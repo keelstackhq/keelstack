@@ -1,0 +1,59 @@
+---
+import { current, sections } from "../data/content";
+import SectionHead from "./SectionHead.astro";
+---
+
+<section class="current" aria-labelledby="current-h">
+  <SectionHead
+    id="current-h"
+    label={sections.current.label}
+    heading={sections.current.heading}
+    maxWidth="900px"
+  />
+  <div class="grid">
+    {
+      current.map((c) => (
+        <div class:list={["item", { accent: c.accent }]}>
+          <div class="label kind">{c.label}</div>
+          <div class="title">{c.title}</div>
+          <div class="text">{c.text}</div>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .current {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 96px 24px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+    gap: 20px;
+    margin-top: 48px;
+  }
+  .item {
+    border-top: 3px solid var(--ink);
+    padding-top: 20px;
+  }
+  .item.accent {
+    border-top-color: var(--accent-ink);
+  }
+  .item.accent .kind {
+    color: var(--accent-ink);
+  }
+  .title {
+    font-weight: 800;
+    font-size: 26px;
+    margin-top: 6px;
+    letter-spacing: -0.02em;
+  }
+  .text {
+    color: var(--ink-2);
+    margin-top: 8px;
+    line-height: 1.5;
+  }
+</style>

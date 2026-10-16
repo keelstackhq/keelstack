@@ -1,56 +1,41 @@
 ---
-import { quickStart, spliceStart } from "../data/tools";
-import { CopyButton } from "./copy-button";
+import { sections } from "../data/content";
+import PiecePicker from "./PiecePicker";
+import SectionHead from "./SectionHead.astro";
+
+// Render `pnpm install` as inline code; the copy itself stays verbatim in content.ts.
+const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
 ---
 
-<section id="start" aria-labelledby="start-title">
-  <div class="wrap">
-    <h2 id="start-title">Get started</h2>
-    <p class="section-lead">
-      splice is not released yet, so today you render with hull's dev renderer. It needs Node 24
-      and pnpm 12; run <code>pnpm install</code> once in a hull checkout.
-    </p>
-    <figure class="snippet">
-      <figcaption>
-        <span>In a hull checkout</span>
-        <CopyButton client:idle text={quickStart} label="Copy the quick start commands" />
-      </figcaption>
-      <pre tabindex="0"><code>{quickStart}</code></pre>
-    </figure>
-    <p class="later">
-      When splice 0.1 is out, the equivalent is <code>{spliceStart}</code> (flags unconfirmed).
-    </p>
+<section id="start" class="start" aria-labelledby="start-h">
+  <div class="inner">
+    <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
+    <p class="intro">{before}<code>pnpm install</code>{after}</p>
+    <PiecePicker client:visible />
   </div>
 </section>
 
 <style>
-  .snippet {
-    margin: 1.5rem 0 1rem;
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    background: var(--code-bg);
-    overflow: hidden;
+  .start {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
   }
-  figcaption {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.5rem 0.75rem 0.5rem 1rem;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.875rem;
-    color: var(--muted);
-    min-height: 3rem;
+  .inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 96px 24px;
   }
-  pre {
-    margin: 0;
-    padding: 1rem;
-    overflow-x: auto;
-    line-height: 1.7;
+  .intro {
+    font-size: 17px;
+    color: var(--ink-2);
+    line-height: 1.5;
+    max-width: 640px;
+    margin: 16px 0 0;
   }
-  .later {
-    color: var(--muted);
-    font-size: 0.9375rem;
+  code {
+    font-family: var(--font-mono);
+    background: var(--chip);
+    padding: 2px 6px;
+    border-radius: 5px;
   }
 </style>

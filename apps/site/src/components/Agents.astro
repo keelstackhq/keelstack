@@ -1,0 +1,77 @@
+---
+import { agentRows, sections } from "../data/content";
+import SectionHead from "./SectionHead.astro";
+---
+
+<section id="agents" class="agents" aria-labelledby="agents-h">
+  <div class="inner">
+    <div>
+      <SectionHead id="agents-h" dark label={sections.agents.label} heading={sections.agents.heading} />
+      <p class="body">{sections.agents.body}</p>
+    </div>
+    <dl class="rows">
+      {
+        agentRows.map((r) => (
+          <div class="row">
+            <dt>{r.key}</dt>
+            <dd>{r.text}</dd>
+          </div>
+        ))
+      }
+    </dl>
+  </div>
+</section>
+
+<style>
+  .agents {
+    background: var(--ink);
+    color: var(--paper);
+  }
+  .inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 96px 24px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr));
+    gap: 56px;
+  }
+  .body {
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--dark-text-2);
+    margin: 24px 0 0;
+    max-width: 520px;
+  }
+  .rows {
+    display: grid;
+    gap: 1px;
+    background: var(--dark-line);
+    border: 1px solid var(--dark-line);
+    border-radius: 16px;
+    overflow: hidden;
+    align-self: start;
+    margin: 0;
+  }
+  .row {
+    background: var(--ink);
+    padding: 22px 24px;
+    display: grid;
+    grid-template-columns: 150px minmax(0, 1fr);
+    gap: 16px;
+  }
+  dt {
+    font-family: var(--font-mono);
+    color: var(--accent);
+    font-size: 14px;
+  }
+  dd {
+    margin: 0;
+    color: var(--dark-text-2);
+  }
+  @media (max-width: 419px) {
+    .row {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 6px;
+    }
+  }
+</style>
