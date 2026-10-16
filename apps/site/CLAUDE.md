@@ -1,7 +1,7 @@
 # Astro site
 
-Astro 7 static site (`output: "static"`) with React islands via `@astrojs/react`, deployed as
-Cloudflare static assets (`wrangler.jsonc`, `./dist`). cascivo (`@cascivo/react`) renders to static HTML
+Astro 7 static site (`output: "static"`) with React islands via `@astrojs/react`, deployed to the
+Cloudflare Pages project `keelstack-landing` with `wrangler pages deploy dist` (Pages ignores `wrangler.jsonc`). cascivo (`@cascivo/react`) renders to static HTML
 in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 
 - `astro.config.mjs` is template-owned but diverges on purpose (adds `@astrojs/react`); keep it.

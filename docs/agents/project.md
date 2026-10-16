@@ -39,7 +39,7 @@ freely, template updates never touch it.
 4. Project notes (this file).
 5. Design spec in `docs/superpowers/specs/`.
 6. Build the page in `apps/site/src/**`.
-7. Verify: `pnpm run ci`, build, screenshots at 390 px and 1280 px, light and dark.
+7. Verify: `pnpm run ci`, build, screenshots at 360, 390 and 1280 px (light only).
 8. One PR to `main`, CI (`ci` + `ci-ok`) green; a human merges.
 
 ## Progress
@@ -56,6 +56,8 @@ freely, template updates never touch it.
 - 2026-10-16 Deploy: `deploy.yml` publishes to Cloudflare Pages `keelstack-landing`; the site's
   `deploy`/`deploy:preview` scripts use `wrangler pages deploy` instead of the template's Workers
   default (`wrangler.jsonc` is ignored by Pages).
+- 2026-10-16 Redesign: light cascivo page with the PiecePicker island, self-hosted fonts and
+  `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
 
 ## Blocked
 
@@ -79,6 +81,3 @@ Cross-repo decisions from keelstackhq/decisions; follow them. To change one, ope
 The hook refreshes this snapshot; commit an update alone as `chore: sync org decisions`.
 
 @docs/agents/org-decisions.md
-
-- 2026-10-16 Redesign: light cascivo page with the PiecePicker island, self-hosted fonts and
-  `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
