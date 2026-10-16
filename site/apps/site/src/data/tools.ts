@@ -74,13 +74,13 @@ export const fitSteps: FitStep[] = [
   {
     tool: "splice",
     title: "Bootstrap and update",
-    body: "splice renders the pieces you pick into a new repo, then moves it to newer template versions. Your edits are merged, never lost.",
+    body: "splice will render the pieces you pick into a new repo, then move it to newer template versions. Your edits are merged, never lost. Until it ships, hull's dev renderer does the first step.",
     code: "splice new · splice update · splice check",
   },
   {
     tool: "hoard",
     title: "Cached CI",
-    body: "hoard gives the generated repo's CI a shared Turborepo cache. Later runs replay every unchanged task.",
+    body: "hoard will give the generated repo's CI a shared Turborepo cache (planned; hoard is not released yet). Later runs replay every unchanged task.",
     code: "uses: keelstackhq/hoard@v1",
   },
 ];
