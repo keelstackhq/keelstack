@@ -22,9 +22,14 @@ freely, template updates never touch it.
   - Page copy comes from the hull, splice and hoard READMEs and specs. Never invent features,
     numbers or release dates; mark gaps `TODO(copy)`. The domain is `TODO(domain)`.
   - Use the `keelstackhq` names (D-001) even where an older README still says `keelstack`.
-  - Static first: no client JS except the copy-button island. Keep each page under ~100 KB
-    transferred. No web fonts.
-  - Design spec: `docs/superpowers/specs/2026-10-16-landing-page-design.md`.
+  - Static first: one React island, `PiecePicker` (`client:visible`) in Get started; every other
+    cascivo component renders to static HTML. Fonts are self-hosted Archivo + JetBrains Mono via
+    Fontsource (latin only, no third-party requests). Light only, no dark variant. Budget: HTML +
+    CSS + fonts for `/` under ~150 KB transferred; the island JS is counted separately.
+  - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
+    diverges from the template on purpose; keep that change when `splice update` ships.
+  - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
+    `2026-10-16-landing-page-design.md`).
 
 ## Steps
 
@@ -74,3 +79,6 @@ Cross-repo decisions from keelstackhq/decisions; follow them. To change one, ope
 The hook refreshes this snapshot; commit an update alone as `chore: sync org decisions`.
 
 @docs/agents/org-decisions.md
+
+- 2026-10-16 Redesign: light cascivo page with the PiecePicker island, self-hosted fonts and
+  `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
