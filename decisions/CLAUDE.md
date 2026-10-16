@@ -11,6 +11,7 @@ The record of settled decisions that apply across keelstackhq repos. Agents in e
   old row from the index.
 - Record only settled outcomes. Open questions belong in shared docs, issues or PRs elsewhere.
 - Changes go through PRs; the owner merges. Never push to `main`.
+- Keep the table aligned (`npx prettier --write DECISIONS.md`): repos format-check their snapshot.
 - Before a PR: `bash scripts/check-index.sh` must pass.
 - A decision is written so an agent can follow it without context: name the repos, files and
   commands it affects.

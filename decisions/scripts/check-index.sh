@@ -5,6 +5,10 @@ cd "$(dirname "$0")/.."
 fail=0
 lines=$(wc -l < DECISIONS.md)
 if [ "$lines" -gt 60 ]; then echo "DECISIONS.md has $lines lines (limit 60)"; fail=1; fi
+# Repos format-check their snapshot (oxfmt/prettier align tables), so the table must be aligned:
+# every table line the same length. Fix with e.g. `npx prettier --write DECISIONS.md`.
+widths=$(grep -E '^\|' DECISIONS.md | awk '{ print length }' | sort -u | wc -l)
+if [ "$widths" -gt 1 ]; then echo "DECISIONS.md table is not aligned; format it (npx prettier --write DECISIONS.md)"; fail=1; fi
 ids=$(grep -oE '^\| D-[0-9]{3} ' DECISIONS.md | tr -d '| ' || true)
 dupes=$(printf '%s\n' "$ids" | sort | uniq -d)
 if [ -n "$dupes" ]; then echo "duplicate IDs: $dupes"; fail=1; fi
