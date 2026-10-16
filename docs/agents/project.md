@@ -42,15 +42,13 @@ freely, template updates never touch it.
 - 2026-10-16 Step 6: page built (hero, tool cards, fit, get started + copy island, footer, 404).
 - 2026-10-16 Step 7: `pnpm run ci` 11/11; build 2 pages, about 17 KB gzipped per page;
   screenshots at 390/1280 px, light/dark, no overflow or console errors. Review nits fixed.
-- 2026-10-16 Step 8: blocked, push denied (see Blocked).
+- 2026-10-16 Step 8: `main` created as an empty root commit by the owner; branch rebased onto it
+  and opened as PR #1.
 
 ## Blocked
 
 Each item needs a human:
 
-- **Push and PR.** `origin` is empty and this session's permission check denied
-  `git push origin e021089:refs/heads/main` and `git push -u origin claude/bootstrap-landing`.
-  A human pushes `main` = `e021089` (render + lockfile), then the branch, and opens the PR.
 - **Deploy.** Add repo secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and
   `CLOUDFLARE_ACCOUNT_ID` under Settings → Secrets and variables → Actions. Then
   `pnpm --filter @keelstackhq/site deploy` (or wire it into a workflow) can publish.
