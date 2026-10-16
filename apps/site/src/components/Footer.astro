@@ -1,0 +1,45 @@
+---
+import { org, tools } from "../data/tools";
+const links = [
+  { href: org.url, label: "keelstackhq on GitHub" },
+  ...tools.map((t) => ({ href: t.repo, label: t.name })),
+  { href: `${org.url}/decisions`, label: "decisions" },
+];
+---
+
+<footer class="footer">
+  <div class="wrap">
+    <nav aria-label="GitHub">
+      <ul>
+        {
+          links.map((l) => (
+            <li>
+              <a href={l.href}>{l.label}</a>
+            </li>
+          ))
+        }
+      </ul>
+    </nav>
+    <p>keelstack: tools for bootstrapping projects. <!-- TODO(copy): license and copyright line --></p>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    border-top: 1px solid var(--border);
+    padding: 2rem 0 3rem;
+    font-size: 0.9375rem;
+    color: var(--muted);
+  }
+  ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.5rem;
+    list-style: none;
+    margin: 0 0 1rem;
+    padding: 0;
+  }
+  p {
+    margin: 0;
+  }
+</style>

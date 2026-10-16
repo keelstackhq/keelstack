@@ -43,14 +43,14 @@ Names follow D-001: `keelstackhq` org and npm scope, even where splice's README 
 - `src/data/tools.ts`: tool data (name, summary, facts, status, repo URL). Tested: every tool links
   under `https://github.com/keelstackhq/`, has a non-empty summary and status.
 - `src/components/*.astro`: Header, ToolCard, Fit, GetStarted, Footer. Zero JS.
-- `src/components/copy-button.tsx`: the only island (`client:visible`). Copies the snippet text
+- `src/components/copy-button.tsx`: the only island (`client:idle`; `client:visible` never fires for an island that server-renders nothing). Copies the snippet text
   with `navigator.clipboard.writeText`, announces "Copied" in an `aria-live` region, and renders
   nothing without the Clipboard API, so the page works without JS. Tested with happy-dom.
 - `src/pages/404.astro`: `wrangler.jsonc` uses `not_found_handling: "404-page"`.
 
 ## Constraints
 
-- Static output only; no client JS except the copy button (Preact, about 4 KB gzipped).
+- Static output only; no client JS except the copy button (about 11 KB gzipped with the Preact runtime; whole page about 17 KB gzipped).
 - Under ~100 KB transferred per page; no images except an inline SVG favicon.
 - Accessibility: semantic landmarks, one `h1`, skip link, visible focus rings, WCAG AA contrast in
   both themes, keyboard reachable controls, `prefers-reduced-motion` respected.
