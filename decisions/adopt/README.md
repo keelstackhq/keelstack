@@ -10,8 +10,10 @@ git checkout -b chore/adopt-org-decisions && git add -A && git commit -m "chore:
 ```
 
 `adopt.sh` is idempotent (run it again any time) and does the three steps below. In a repo
-generated from hull, whose `CLAUDE.md` is template-owned, it writes the import into
-`docs/agents/project.md` instead. Doing it by hand:
+generated from hull, whose `CLAUDE.md`, `.claude/settings.json` and session-start hook are
+template-owned, it writes the import into `docs/agents/project.md` and the hook into
+`.claude/hooks/session-start.d/`, which hull's session-start hook runs (hull templates from
+2026-10-16 on); it does not touch `.claude/settings.json`. Doing it by hand:
 
 1. Copy `adopt/sync-decisions.sh` to `.claude/hooks/sync-decisions.sh` and the current
    `DECISIONS.md` to `docs/agents/org-decisions.md` (a committed snapshot: CI, offline sessions

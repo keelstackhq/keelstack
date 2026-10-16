@@ -7,13 +7,30 @@ src_repo="$(dirname "$here")"
 target="$(cd "${1:?usage: adopt.sh <target-repo-dir>}" && pwd)"
 cd "$target"
 
-# 1. Hook and snapshot.
-mkdir -p .claude/hooks docs/agents
-cp "$here/sync-decisions.sh" .claude/hooks/sync-decisions.sh
-cp "$src_repo/DECISIONS.md" docs/agents/org-decisions.md
-echo "adopt: wrote .claude/hooks/sync-decisions.sh and docs/agents/org-decisions.md"
+# A repo generated from hull has a template-owned CLAUDE.md that imports docs/agents/project.md,
+# and template-owned .claude/settings.json and session-start hook. Edits there would be drift, so
+# such a repo gets the hook in .claude/hooks/session-start.d/ (run by hull's session-start hook)
+# and the import in docs/agents/project.md.
+generated=0
+if [ -f CLAUDE.md ] && grep -q '^@docs/agents/project.md' CLAUDE.md && [ -f docs/agents/project.md ]; then
+  generated=1
+fi
 
-# 2. SessionStart hook in .claude/settings.json (kept if already present).
+# 1. Hook and snapshot.
+mkdir -p docs/agents
+cp "$src_repo/DECISIONS.md" docs/agents/org-decisions.md
+if [ "$generated" -eq 1 ]; then
+  mkdir -p .claude/hooks/session-start.d
+  cp "$here/sync-decisions.sh" .claude/hooks/session-start.d/sync-decisions.sh
+  echo "adopt: hull-generated repo; wrote .claude/hooks/session-start.d/sync-decisions.sh and docs/agents/org-decisions.md"
+  echo "adopt: left template-owned .claude/settings.json alone (hull's session-start hook runs session-start.d/)"
+else
+  mkdir -p .claude/hooks
+  cp "$here/sync-decisions.sh" .claude/hooks/sync-decisions.sh
+  echo "adopt: wrote .claude/hooks/sync-decisions.sh and docs/agents/org-decisions.md"
+fi
+
+# 2. SessionStart hook in .claude/settings.json (kept if already present; skipped in generated repos).
 merge='
 const fs = require("fs"); const p = ".claude/settings.json";
 const s = fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf8")) : {};
@@ -24,7 +41,9 @@ if (!has) s.hooks.SessionStart.push({ matcher: "startup|resume", hooks: [{ type:
 fs.writeFileSync(p, JSON.stringify(s, null, 2) + "\n");
 console.log(has ? "adopt: settings.json already has the hook" : "adopt: added the SessionStart hook to .claude/settings.json");
 '
-if command -v node >/dev/null 2>&1; then
+if [ "$generated" -eq 1 ]; then
+  :
+elif command -v node >/dev/null 2>&1; then
   node -e "$merge"
 elif command -v python3 >/dev/null 2>&1; then
   python3 - <<'PY'
@@ -46,9 +65,7 @@ fi
 # 3. Import the snapshot. A template-owned CLAUDE.md (hull-generated repos) imports
 #    docs/agents/project.md; put the section there instead so template updates keep it.
 notes="CLAUDE.md"
-if [ -f CLAUDE.md ] && grep -q '^@docs/agents/project.md' CLAUDE.md && [ -f docs/agents/project.md ]; then
-  notes="docs/agents/project.md"
-fi
+if [ "$generated" -eq 1 ]; then notes="docs/agents/project.md"; fi
 if grep -qs '@docs/agents/org-decisions.md' "$notes"; then
   echo "adopt: $notes already imports the snapshot"
 else
