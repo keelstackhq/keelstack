@@ -5,7 +5,8 @@ freely, template updates never touch it.
 
 - What this project is: the landing page of keelstack, the family of developer tools under the
   `keelstackhq` org (hull, splice, hoard; see D-001). One static Astro site in `apps/site`,
-  deployed as Cloudflare static assets (`apps/site/wrangler.jsonc`). Nothing else lives here.
+  deployed to the Cloudflare Pages project `keelstack-landing` by `.github/workflows/deploy.yml`
+  (push to `main`, or run it by hand). Nothing else lives here.
 - Generated from: `keelstackhq/hull@e485214f8c7f5bebb25c31d480a9d6b6e6b45e68` with
   `node scripts/render.mjs new --template template --out <dir> --piece base --piece astro-site:site --data scope=keelstackhq --json`
   (Node 24, pnpm 12.11.2). No `splice` lock yet: splice is unreleased, so `splice update` does
@@ -14,6 +15,9 @@ freely, template updates never touch it.
   - `pnpm --filter @keelstackhq/site dev`: local dev server.
   - `pnpm --filter @keelstackhq/site build`: static output in `apps/site/dist`.
   - `pnpm --filter @keelstackhq/site preview`: serve `dist` locally.
+  - Deploy: `pnpm turbo run deploy --filter=@keelstackhq/site` (Pages, branch `main`); PRs get
+    `deploy:preview` (branch `pr-<n>`) from the template's `preview.yml`. Both need the
+    `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets (set).
 - Conventions and decisions:
   - Page copy comes from the hull, splice and hoard READMEs and specs. Never invent features,
     numbers or release dates; mark gaps `TODO(copy)`. The domain is `TODO(domain)`.
@@ -44,15 +48,15 @@ freely, template updates never touch it.
   screenshots at 390/1280 px, light/dark, no overflow or console errors. Review nits fixed.
 - 2026-10-16 Step 8: `main` created as an empty root commit by the owner; branch rebased onto it
   and opened as PR #1.
+- 2026-10-16 Deploy: `deploy.yml` publishes to Cloudflare Pages `keelstack-landing`; the site's
+  `deploy`/`deploy:preview` scripts use `wrangler pages deploy` instead of the template's Workers
+  default (`wrangler.jsonc` is ignored by Pages).
 
 ## Blocked
 
 Each item needs a human:
 
-- **Deploy.** Add repo secrets `CLOUDFLARE_API_TOKEN` (Workers Scripts: Edit) and
-  `CLOUDFLARE_ACCOUNT_ID` under Settings → Secrets and variables → Actions. Then
-  `pnpm --filter @keelstackhq/site deploy` (or wire it into a workflow) can publish.
-- **Domain.** Choose the domain (`TODO(domain)`), add it as a custom domain of the `site` Worker
+- **Domain.** Choose the domain (`TODO(domain)`), add it as a custom domain of the Pages project `keelstack-landing`
   in the Cloudflare dashboard, then add the canonical URL where `apps/site/src/layouts/Base.astro`
   says `TODO(domain)` (`astro.config.mjs` is template-owned, so `site` is not set there).
 - **Branch protection.** Protect `main` and require the `ci-ok` status check (Settings → Branches
