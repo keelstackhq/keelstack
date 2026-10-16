@@ -38,5 +38,5 @@
   --cascivo-radius-control: 10px;
   --cascivo-radius-item: 10px;
   --cascivo-radius-badge: 99px;
-  --cascivo-focus-ring: 0 0 0 2px var(--accent-ink);
+  --cascivo-focus-ring: 0 0 #0000; /* site outline in global.css is the only focus ring */
 }
