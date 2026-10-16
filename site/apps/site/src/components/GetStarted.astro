@@ -1,0 +1,41 @@
+---
+import { sections } from "../data/content";
+import PiecePicker from "./PiecePicker";
+import SectionHead from "./SectionHead.astro";
+
+// Render `pnpm install` as inline code; the copy itself stays verbatim in content.ts.
+const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
+---
+
+<section id="start" class="start" aria-labelledby="start-h">
+  <div class="inner">
+    <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
+    <p class="intro">{before}<code>pnpm install</code>{after}</p>
+    <PiecePicker client:visible />
+  </div>
+</section>
+
+<style>
+  .start {
+    background: var(--surface);
+    border-top: 1px solid var(--line);
+  }
+  .inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 96px 24px;
+  }
+  .intro {
+    font-size: 17px;
+    color: var(--ink-2);
+    line-height: 1.5;
+    max-width: 640px;
+    margin: 16px 0 0;
+  }
+  code {
+    font-family: var(--font-mono);
+    background: var(--chip);
+    padding: 2px 6px;
+    border-radius: 5px;
+  }
+</style>

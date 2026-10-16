@@ -6,7 +6,7 @@ import Base from "../layouts/Base.astro";
 
 <Base title="Page not found · keelstack" description="This page does not exist.">
   <Nav />
-  <main id="main" class="wrap missing">
+  <main id="main" class="missing">
     <h1>Page not found</h1>
     <p>There is nothing at this address. <a href="/">Go to the keelstack home page</a>.</p>
   </main>
@@ -15,8 +15,22 @@ import Base from "../layouts/Base.astro";
 
 <style>
   .missing {
-    padding-top: 4rem;
-    padding-bottom: 4rem;
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 96px 24px;
     min-height: 50vh;
+  }
+  h1 {
+    margin: 0;
+    font-weight: 900;
+    font-stretch: 112%;
+    font-size: clamp(36px, 5vw, 64px);
+    line-height: 1;
+    letter-spacing: -0.04em;
+  }
+  p {
+    font-size: 17px;
+    color: var(--ink-2);
+    margin: 16px 0 0;
   }
 </style>

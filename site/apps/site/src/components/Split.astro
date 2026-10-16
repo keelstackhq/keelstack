@@ -3,8 +3,8 @@ import { sections, split } from "../data/content";
 import SectionHead from "./SectionHead.astro";
 ---
 
-<section class="split">
-  <SectionHead label={sections.split.label} heading={sections.split.heading} maxWidth="860px" />
+<section class="split" aria-labelledby="split-h">
+  <SectionHead id="split-h" label={sections.split.label} heading={sections.split.heading} maxWidth="860px" />
   <div class="grid">
     <div class="handles">
       <div class="row">
