@@ -77,6 +77,7 @@ export default function PiecePicker() {
         <div className="pp-bar">
           <SegmentedControl
             className="pp-mode"
+            role="radiogroup"
             ariaLabel="Command version"
             options={MODES}
             value={mode}

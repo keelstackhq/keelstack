@@ -42,6 +42,12 @@ describe("PiecePicker", () => {
     const html = renderToString(<PiecePicker />);
     expect(html).toContain("--piece hono-worker:api --data scope=acme");
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(2);
+    expect(html).not.toMatch(/>Copy</);
+  });
+
+  it("mode switch is a radiogroup named Command version", () => {
+    render(<PiecePicker />);
+    expect(screen.getByRole("radiogroup", { name: "Command version" })).toBeTruthy();
   });
 
   it("toggling a piece updates aria-pressed and the command", () => {

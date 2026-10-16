@@ -30,6 +30,7 @@ describe("buildLlmsTxt", () => {
     expect(out).toContain("## Get started");
     expect(out).toContain(buildCommand(new Set(DEFAULT_ON), "today"));
     expect(out).toContain(buildCommand(new Set(DEFAULT_ON), "splice"));
-    expect(out).toContain(CAPTIONS.splice);
+    expect(out).toContain(`\n${CAPTIONS.splice}\n`);
+    expect(out).not.toContain(`(${CAPTIONS.splice})`);
   });
 });

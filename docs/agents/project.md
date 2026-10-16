@@ -24,7 +24,8 @@ freely, template updates never touch it.
   - Use the `keelstackhq` names (D-001) even where an older README still says `keelstack`.
   - Static first: one React island, `PiecePicker` (`client:visible`) in Get started; every other
     cascivo component renders to static HTML. Fonts are self-hosted Archivo + JetBrains Mono via
-    Fontsource (latin only, no third-party requests). Light only, no dark variant. Budget: HTML +
+    Fontsource (woff2 for latin, latin-ext and vietnamese ship in `dist`, but browsers fetch only the latin
+    file via `unicode-range`; no third-party requests). Light only, no dark variant. Budget: HTML +
     CSS + fonts for `/` under ~150 KB transferred; the island JS is counted separately.
   - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
     diverges from the template on purpose; keep that change when `splice update` ships.
@@ -70,10 +71,13 @@ Each item needs a human:
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
-- **Public repos.** The page links to `github.com/keelstackhq/{hull,splice,hoard}`, which are
+- **Public repos.** The page links to `github.com/keelstackhq/{hull,splice,hoard,decisions}`, which are
   private: visitors get a 404 until they are made public.
 - **Releases.** splice and hoard are unreleased, so the page shows hull's dev renderer as the way
   to start today. Update the getting-started snippet when `@keelstackhq/splice` 0.1 ships.
+- **Confirm before launch.** The hero terminal output is illustrative: replace it with real splice
+  output or keep the preview label. Piece instance names other than `web` and `api` are
+  placeholders. The splice 0.1 flags are unconfirmed.
 
 ## Org decisions
 
