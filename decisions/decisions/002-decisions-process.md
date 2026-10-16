@@ -18,7 +18,8 @@ loading long documents into their context.
 - Open topics are discussed in shared docs, issues or PRs; only the outcome lands here.
 - Changes arrive by PR; the owner (Adam) merges. Agents propose, never merge.
 - Every repo commits a snapshot of the index at `docs/agents/org-decisions.md`, imported by its
-  `CLAUDE.md` and refreshed by a session-start hook (see `adopt/`).
+  `CLAUDE.md` and refreshed by a session-start hook. A new repo adopts it in its first PR with
+  `bash ../decisions/adopt/adopt.sh .` (see `adopt/README.md`).
 
 ## Consequences
 

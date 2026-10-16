@@ -1,7 +1,17 @@
 # Adopt keelstackhq/decisions in a repo
 
-Three changes, one commit (`chore: adopt org decisions`). Afterwards every agent in that repo loads
-the current decisions at session start, about 60 lines.
+One command, one commit. Afterwards every agent in that repo loads the current decisions at
+session start, about 60 lines. Every new keelstackhq repo does this in its first PR.
+
+```bash
+git clone --depth 1 https://github.com/keelstackhq/decisions ../decisions   # or git -C ../decisions pull
+bash ../decisions/adopt/adopt.sh .
+git checkout -b chore/adopt-org-decisions && git add -A && git commit -m "chore: adopt org decisions"
+```
+
+`adopt.sh` is idempotent (run it again any time) and does the three steps below. In a repo
+generated from hull, whose `CLAUDE.md` is template-owned, it writes the import into
+`docs/agents/project.md` instead. Doing it by hand:
 
 1. Copy `adopt/sync-decisions.sh` to `.claude/hooks/sync-decisions.sh` and the current
    `DECISIONS.md` to `docs/agents/org-decisions.md` (a committed snapshot: CI, offline sessions
@@ -38,7 +48,8 @@ should list the D-IDs.
 
 ## Prompt for the repo's agent
 
-> Adopt keelstackhq/decisions in this repo by following
-> https://github.com/keelstackhq/decisions/blob/main/adopt/README.md exactly (hook, snapshot,
-> CLAUDE.md import). Then read docs/agents/org-decisions.md and list any decision this repo does
-> not follow yet, with the file and line, without fixing it. Open one PR.
+> Adopt keelstackhq/decisions in this repo: clone it to ../decisions and run
+> `bash ../decisions/adopt/adopt.sh .` (see its adopt/README.md). Review the diff against this
+> repo's own conventions, run the repo's checks, and open one PR `chore: adopt org decisions`.
+> Then read docs/agents/org-decisions.md and list, in the PR description, any decision this repo
+> does not follow yet (file and line), without fixing it.
