@@ -1,0 +1,74 @@
+---
+import type { Tool } from "../data/tools";
+interface Props {
+  tool: Tool;
+}
+const { tool } = Astro.props;
+const headingId = `tool-${tool.name}`;
+---
+
+<article class="card" aria-labelledby={headingId}>
+  <p class="role">{tool.role}</p>
+  <h3 id={headingId}><code class="name">{tool.name}</code></h3>
+  <p>{tool.summary}</p>
+  <ul>
+    {tool.facts.map((fact) => <li>{fact}</li>)}
+  </ul>
+  <p class="status"><span class="dot" aria-hidden="true"></span>Status: {tool.status}</p>
+  <a class="repo" href={tool.repo}>{tool.name} on GitHub<span aria-hidden="true"> →</span></a>
+</article>
+
+<style>
+  .card {
+    display: flex;
+    flex-direction: column;
+    background: var(--bg-soft);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1.5rem;
+  }
+  .role {
+    margin: 0 0 0.25rem;
+    font-size: 0.8125rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  h3 {
+    font-size: 1.5rem;
+  }
+  .name {
+    font-size: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+  }
+  ul {
+    margin: 0 0 1.25rem;
+    padding-left: 1.125rem;
+    color: var(--muted);
+    font-size: 0.9375rem;
+  }
+  li + li {
+    margin-top: 0.375rem;
+  }
+  .status {
+    margin-top: auto;
+    font-size: 0.875rem;
+    color: var(--muted);
+  }
+  .dot {
+    display: inline-block;
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--accent);
+    margin-right: 0.5rem;
+    vertical-align: 0.05em;
+  }
+  .repo {
+    font-weight: 600;
+    margin-top: 0.25rem;
+  }
+</style>
