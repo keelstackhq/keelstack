@@ -13,7 +13,7 @@ body {
   color: var(--ink);
   font-family: var(--font-sans);
   font-size: 1rem;
-  line-height: 1.6;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -71,30 +71,32 @@ a:hover {
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 14px 22px;
-  border-radius: 99px;
-  border: 1px solid transparent;
+  border-radius: 10px;
   font-family: var(--font-sans);
-  font-weight: 600;
+  font-weight: 700;
   font-size: 16px;
-  line-height: 1;
+  line-height: 1.15;
   text-decoration: none;
   cursor: pointer;
 }
 .btn-primary {
   background: var(--ink);
   color: var(--paper);
+  border: 0;
+  padding: 15px 24px;
 }
 .btn-primary:hover {
-  color: var(--accent);
+  background: var(--accent-ink);
+  color: #fff;
 }
 .btn-outline {
   background: transparent;
   color: var(--ink);
-  border-color: var(--ink);
+  border: 1.5px solid var(--ink);
+  padding: 14px 22px;
 }
 .btn-outline:hover {
-  background: var(--chip);
+  background: #fff;
   color: var(--ink);
 }
 @media (prefers-reduced-motion: reduce) {

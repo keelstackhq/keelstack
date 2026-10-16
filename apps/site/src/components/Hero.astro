@@ -13,9 +13,9 @@ const v = hero.variants[hero.active];
     <h1>{v.lead}<span class="hl">{v.highlight}</span></h1>
     <p class="body">{hero.body}</p>
     <div class="ctas">
-      <Button asChild><a class="btn btn-primary cta" href="/#start">Get started →</a></Button>
+      <Button asChild><a class="btn btn-primary" href="/#start">Get started →</a></Button>
       <Button asChild>
-        <a class="btn btn-outline cta" href={org.url}>keelstackhq on GitHub</a>
+        <a class="btn btn-outline" href={org.url}>keelstackhq on GitHub</a>
       </Button>
     </div>
   </div>
@@ -62,28 +62,5 @@ const v = hero.variants[hero.active];
     gap: 12px;
     margin-top: 32px;
     flex-wrap: wrap;
-  }
-  .ctas :global(.cta) {
-    border-radius: 10px;
-    font-weight: 700;
-    font-size: 16px;
-    line-height: 1.5;
-  }
-  .ctas :global(.btn-primary.cta) {
-    background: var(--ink);
-    color: var(--paper);
-    padding: 15px 24px;
-  }
-  .ctas :global(.btn-primary.cta:hover) {
-    background: var(--accent-ink);
-    color: #fff;
-  }
-  .ctas :global(.btn-outline.cta) {
-    border: 1.5px solid var(--ink);
-    padding: 14px 22px;
-  }
-  .ctas :global(.btn-outline.cta:hover) {
-    background: #fff;
-    color: var(--ink);
   }
 </style>
