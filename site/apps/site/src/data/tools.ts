@@ -1,5 +1,4 @@
-// Page copy. Every line comes from the tool's README or design spec; gaps are TODO(copy).
-// Names follow D-001 (org and npm scope `keelstackhq`), even where a README still says `keelstack`.
+// Page copy for the tool cards. Names follow D-001 (org and npm scope `keelstackhq`).
 
 export const org = {
   name: "keelstackhq",
@@ -9,89 +8,46 @@ export const org = {
 export interface Tool {
   name: "hull" | "splice" | "hoard";
   role: string;
-  summary: string;
-  facts: string[];
   status: string;
+  statusStyle: "filled" | "outline" | "dashed";
+  pitch: string;
+  detail: string;
+  detailMono: boolean;
   repo: string;
 }
 
 export const tools: Tool[] = [
   {
     name: "hull",
-    role: "Monorepo template",
-    summary:
-      "An opinionated, AI-native monorepo template. Pick the pieces you need; hull owns the structure, stack, tool versions and config, and keeps them current. Your app code stays yours.",
-    facts: [
-      "pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro, Rust, Tauri, Hono on Cloudflare",
-      "One-job CI plus a ci-ok check; Turbo runs only affected tasks",
-      "Built for Claude Code: a lean CLAUDE.md, subagents, skills and a /loop default",
-    ],
-    status: "Pre-0.1, no release tag yet",
+    role: "01 · monorepo template",
+    status: "pre-0.1",
+    statusStyle: "filled",
+    pitch:
+      "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
+    detail: "pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro, Rust, Tauri, Hono on Cloudflare",
+    detailMono: false,
     repo: `${org.url}/hull`,
   },
   {
     name: "splice",
-    role: "Bootstrap and update",
-    summary:
-      "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary: no Python, no Rust toolchain.",
-    facts: [
-      "splice new, add, update, check, diff and explain",
-      "On update, owned files are replaced, shared files are 3-way merged, seed files stay yours",
-      "Every command takes --json and --yes; an update bot opens one pull request",
-    ],
-    status: "Under construction",
+    role: "02 · bootstrap + update",
+    status: "under construction",
+    statusStyle: "outline",
+    pitch:
+      "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
+    detail: "new · add · update · check · diff · explain",
+    detailMono: true,
     repo: `${org.url}/splice`,
   },
   {
     name: "hoard",
-    role: "Cached CI",
-    summary:
-      "A Turborepo (and Vite+) remote cache for GitHub Actions, in one line of YAML. No account, no server to host.",
-    facts: [
-      "Artifacts go to the GitHub Actions cache (default, zero config) or your own Cloudflare R2 bucket",
-      "Serves the Turborepo remote-cache API and exports TURBO_API, TURBO_TOKEN and TURBO_TEAM",
-      "The cache never fails your build: a storage error is a miss or a skipped upload",
-    ],
-    status: "Not released yet",
+    role: "03 · cached CI",
+    status: "not released yet",
+    statusStyle: "dashed",
+    pitch:
+      "A Turborepo (and Vite+) remote cache for GitHub Actions. The cache never fails your build: an error is a miss.",
+    detail: "GitHub Actions cache by default, or your own Cloudflare R2 bucket",
+    detailMono: false,
     repo: `${org.url}/hoard`,
   },
 ];
-
-export interface FitStep {
-  tool: Tool["name"];
-  title: string;
-  body: string;
-  code: string;
-}
-
-export const fitSteps: FitStep[] = [
-  {
-    tool: "hull",
-    title: "Template",
-    body: "hull defines the structure, stack, tool versions and config as pieces: base, preact-app, ui-storybook, astro-site, hono-worker, rust-tool, tauri-app, docs.",
-    code: "gh:keelstackhq/hull//template",
-  },
-  {
-    tool: "splice",
-    title: "Bootstrap and update",
-    body: "splice will render the pieces you pick into a new repo, then move it to newer template versions. Your edits are merged, never lost. Until it ships, hull's dev renderer does the first step.",
-    code: "splice new · splice update · splice check",
-  },
-  {
-    tool: "hoard",
-    title: "Cached CI",
-    body: "hoard will give the generated repo's CI a shared Turborepo cache (planned; hoard is not released yet). Later runs replay every unchanged task.",
-    code: "uses: keelstackhq/hoard@v1",
-  },
-];
-
-// From hull's README "Quick start": the only path that works before splice 0.1 ships.
-export const quickStart = [
-  "node scripts/render.mjs new --template template --out ../my-repo \\",
-  "  --piece base --piece preact-app:web --piece hono-worker:api --data scope=acme",
-  "cd ../my-repo && git init && pnpm install && pnpm run ci",
-].join("\n");
-
-// From hull's README: the planned equivalent once splice 0.1 is out (flags unconfirmed).
-export const spliceStart =
-  "pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-repo --piece ...";

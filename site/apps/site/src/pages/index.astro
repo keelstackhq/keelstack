@@ -1,108 +1,27 @@
 ---
-import Fit from "../components/Fit.astro";
+import Agents from "../components/Agents.astro";
 import Footer from "../components/Footer.astro";
 import GetStarted from "../components/GetStarted.astro";
-import Header from "../components/Header.astro";
-import ToolCard from "../components/ToolCard.astro";
-import { tools } from "../data/tools";
+import Hero from "../components/Hero.astro";
+import Nav from "../components/Nav.astro";
+import Split from "../components/Split.astro";
+import StatStrip from "../components/StatStrip.astro";
+import StaysCurrent from "../components/StaysCurrent.astro";
+import Tools from "../components/Tools.astro";
+import { hero } from "../data/content";
 import Base from "../layouts/Base.astro";
 ---
 
-<Base
-  title="keelstack: tools for bootstrapping projects"
-  description="hull, splice and hoard: a monorepo template, a tool to bootstrap and update repos from it, and a one-line CI cache."
->
-  <Header />
+<Base title="keelstack: seconds to a repo, then it's all your logic" description={hero.body}>
+  <Nav />
   <main id="main">
-    <div class="wrap hero">
-      <h1>keelstack</h1>
-      <p class="pitch">Tools for bootstrapping projects.</p>
-      <p class="lead">
-        Start a monorepo from a template, keep it current as the template moves, and cache its
-        CI.
-      </p>
-      <p class="note">All three are pre-release: no tagged versions yet.</p>
-      <p class="cta">
-        <a class="button" href="#start">Get started</a>
-        <a class="button secondary" href="https://github.com/keelstackhq">keelstackhq on GitHub</a>
-      </p>
-    </div>
-
-    <section id="tools" aria-labelledby="tools-title">
-      <div class="wrap">
-        <h2 id="tools-title">The tools</h2>
-        <div class="grid">
-          {tools.map((tool) => <ToolCard tool={tool} />)}
-        </div>
-      </div>
-    </section>
-
-    <Fit />
+    <Hero />
+    <StatStrip />
+    <Split />
+    <Tools />
+    <Agents />
+    <StaysCurrent />
     <GetStarted />
   </main>
   <Footer />
 </Base>
-
-<style>
-  .hero {
-    padding-top: 4.5rem;
-    padding-bottom: 4rem;
-  }
-  h1 {
-    font-size: clamp(2.5rem, 7vw, 4rem);
-    letter-spacing: -0.03em;
-    margin-bottom: 0.25rem;
-  }
-  .pitch {
-    font-size: clamp(1.25rem, 3vw, 1.625rem);
-    font-weight: 600;
-    margin-bottom: 1rem;
-  }
-  .lead {
-    color: var(--muted);
-    max-width: 40rem;
-    font-size: 1.0625rem;
-  }
-  .note {
-    display: inline-block;
-    font-size: 0.875rem;
-    color: var(--text);
-    background: var(--accent-soft);
-    border-radius: 999px;
-    padding: 0.25rem 0.875rem;
-  }
-  .cta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.75rem;
-    margin-top: 1rem;
-  }
-  .button {
-    display: inline-block;
-    padding: 0.625rem 1.25rem;
-    border-radius: 8px;
-    background: var(--accent);
-    color: var(--bg);
-    font-weight: 600;
-    text-decoration: none;
-    border: 1px solid var(--accent);
-  }
-  .button.secondary {
-    background: transparent;
-    color: var(--text);
-    border-color: var(--border-strong);
-  }
-  .button.secondary:hover {
-    border-color: var(--accent);
-  }
-  .grid {
-    display: grid;
-    gap: 1rem;
-    margin-top: 1.5rem;
-  }
-  @media (min-width: 56rem) {
-    .grid {
-      grid-template-columns: repeat(3, 1fr);
-    }
-  }
-</style>

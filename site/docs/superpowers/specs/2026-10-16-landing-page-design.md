@@ -1,5 +1,7 @@
 # keelstack landing page: design
 
+> Superseded by `2026-10-16-landing-redesign-design.md` (light redesign, cascivo).
+
 Date: 2026-10-16 · Status: approved (defaults, confirmed by the owner) · App: `apps/site`
 
 ## Goal

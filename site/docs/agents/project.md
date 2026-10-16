@@ -22,9 +22,15 @@ freely, template updates never touch it.
   - Page copy comes from the hull, splice and hoard READMEs and specs. Never invent features,
     numbers or release dates; mark gaps `TODO(copy)`. The domain is `TODO(domain)`.
   - Use the `keelstackhq` names (D-001) even where an older README still says `keelstack`.
-  - Static first: no client JS except the copy-button island. Keep each page under ~100 KB
-    transferred. No web fonts.
-  - Design spec: `docs/superpowers/specs/2026-10-16-landing-page-design.md`.
+  - Static first: one React island, `PiecePicker` (`client:visible`) in Get started; every other
+    cascivo component renders to static HTML. Fonts are self-hosted Archivo + JetBrains Mono via
+    Fontsource (woff2 for latin, latin-ext and vietnamese ship in `dist`, but browsers fetch only the latin
+    file via `unicode-range`; no third-party requests). Light only, no dark variant. Budget: HTML +
+    CSS + fonts for `/` under ~150 KB transferred; the island JS is counted separately.
+  - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
+    diverges from the template on purpose; keep that change when `splice update` ships.
+  - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
+    `2026-10-16-landing-page-design.md`).
 
 ## Steps
 
@@ -34,7 +40,7 @@ freely, template updates never touch it.
 4. Project notes (this file).
 5. Design spec in `docs/superpowers/specs/`.
 6. Build the page in `apps/site/src/**`.
-7. Verify: `pnpm run ci`, build, screenshots at 390 px and 1280 px, light and dark.
+7. Verify: `pnpm run ci`, build, screenshots at 360, 390 and 1280 px (light only).
 8. One PR to `main`, CI (`ci` + `ci-ok`) green; a human merges.
 
 ## Progress
@@ -51,6 +57,8 @@ freely, template updates never touch it.
 - 2026-10-16 Deploy: `deploy.yml` publishes to Cloudflare Pages `keelstack-landing`; the site's
   `deploy`/`deploy:preview` scripts use `wrangler pages deploy` instead of the template's Workers
   default (`wrangler.jsonc` is ignored by Pages).
+- 2026-10-16 Redesign: light cascivo page with the PiecePicker island, self-hosted fonts and
+  `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
 
 ## Blocked
 
@@ -63,10 +71,13 @@ Each item needs a human:
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
-- **Public repos.** The page links to `github.com/keelstackhq/{hull,splice,hoard}`, which are
+- **Public repos.** The page links to `github.com/keelstackhq/{hull,splice,hoard,decisions}`, which are
   private: visitors get a 404 until they are made public.
 - **Releases.** splice and hoard are unreleased, so the page shows hull's dev renderer as the way
   to start today. Update the getting-started snippet when `@keelstackhq/splice` 0.1 ships.
+- **Confirm before launch.** The hero terminal output is illustrative: replace it with real splice
+  output or keep the preview label. Piece instance names other than `web` and `api` are
+  placeholders. The splice 0.1 flags are unconfirmed.
 
 ## Org decisions
 

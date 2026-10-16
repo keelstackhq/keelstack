@@ -1,45 +1,74 @@
 ---
-import { org, tools } from "../data/tools";
-const links = [
-  { href: org.url, label: "keelstackhq on GitHub" },
-  ...tools.map((t) => ({ href: t.repo, label: t.name })),
-  { href: `${org.url}/decisions`, label: "decisions" },
-];
+import { Button } from "@cascivo/react";
+import { footerLinks } from "../data/content";
+import { org } from "../data/tools";
 ---
 
 <footer class="footer">
-  <div class="wrap">
-    <nav aria-label="GitHub">
-      <ul>
-        {
-          links.map((l) => (
-            <li>
-              <a href={l.href}>{l.label}</a>
-            </li>
-          ))
-        }
-      </ul>
-    </nav>
-    <p>keelstack: tools for bootstrapping projects. <!-- TODO(copy): license and copyright line --></p>
+  <div class="inner">
+    <p class="display">Skip the setup.</p>
+    <div class="ctas">
+      <Button asChild><a class="btn btn-primary" href="/#start">Get started →</a></Button>
+      <Button asChild><a class="btn btn-outline" href={org.url}>GitHub</a></Button>
+    </div>
+    <div class="bar">
+      <span class="brand">keelstack</span>
+      <nav aria-label="Projects" class="links">
+        {footerLinks.map((l) => <a href={l.href}>{l.label}</a>)}
+      </nav>
+      <span class="grow"></span>
+      <span>Tools for bootstrapping projects.</span>
+    </div>
   </div>
 </footer>
 
 <style>
   .footer {
-    border-top: 1px solid var(--border);
-    padding: 2rem 0 3rem;
-    font-size: 0.9375rem;
-    color: var(--muted);
+    background: var(--accent);
   }
-  ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem 1.5rem;
-    list-style: none;
-    margin: 0 0 1rem;
-    padding: 0;
+  .inner {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 80px 24px 40px;
   }
-  p {
+  .display {
     margin: 0;
+    font-weight: 900;
+    font-stretch: 112%;
+    font-size: clamp(48px, 9vw, 140px);
+    line-height: 0.9;
+    letter-spacing: -0.05em;
+    text-wrap: balance;
+  }
+  .ctas {
+    display: flex;
+    gap: 12px;
+    margin-top: 32px;
+    flex-wrap: wrap;
+  }
+  .bar {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+    margin-top: 72px;
+    padding-top: 20px;
+    border-top: 1px solid var(--ink);
+    font-size: 15px;
+  }
+  .brand {
+    font-weight: 800;
+  }
+  .links {
+    display: flex;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .grow {
+    flex: 1;
+  }
+  /* accent-ink on the accent background is too faint to read, so hover underlines instead */
+  .bar a:hover {
+    color: var(--ink);
+    text-decoration-thickness: 2px;
   }
 </style>
