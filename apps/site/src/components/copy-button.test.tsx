@@ -6,6 +6,14 @@ import { CopyButton } from "./copy-button";
 
 let root: HTMLDivElement;
 
+function deferred() {
+  const result = { resolve: () => {}, promise: Promise.resolve() };
+  result.promise = new Promise<void>((r) => {
+    result.resolve = r;
+  });
+  return result;
+}
+
 function mount(text = "pnpm install") {
   root = document.createElement("div");
   document.body.append(root);
@@ -36,6 +44,26 @@ test("copies the text and announces it", async () => {
   });
   expect(writeText).toHaveBeenCalledWith("node scripts/render.mjs new");
   expect(el.querySelector("[aria-live]")?.textContent).toBe("Copied");
+});
+
+test("clears the message on each click so a repeat copy is announced again", async () => {
+  const pending = deferred();
+  const writeText = vi.fn().mockResolvedValueOnce(undefined).mockReturnValueOnce(pending.promise);
+  vi.stubGlobal("navigator", { clipboard: { writeText } });
+  const el = mount();
+  const status = () => el.querySelector("[aria-live]")?.textContent;
+  await act(async () => {
+    el.querySelector("button")?.click();
+  });
+  expect(status()).toBe("Copied");
+  await act(async () => {
+    el.querySelector("button")?.click();
+  });
+  expect(status()).toBe("");
+  await act(async () => {
+    pending.resolve();
+  });
+  expect(status()).toBe("Copied");
 });
 
 test("says so when copying fails", async () => {

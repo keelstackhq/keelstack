@@ -18,6 +18,7 @@ export function CopyButton({ text, label }: Props) {
   if (!supported) return null;
 
   async function copy() {
+    setMessage("");
     try {
       await navigator.clipboard.writeText(text);
       setMessage("Copied");
