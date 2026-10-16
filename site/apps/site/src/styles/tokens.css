@@ -1,0 +1,42 @@
+:root {
+  --paper: #f5f3ee;
+  --surface: #ffffff;
+  --ink: #15161a;
+  --ink-2: #3c3e44;
+  --muted: #5a5c63;
+  --line: #dedad0;
+  --line-dashed: #bdb8ac;
+  --chip: #ece9e1;
+  --accent: #8df0c8;
+  --accent-ink: #0b7a55;
+  --dark-line: #2a2c32;
+  --dark-text-2: #c9c7c0;
+
+  --font-sans: "Archivo Variable", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  /* cascivo variables read by Button, Badge and SegmentedControl */
+  --cascivo-font-sans: var(--font-sans);
+  --cascivo-color-bg: var(--paper);
+  --cascivo-color-background: var(--paper);
+  --cascivo-color-bg-subtle: var(--chip);
+  --cascivo-color-surface: var(--surface);
+  --cascivo-color-text: var(--ink);
+  --cascivo-color-text-subtle: var(--muted);
+  --cascivo-color-border: var(--line);
+  --cascivo-color-border-strong: var(--line-dashed);
+  --cascivo-color-primary: var(--ink);
+  --cascivo-color-primary-fg: var(--paper);
+  --cascivo-color-primary-content: var(--paper);
+  --cascivo-color-primary-hover: var(--ink-2);
+  --cascivo-color-primary-active: var(--ink-2);
+  --cascivo-color-secondary: var(--chip);
+  --cascivo-color-secondary-content: var(--ink);
+  --cascivo-color-secondary-hover: var(--line);
+  --cascivo-color-accent: var(--accent);
+  --cascivo-color-text-on-accent: var(--ink);
+  --cascivo-radius-control: 10px;
+  --cascivo-radius-item: 10px;
+  --cascivo-radius-badge: 99px;
+  --cascivo-focus-ring: 0 0 0 2px var(--accent-ink);
+}

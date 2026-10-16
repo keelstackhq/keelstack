@@ -1,7 +1,7 @@
-import preact from "@astrojs/preact";
+import react from "@astrojs/react";
 import { defineConfig } from "astro/config";
 
 export default defineConfig({
   output: "static",
-  integrations: [preact()],
+  integrations: [react()],
 });

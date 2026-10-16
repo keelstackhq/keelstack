@@ -1,8 +1,8 @@
 # Astro site
 
-Astro 7 static site (`output: "static"`) with Preact islands via `@astrojs/preact`, deployed as
-Cloudflare static assets (`wrangler.jsonc`, `./dist`). Plain Preact components: cascivo is not used
-here (it breaks under the `@astrojs/preact` compat setup).
+Astro 7 static site (`output: "static"`) with React islands via `@astrojs/react`, deployed as
+Cloudflare static assets (`wrangler.jsonc`, `./dist`). cascivo (`@cascivo/react`) renders to static HTML
+in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 
 - Astro runs through package scripts (`astro dev`, `astro build`); never `vp run`.
 - Astro's own `vite` resolves to the Vite+ core through the root override: one vite in the lockfile.

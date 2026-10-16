@@ -1,6 +1,5 @@
 ---
 import { quickStart, spliceStart } from "../data/tools";
-import { CopyButton } from "./copy-button";
 ---
 
 <section id="start" aria-labelledby="start-title">
@@ -13,7 +12,6 @@ import { CopyButton } from "./copy-button";
     <figure class="snippet">
       <figcaption>
         <span>In a hull checkout</span>
-        <CopyButton client:idle text={quickStart} label="Copy the quick start commands" />
       </figcaption>
       <pre tabindex="0"><code>{quickStart}</code></pre>
     </figure>
