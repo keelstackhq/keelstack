@@ -1,4 +1,8 @@
 ---
+import Hero from "../components/Hero.astro";
+import Nav from "../components/Nav.astro";
+import Split from "../components/Split.astro";
+import StatStrip from "../components/StatStrip.astro";
 import Base from "../layouts/Base.astro";
 ---
 
@@ -6,7 +10,10 @@ import Base from "../layouts/Base.astro";
   title="keelstack: tools for bootstrapping projects"
   description="hull, splice and hoard: a monorepo template, a tool to bootstrap and update repos from it, and a one-line CI cache."
 >
+  <Nav />
   <main id="main">
-    <h1>keelstack</h1>
+    <Hero />
+    <StatStrip />
+    <Split />
   </main>
 </Base>

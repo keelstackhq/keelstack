@@ -1,0 +1,81 @@
+---
+import { Badge } from "@cascivo/react";
+import { nav } from "../data/content";
+
+// Anchors resolve against "/" so the nav also works on the 404 page.
+const href = (h: string) => (h.startsWith("#") ? `/${h}` : h);
+---
+
+<nav class="nav" aria-label="Sections">
+  <div class="bar">
+    <a class="brand" href="/">
+      <span class="mark" aria-hidden="true"></span>keelstack
+    </a>
+    <Badge variant="outline" className="pill">pre-release</Badge>
+    <div class="grow"></div>
+    <div class="links">
+      {nav.map((l, i) => <a class:list={{ strong: i === nav.length - 1 }} href={href(l.href)}>{l.label}</a>)}
+    </div>
+  </div>
+</nav>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: rgba(245, 243, 238, 0.92);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  .bar {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+    font-weight: 800;
+    font-size: 19px;
+    letter-spacing: -0.02em;
+  }
+  .mark {
+    width: 14px;
+    height: 14px;
+    background: var(--ink);
+    transform: rotate(45deg);
+    display: block;
+  }
+  .nav :global(.pill) {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    padding: 4px 8px;
+    border: 1px solid var(--ink);
+    border-radius: 99px;
+    background: transparent;
+    color: var(--ink);
+    line-height: 1.6;
+  }
+  .grow {
+    flex: 1;
+  }
+  .links {
+    display: flex;
+    gap: 22px;
+    font-size: 15px;
+    flex-wrap: wrap;
+  }
+  .links a {
+    text-decoration: none;
+  }
+  .strong {
+    font-weight: 700;
+  }
+</style>

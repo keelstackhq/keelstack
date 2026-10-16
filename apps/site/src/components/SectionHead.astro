@@ -1,0 +1,27 @@
+---
+interface Props {
+  label: string;
+  heading: string;
+  id?: string;
+  dark?: boolean;
+  maxWidth?: string;
+}
+const { label, heading, id, dark = false, maxWidth } = Astro.props;
+---
+
+<div class:list={["head", { dark }]}>
+  <div class="label tag">{label}</div>
+  <h2 id={id} class="h2" style={maxWidth ? `max-width:${maxWidth}` : undefined}>{heading}</h2>
+</div>
+
+<style>
+  .h2 {
+    margin-top: 12px;
+  }
+  .dark .tag {
+    color: var(--accent);
+  }
+  .dark .h2 {
+    color: #fff;
+  }
+</style>
