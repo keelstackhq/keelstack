@@ -20,7 +20,7 @@ freely, template updates never touch it.
     `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets (set).
 - Conventions and decisions:
   - Page copy comes from the hull, splice and hoard READMEs and specs. Never invent features,
-    numbers or release dates; mark gaps `TODO(copy)`. The domain is `TODO(domain)`.
+    numbers or release dates; mark gaps `TODO(copy)`. The domain is `keelstack.dev` (`apps/site/src/lib/site.ts`).
   - Use the `keelstackhq` names (D-001) even where an older README still says `keelstack`.
   - Static first: one React island, `PiecePicker` (`client:visible`) in Get started; every other
     cascivo component renders to static HTML. Fonts are self-hosted Archivo + JetBrains Mono via
@@ -59,14 +59,13 @@ freely, template updates never touch it.
   default (`wrangler.jsonc` is ignored by Pages).
 - 2026-10-16 Redesign: light cascivo page with the PiecePicker island, self-hosted fonts and
   `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
+- 2026-10-18 Domain: `keelstack.dev` (configured on Cloudflare by the owner); canonical URL and
+  `og:url` set from `apps/site/src/lib/site.ts`, except on the 404 page.
 
 ## Blocked
 
 Each item needs a human:
 
-- **Domain.** Choose the domain (`TODO(domain)`), add it as a custom domain of the Pages project `keelstack-landing`
-  in the Cloudflare dashboard, then add the canonical URL where `apps/site/src/layouts/Base.astro`
-  says `TODO(domain)` (`astro.config.mjs` is template-owned, so `site` is not set there).
 - **Branch protection.** Protect `main` and require the `ci-ok` status check (Settings → Branches
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
