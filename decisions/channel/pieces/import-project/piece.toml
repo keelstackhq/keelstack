@@ -1,0 +1,7 @@
+id = "import-project"
+description = "Import the org decisions snapshot from docs/agents/project.md"
+multiple = false
+requires = ["snapshot"]
+
+[sections]
+"docs/agents/project.md" = "sections/org-decisions.md"

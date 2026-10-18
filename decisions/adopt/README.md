@@ -1,5 +1,15 @@
 # Adopt keelstackhq/decisions in a repo
 
+> **Deprecated (D-004).** Use the splice channel (splice 0.2.0 or later) and delete the
+> `sync-decisions.sh` hook and the hand-written "Org decisions" block first:
+>
+> ```bash
+> splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project
+> ```
+>
+> Use `--piece import-claude` when the repo has no `docs/agents/project.md`. The rest of this page
+> describes the old script, kept until every org repo has the channel.
+
 One command, one commit. Afterwards every agent in that repo loads the current decisions at
 session start, about 60 lines. Every new keelstackhq repo does this in its first PR.
 

@@ -2,6 +2,7 @@
 # Adopt keelstackhq/decisions in a repo: snapshot + SessionStart hook + CLAUDE.md import.
 # Usage: bash <decisions-checkout>/adopt/adopt.sh <target-repo-dir>   (idempotent; run again any time)
 set -euo pipefail
+echo "deprecated: run splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project" >&2
 here="$(cd "$(dirname "$0")" && pwd)"
 src_repo="$(dirname "$here")"
 target="$(cd "${1:?usage: adopt.sh <target-repo-dir>}" && pwd)"

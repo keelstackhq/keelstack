@@ -1,0 +1,4 @@
+format = 1
+name = "decisions"
+min_splice = "0.2.0"
+base = "snapshot"

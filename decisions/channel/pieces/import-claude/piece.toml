@@ -1,0 +1,7 @@
+id = "import-claude"
+description = "Import the org decisions snapshot from CLAUDE.md"
+multiple = false
+requires = ["snapshot"]
+
+[sections]
+"CLAUDE.md" = "sections/org-decisions.md"
