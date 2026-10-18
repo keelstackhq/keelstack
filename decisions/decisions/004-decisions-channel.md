@@ -32,8 +32,10 @@ owns `docs/agents/org-decisions.md` (a copy of `DECISIONS.md`, kept identical by
 One PR per repo: hull, splice, hoard, example-app, keelstack, berth (hoist only if the owner
 asks). In each, delete `.claude/hooks/session-start.d/sync-decisions.sh` (or
 `.claude/hooks/sync-decisions.sh` and its `.claude/settings.json` entry) and the hand-written
-"## Org decisions" block, then run the command above. The existing snapshot equals the render, so
-it adopts without `--force`. Needs splice 0.2.0. Until a repo has migrated, its hook stays.
+"## Org decisions" block, sync the snapshot one last time (run the old hook, or copy
+`DECISIONS.md` to `docs/agents/org-decisions.md`) and commit, then run the command above: a
+snapshot equal to the render adopts without `--force`, a stale one is a conflict and nothing is
+written. Needs splice 0.2.0. Until a repo has migrated, its hook stays.
 `adopt/adopt.sh` prints a deprecation line and is deleted once every org repo has the channel.
 New repos use the channel from their first PR. Editing `DECISIONS.md` now also means
 `cp DECISIONS.md channel/pieces/snapshot/files/docs/agents/org-decisions.md`.
