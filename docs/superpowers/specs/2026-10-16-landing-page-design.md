@@ -14,7 +14,7 @@ how to start today. Plain and technical; no marketing claims.
   specs. Never invent features, numbers or dates; gaps are `TODO(copy)`.
 - **Style:** clean and minimal, system font stack, one accent colour, light and dark mode through
   `prefers-color-scheme` (no toggle, no JS).
-- **Domain:** `TODO(domain)` (not chosen yet; listed under Blocked in `docs/agents/project.md`).
+- **Domain:** `keelstack.dev`; pages set `<link rel="canonical">` and `og:url` from it (not the 404).
 
 ## Sections (one page, top to bottom)
 
