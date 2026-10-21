@@ -78,9 +78,13 @@ Each item needs a human:
   output or keep the preview label. Piece instance names other than `web` and `api` are
   placeholders. The splice 0.1 flags are unconfirmed.
 
+<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
+
 ## Org decisions
 
 Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-The hook refreshes this snapshot; commit an update alone as `chore: sync org decisions`.
+`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
 
 @docs/agents/org-decisions.md
+
+<!-- splice:decisions:end -->
