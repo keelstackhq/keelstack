@@ -77,10 +77,3 @@ Each item needs a human:
 - **Confirm before launch.** The hero terminal output is illustrative: replace it with real splice
   output or keep the preview label. Piece instance names other than `web` and `api` are
   placeholders. The splice 0.1 flags are unconfirmed.
-
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-The hook refreshes this snapshot; commit an update alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
