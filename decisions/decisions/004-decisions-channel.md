@@ -37,5 +37,7 @@ asks). In each, delete `.claude/hooks/session-start.d/sync-decisions.sh` (or
 snapshot equal to the render adopts without `--force`, a stale one is a conflict and nothing is
 written. Needs splice 0.2.0. Until a repo has migrated, its hook stays.
 `adopt/adopt.sh` prints a deprecation line and is deleted once every org repo has the channel.
+Done 2026-10-21: hull, splice, hoard, example-app, keelstack and berth adopted the channel (hull#7,
+splice#9, hoard#3, example-app#9, keelstack#5, berth#2) and `adopt/` was deleted.
 New repos use the channel from their first PR. Editing `DECISIONS.md` now also means
 `cp DECISIONS.md channel/pieces/snapshot/files/docs/agents/org-decisions.md`.
