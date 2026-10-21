@@ -7,7 +7,7 @@ at session start.
   its reasoning in [`decisions/`](decisions/).
 - **Use in a repo (also every new repo):** `splice channel add gh:keelstackhq/decisions//channel
 --track main --piece import-project` (`--piece import-claude` without
-  `docs/agents/project.md`); see D-004. `adopt/adopt.sh` is deprecated.
+  `docs/agents/project.md`); see D-004.
 - **Change:** discuss an open topic in a shared doc, issue or PR in the repos concerned; once it is
   settled, open a PR here adding `decisions/NNN-title.md` (from `decisions/000-template.md`) and
   one index row, and copy `DECISIONS.md` to

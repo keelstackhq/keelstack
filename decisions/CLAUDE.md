@@ -1,7 +1,7 @@
 # keelstackhq/decisions
 
 The record of settled decisions that apply across keelstackhq repos. Agents in every repo load
-`DECISIONS.md` through a committed snapshot (see `adopt/`), so keep it short and exact.
+`DECISIONS.md` through the splice channel in `channel/` (D-004), so keep it short and exact.
 
 ## Rules
 
