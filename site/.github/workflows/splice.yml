@@ -1,0 +1,33 @@
+name: splice
+
+# splice update bot (splice README, "Update bot"). Opens or refreshes one pull request
+# (`splice/update`) when a template source moves. Repo-local exception to template ownership.
+# scope: all runs `splice update --all`; today that is the decisions channel only (D-004), since
+# this repo has no main `.splice/lock.toml` (rendered with hull's dev renderer).
+# SPLICE_BOT_TOKEN (GitHub App or fine-grained token) is optional: without it the bot uses
+# GITHUB_TOKEN, whose pull requests do not trigger CI.
+
+on:
+  schedule: [{ cron: "17 6 * * 1" }]
+  workflow_dispatch:
+
+concurrency:
+  group: splice-update
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: keelstackhq/splice/action@v1
+        with:
+          scope: all
+          token: ${{ secrets.SPLICE_BOT_TOKEN || github.token }}
