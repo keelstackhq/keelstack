@@ -31,6 +31,9 @@ freely, template updates never touch it.
     diverges from the template on purpose; keep that change when `splice update` ships.
   - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
     `2026-10-16-landing-page-design.md`).
+  - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@v1`, `scope: all`,
+    Mondays 06:17 UTC and by hand) runs `splice update --all`. With no main `.splice/lock.toml`
+    that covers only the decisions channel (D-004); hull updates need a main lock first.
 
 ## Steps
 
@@ -61,6 +64,8 @@ freely, template updates never touch it.
   `/llms.txt`; `apps/site/astro.config.mjs` now diverges from the template for `@astrojs/react`.
 - 2026-10-18 Domain: `keelstack.dev` (configured on Cloudflare by the owner); canonical URL and
   `og:url` set from `apps/site/src/lib/site.ts`, except on the 404 page.
+- 2026-10-22 Update bot: `splice.yml` added; `splice update --all` (splice 0.2.0) reports the
+  decisions channel up to date; `splice update` alone exits 2 (no `.splice/lock.toml`).
 
 ## Blocked
 
