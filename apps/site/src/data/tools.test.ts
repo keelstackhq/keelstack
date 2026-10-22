@@ -13,7 +13,7 @@ test("every tool links to its repo in the keelstackhq org (D-001)", () => {
 });
 
 test("statuses and styles follow the design", () => {
-  expect(tools.map((t) => t.status)).toEqual(["pre-0.1", "under construction", "not released yet"]);
+  expect(tools.map((t) => t.status)).toEqual(["v0.1.1", "v0.2.0", "not released yet"]);
   expect(tools.map((t) => t.statusStyle)).toEqual(["filled", "outline", "dashed"]);
   expect(tools.map((t) => t.detailMono)).toEqual([false, true, false]);
 });
