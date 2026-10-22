@@ -1,14 +1,9 @@
-import { Button, SegmentedControl } from "@cascivo/react";
+import { Button } from "@cascivo/react";
 import { useEffect, useRef, useState } from "react";
-import { buildCommand, CAPTIONS, DEFAULT_ON, type Mode, PIECES } from "../lib/command";
+import { buildCommand, CAPTION, DEFAULT_ON, PIECES } from "../lib/command";
 import "./PiecePicker.css";
 
 export const COPIED_MS = 1400;
-
-const MODES = [
-  { value: "today", label: "Today" },
-  { value: "splice", label: "With splice 0.1" },
-];
 
 type CopyState = "idle" | "copied" | "failed";
 const COPY_LABEL: Record<CopyState, string> = {
@@ -19,7 +14,6 @@ const COPY_LABEL: Record<CopyState, string> = {
 
 export default function PiecePicker() {
   const [on, setOn] = useState<ReadonlySet<string>>(() => new Set(DEFAULT_ON));
-  const [mode, setMode] = useState<Mode>("today");
   const [copy, setCopy] = useState<CopyState>("idle");
   const [canCopy, setCanCopy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -29,7 +23,7 @@ export default function PiecePicker() {
     return () => clearTimeout(timer.current);
   }, []);
 
-  const command = buildCommand(on, mode);
+  const command = buildCommand(on);
 
   function toggle(name: string) {
     setOn((prev) => {
@@ -75,14 +69,7 @@ export default function PiecePicker() {
       </div>
       <div className="pp-card">
         <div className="pp-bar">
-          <SegmentedControl
-            className="pp-mode"
-            role="radiogroup"
-            ariaLabel="Command version"
-            options={MODES}
-            value={mode}
-            onValueChange={(v) => setMode(v as Mode)}
-          />
+          <span className="pp-label">sh</span>
           {canCopy && (
             <Button type="button" variant="ghost" className="pp-copy" onClick={onCopy}>
               {COPY_LABEL[copy]}
@@ -93,7 +80,7 @@ export default function PiecePicker() {
           <code>{command}</code>
         </pre>
       </div>
-      <p className="pp-caption">{CAPTIONS[mode]}</p>
+      <p className="pp-caption">{CAPTION}</p>
       <span aria-live="polite" className="visually-hidden">
         {copy === "copied" ? "Copied to clipboard" : copy === "failed" ? "Copy failed" : ""}
       </span>

@@ -9,8 +9,8 @@ freely, template updates never touch it.
   (push to `main`, or run it by hand). Nothing else lives here.
 - Generated from: `keelstackhq/hull@e485214f8c7f5bebb25c31d480a9d6b6e6b45e68` with
   `node scripts/render.mjs new --template template --out <dir> --piece base --piece astro-site:site --data scope=keelstackhq --json`
-  (Node 24, pnpm 12.11.2). No `splice` lock yet: splice is unreleased, so `splice update` does
-  not work here until it ships.
+  (Node 24, pnpm 12.11.2). No main `.splice/lock.toml`: only the decisions channel is under
+  splice (see Update bot below).
 - Commands beyond `pnpm check` and `pnpm run ci`:
   - `pnpm --filter @keelstackhq/site dev`: local dev server.
   - `pnpm --filter @keelstackhq/site build`: static output in `apps/site/dist`.
@@ -66,6 +66,11 @@ freely, template updates never touch it.
   `og:url` set from `apps/site/src/lib/site.ts`, except on the 404 page.
 - 2026-10-22 Update bot: `splice.yml` added; `splice update --all` (splice 0.2.0) reports the
   decisions channel up to date; `splice update` alone exits 2 (no `.splice/lock.toml`).
+- 2026-10-22 splice 0.2.0: Get started and the hero show the real `splice new` command, pinned to
+  `@keelstackhq/splice@0.2.0` and hull `--ref v0.1.1` (`apps/site/src/lib/command.ts`); the hero
+  lines are copied from that run's output (57 files: 35 owned, 8 shared, 14 seed, then
+  `pnpm install`). Re-run it and update `terminal` in `content.ts` when bumping either version.
+  The org repos are public (anonymous git reads of all four succeed).
 
 ## Blocked
 
@@ -75,13 +80,9 @@ Each item needs a human:
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
-- **Public repos.** The page links to `github.com/keelstackhq/{hull,splice,hoard,decisions}`, which are
-  private: visitors get a 404 until they are made public.
-- **Releases.** splice and hoard are unreleased, so the page shows hull's dev renderer as the way
-  to start today. Update the getting-started snippet when `@keelstackhq/splice` 0.1 ships.
-- **Confirm before launch.** The hero terminal output is illustrative: replace it with real splice
-  output or keep the preview label. Piece instance names other than `web` and `api` are
-  placeholders. The splice 0.1 flags are unconfirmed.
+- **hoard status.** The hoard card still says "not released yet", but hoard has a `v0.1.0` tag and
+  its README documents `keelstackhq/hoard@v0`; confirm the release and update `tools.ts`.
+- **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
 
 <!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
 

@@ -2,7 +2,7 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { buildCommand, CAPTIONS, DEFAULT_ON } from "../lib/command";
+import { buildCommand, CAPTION, DEFAULT_ON } from "../lib/command";
 import PiecePicker, { COPIED_MS } from "./PiecePicker";
 
 function stubClipboard(writeText: () => Promise<void>) {
@@ -28,26 +28,28 @@ afterEach(() => {
 });
 
 describe("PiecePicker", () => {
-  it("renders web and api pressed, others not, and the today command", () => {
+  it("renders web and api pressed, others not, and the default command", () => {
     render(<PiecePicker />);
     expect(chip("web").getAttribute("aria-pressed")).toBe("true");
     expect(chip("api").getAttribute("aria-pressed")).toBe("true");
     for (const n of ["ui", "site", "cli", "desktop", "docs"]) {
       expect(chip(n).getAttribute("aria-pressed")).toBe("false");
     }
-    expect(code()).toBe(buildCommand(new Set(DEFAULT_ON), "today"));
+    expect(code()).toBe(buildCommand(new Set(DEFAULT_ON)));
   });
 
   it("server render contains the default command and pressed states", () => {
     const html = renderToString(<PiecePicker />);
-    expect(html).toContain("--piece hono-worker:api --data scope=acme");
+    expect(html).toContain("--piece preact-app:web --piece hono-worker:api");
     expect(html.match(/aria-pressed="true"/g)).toHaveLength(2);
     expect(html).not.toMatch(/>Copy</);
   });
 
-  it("mode switch is a radiogroup named Command version", () => {
+  it("shows one splice command and its caption, no mode switch", () => {
     render(<PiecePicker />);
-    expect(screen.getByRole("radiogroup", { name: "Command version" })).toBeTruthy();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(code()!.startsWith("pnpm dlx @keelstackhq/splice@0.2.0 new")).toBe(true);
+    expect(screen.getByText(CAPTION)).toBeTruthy();
   });
 
   it("toggling a piece updates aria-pressed and the command", () => {
@@ -60,16 +62,6 @@ describe("PiecePicker", () => {
     expect(code()).not.toContain("--piece astro-site:site");
   });
 
-  it("mode switch changes command and caption", () => {
-    render(<PiecePicker />);
-    fireEvent.click(screen.getByRole("radio", { name: "With splice 0.1" }));
-    expect(
-      screen.getByRole("radio", { name: "With splice 0.1" }).getAttribute("aria-checked"),
-    ).toBe("true");
-    expect(code()!.startsWith("pnpm dlx")).toBe(true);
-    expect(screen.getByText(CAPTIONS.splice)).toBeTruthy();
-  });
-
   it("copy writes the current command and shows Copied for 1400 ms", async () => {
     const writeText = vi.fn(() => Promise.resolve());
     stubClipboard(writeText);
@@ -77,7 +69,7 @@ describe("PiecePicker", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Copy" }));
     });
-    expect(writeText).toHaveBeenCalledWith(buildCommand(new Set(DEFAULT_ON), "today"));
+    expect(writeText).toHaveBeenCalledWith(buildCommand(new Set(DEFAULT_ON)));
     expect(screen.getAllByText("Copied").length).toBeGreaterThan(0);
     act(() => {
       vi.advanceTimersByTime(COPIED_MS - 1);

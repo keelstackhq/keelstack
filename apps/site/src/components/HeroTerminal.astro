@@ -2,7 +2,7 @@
 import { terminal } from "../data/content";
 ---
 
-<div class="term" role="group" aria-label="Example splice session (preview)">
+<div class="term" role="group" aria-label="splice new session, excerpt">
   <div class="bar">
     <span class="dot" aria-hidden="true"></span><span class="dot" aria-hidden="true"></span><span
       class="dot"
@@ -21,13 +21,13 @@ import { terminal } from "../data/content";
     }
     <div class="gap"></div>
     {
-      terminal.checks.map((c) => (
+      terminal.output.map((o) => (
         <div>
-          <span class="g">✓</span> {c.text}
-          {c.dim && <span class="dim"> {c.dim}</span>}
+          <span class="g">create</span> {o.path} <span class="dim">{o.cls}</span>
         </div>
       ))
     }
+    <div class="dim">{terminal.summary}</div>
     <div class="gap"></div>
     <div class="turn">{terminal.turn}</div>
   </div>
