@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "pre-0.1",
+    status: "v0.1.1",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -31,7 +31,7 @@ export const tools: Tool[] = [
   {
     name: "splice",
     role: "02 · bootstrap + update",
-    status: "under construction",
+    status: "v0.2.0",
     statusStyle: "outline",
     pitch:
       "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",

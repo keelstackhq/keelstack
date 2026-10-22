@@ -15,7 +15,7 @@
   --font-sans: "Archivo Variable", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
 
-  /* cascivo variables read by Button, Badge and SegmentedControl */
+  /* cascivo variables read by Button and Badge */
   --cascivo-font-sans: var(--font-sans);
   --cascivo-color-bg: var(--paper);
   --cascivo-color-background: var(--paper);
