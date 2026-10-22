@@ -1,45 +1,43 @@
 import { expect, test } from "vite-plus/test";
-import { DEFAULT_ON, PIECES, buildCommand } from "./command";
+import { CAPTION, DEFAULT_ON, HULL_REF, PIECES, SPLICE_VERSION, buildCommand } from "./command";
 
 const def = new Set(DEFAULT_ON);
 
-test("today, defaults", () => {
-  expect(buildCommand(def, "today")).toBe(
-    "node scripts/render.mjs new --template template --out ../my-repo \\\n" +
-      "  --piece base --piece preact-app:web --piece hono-worker:api --data scope=acme\n" +
-      "cd ../my-repo && git init && pnpm install && pnpm run ci",
-  );
+test("pins the released splice and hull versions", () => {
+  expect(SPLICE_VERSION).toBe("0.2.0");
+  expect(HULL_REF).toBe("v0.1.1");
 });
 
-test("splice, defaults", () => {
-  expect(buildCommand(def, "splice")).toBe(
-    "pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-repo \\\n" +
+test("defaults: the command run for the hero output", () => {
+  expect(buildCommand(def)).toBe(
+    "pnpm dlx @keelstackhq/splice@0.2.0 new \\\n" +
+      "  gh:keelstackhq/hull//template my-repo --ref v0.1.1 \\\n" +
       "  --piece preact-app:web --piece hono-worker:api",
   );
 });
 
 test("keeps PIECES order whatever the insertion order", () => {
-  expect(buildCommand(new Set(["docs", "web"]), "splice")).toContain(
+  expect(buildCommand(new Set(["docs", "web"]))).toContain(
     "--piece preact-app:web --piece docs:docs",
   );
 });
 
-test("today, nothing selected", () => {
-  expect(buildCommand(new Set(), "today")).toContain("  --piece base --data scope=acme\n");
-});
-
-test("splice, nothing selected: no dangling backslash", () => {
-  expect(buildCommand(new Set(), "splice")).toBe(
-    "pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-repo",
+test("nothing selected: no dangling backslash", () => {
+  expect(buildCommand(new Set())).toBe(
+    "pnpm dlx @keelstackhq/splice@0.2.0 new \\\n" +
+      "  gh:keelstackhq/hull//template my-repo --ref v0.1.1",
   );
 });
 
 test("no line ends in a space", () => {
-  for (const mode of ["today", "splice"] as const) {
-    for (const on of [def, new Set<string>()]) {
-      expect(buildCommand(on, mode)).not.toMatch(/ \n| $/);
-    }
+  for (const on of [def, new Set<string>()]) {
+    expect(buildCommand(on)).not.toMatch(/ \n| $/);
   }
+});
+
+test("caption names the pinned versions", () => {
+  expect(CAPTION).toContain("v0.1.1");
+  expect(CAPTION).toContain("--ref");
 });
 
 test("PIECES lists the seven pieces", () => {

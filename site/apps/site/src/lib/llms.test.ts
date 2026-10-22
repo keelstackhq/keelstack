@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { agentRows } from "../data/content";
 import { tools } from "../data/tools";
-import { buildCommand, CAPTIONS, DEFAULT_ON } from "./command";
+import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { buildLlmsTxt } from "./llms";
 
 describe("buildLlmsTxt", () => {
@@ -26,11 +26,10 @@ describe("buildLlmsTxt", () => {
     for (const r of agentRows) expect(out).toContain(r.key);
   });
 
-  it("includes both start commands and the splice caption", () => {
+  it("includes the splice command and its caption", () => {
     expect(out).toContain("## Get started");
-    expect(out).toContain(buildCommand(new Set(DEFAULT_ON), "today"));
-    expect(out).toContain(buildCommand(new Set(DEFAULT_ON), "splice"));
-    expect(out).toContain(`\n${CAPTIONS.splice}\n`);
-    expect(out).not.toContain(`(${CAPTIONS.splice})`);
+    expect(out).toContain(buildCommand(new Set(DEFAULT_ON)));
+    expect(out).toContain(`\n${CAPTION}\n`);
+    expect(out).not.toContain("render.mjs");
   });
 });

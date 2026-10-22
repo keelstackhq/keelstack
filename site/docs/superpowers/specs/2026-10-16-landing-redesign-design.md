@@ -141,3 +141,14 @@ the three tools (status, pitch, repo), the agent facts, and both commands for th
 
 Dark mode, theme toggle, A/B testing infrastructure for the hero variants, analytics, the custom
 domain, real splice output in the hero.
+
+## Amendment 2026-10-22: splice 0.2.0 released
+
+splice 0.2.0 and hull v0.1.1 are released, so the preview parts above no longer apply:
+
+- Get started shows one command, no Today/splice mode switch:
+  `pnpm dlx @keelstackhq/splice@0.2.0 new \` / `gh:keelstackhq/hull//template my-repo --ref v0.1.1 \` /
+  `--piece …`, caption "Pinned to hull v0.1.1. Drop --ref to get the latest hull release."
+- The hero terminal shows that command with the default pieces and real output lines from running
+  it (an excerpt of the `create` lines plus a count), not illustrative ✓ lines.
+- Tool statuses: hull `v0.1.1`, splice `v0.2.0` (release tags); hoard unchanged.

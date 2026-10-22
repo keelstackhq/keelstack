@@ -23,9 +23,27 @@ test("hero has three variants and seconds is active", () => {
   expect(hero.active).toBe("seconds");
 });
 
-test("terminal and stats shapes", () => {
-  expect(terminal.command).toHaveLength(3);
-  expect(terminal.checks).toHaveLength(4);
+test("terminal shows the default command, real create lines and file counts", () => {
+  expect(terminal.title).toContain("splice 0.2.0");
+  expect(terminal.title).not.toMatch(/preview/i);
+  // The command that was run to record the output below.
+  expect(terminal.command).toEqual([
+    "pnpm dlx @keelstackhq/splice@0.2.0 new \\",
+    "gh:keelstackhq/hull//template my-repo --ref v0.1.1 \\",
+    "--piece preact-app:web --piece hono-worker:api",
+  ]);
+  // Lines copied from `splice new` output (hull v0.1.1, splice 0.2.0), in output order.
+  expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
+    "create  .github/workflows/ci.yml  owned",
+    "create  AGENTS.md  seed",
+    "create  CLAUDE.md  owned",
+    "create  apps/api/src/index.ts  seed",
+    "create  apps/web/src/app.tsx  seed",
+  ]);
+  expect(terminal.summary).toBe("# … 57 files: 35 owned, 8 shared, 14 seed; then pnpm install");
+});
+
+test("stats shapes", () => {
   expect(stats).toHaveLength(4);
   for (const s of stats) expect(s.value.startsWith("1 ")).toBe(true);
 });
@@ -48,6 +66,11 @@ test("links stay in the keelstackhq org or on the page", () => {
   }
   expect(footerLinks.map((l) => l.label)).toEqual(["hull", "splice", "hoard", "decisions"]);
   expect(footerLinks[3]?.href).toBe(`${org.url}/decisions`);
+});
+
+test("get started copy no longer says splice is unreleased", () => {
+  expect(sections.start.body).not.toMatch(/not released|dev renderer/);
+  expect(sections.start.body).toContain("pnpm install");
 });
 
 test("no old org names and no empty strings", () => {

@@ -1,6 +1,6 @@
 import { agentRows, hero, sections } from "../data/content";
 import { tools } from "../data/tools";
-import { buildCommand, CAPTIONS, DEFAULT_ON } from "./command";
+import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 
 export function buildLlmsTxt(): string {
   const on = new Set(DEFAULT_ON);
@@ -25,18 +25,10 @@ export function buildLlmsTxt(): string {
     "",
     sections.start.body ?? "",
     "",
-    "Today:",
+    CAPTION,
     "",
     "```sh",
-    buildCommand(on, "today"),
-    "```",
-    "",
-    "With splice 0.1:",
-    "",
-    CAPTIONS.splice,
-    "",
-    "```sh",
-    buildCommand(on, "splice"),
+    buildCommand(on),
     "```",
     "",
   ].join("\n");

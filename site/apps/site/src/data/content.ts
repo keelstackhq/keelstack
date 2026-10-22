@@ -1,4 +1,5 @@
 // Page copy from the design reference. Names follow D-001 (`keelstackhq`).
+import { buildCommand, DEFAULT_ON, SPLICE_VERSION } from "../lib/command";
 import { org } from "./tools";
 
 export interface HeroVariant {
@@ -17,19 +18,22 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
+// Real `splice new` run (splice 0.2.0, hull v0.1.1, the default pieces). `output` is an excerpt of
+// its 57 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
-  title: "~/my-repo · splice 0.1 preview",
-  command: [
-    "pnpm dlx @keelstackhq/splice new \\",
-    "gh:keelstackhq/hull//template my-repo \\",
-    "--piece preact-app:web --piece hono-worker:api",
-  ],
-  checks: [
-    { text: "base, preact-app, hono-worker rendered" },
-    { text: "pnpm, Turborepo, TypeScript 7, Vite+ pinned" },
-    { text: "CLAUDE.md, subagents, skills in place" },
-    { text: "pnpm run ci", dim: "· one job, ci-ok" },
-  ] as { text: string; dim?: string }[],
+  title: `~ · splice ${SPLICE_VERSION}`,
+  command: buildCommand(new Set(DEFAULT_ON))
+    .split("\n")
+    .map((l) => l.trim()),
+  output: [
+    { path: ".github/workflows/ci.yml", cls: "owned" },
+    { path: "AGENTS.md", cls: "seed" },
+    { path: "CLAUDE.md", cls: "owned" },
+    { path: "apps/api/src/index.ts", cls: "seed" },
+    { path: "apps/web/src/app.tsx", cls: "seed" },
+  ] as { path: string; cls: "owned" | "shared" | "seed" }[],
+  summary: "# … 57 files: 35 owned, 8 shared, 14 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
@@ -110,7 +114,7 @@ export const sections: Record<
   start: {
     label: "05 · Get started",
     heading: "Pick your pieces.",
-    body: "splice is not released yet, so today you render with hull’s dev renderer. Needs Node 24 and pnpm 12; run pnpm install once in a hull checkout.",
+    body: "splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node 24 and pnpm 12.",
   },
 };
 
