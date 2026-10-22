@@ -71,6 +71,8 @@ freely, template updates never touch it.
   lines are copied from that run's output (57 files: 35 owned, 8 shared, 14 seed, then
   `pnpm install`). Re-run it and update `terminal` in `content.ts` when bumping either version.
   The org repos are public (anonymous git reads of all four succeed).
+- 2026-10-22 hoard 0.1.0: the hoard card shows `v0.1.0` and the README's `keelstackhq/hoard@v0`
+  step (pin `@v0` while hoard is 0.x).
 
 ## Blocked
 
@@ -80,8 +82,6 @@ Each item needs a human:
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
-- **hoard status.** The hoard card still says "not released yet", but hoard has a `v0.1.0` tag and
-  its README documents `keelstackhq/hoard@v0`; confirm the release and update `tools.ts`.
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
 
 <!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->

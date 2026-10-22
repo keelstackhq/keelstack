@@ -151,4 +151,5 @@ splice 0.2.0 and hull v0.1.1 are released, so the preview parts above no longer 
   `--piece …`, caption "Pinned to hull v0.1.1. Drop --ref to get the latest hull release."
 - The hero terminal shows that command with the default pieces and real output lines from running
   it (an excerpt of the `create` lines plus a count), not illustrative ✓ lines.
-- Tool statuses: hull `v0.1.1`, splice `v0.2.0` (release tags); hoard unchanged.
+- Tool statuses: hull `v0.1.1`, splice `v0.2.0`, hoard `v0.1.0` (release tags); the hoard detail
+  shows the README's `uses: keelstackhq/hoard@v0` step in mono.
