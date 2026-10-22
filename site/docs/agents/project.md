@@ -73,6 +73,9 @@ freely, template updates never touch it.
   The org repos are public (anonymous git reads of all four succeed).
 - 2026-10-22 hoard 0.1.0: the hoard card shows `v0.1.0` and the README's `keelstackhq/hoard@v0`
   step (pin `@v0` while hoard is 0.x).
+- 2026-10-22 hull v0.2.0: pin moved to `--ref v0.2.0`; re-ran the command (exit 0, lock hull 0.2.0
+  @ `8f7eea2`): 53 files (31 owned, 8 shared, 14 seed; the `.claude/agents/*` files moved to the
+  rigging channel), then `pnpm install`; the generated repo passes `pnpm check` 13/13.
 
 ## Blocked
 

@@ -18,8 +18,8 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.2.0, hull v0.1.1, the default pieces). `output` is an excerpt of
-// its 57 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// Real `splice new` run (splice 0.2.0, hull v0.2.0, the default pieces). `output` is an excerpt of
+// its 53 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
   title: `~ · splice ${SPLICE_VERSION}`,
@@ -33,7 +33,7 @@ export const terminal = {
     { path: "apps/api/src/index.ts", cls: "seed" },
     { path: "apps/web/src/app.tsx", cls: "seed" },
   ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 57 files: 35 owned, 8 shared, 14 seed; then pnpm install",
+  summary: "# … 53 files: 31 owned, 8 shared, 14 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
@@ -66,7 +66,7 @@ export const split = {
 export const agentRows: { key: string; text: string }[] = [
   {
     key: "CLAUDE.md",
-    text: "Lean by default. Subagents, skills and a /loop default ship with the template.",
+    text: "Lean by default. Skills and a /loop default ship with the template; subagents come from hull’s rigging channel.",
   },
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },
