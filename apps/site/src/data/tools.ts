@@ -42,12 +42,13 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "not released yet",
+    status: "v0.1.0",
     statusStyle: "dashed",
     pitch:
       "A Turborepo (and Vite+) remote cache for GitHub Actions. The cache never fails your build: an error is a miss.",
-    detail: "GitHub Actions cache by default, or your own Cloudflare R2 bucket",
-    detailMono: false,
+    // The README pins `@v0` while hoard is 0.x.
+    detail: "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
+    detailMono: true,
     repo: `${org.url}/hoard`,
   },
 ];
