@@ -13,9 +13,15 @@ test("every tool links to its repo in the keelstackhq org (D-001)", () => {
 });
 
 test("statuses and styles follow the design", () => {
-  expect(tools.map((t) => t.status)).toEqual(["v0.1.1", "v0.2.0", "not released yet"]);
+  expect(tools.map((t) => t.status)).toEqual(["v0.1.1", "v0.2.0", "v0.1.0"]);
   expect(tools.map((t) => t.statusStyle)).toEqual(["filled", "outline", "dashed"]);
-  expect(tools.map((t) => t.detailMono)).toEqual([false, true, false]);
+  expect(tools.map((t) => t.detailMono)).toEqual([false, true, true]);
+});
+
+test("hoard detail is the pinned Action from its README", () => {
+  expect(tools[2]?.detail).toBe(
+    "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
+  );
 });
 
 test("no copy uses the old keelstack org or npm scope", () => {
