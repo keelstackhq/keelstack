@@ -153,3 +153,6 @@ splice 0.2.0 and hull v0.1.1 are released, so the preview parts above no longer 
   it (an excerpt of the `create` lines plus a count), not illustrative ✓ lines.
 - Tool statuses: hull `v0.1.1`, splice `v0.2.0`, hoard `v0.1.0` (release tags); the hoard detail
   shows the README's `uses: keelstackhq/hoard@v0` step in mono.
+
+Update 2026-10-22: the pin moved to hull `v0.2.0` (`--ref v0.2.0`, caption "Pinned to hull v0.2.0. …",
+hull status `v0.2.0`); the hero output was re-recorded from that run.

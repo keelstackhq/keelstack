@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.1.1",
+    status: "v0.2.0",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
