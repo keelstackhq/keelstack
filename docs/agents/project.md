@@ -81,6 +81,7 @@ freely, template updates never touch it.
   `src/data/docs.ts`, Docs nav link, `/llms.txt` Docs section, Overview page.
 - 2026-10-26 Docs 2/5: `/docs/getting-started/` (new or existing repo to the full setup); long
   inline code wraps in docs pages.
+- 2026-10-26 Docs 3/6: `/docs/tasks/` and `/docs/ci/`; the series grew to 6 PRs with a playbook page.
 
 ## Blocked
 

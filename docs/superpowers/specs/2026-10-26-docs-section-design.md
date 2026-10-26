@@ -110,4 +110,7 @@ Each PR is green on its own (`pnpm run ci`, build, screenshots at 390 and 1280 p
 2. Getting started.
 3. Tasks and CI.
 4. Risk and Releases.
-5. Troubleshooting, final TODO(copy) list in the project notes.
+5. Playbook (`/docs/playbook/`, added on 2026-10-26 at the owner's request): how keelstackhq
+   bootstraps and runs a repo with an orchestrator session, child sessions and waves. Parts that
+   come only from the orchestrator's brief, not from a repo, are labelled **Practice**.
+6. Troubleshooting, final TODO(copy) list in the project notes.
