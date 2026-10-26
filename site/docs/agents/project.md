@@ -76,6 +76,9 @@ freely, template updates never touch it.
 - 2026-10-22 hull v0.2.0: pin moved to `--ref v0.2.0`; re-ran the command (exit 0, lock hull 0.2.0
   @ `8f7eea2`): 53 files (31 owned, 8 shared, 14 seed; the `.claude/agents/*` files moved to the
   rigging channel), then `pnpm install`; the generated repo passes `pnpm check` 13/13.
+- 2026-10-26 Docs 1/5: `/docs/` section (spec `docs/superpowers/specs/2026-10-26-docs-section-design.md`):
+  Markdown pages in `apps/site/src/pages/docs/`, `Docs.astro` layout, page data and sources in
+  `src/data/docs.ts`, Docs nav link, `/llms.txt` Docs section, Overview page.
 
 ## Blocked
 
