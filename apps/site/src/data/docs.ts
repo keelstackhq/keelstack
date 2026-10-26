@@ -158,9 +158,23 @@ export const docs: DocPage[] = [
   {
     slug: "troubleshooting",
     title: "Troubleshooting",
-    summary: "TODO(copy): troubleshooting placeholder.",
-    sources: [],
-    ready: false,
+    summary:
+      "Known pitfalls with cause and fix: repo settings, approvals, bot tokens, templates, bosun exit 4, and exit codes per tool.",
+    sources: [
+      "rust-canary/docs/canary-findings.md",
+      "bosun/docs/spec.md",
+      "bosun/CHANGELOG.md",
+      "bosun/docs/PROGRESS.md",
+      "hoist/README.md",
+      "hoist/docs/PROGRESS.md",
+      "splice/README.md",
+      "splice/docs/getting-started.md",
+      "splice/.github/workflows/release.yml",
+      "splice/action/action.yml",
+      "hull/README.md",
+      "berth/README.md",
+    ],
+    ready: true,
   },
 ];
 

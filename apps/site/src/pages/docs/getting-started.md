@@ -218,4 +218,12 @@ plan, so no ruleset) every pull request was merged by hand instead.
 
 A repo that publishes packages releases through `hoist release` in its release workflow; agents
 never tag. The first publish needs the owner once (`hoist release bootstrap`, then a re-run of
-the failed publish job within 2 days).
+the failed publish job within 2 days). The steps are in
+[Releases and updates](/docs/releases/).
+
+## Next
+
+- [Tasks and sessions](/docs/tasks/), [CI and gates](/docs/ci/) and
+  [Risk and review](/docs/risk/): how bosun runs the work once it is set up.
+- [Playbook](/docs/playbook/): how to run a repo day to day with an orchestrator session.
+- [Troubleshooting](/docs/troubleshooting/): known pitfalls, with fixes.
