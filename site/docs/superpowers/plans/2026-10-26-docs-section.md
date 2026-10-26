@@ -29,7 +29,7 @@ review of the copy against the sources.
 
 ## PR 4: risk and releases
 
-- [ ] `risk.md`, `releases.md`, mark ready. Re-check bosun `feat/signed-approvals` first.
+- [x] `risk.md`, `releases.md`, mark ready. Re-check bosun `feat/signed-approvals` first.
 
 ## PR 5: playbook
 

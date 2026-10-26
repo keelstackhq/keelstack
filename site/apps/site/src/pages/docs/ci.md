@@ -9,13 +9,13 @@ bosun's `main` is marked.
 
 ## Required checks
 
-| Check            | Posted by                                                         | Fails when                                                                          |
-| ---------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
-| `ci-ok`          | the aggregate job of `.github/workflows/bosun.yml`                | a `gate-*` job, `bosun-bin` (installs the pinned bosun) or `pin` did not succeed    |
-| `bosun-ok`       | the same job, renamed, in a repo with its own `ci-ok` (`own_ci`)  | as `ci-ok`                                                                          |
-| `risk-check`     | the `risk` workflow (a commit status)                             | the pull request is high risk and has no approval yet; see the Risk and review page |
-| `review-verdict` | `bosun verdict post`, or the `verdict` workflow (a commit status) | the verdict requests changes, has confidence below 0.85, or escalates               |
-| `main-open`      | the `main-open` workflow                                          | main is red and the pull request is not a mainfix                                   |
+| Check            | Posted by                                                         | Fails when                                                                                |
+| ---------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `ci-ok`          | the aggregate job of `.github/workflows/bosun.yml`                | a `gate-*` job, `bosun-bin` (installs the pinned bosun) or `pin` did not succeed          |
+| `bosun-ok`       | the same job, renamed, in a repo with its own `ci-ok` (`own_ci`)  | as `ci-ok`                                                                                |
+| `risk-check`     | the `risk` workflow (a commit status)                             | the pull request is high risk and has no approval yet; see [Risk and review](/docs/risk/) |
+| `review-verdict` | `bosun verdict post`, or the `verdict` workflow (a commit status) | the verdict requests changes, has confidence below 0.85, or escalates                     |
+| `main-open`      | the `main-open` workflow                                          | main is red and the pull request is not a mainfix                                         |
 
 `bosun pr --auto-merge` turns on auto-merge only when all of them are green. It reads the list
 from `BOSUN_REQUIRED_CHECKS` (comma-separated, replaces all), else the four defaults plus any extra
