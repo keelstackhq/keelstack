@@ -79,6 +79,8 @@ freely, template updates never touch it.
 - 2026-10-26 Docs 1/5: `/docs/` section (spec `docs/superpowers/specs/2026-10-26-docs-section-design.md`):
   Markdown pages in `apps/site/src/pages/docs/`, `Docs.astro` layout, page data and sources in
   `src/data/docs.ts`, Docs nav link, `/llms.txt` Docs section, Overview page.
+- 2026-10-26 Docs 2/5: `/docs/getting-started/` (new or existing repo to the full setup); long
+  inline code wraps in docs pages.
 
 ## Blocked
 

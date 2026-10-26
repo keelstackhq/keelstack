@@ -169,3 +169,8 @@
   font-size: 14px;
   color: var(--muted);
 }
+
+/* Long paths (sources, inline code) wrap instead of widening the grid column. */
+.prose :not(pre) > code {
+  overflow-wrap: anywhere;
+}
