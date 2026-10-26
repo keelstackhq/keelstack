@@ -48,7 +48,7 @@ describe("PiecePicker", () => {
   it("shows one splice command and its caption, no mode switch", () => {
     render(<PiecePicker />);
     expect(screen.queryByRole("radiogroup")).toBeNull();
-    expect(code()!.startsWith("pnpm dlx @keelstackhq/splice@0.2.0 new")).toBe(true);
+    expect(code()!.startsWith("pnpm dlx @keelstackhq/splice@0.2.1 new")).toBe(true);
     expect(screen.getByText(CAPTION)).toBeTruthy();
   });
 

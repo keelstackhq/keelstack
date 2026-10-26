@@ -31,7 +31,7 @@ export const tools: Tool[] = [
   {
     name: "splice",
     role: "02 · bootstrap + update",
-    status: "v0.2.0",
+    status: "v0.2.1",
     statusStyle: "outline",
     pitch:
       "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
@@ -42,7 +42,7 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "v0.1.0",
+    status: "v0.3.0",
     statusStyle: "dashed",
     pitch:
       "A Turborepo (and Vite+) remote cache for GitHub Actions. The cache never fails your build: an error is a miss.",
