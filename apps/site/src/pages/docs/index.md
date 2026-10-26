@@ -10,14 +10,15 @@ decisions and approves high-risk pull requests. Every tool is public under
 your own.
 
 Versions below are the released ones as of 2026-10-26. To set up a repo of your own, go to
-[Getting started](/docs/getting-started/).
+[Getting started](/docs/getting-started/). How to run it day to day with an orchestrator session and
+child sessions is in the [Playbook](/docs/playbook/).
 
 ## The tools
 
 | Tool                                                  | What it does                                                                                                                            | Released           | Get it                                                            |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------- |
 | [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.2.2             | Rendered by splice from `gh:keelstackhq/hull//template`           |
-| [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.2.0              | `pnpm dlx @keelstackhq/splice@0.2.0 <command>`                    |
+| [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.2.1              | `pnpm dlx @keelstackhq/splice@0.2.1 <command>`                    |
 | [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.0              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
 | [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.2.0              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
 | [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions in one line of YAML. No account, no server.                                     | v0.3.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
