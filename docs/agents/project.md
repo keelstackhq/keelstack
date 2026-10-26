@@ -84,6 +84,8 @@ freely, template updates never touch it.
 - 2026-10-26 Docs 3/6: `/docs/tasks/` and `/docs/ci/`; the series grew to 6 PRs with a playbook page.
 - 2026-10-26 Docs 4/6: `/docs/risk/` and `/docs/releases/` (signed and delegated approvals stay upcoming:
   bosun branches `feat/signed-approvals`, `feat/delegate-approvals`, unmerged).
+- 2026-10-26 Docs 5/6: `/docs/playbook/` (orchestrator, children, waves, owner decisions; parts only
+  the orchestrator's brief backs are labelled Practice); docs pin splice 0.2.1.
 
 ## Blocked
 

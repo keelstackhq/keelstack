@@ -139,6 +139,23 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "playbook",
+    title: "Playbook",
+    summary:
+      "How to bootstrap and run a repo with agents: the orchestrator session, child sessions, waves, owner decisions and approvals.",
+    sources: [
+      "bosun/docs/spec.md",
+      "bosun/docs/defaults.md",
+      "bosun/AGENTS.md",
+      "bosun/docs/PROGRESS.md",
+      "decisions/DECISIONS.md",
+      "splice/.github/workflows/release.yml",
+      "hoist/README.md",
+      "rust-canary/docs/canary-findings.md",
+    ],
+    ready: true,
+  },
+  {
     slug: "troubleshooting",
     title: "Troubleshooting",
     summary: "TODO(copy): troubleshooting placeholder.",
