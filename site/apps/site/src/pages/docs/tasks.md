@@ -4,8 +4,7 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. It follows bosun 0.2.0; behaviour that is only on bosun's
-`main` is marked.
+each other, and what stops work. It follows bosun 0.2.2 (2026-10-26).
 
 ## Every command speaks JSON
 
@@ -68,25 +67,25 @@ imports the new work and closes what the plan dropped as "not planned".
 | `bosun:area/`   | one per area                                                                            |
 | `bosun:source/` | plan, slack, lesson, flake, human                                                       |
 
-| From                     | To          | When                                                                                                                               |
-| ------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| planned                  | ready       | its plan task merged                                                                                                               |
-| ready                    | claimed     | `bosun claim`; lease written                                                                                                       |
-| claimed                  | building    | first commit pushed                                                                                                                |
-| building                 | review      | `bosun pr`; gates green                                                                                                            |
-| review                   | fixing      | verdict requests changes                                                                                                           |
-| fixing                   | review      | fix pushed                                                                                                                         |
-| review                   | queued      | verdict approves, risk ok, `bosun pr --auto-merge` turned auto-merge on                                                            |
-| queued                   | merged      | GitHub merged it (auto-merge), never an agent                                                                                      |
-| building, review, fixing | merged      | a human merged the pull request (on bosun `main`, not released yet)                                                                |
-| any                      | blocked     | a stop rule, conflict or budget (a child's `bosun result --outcome blocked` sets it on the epic on bosun `main`, not released yet) |
-| any                      | needs-human | high risk, an owner question, tier escalation used up                                                                              |
+| From                     | To          | When                                                                                                         |
+| ------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------ |
+| planned                  | ready       | its plan task merged                                                                                         |
+| ready                    | claimed     | `bosun claim`; lease written                                                                                 |
+| claimed                  | building    | first commit pushed                                                                                          |
+| building                 | review      | `bosun pr`; gates green                                                                                      |
+| review                   | fixing      | verdict requests changes                                                                                     |
+| fixing                   | review      | fix pushed                                                                                                   |
+| review                   | queued      | verdict approves, risk ok, `bosun pr --auto-merge` turned auto-merge on                                      |
+| queued                   | merged      | GitHub merged it (auto-merge), never an agent                                                                |
+| building, review, fixing | merged      | a human merged the pull request (since bosun 0.2.1)                                                          |
+| any                      | blocked     | a stop rule, conflict or budget (a child's `bosun result --outcome blocked` sets it on the epic since 0.2.1) |
+| any                      | needs-human | high risk, an owner question, tier escalation used up                                                        |
 
 Only bosun commands change a state label. The PreToolUse hook (label-lock) guards against
-accidents and is not a sandbox. In bosun 0.2.0 it refuses any shell command that names a state
-label and does not start with `bosun`, read-only ones included; on bosun's `main`, read-only
-commands and heredoc prose pass. In bosun 0.2.0, a task that a person merged by hand stays in `review`: the move to
-merged on a human merge is on bosun's `main`.
+accidents and is not a sandbox. Read-only commands and heredoc prose that mention a state label
+pass; any other command naming one is refused (in 0.2.0 even read-only ones were). Since 0.2.1 a
+task that a person merged by hand moves to merged too (`bosun pr`, `bosun reap` and
+`bosun result --outcome merged --pr N` see it); in 0.2.0 it stayed in `review`.
 
 ## Claims and leases
 
@@ -190,7 +189,7 @@ these rules. Each stop also opens or hits a lesson.
 
 ## Main-red and process-red
 
-- The main-health workflow runs on each push to `main` and nightly. A failure opens one
+- The main-health workflow runs on each push to `main` and weekly (nightly before bosun 0.2.2). A failure opens one
   `bosun:main-red` issue; a green run closes it.
 - While main is red, the required check `main-open` fails every pull request that is not a
   mainfix (label `bosun:kind/mainfix` on the pull request or an open linked issue), and spawn,

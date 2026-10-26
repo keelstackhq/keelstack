@@ -32,8 +32,8 @@ a pull request once its required checks are green and any owner approval is in. 
 a time, and only when a pull request's CI ran on the current `main` or its files are disjoint
 from what merged since; otherwise it checks the combination locally (format, lint, tests) first.
 Child sessions never merge. Without an orchestrator, use auto-merge (`bosun pr --auto-merge` in a
-bosun repo) or the owner merges. Org decision D-006 still says agents never merge; a decisions
-pull request that replaces it with this rule is in progress.
+bosun repo) or the owner merges. This is org decision D-008, which replaces D-006 and is pending
+the owner's merge of decisions PR #6 (2026-10-26).
 
 ### Child sessions
 
@@ -45,8 +45,18 @@ One per independent work stream, each in its own repo or area. Inside a child:
 - Tasks of at most 400 changed lines (bosun).
 - Never merge, tag, release or force-push.
 - **Practice, owner-gated pull requests:** finish every review and fix first, then report the
-  final head SHA exactly once and never push to it again: a push voids the approval, which binds
-  to one SHA. Never merge `main` into a pull request after its approve line went to the owner.
+  final head SHA exactly once and freeze the head: never push to it again, since a push voids the
+  approval, which binds to one SHA. Never merge `main` into a pull request after its approve line
+  went to the owner.
+- **One push per pull request.** Run the local checks (in a bosun repo, every gate) before the
+  push and do review rounds locally, so a pull request goes up once, done and green. Push again
+  only for review feedback or a CI failure that cannot be reproduced locally. Do not edit a pull
+  request's body or title just to retry CI. This is bosun's AGENTS.md rule and pending org
+  decision D-007.
+- **Practice, security-sensitive pull requests** get two independent reviewer sessions, not one.
+- **Practice, blocked pushes:** a child session's permission classifier can refuse a push when
+  the instruction to push came from another session (the orchestrator). The owner then confirms
+  the push in that child session.
 
 Inside an area orchestrator, leaf tasks run as wave agents, each in its own berth workspace with
 `BOSUN_SESSION=<session>/<task>`. bosun's limits keep the tree small: depth 2 (root, then area
@@ -83,19 +93,27 @@ owner-only action as small as possible:
 - **Human-only steps** are listed under "Blocked" in `docs/PROGRESS.md`, each with the exact
   action.
 
-### Signed chat approvals
+### Approvals by chat
 
-On bosun's `main`, not released yet: the orchestrator holds a key enrolled in
-`.bosun/approvers.toml`; the owner says "approve" in the orchestrator chat, and the orchestrator
-posts the approve comment with a signature that `risk-check` verifies. Details in
-[Risk and review](/docs/risk/).
+Since bosun 0.2.1 the orchestrator holds a key enrolled in `.bosun/approvers.toml`. The owner tells
+the orchestrator in its chat to approve a pull request, and the orchestrator posts the approve comment with a
+signature that `risk-check` verifies. Changes to keys, owners or CODEOWNERS always need the owner's
+own GitHub approval. Details in [Risk and review](/docs/risk/).
 
-### Upcoming
+### Delegated decisions
 
-**Delegated decisions** (bosun branch `feat/delegate-approvals`, not merged): a delegate session
-would approve a high-risk change itself when an independent verdict approves with confidence of
-at least 0.9 and no blocker or major findings, while changes to the approval and risk system,
-secrets and production writes always go to the owner.
+Since bosun 0.2.1 a repo can opt rules into `approval = "delegate"`: a delegate session then
+approves those high-risk changes itself when an independent verdict approves with confidence of at
+least 0.9 and no blocker or major findings. Critical changes (workflows, governance, the approval
+and risk system, secrets, production writes, and in bosun its own code) always go to the owner.
+bosun's own repo delegates R-ci, R-gate and R-deps (merged on `main` after 0.2.2).
+
+### Known gaps
+
+**Practice:** open bosun issues #234 to #238, as the orchestrator lists them: the two-job design
+for ts-pnpm stacks (trusted gates in a job that never installs pull request dependencies; bosun's
+spec already names it as the robust follow-up), pnpm's `auditConfig`, cargo-deny by path, and how
+review verdicts are aggregated.
 
 ## Releases
 

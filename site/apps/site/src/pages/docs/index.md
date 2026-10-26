@@ -19,7 +19,7 @@ child sessions is in the [Playbook](/docs/playbook/).
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------- |
 | [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.2.2             | Rendered by splice from `gh:keelstackhq/hull//template`           |
 | [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.2.1              | `pnpm dlx @keelstackhq/splice@0.2.1 <command>`                    |
-| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.0              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
+| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.2              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
 | [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.2.0              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
 | [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions in one line of YAML. No account, no server.                                     | v0.3.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
 | [berth](https://github.com/keelstackhq/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | 0.1.0              | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
@@ -90,20 +90,23 @@ bosun uses the other tools for the parts it does not own:
   gate jobs use `Swatinem/rust-cache`, since hoard caches Turborepo and Vite+ tasks, not cargo
   builds.
 
-### One rule across all of it
+### Who merges and who tags
 
-Agents never merge pull requests, push or move tags, or force-push (org decision D-006). They get
-the required checks green and may turn on auto-merge; GitHub merges, or the owner does. Releases
-and tags come from release workflows; repos that are only tagged (hull, splice's `v1`) are
-tagged by the owner. Where bosun's hooks are installed they refuse merge, tag and
-force-push commands; branch protection stays the real guard.
+Child sessions (the agents that write code) never merge pull requests, push or move tags, or
+force-push. They get the required checks green and may turn on auto-merge. An orchestrator session
+may merge once the required checks are green and any owner approval is in; without one, GitHub's
+auto-merge or the owner merges. Release workflows may tag on a version-bump merge, and the owner still
+approves the `release` environment; repos that are only tagged (hull, splice's `v1`) are tagged by
+the owner. This is org decision D-008, pending the owner's merge of decisions PR #6 as of
+2026-10-26; until then D-006 says agents never merge at all. Where bosun's hooks are installed
+they refuse merge, tag and force-push commands; branch protection stays the real guard.
 
 ## Who does what
 
-| Person (the owner)                                                      | Agents                                                                 |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Creates the repo, installs the Claude GitHub App, applies repo settings | Write all code through bosun tasks                                     |
-| Fills `governance/owners.toml`                                          | Claim, test, open pull requests, review with a fresh reviewer subagent |
-| Approves high-risk pull requests on their head SHA                      | Ask the owner with `bosun ask` when a decision is needed               |
-| Approves the `release` environment for each release                     | Never merge, tag or force-push                                         |
-| Can stop all work with a `bosun:halt` issue                             | Stop when bosun reports halted (exit 4)                                |
+| Person (the owner)                                                                           | Agents                                                                 |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Creates the repo, installs the Claude GitHub App, applies repo settings                      | Write all code through bosun tasks                                     |
+| Fills `governance/owners.toml`                                                               | Claim, test, open pull requests, review with a fresh reviewer subagent |
+| Approves high-risk pull requests on their head SHA, on GitHub or by chat (a signed approval) | Ask the owner with `bosun ask` when a decision is needed               |
+| Approves the `release` environment for each release                                          | Child sessions never merge, tag or force-push                          |
+| Can stop all work with a `bosun:halt` issue                                                  | Stop when bosun reports halted (exit 4)                                |

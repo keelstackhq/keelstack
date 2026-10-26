@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 Two things change a repo after it is set up: your own releases, and updates to the templates and
 channels it came from. Agents take part in both, but they never tag: tags come from release
-workflows, or from the owner where a repo is tagged by hand (org decision D-006).
+workflows, or from the owner where a repo is tagged by hand.
 
 ## Releasing with hoist
 
@@ -31,7 +31,9 @@ hull's `template-rust` on hull `main`, `BOSUN_RELEASE` in bosun): until then a p
   token) and **re-run the failed job**; do not push a fix commit. Finished steps are skipped.
 - The optional secret `HOIST_RELEASE_TOKEN` (Contents and Pull requests: write) makes the release
   pull request run CI. Pull requests opened with the default `GITHUB_TOKEN` do not trigger
-  workflows.
+  workflows. In bosun's own `release.yml` (since 0.2.2), `prepare` runs only when that secret is
+  set: without it the job failed on every push to `main`, since `GITHUB_TOKEN` may not open pull
+  requests there, so now it is skipped with a warning.
 - `hoist release plan` shows the next versions and writes nothing.
 
 ### The first release (once, by the owner)
@@ -77,6 +79,16 @@ publishes that package (npm through trusted publishing with provenance, and GitH
 CLIs). Human steps first: a `release` environment with a tag rule, the first publish of each new
 npm name by hand, and an npm trusted publisher (the repo, `release.yml`, environment `release`),
 then a release within 2 days. Agents bump the version and stop there.
+
+### Changelog fragments
+
+Since bosun 0.2.2, pull requests in bosun (and in repos with its channel) never edit
+`CHANGELOG.md` or the Done list of `docs/PROGRESS.md`. Each adds a one-line fragment,
+`changelog.d/<branch>.md` or `docs/progress.d/<branch>.md` (the branch name with `/` as `-`), so
+merging `main` into a pull request never conflicts on them. Before a release, a docs pull request
+to `main` runs `scripts/fold-fragments.sh` (the channel ships it as `.bosun/fold-fragments.sh`),
+which appends them under `## Unreleased` in `CHANGELOG.md` and `## Done` in
+`docs/PROGRESS.md` and deletes them.
 
 ## Pinning bosun after a bosun release
 
@@ -124,3 +136,15 @@ Current keelstackhq decisions (D-001 to D-006): the org and npm scope are `keels
 decisions repo records settled cross-repo decisions; hull and splice share
 `docs/template-format.md`; org decisions reach repos as this channel; shared template rules
 bind both renderers; agents never merge, tag or force-push.
+
+Pending the owner's merge (decisions PR #6, 2026-10-26):
+
+- **D-007, CI minutes.** Run the repo's local CI mirror before every push; one push per pull
+  request, with review rounds done locally; workflows skip comment, label and edit events at job
+  level; small jobs fold into one that keeps `ci-ok`; Windows and macOS only in release workflows;
+  scheduled workflows at most weekly.
+- **D-008, merges and tags** (replaces D-006). Child sessions never merge, push or move tags, or
+  force-push; they get the required checks green and may enable auto-merge. The orchestrator
+  session may merge once the required checks are green and any owner approval is in. Release
+  workflows may tag on a version-bump merge, and the owner still approves `release`; tag-only repos
+  (hull, splice's `v1`) are tagged by the owner; the decisions repo stays owner-merged.

@@ -4,8 +4,8 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.2.0; behaviour
-that is only on bosun's `main`, or not merged yet, is marked.
+turns `risk-check` green only when the rules are met. This page follows bosun 0.2.2
+(2026-10-26).
 
 ## Risk rules
 
@@ -14,17 +14,17 @@ channel updates do not change it; add rules for the paths
 of your project that need an owner, such as auth, payments or migrations). A pull request that
 matches any rule is high risk.
 
-| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                                                                    |
-| ------------------- | --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.splice/**`, `hoist.toml`, `REVIEW.md`, and the root `AGENTS.md` and `CLAUDE.md`; on bosun's `main`, `docs/agents/**`, `**/AGENTS.md` and `**/CLAUDE.md` (every nested agent-rule file) |
-| R-ci                | CI decides what is verified.                        | `.github/workflows/**`; rust stacks add `deny.toml` and `rust-toolchain.toml`, ts-pnpm stacks `.npmrc`                                                                                                                                                     |
-| R-secrets           | A secret in the repo is a leak.                     | added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`                                                                                                                                                                                                |
-| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency in a manifest                                                                                                                                                                                                                             |
-| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                                                                    |
-| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                                                                   |
+| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                         |
+| ------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.splice/**`, `hoist.toml`, `REVIEW.md`, `docs/agents/**`, and every `AGENTS.md` and `CLAUDE.md` (`**/`, since 0.2.1; root files only before) |
+| R-ci                | CI decides what is verified.                        | `.github/workflows/**`; rust stacks add `deny.toml` and `rust-toolchain.toml`, ts-pnpm stacks `.npmrc`                                                                                                          |
+| R-secrets           | A secret in the repo is a leak.                     | added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`                                                                                                                                                     |
+| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency in a manifest                                                                                                                                                                                  |
+| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                         |
+| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                        |
 
-On bosun's `main`, bosun's own repo also has R-gate (the gate code itself) and R-ci-review
-(below). A repo set up before a rule change adds new paths to its seed by hand.
+bosun's own repo also has R-gate (the gate code itself) and R-ci-review (below). `risk.toml` is a
+seed, so a repo set up before a rule change adds new paths by hand.
 
 - **Rules come from the base branch.** `risk-check` evaluates the rules of the pull request's
   base, never its head, so a pull request cannot change the rules that judge it.
@@ -40,15 +40,16 @@ approver must check.
 
 ## Approval classes
 
-Each rule has `approval = "owner"` (the default) or `approval = "two-verdicts"`. A high-risk pull
-request needs the owner when any matching rule needs the owner, else two verdicts.
+Each rule has `approval = "owner"` (the default), `"two-verdicts"` or `"delegate"` (since 0.2.1).
+A high-risk pull request needs the owner when any matching rule needs the owner, else a delegate
+when any match is `delegate`, else two verdicts.
 
 **Two verdicts** pass when, on the current head, verdict records of at least two distinct sessions
 approve with confidence of at least 0.9. Sessions that hold or held a lease on a linked task do
 not count, since they wrote the change. A pull request that links no task can only pass with the
-owner. Every rule in the file `bosun init` seeds is an owner rule. On bosun's `main` (not released yet),
-bosun's own repo uses the class for `channel/**` (R-ci-review), the CI it ships to other repos. The session in a verdict comment is self-declared, so
-this class is weaker than an owner approval.
+owner. Every rule in the file `bosun init` seeds is an owner rule. bosun's own repo uses the class
+for `channel/**` (R-ci-review), the CI it ships to other repos. The session in a verdict comment
+is self-declared, so this class is weaker than an owner approval.
 
 ## Review verdicts
 
@@ -127,13 +128,12 @@ bosun approve 199@<sha> 200@<sha>   # run exactly the `data.approve_command` tha
 ```
 
 `bosun approve` posts nothing if any named pull request moved to another head (exit 3); run
-`--list` again. On bosun's `main` (not released yet) the posting modes also refuse in a cloud
-session (exit 5); `--list` still works there.
+`--list` again. Without `--sign-key` the posting modes refuse in a cloud session (exit 5, since
+0.2.1); `--list` still works there.
 
 ### Signed approvals from chat
 
-On bosun's `main` (merged 2026-10-26, not released yet), so an owner can approve from a Claude
-chat. The orchestrator session holds an ed25519 private key in its own container. On the owner's
+Since bosun 0.2.1 the owner can approve from a Claude chat by telling the orchestrator. The orchestrator session holds an ed25519 private key in its own container. On the owner's
 chat message it posts a comment whose first line is `/bosun approve <head sha>` and a later line
 `bosun-sig ed25519 <key id> <signature>`. The signature is the proof, so author, app attribution
 and edits do not matter. It counts only when:
@@ -141,7 +141,10 @@ and edits do not matter. It counts only when:
 - the key id is listed in `.bosun/approvers.toml` on the default branch (never the pull request's
   copy, so a pull request that adds its own key does not count);
 - the signature verifies for this repo, this pull request and its current head;
-- `governance/owners.toml` lists owners and no owner's newest review on the head requests changes.
+- `governance/owners.toml` lists owners and no owner's newest review on the head requests changes;
+- the pull request does not change `.bosun/approvers.toml`, `governance/owners.toml` or a
+  `CODEOWNERS` file, and bosun could see its whole diff. Key and owner changes always need the
+  owner's own GitHub approval, so a stolen key cannot enroll keys or owners.
 
 ```toml
 # .bosun/approvers.toml (R-gov)
@@ -156,6 +159,38 @@ a pull request to `.bosun/approvers.toml` that the owner approves on GitHub. The
 `bosun approve <pr>@<head> --sign-key key.pem` (`--print` shows the comment without posting). A
 repo's `risk` workflow runs the bosun release pinned in `.bosun/version`, so signed approvals
 count in CI only once that pin is a release with this feature.
+
+### Delegated decisions
+
+Since bosun 0.2.1 a repo can let one Claude session decide some high-risk pull requests itself. A
+key in `.bosun/approvers.toml` gets `role = "delegate"`; the delegate signs with
+`bosun approve <pr>@<head> --sign-key <pem> --as delegate`. `risk-check` counts it only when all
+hold:
+
+- every rule matched on the head is `approval = "delegate"` (any owner rule needs the owner, and a
+  delegate never stands in for two verdicts);
+- the pull request is not critical (below), bosun is not halted, and it targets the default
+  branch;
+- it links open bosun tasks, each with a lease record;
+- at least one review verdict on the head, from a session without a lease on a linked task,
+  approves with confidence of at least 0.9 and no major findings;
+- the owner checks of signed approvals above.
+
+**The critical floor** is hard-coded, whatever a rule says: R-secrets, R-prod-write, R-unseen, and
+any change to `.bosun/**`, `governance/**`, a `CODEOWNERS` file, `.github/workflows/**` or
+`.github/actions/**`. In bosun's own repo all of its code and manifests are critical too. Those
+always go to the owner.
+
+The rules `bosun init` seeds have no `delegate` class, so the mode is off until you opt in rules.
+bosun's own repo delegates R-ci, R-gate and R-deps (after the floor, that leaves `deny.toml`, the
+toolchain files, `.config/**` and `profiles/**` to a delegate); this opt-in is merged on bosun's
+`main` and not in a release yet. To turn delegation off at once, delete the delegate key from
+`.bosun/approvers.toml` in a pull request the owner approves. Releases stay human through the
+`release` environment.
+
+The `delegate` value needs a pinned release that knows it: a `risk.toml` on the default branch
+that uses a value the pinned bosun cannot parse fails every pull request (see
+[Troubleshooting](/docs/troubleshooting/)).
 
 ## Asking the owner
 

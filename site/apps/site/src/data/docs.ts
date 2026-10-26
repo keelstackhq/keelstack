@@ -90,6 +90,7 @@ export const docs: DocPage[] = [
       "bosun/docs/spec.md",
       "bosun/CHANGELOG.md",
       "bosun/channel/pieces/core/files/.github/workflows/bosun.yml.jinja",
+      "bosun/docs/ci-minutes.md",
       "bosun/channel/pieces/core/files/hoist.toml.jinja",
       "bosun/profiles/rust.toml",
       "bosun/profiles/ts-pnpm.toml",
@@ -106,6 +107,7 @@ export const docs: DocPage[] = [
     summary:
       "Risk rules and approval classes, review verdicts, owner approvals (and why cloud-session approvals do not count), asking the owner, and the kill switch.",
     sources: [
+      "bosun/.bosun/approvers.toml",
       "bosun/docs/spec.md",
       "bosun/README.md",
       "bosun/REVIEW.md",
@@ -123,6 +125,9 @@ export const docs: DocPage[] = [
     summary:
       "Releasing with hoist (and the one-time first publish), tag-on-merge, hull template releases, pinning bosun, the splice update bot and the decisions channel.",
     sources: [
+      "bosun/CHANGELOG.md",
+      "bosun/changelog.d/README.md",
+      "bosun/.github/workflows/release.yml",
       "hoist/README.md",
       "bosun/docs/releasing.md",
       "splice/.github/workflows/release.yml",
@@ -144,6 +149,9 @@ export const docs: DocPage[] = [
     summary:
       "How to bootstrap and run a repo with agents: the orchestrator session, child sessions, waves, owner decisions and approvals.",
     sources: [
+      "bosun/README.md",
+      "bosun/CHANGELOG.md",
+      "bosun/channel/pieces/core/files/sections/agents.md",
       "bosun/docs/spec.md",
       "bosun/docs/defaults.md",
       "bosun/AGENTS.md",
@@ -161,6 +169,7 @@ export const docs: DocPage[] = [
     summary:
       "Known pitfalls with cause and fix: repo settings, approvals, bot tokens, templates, bosun exit 4, and exit codes per tool.",
     sources: [
+      "bosun/tests/governance.rs",
       "rust-canary/docs/canary-findings.md",
       "bosun/docs/spec.md",
       "bosun/CHANGELOG.md",
