@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { docHref, readyDocs } from "../data/docs";
 import { agentRows } from "../data/content";
 import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
@@ -24,6 +25,17 @@ describe("buildLlmsTxt", () => {
     expect(out).toContain("## For agents");
     expect(agentRows).toHaveLength(4);
     for (const r of agentRows) expect(out).toContain(r.key);
+  });
+
+  it("lists the ready docs pages between agents and get started", () => {
+    expect(out).toContain("## Docs");
+    for (const d of readyDocs()) {
+      expect(out).toContain(
+        `- [${d.title}](https://keelstack.dev${docHref(d.slug)}): ${d.summary}`,
+      );
+    }
+    expect(out.indexOf("## For agents")).toBeLessThan(out.indexOf("## Docs"));
+    expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("## Get started"));
   });
 
   it("includes the splice command and its caption", () => {
