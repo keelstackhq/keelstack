@@ -130,11 +130,32 @@ bosun approve 199@<sha> 200@<sha>   # run exactly the `data.approve_command` tha
 `--list` again. On bosun's `main` (not released yet) the posting modes also refuse in a cloud
 session (exit 5); `--list` still works there.
 
-### Signed approvals from chat (upcoming)
+### Signed approvals from chat
 
-Not merged yet: bosun branch `feat/signed-approvals` lets an orchestrator session post the approve
-comment with an ed25519 signature line from a key enrolled in `.bosun/approvers.toml`, so an owner
-can approve from a Claude chat. It is not in bosun 0.2.0 or on `main`.
+On bosun's `main` (merged 2026-10-26, not released yet), so an owner can approve from a Claude
+chat. The orchestrator session holds an ed25519 private key in its own container. On the owner's
+chat message it posts a comment whose first line is `/bosun approve <head sha>` and a later line
+`bosun-sig ed25519 <key id> <signature>`. The signature is the proof, so author, app attribution
+and edits do not matter. It counts only when:
+
+- the key id is listed in `.bosun/approvers.toml` on the default branch (never the pull request's
+  copy, so a pull request that adds its own key does not count);
+- the signature verifies for this repo, this pull request and its current head;
+- `governance/owners.toml` lists owners and no owner's newest review on the head requests changes.
+
+```toml
+# .bosun/approvers.toml (R-gov)
+[[key]]
+id = "orchestrator-2026-10"
+ed25519 = "<base64 of the raw 32-byte public key>"
+```
+
+Make a key with `openssl genpkey -algorithm ed25519 -out key.pem`; its public key is
+`openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`. Enroll or rotate a key with
+a pull request to `.bosun/approvers.toml` that the owner approves on GitHub. The signer posts with
+`bosun approve <pr>@<head> --sign-key key.pem` (`--print` shows the comment without posting). A
+repo's `risk` workflow runs the bosun release pinned in `.bosun/version`, so signed approvals
+count in CI only once that pin is a release with this feature.
 
 ## Asking the owner
 
