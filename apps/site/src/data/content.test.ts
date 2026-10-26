@@ -66,9 +66,11 @@ test("CLAUDE.md row: subagents come from the rigging channel since hull v0.2.0",
 
 test("links stay in the keelstackhq org or on the page", () => {
   for (const l of [...footerLinks, ...nav]) {
-    expect(l.href.startsWith("#") || l.href.startsWith("https://github.com/keelstackhq")).toBe(
-      true,
-    );
+    expect(
+      l.href.startsWith("#") ||
+        l.href.startsWith("/") ||
+        l.href.startsWith("https://github.com/keelstackhq"),
+    ).toBe(true);
   }
   expect(footerLinks.map((l) => l.label)).toEqual(["hull", "splice", "hoard", "decisions"]);
   expect(footerLinks[3]?.href).toBe(`${org.url}/decisions`);

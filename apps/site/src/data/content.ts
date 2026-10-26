@@ -129,5 +129,6 @@ export const nav: { label: string; href: string }[] = [
   { label: "Tools", href: "#tools" },
   { label: "For agents", href: "#agents" },
   { label: "Get started", href: "#start" },
+  { label: "Docs", href: "/docs/" },
   { label: "GitHub ↗", href: org.url },
 ];

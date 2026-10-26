@@ -1,0 +1,60 @@
+---
+import Nav from "../components/Nav.astro";
+import { docHref, docs, readyDocs, sourceUrl } from "../data/docs";
+import { org } from "../data/tools";
+import Base from "./Base.astro";
+import "../styles/docs.css";
+
+const path = Astro.url.pathname.replace(/\/+$/, "") + "/";
+const page = docs.find((d) => docHref(d.slug) === path);
+if (!page) throw new Error(`Docs layout: no entry in src/data/docs.ts for ${Astro.url.pathname}`);
+
+const ready = readyDocs();
+const i = ready.findIndex((d) => d.slug === page.slug);
+const prev = i > 0 ? ready[i - 1] : undefined;
+const next = i >= 0 ? ready[i + 1] : undefined;
+---
+
+<Base title={`${page.title} · keelstack docs`} description={page.summary}>
+  <Nav />
+  <div class="docs">
+    <details class="toc-mobile">
+      <summary>Docs pages</summary>
+      <ul>
+        {ready.map((d) => (
+          <li>
+            <a href={docHref(d.slug)} aria-current={d.slug === page.slug ? "page" : undefined}>{d.title}</a>
+          </li>
+        ))}
+      </ul>
+    </details>
+    <nav class="toc" aria-label="Docs">
+      <ul>
+        {ready.map((d) => (
+          <li>
+            <a href={docHref(d.slug)} aria-current={d.slug === page.slug ? "page" : undefined}>{d.title}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+    <main id="main" class="prose">
+      <h1>{page.title}</h1>
+      <slot />
+      {page.sources.length > 0 && (
+        <section class="sources">
+          <h2>Sources</h2>
+          <ul>
+            {page.sources.map((s) => (
+              <li><a href={sourceUrl(s)}><code>{s}</code></a></li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <div class="pager">
+        {prev ? <a rel="prev" href={docHref(prev.slug)}>← {prev.title}</a> : <span></span>}
+        {next ? <a rel="next" href={docHref(next.slug)}>{next.title} →</a> : <span></span>}
+      </div>
+      <p class="docs-foot"><a href="/">keelstack</a> · <a href={org.url}>GitHub</a></p>
+    </main>
+  </div>
+</Base>

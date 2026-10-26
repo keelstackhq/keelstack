@@ -6,6 +6,8 @@ in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 
 - `astro.config.mjs` is template-owned but diverges on purpose (adds `@astrojs/react`); keep it.
 - One island only: `PiecePicker` in Get started, `client:visible`. Everything else is static HTML.
+- Docs pages are `.md` files in `src/pages/docs/` using `src/layouts/Docs.astro`; page data lives in
+  `src/data/docs.ts`. `astro.config.mjs` also sets `markdown.syntaxHighlight: false` on purpose (plain `<pre><code>`).
 - Fonts are self-hosted via Fontsource (Archivo, JetBrains Mono). Light theme only.
 - `/llms.txt` is built from the same data files by `src/lib/llms.ts` (`src/pages/llms.txt.ts`).
 - Astro runs through package scripts (`astro dev`, `astro build`); never `vp run`.
