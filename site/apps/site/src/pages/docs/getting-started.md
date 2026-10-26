@@ -6,7 +6,7 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-26: splice 0.2.0, bosun 0.2.0, hoist 0.2.0,
+Versions are the released ones as of 2026-10-26: splice 0.2.1, bosun 0.2.0, hoist 0.2.0,
 berth 0.1.0, hoard `@v0`.
 
 ## Before you start
@@ -26,7 +26,7 @@ berth 0.1.0, hoard `@v0`.
 Skip to step 2 if your repo already has code and you do not want hull.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.0 new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice@0.2.1 new gh:keelstackhq/hull//template my-repo \
   --data scope=my-scope --piece preact-app:web --piece hono-worker:api
 cd my-repo
 git add -A && git commit -m "chore: initial commit from hull"
@@ -45,23 +45,23 @@ For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolch
 yet, so render it from a branch:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.0 new gh:keelstackhq/hull//template-rust my-repo \
+pnpm dlx @keelstackhq/splice@0.2.1 new gh:keelstackhq/hull//template-rust my-repo \
   --ref main --piece rust-cli:cli
 ```
 
-Such a repo records version `0.0.0+g<sha>`. splice 0.2.0 cannot move it forward: `splice update`
-looks for the latest stable tag, which has no `template-rust`, and `splice check` (and so the
-weekly update bot) offers v0.2.2 and opens a broken pull request. A fix (`splice update --ref`)
-is on splice's `main`, not released yet; until hull v0.3.0 is tagged, close those bot pull
-requests.
+Such a repo records version `0.0.0+g<sha>`. Move it forward with `splice update --ref main` (or a
+sha); the target must be a git descendant of the locked commit. A plain `splice update`, `check`
+and the weekly bot consider only stable tags that descend from that commit, so they offer nothing
+until hull v0.3.0 is tagged. splice 0.2.0 lacked this and offered v0.2.2, which has no
+`template-rust`; use 0.2.1 or later.
 
 ## 2. Add the channels
 
 Run these in the repo root, on a clean tree:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.0 channel add gh:keelstackhq/hull//rigging --piece claude
-pnpm dlx @keelstackhq/splice@0.2.0 channel add gh:keelstackhq/decisions//channel \
+pnpm dlx @keelstackhq/splice@0.2.1 channel add gh:keelstackhq/hull//rigging --piece claude
+pnpm dlx @keelstackhq/splice@0.2.1 channel add gh:keelstackhq/decisions//channel \
   --track main --piece import-project
 node scripts/agents-index.mjs     # hull repos: refresh the agents index
 git add -A && git commit -m "chore: add rigging and decisions channels"
@@ -87,7 +87,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.2.0 @keelstackhq/bosun@0.2.0
+npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.0
 bosun init --stack rust --owner <your-github-login>
 ```
 

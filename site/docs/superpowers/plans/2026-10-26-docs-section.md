@@ -33,7 +33,7 @@ review of the copy against the sources.
 
 ## PR 5: playbook
 
-- [ ] `playbook.md` (slug `playbook`, after `releases`), mark ready; **Practice** labels.
+- [x] `playbook.md` (slug `playbook`, after `releases`), mark ready; **Practice** labels.
 
 ## PR 6: troubleshooting
 
