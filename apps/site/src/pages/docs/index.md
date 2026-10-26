@@ -9,7 +9,8 @@ decisions and approves high-risk pull requests. Every tool is public under
 [keelstackhq](https://github.com/keelstackhq); these docs show how to use them in a repo of
 your own.
 
-Versions below are the released ones as of 2026-10-26.
+Versions below are the released ones as of 2026-10-26. To set up a repo of your own, go to
+[Getting started](/docs/getting-started/).
 
 ## The tools
 
