@@ -37,4 +37,4 @@ review of the copy against the sources.
 
 ## PR 6: troubleshooting
 
-- [ ] `troubleshooting.md`, mark ready; project notes progress line and the TODO(copy) list.
+- [x] `troubleshooting.md`, mark ready; project notes progress line and the TODO(copy) list.

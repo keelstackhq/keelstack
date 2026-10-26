@@ -86,6 +86,20 @@ freely, template updates never touch it.
   bosun branches `feat/signed-approvals`, `feat/delegate-approvals`, unmerged).
 - 2026-10-26 Docs 5/6: `/docs/playbook/` (orchestrator, children, waves, owner decisions; parts only
   the orchestrator's brief backs are labelled Practice); docs pin splice 0.2.1.
+- 2026-10-26 Docs 6/6: `/docs/troubleshooting/`; the docs section is complete (8 pages, listed in
+  `/llms.txt`). Open copy gaps:
+  - TODO(copy): running your own org's decisions channel (the channel is a plain splice template;
+    no source describes setting one up).
+  - TODO(copy): delegated decisions and signed chat approvals, once bosun merges
+    `feat/delegate-approvals` and `feat/signed-approvals` (now "upcoming").
+  - TODO(copy): D-006 replacement (orchestrator may merge); update Overview, Releases and Playbook
+    when the decisions PR lands.
+  - TODO(copy): hull v0.2.2 repos have no bosun hooks until hull v0.3.0 is tagged; no interim
+    step is documented.
+  - TODO(copy): `bosun init --stack ts-pnpm` first-PR-green is unverified (bosun UC-M7-2).
+  - TODO(copy): bosun-main behaviour (docs-only fast path, `own_ci` running test-integrity only,
+    `init --branch`, human merges) moves from "not released yet" to released with the next bosun
+    release; then re-check every page.
 
 ## Blocked
 
