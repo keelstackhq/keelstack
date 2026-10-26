@@ -90,8 +90,9 @@ freely, template updates never touch it.
   `/llms.txt`). Open copy gaps:
   - TODO(copy): running your own org's decisions channel (the channel is a plain splice template;
     no source describes setting one up).
-  - TODO(copy): delegated decisions and signed chat approvals, once bosun merges
-    `feat/delegate-approvals` and `feat/signed-approvals` (now "upcoming").
+  - TODO(copy): delegated decisions, once bosun merges `feat/delegate-approvals` (now
+    "upcoming"); signed chat approvals are on bosun main (#226), mark them released with the next
+    bosun release.
   - TODO(copy): D-006 replacement (orchestrator may merge); update Overview, Releases and Playbook
     when the decisions PR lands.
   - TODO(copy): hull v0.2.2 repos have no bosun hooks until hull v0.3.0 is tagged; no interim
@@ -100,6 +101,9 @@ freely, template updates never touch it.
   - TODO(copy): bosun-main behaviour (docs-only fast path, `own_ci` running test-integrity only,
     `init --branch`, human merges) moves from "not released yet" to released with the next bosun
     release; then re-check every page.
+- 2026-10-26 Hero and tool cards on splice 0.2.1 (re-ran the hero command: output identical to
+  0.2.0, 53 files: 31 owned, 8 shared, 14 seed) and hoard v0.3.0; docs: signed chat approvals are
+  on bosun main (#226), not released.
 
 ## Blocked
 

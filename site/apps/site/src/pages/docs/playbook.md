@@ -83,17 +83,19 @@ owner-only action as small as possible:
 - **Human-only steps** are listed under "Blocked" in `docs/PROGRESS.md`, each with the exact
   action.
 
+### Signed chat approvals
+
+On bosun's `main`, not released yet: the orchestrator holds a key enrolled in
+`.bosun/approvers.toml`; the owner says "approve" in the orchestrator chat, and the orchestrator
+posts the approve comment with a signature that `risk-check` verifies. Details in
+[Risk and review](/docs/risk/).
+
 ### Upcoming
 
-Neither is merged in bosun yet:
-
-- **Signed chat approvals.** The orchestrator holds a key enrolled in `.bosun/approvers.toml`; the
-  owner says "approve" in the orchestrator chat, and the orchestrator posts the approve comment
-  with a signature that `risk-check` verifies (bosun branch `feat/signed-approvals`).
-- **Delegated decisions.** A delegate session would approve a high-risk change itself when an
-  independent verdict approves with confidence of at least 0.9 and no blocker or major findings,
-  while changes to the approval and risk system, secrets and production writes always go to the
-  owner (bosun branch `feat/delegate-approvals`).
+**Delegated decisions** (bosun branch `feat/delegate-approvals`, not merged): a delegate session
+would approve a high-risk change itself when an independent verdict approves with confidence of
+at least 0.9 and no blocker or major findings, while changes to the approval and risk system,
+secrets and production writes always go to the owner.
 
 ## Releases
 
