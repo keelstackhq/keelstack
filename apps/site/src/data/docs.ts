@@ -69,16 +69,36 @@ export const docs: DocPage[] = [
   {
     slug: "tasks",
     title: "Tasks and sessions",
-    summary: "TODO(copy): tasks and sessions placeholder.",
-    sources: [],
-    ready: false,
+    summary:
+      "How bosun cuts work into plans, epics and tasks, the task states, leases, sessions and waves, and what stops work.",
+    sources: [
+      "bosun/docs/spec.md",
+      "bosun/docs/plan-format.md",
+      "bosun/docs/defaults.md",
+      "bosun/AGENTS.md",
+      "bosun/CHANGELOG.md",
+      "rust-canary/docs/canary-findings.md",
+    ],
+    ready: true,
   },
   {
     slug: "ci",
     title: "CI and gates",
-    summary: "TODO(copy): CI and gates placeholder.",
-    sources: [],
-    ready: false,
+    summary:
+      "Required checks, the gate contract, test-integrity, pinned workflows, own CI, the docs-only fast path and caching.",
+    sources: [
+      "bosun/docs/spec.md",
+      "bosun/CHANGELOG.md",
+      "bosun/channel/pieces/core/files/.github/workflows/bosun.yml.jinja",
+      "bosun/channel/pieces/core/files/hoist.toml.jinja",
+      "bosun/profiles/rust.toml",
+      "bosun/profiles/ts-pnpm.toml",
+      "hull/README.md",
+      "hull/CHANGELOG.md",
+      "hoard/README.md",
+      "rust-canary/docs/canary-findings.md",
+    ],
+    ready: true,
   },
   {
     slug: "risk",
