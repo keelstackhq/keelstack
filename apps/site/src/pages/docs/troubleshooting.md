@@ -11,9 +11,9 @@ describe.
 ### Required checks are only advisory; auto-merge never fires
 
 **Why.** A private repo on GitHub's free plan has no rulesets. `hoist plan --area github` reports
-"cannot read rulesets: Upgrade to GitHub Pro or make this repository public". bosun 0.2.0's
-`bosun doctor` still says "required checks: ok", because it reads only `hoist.toml` and the
-workflows; on bosun's `main` it reads the enforced checks and says "cannot verify".
+"cannot read rulesets: Upgrade to GitHub Pro or make this repository public". Since bosun
+0.2.1, `bosun doctor` reads the enforced checks and says "cannot verify" (0.2.0 still said
+"required checks: ok").
 Without a ruleset, `ci-ok`, `bosun-ok`, `risk-check`, `review-verdict` and `main-open` decide
 nothing, so the owner merges every pull request by hand.
 
@@ -29,11 +29,11 @@ hand, then applies the required checks.
 
 ### `bosun init` cannot push from a Claude cloud session
 
-**Why.** Cloud sessions push only to `claude/…` branches; bosun 0.2.0 always uses `bosun/init`.
+**Why.** Cloud sessions push only to `claude/…` branches; bosun 0.2.0 always used `bosun/init`.
 
-**Fix.** `bosun init … --no-pr`, push the commit to a `claude/` branch and open the pull request
-yourself. bosun's `main` (not released yet) adds `--branch` and defaults to `claude/bosun-init` in
-cloud sessions.
+**Fix.** Use bosun 0.2.1 or later: in a cloud session it defaults to `claude/bosun-init`, and
+`--branch` sets another branch. With 0.2.0, run `bosun init … --no-pr`, push the commit to a
+`claude/` branch and open the pull request yourself.
 
 ## Approvals and reviews
 
@@ -57,6 +57,16 @@ Check, in order:
 design.
 
 **Fix.** Approve its head SHA with `/bosun approve <sha>` each week.
+
+### A review verdict was posted but `review-verdict` did not change
+
+**Why.** For each reviewer session, its newest verdict record on the current head decides, so a
+later request for changes withdraws an earlier approval; a verdict for an older head does not
+count. Since bosun 0.2.1 a newer verdict comment replaces only one from the same session, so two
+reviewers posting close together both count. **Practice:** how verdicts of several sessions
+combine is open as bosun issue #238 (per the orchestrator).
+
+**Fix.** After a push, post a new verdict for the new head.
 
 ### A cloud session gets 403 posting the review verdict
 
@@ -136,19 +146,36 @@ only mainfix work continues; fix main with `bosun revert <pr>` or a smaller forw
 **Why.** In bosun 0.2.0 only a task that `bosun pr --auto-merge` queued moves to merged. Merging by
 hand (as on a private repo without rulesets) leaves the state label and the lease behind.
 
-**Fix.** On bosun's `main`, not released yet, `bosun pr`, `bosun reap` and
+**Fix.** Pin bosun 0.2.1 or later: `bosun pr`, `bosun reap` and
 `bosun result --outcome merged --pr N` see a human merge.
 
 ### A hook refuses a harmless command that mentions a state label
 
 In bosun 0.2.0 the label-lock hook refuses any shell command naming a `bosun:state/` label that
-does not start with `bosun`, even a read-only `grep` or a heredoc. On bosun's `main`, read-only
-commands and heredoc prose pass.
+does not start with `bosun`, even a read-only `grep` or a heredoc. Since 0.2.1, read-only commands
+and heredoc prose pass.
 
 ### `bosun doctor` reports the Claude GitHub App as missing
 
 In bosun 0.2.0 it looks for a login starting with `claude`, but the app acts as the owner's login.
-bosun's `main` also checks the app attribution of issues, pull requests and comments.
+Since 0.2.1 it also checks the app attribution of issues, pull requests and comments.
+
+### Every pull request fails `risk-check` after a `risk.toml` change
+
+**Why.** `risk-check` runs the bosun release pinned in `.bosun/version` and reads `risk.toml` from
+the base branch. A rule that uses a value the pinned release does not know (bosun 0.2.0 and
+`approval = "delegate"`) is a parse error, so every pull request fails, including the one that
+would fix it. bosun hit this on its own repo before 0.2.1.
+
+**Fix.** Keep the rules parseable by the pin: move `.bosun/version` to a release that knows the
+value first (for `delegate`, 0.2.1), then add the rule. bosun's own repo has a test
+(`tests/governance.rs`) that keeps its rules parseable by its pin.
+
+### A child session's push is refused
+
+**Practice:** a child session's permission classifier can block a push when the instruction to
+push came from another session, such as the orchestrator. The owner confirms the push in that
+child session.
 
 ## Exit codes
 
