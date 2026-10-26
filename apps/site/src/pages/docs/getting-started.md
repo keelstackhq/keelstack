@@ -6,7 +6,7 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-26: splice 0.2.1, bosun 0.2.0, hoist 0.2.0,
+Versions are the released ones as of 2026-10-26: splice 0.2.1, bosun 0.2.2, hoist 0.2.0,
 berth 0.1.0, hoard `@v0`.
 
 ## Before you start
@@ -73,8 +73,8 @@ git add -A && git commit -m "chore: add rigging and decisions channels"
 - **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
   `--piece import-project` when the repo has `docs/agents/project.md` (hull repos do), else
   `--piece import-claude`; `--piece import-agents` adds a pointer to `AGENTS.md`.
-- The decisions channel brings keelstackhq's own decisions (D-001 to D-006), such as "agents
-  never merge, tag or force-push". The channel is an ordinary splice template, so splice can
+- The decisions channel brings keelstackhq's own decisions (D-001 to D-006; D-007 and D-008
+  are pending in decisions PR #6), such as how merges and tags work. The channel is an ordinary splice template, so splice can
   apply one from your own repo the same way; that setup is not documented in the sources yet.
 - `node scripts/agents-index.mjs` exists only in hull repos.
 
@@ -87,21 +87,19 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.0
+npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.2
 bosun init --stack rust --owner <your-github-login>
 ```
 
 - `--stack` is `rust` or `ts-pnpm`, once per stack; a mixed repo gets one entry per stack
   directory. `--plan FILE` copies a plan into the repo.
-- `bosun init` runs `splice channel add gh:keelstackhq/bosun//channel` on branch `bosun/init`,
-  commits, pushes and opens one setup pull request whose body lists the owner steps.
+- `bosun init` runs `splice channel add gh:keelstackhq/bosun//channel` on branch `bosun/init`
+  (`claude/bosun-init` in a Claude cloud session, which can push only to `claude/…` branches;
+  `--branch` sets another), commits, pushes and opens one setup pull request whose body lists the
+  owner steps. `--no-pr` stops after the commit and returns the pull request title and body.
 - Next to a hull template it detects the repo's own `ci-ok` job and names bosun's aggregate check
   `bosun-ok` instead, does not take `CLAUDE.md`, keeps the files hull owns, and adds the missing
   required checks to `hoist.toml` (it keeps hull's own `hoist.toml`).
-- In a Claude cloud session, which can push only to `claude/…` branches, bosun 0.2.0 cannot push
-  `bosun/init`. Run `bosun init … --no-pr`, push the commit to a `claude/` branch and open the
-  pull request yourself. On bosun's `main` (not released yet), `--branch` sets the branch and the
-  cloud default is `claude/bosun-init`.
 - bosun's two Claude Code hooks belong in `.claude/settings.json`. In a hull repo that file
   belongs to hull, so `bosun init` leaves it alone. hull's `main` (the unreleased v0.3.0) ships
   the hooks, guarded so they do nothing until `.bosun/bosun.toml` exists; with hull v0.2.2,

@@ -90,20 +90,20 @@ freely, template updates never touch it.
   `/llms.txt`). Open copy gaps:
   - TODO(copy): running your own org's decisions channel (the channel is a plain splice template;
     no source describes setting one up).
-  - TODO(copy): delegated decisions, once bosun merges `feat/delegate-approvals` (now
-    "upcoming"); signed chat approvals are on bosun main (#226), mark them released with the next
-    bosun release.
-  - TODO(copy): D-006 replacement (orchestrator may merge); update Overview, Releases and Playbook
-    when the decisions PR lands.
   - TODO(copy): hull v0.2.2 repos have no bosun hooks until hull v0.3.0 is tagged; no interim
     step is documented.
   - TODO(copy): `bosun init --stack ts-pnpm` first-PR-green is unverified (bosun UC-M7-2).
-  - TODO(copy): bosun-main behaviour (docs-only fast path, `own_ci` running test-integrity only,
-    `init --branch`, human merges) moves from "not released yet" to released with the next bosun
-    release; then re-check every page.
+  - Resolved by the refresh (2026-10-26): signed and delegated approvals (bosun 0.2.1), the
+    bosun-main behaviour that shipped in 0.2.1 and 0.2.2.
 - 2026-10-26 Hero and tool cards on splice 0.2.1 (re-ran the hero command: output identical to
   0.2.0, 53 files: 31 owned, 8 shared, 14 seed) and hoard v0.3.0; docs: signed chat approvals are
   on bosun main (#226), not released.
+- 2026-10-26 Docs refresh: every page follows bosun 0.2.2 and splice 0.2.1 (one-job channel CI,
+  base-config restore, signed and delegated approvals, fragments, prepare without
+  HOIST_RELEASE_TOKEN); D-007 and D-008 described as pending (decisions PR #6); playbook rules
+  and troubleshooting entries from the orchestrator are labelled Practice. Open TODO(copy):
+  D-007/D-008 once merged; bosun issues #234-#238 are cited from the orchestrator (the API is
+  not enabled for bosun in this session).
 
 ## Blocked
 
