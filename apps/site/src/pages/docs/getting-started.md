@@ -144,7 +144,8 @@ Then, still as the owner:
 - Add the Actions secret `SPLICE_BOT_TOKEN`: a fine-grained token for this repo with Contents,
   Pull requests and Workflows set to read and write. Without it the weekly update pull requests
   run no CI.
-- Paste `docs/setup-script.sh` into the setup script of your Claude Code cloud environment. It
+- Paste `docs/setup-script.sh` into the setup script of the repo's Claude Code cloud environment
+  (network allow-list and secrets: [Cloud environment](/docs/cloud/)). It
   runs as root before each session and installs Node 24, pnpm (ts-pnpm stacks), the Rust
   toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
   and bosun.

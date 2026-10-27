@@ -1,15 +1,13 @@
 import { readyDocs } from "../data/docs";
 import { agentRows, hero, sections } from "../data/content";
-import { moreTools, tools } from "../data/tools";
+import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
 
 export function buildLlmsTxt(): string {
   const on = new Set(DEFAULT_ON);
-  const toolLines = [...tools, ...moreTools].map(
-    (t) => `- [${t.name}](${t.repo}) (${t.status}): ${t.pitch}`,
-  );
+  const toolLines = tools.map((t) => `- [${t.name}](${t.repo}) (${t.status}): ${t.pitch}`);
   const agentLines = agentRows.map((r) => `- \`${r.key}\`: ${r.text}`);
   const docLines = readyDocs().map(
     (d) => `- [${d.title}](${SITE_URL}${docMdPath(d.slug)}): ${d.summary}`,

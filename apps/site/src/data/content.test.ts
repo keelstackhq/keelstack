@@ -53,7 +53,13 @@ test("split has 12 chips", () => {
 });
 
 test("agent rows and current cards", () => {
-  expect(agentRows.map((r) => r.key)).toEqual(["CLAUDE.md", "--json --yes", "ci-ok", "update bot"]);
+  expect(agentRows.map((r) => r.key)).toEqual([
+    "CLAUDE.md",
+    "bosun",
+    "--json --yes",
+    "ci-ok",
+    "update bot",
+  ]);
   expect(current.map((c) => c.title)).toEqual(["Replaced", "3-way merged", "Stay yours"]);
   expect(current.map((c) => !!c.accent)).toEqual([false, false, true]);
 });
@@ -72,8 +78,16 @@ test("links stay in the keelstackhq org or on the page", () => {
         l.href.startsWith("https://github.com/keelstackhq"),
     ).toBe(true);
   }
-  expect(footerLinks.map((l) => l.label)).toEqual(["hull", "splice", "hoard", "decisions"]);
-  expect(footerLinks[3]?.href).toBe(`${org.url}/decisions`);
+  expect(footerLinks.map((l) => l.label)).toEqual([
+    "hull",
+    "splice",
+    "hoard",
+    "bosun",
+    "hoist",
+    "berth",
+    "decisions",
+  ]);
+  expect(footerLinks[6]?.href).toBe(`${org.url}/decisions`);
 });
 
 test("get started copy no longer says splice is unreleased", () => {

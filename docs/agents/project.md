@@ -107,6 +107,10 @@ freely, template updates never touch it.
   v0.3.0 (hero re-run: 54 files, 32 owned, 8 shared, 14 seed), bosun 0.2.3 (ts-pnpm two jobs),
   D-007/D-008 settled; signed approvals documented with the exact comment format and key
   enrollment. hull v0.3.0 ships the bosun hooks, so that TODO(copy) is resolved.
+- 2026-10-27 Agents round 1/2: landing lists all six tools (cards, For agents row, footer, llms.txt),
+  new pages Start here (ordered path) and Cloud environment (bosun's setup script, network
+  allow-list, secrets and keys; a test pins its versions to the site's), troubleshooting for bosun
+  main after 0.2.3 (#249, #250).
 
 ## Blocked
 
