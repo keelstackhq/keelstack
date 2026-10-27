@@ -111,6 +111,9 @@ freely, template updates never touch it.
   new pages Start here (ordered path) and Cloud environment (bosun's setup script, network
   allow-list, secrets and keys; a test pins its versions to the site's), troubleshooting for bosun
   main after 0.2.3 (#249, #250).
+- 2026-10-27 Agents round 2/2: the docs as a docspack package (`@keelstackhq/docspack`, built with
+  the site, tarball at keelstack.dev/docspack/), Getting started step 8 and llms.txt name it.
+  TODO(copy): an npm publish of the package (owner step).
 
 ## Blocked
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import docspack from "../../docspack.json";
 import { readyDocs } from "../data/docs";
 import { docMdPath } from "./docs-md";
 import { agentRows } from "../data/content";
@@ -41,6 +42,12 @@ describe("buildLlmsTxt", () => {
 
   it("points agents at llms-full.txt", () => {
     expect(out).toContain("https://keelstack.dev/llms-full.txt");
+  });
+
+  it("names the docspack tarball for offline use", () => {
+    expect(out).toContain(
+      `https://keelstack.dev/docspack/keelstackhq-docspack-${docspack.version}.tgz`,
+    );
   });
 
   it("lists all six tools with their versions", () => {

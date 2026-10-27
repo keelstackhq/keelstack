@@ -129,3 +129,17 @@ The owner asked for docs an AI can be pointed at. Decisions:
   the end. No hand-copied duplicate.
 - `/docs/` opens with a "For AI agents" note naming both files.
 - Tests fail when a ready page is missing from `/llms.txt` or `/llms-full.txt`.
+
+## Addendum (2026-10-27): docspack
+
+- The docs are also a docspack documentation package, `@keelstackhq/docspack` (a name docspack
+  discovers in a project's dependencies).
+  `apps/site/scripts/docspack.mjs` runs after `astro build`: `docspack build --from` the generated
+  `dist/docs/*.md` (the same Markdown as `/llms-full.txt`), a check that every page is the source
+  of a chunk, then `npm pack` into `dist/docspack/`, served at keelstack.dev/docspack/.
+- Version: a date (`2026.10.27`) in `apps/site/docspack.json`, bumped with doc changes. The file
+  also holds `sources`, a sha256 of the packed Markdown; the build fails when the docs change and
+  the version does not, since a consumer's lockfile pins the tarball's checksum.
+- A repo installs it from the tarball URL (`pnpm add -D docspack@1.5.0 "@keelstackhq/docspack@<url>"`),
+  then `docspack sync` and `docspack ask --json`. Only the current version is served, so a pinned
+  install needs the npm package: proposed to the orchestrator, with a hull `docs/packs.json` entry.

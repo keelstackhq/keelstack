@@ -89,3 +89,22 @@ describe("cloud environment page", () => {
     expect(script).toContain('npm install -g "@keelstackhq/splice@${SPLICE_VERSION}"');
   });
 });
+
+describe("docspack package", () => {
+  const meta = JSON.parse(
+    readFileSync(new URL("../../docspack.json", import.meta.url), "utf8"),
+  ) as {
+    name: string;
+    version: string;
+  };
+  it("is named and versioned like a docspack vendor package", () => {
+    expect(meta.name).toBe("@keelstackhq/docspack");
+    expect(meta.version).toMatch(/^\d{4}\.\d{1,2}\.\d{1,2}$/);
+  });
+  it("the Getting started page installs the current tarball", () => {
+    const page = readFileSync(new URL("../pages/docs/getting-started.md", import.meta.url), "utf8");
+    expect(page).toContain(
+      `https://keelstack.dev/docspack/keelstackhq-docspack-${meta.version}.tgz`,
+    );
+  });
+});
