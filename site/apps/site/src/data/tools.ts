@@ -6,7 +6,7 @@ export const org = {
 } as const;
 
 export interface Tool {
-  name: "hull" | "splice" | "hoard";
+  name: "hull" | "splice" | "hoard" | "bosun" | "hoist" | "berth";
   role: string;
   status: string;
   statusStyle: "filled" | "outline" | "dashed";
@@ -51,27 +51,37 @@ export const tools: Tool[] = [
     detailMono: true,
     repo: `${org.url}/hoard`,
   },
-];
-
-// The other keelstack tools, listed in /llms.txt (the landing page shows cards for the three above).
-export const moreTools: { name: string; status: string; pitch: string; repo: string }[] = [
   {
     name: "bosun",
+    role: "04 · agent orchestration",
     status: "v0.2.3",
+    statusStyle: "outline",
     pitch:
-      "Orchestration for agent-built repos: claims and leases, waves, gates, risk checks, review verdicts, approvals and cost.",
+      "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",
+    detail: "claim · pr · gate · risk-check · verdict · approve",
+    detailMono: true,
     repo: `${org.url}/bosun`,
   },
   {
     name: "hoist",
+    role: "05 · provision + release",
     status: "v0.2.0",
-    pitch: "Provisions and verifies a repo's GitHub and Cloudflare setup, and runs releases.",
+    statusStyle: "outline",
+    pitch:
+      "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",
+    detail: "plan · check · apply · release",
+    detailMono: true,
     repo: `${org.url}/hoist`,
   },
   {
     name: "berth",
+    role: "06 · agent workspaces",
     status: "v0.1.0",
-    pitch: "An isolated workspace per parallel agent: worktree, env files, ports and a database.",
+    statusStyle: "outline",
+    pitch:
+      "Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database.",
+    detail: "up · down · ls · env · gc",
+    detailMono: true,
     repo: `${org.url}/berth`,
   },
 ];

@@ -68,6 +68,10 @@ export const agentRows: { key: string; text: string }[] = [
     key: "CLAUDE.md",
     text: "Lean by default. Skills and a /loop default ship with the template; subagents come from hull’s rigging channel.",
   },
+  {
+    key: "bosun",
+    text: "Claims, gates, risk checks and review verdicts on GitHub. Child sessions never merge or tag; the orchestrator or auto-merge merges on green, and owners approve high-risk changes, also by chat.",
+  },
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },
   { key: "update bot", text: "Template moves; you get one pull request to review." },
@@ -101,7 +105,10 @@ export const sections: Record<
     label: "01 · The split",
     heading: "hull owns the plumbing. Your app code stays yours.",
   },
-  tools: { label: "02 · Three tools", heading: "Template. Bootstrap. Cache." },
+  tools: {
+    label: "02 · Six tools",
+    heading: "Template. Bootstrap. Cache. Orchestrate. Provision. Isolate.",
+  },
   agents: {
     label: "03 · Built for agents",
     heading: "Your agent opens the repo and gets to work.",
@@ -122,6 +129,9 @@ export const footerLinks: { label: string; href: string }[] = [
   { label: "hull", href: `${org.url}/hull` },
   { label: "splice", href: `${org.url}/splice` },
   { label: "hoard", href: `${org.url}/hoard` },
+  { label: "bosun", href: `${org.url}/bosun` },
+  { label: "hoist", href: `${org.url}/hoist` },
+  { label: "berth", href: `${org.url}/berth` },
   { label: "decisions", href: `${org.url}/decisions` },
 ];
 

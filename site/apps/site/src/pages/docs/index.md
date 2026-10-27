@@ -9,8 +9,9 @@ decisions and approves high-risk pull requests. Every tool is public under
 [keelstackhq](https://github.com/keelstackhq); these docs show how to use them in a repo of
 your own.
 
-Versions below are the released ones as of 2026-10-27. To set up a repo of your own, go to
-[Getting started](/docs/getting-started/). How to run it day to day with an orchestrator session and
+Versions below are the released ones as of 2026-10-27. To set up a repo of your own, follow
+[Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
+(the details). How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).
 
 > **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in

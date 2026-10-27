@@ -1,6 +1,10 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
+import { SPLICE_VERSION } from "../lib/command";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
+import { tools } from "./tools";
+
+const bosunVersion = tools.find((t) => t.name === "bosun")?.status.replace(/^v/, "");
 
 const dir = new URL("../pages/docs/", import.meta.url);
 const repos = ["hull", "splice", "bosun", "hoist", "hoard", "berth", "decisions", "rust-canary"];
@@ -8,10 +12,12 @@ const fileFor = (slug: string) => (slug === "" ? "index.md" : `${slug}.md`);
 const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
 
 describe("docs data", () => {
-  it("has the eight pages in order with unique slugs", () => {
+  it("has the ten pages in order with unique slugs", () => {
     expect(docs.map((d) => d.slug)).toEqual([
       "",
+      "start-here",
       "getting-started",
+      "cloud",
       "tasks",
       "ci",
       "risk",
@@ -21,7 +27,9 @@ describe("docs data", () => {
     ]);
     expect(docs.map((d) => d.title)).toEqual([
       "Overview",
+      "Start here",
       "Getting started",
+      "Cloud environment",
       "Tasks and sessions",
       "CI and gates",
       "Risk and review",
@@ -69,5 +77,15 @@ describe("docs data", () => {
         expect(text).not.toContain(old);
       }
     }
+  });
+});
+
+describe("cloud environment page", () => {
+  const page = readFileSync(new URL("../pages/docs/cloud.md", import.meta.url), "utf8");
+  it("embeds a setup script pinned to the versions the site shows", () => {
+    const script = page.split("```bash\n")[1]?.split("```")[0] ?? "";
+    expect(script).toContain(`SPLICE_VERSION=${SPLICE_VERSION}\n`);
+    expect(script).toContain(`BOSUN_VERSION=${bosunVersion}\n`);
+    expect(script).toContain('npm install -g "@keelstackhq/splice@${SPLICE_VERSION}"');
   });
 });

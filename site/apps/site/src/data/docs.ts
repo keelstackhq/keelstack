@@ -41,6 +41,22 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "start-here",
+    title: "Start here",
+    summary:
+      "For agents: the ordered path from an empty GitHub repo to the first merged task, linking every detail page.",
+    sources: [
+      "splice/README.md",
+      "hull/README.md",
+      "bosun/README.md",
+      "bosun/docs/spec.md",
+      "bosun/AGENTS.md",
+      "hoist/README.md",
+      "decisions/DECISIONS.md",
+    ],
+    ready: true,
+  },
+  {
     slug: "getting-started",
     title: "Getting started",
     summary:
@@ -63,6 +79,20 @@ export const docs: DocPage[] = [
       "hoard/README.md",
       "berth/README.md",
       "rust-canary/docs/canary-findings.md",
+    ],
+    ready: true,
+  },
+  {
+    slug: "cloud",
+    title: "Cloud environment",
+    summary:
+      "A dedicated Claude Code cloud environment: setup script, network allow-list, secrets and keys, and the owner's phone steps.",
+    sources: [
+      "bosun/docs/setup-script.sh",
+      "bosun/channel/pieces/core/files/docs/setup-script.sh.jinja",
+      "bosun/docs/spec.md",
+      "bosun/docs/PROGRESS.md",
+      "bosun/.bosun/approvers.toml",
     ],
     ready: true,
   },
