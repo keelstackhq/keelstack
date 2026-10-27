@@ -32,8 +32,7 @@ a pull request once its required checks are green and any owner approval is in. 
 a time, and only when a pull request's CI ran on the current `main` or its files are disjoint
 from what merged since; otherwise it checks the combination locally (format, lint, tests) first.
 Child sessions never merge. Without an orchestrator, use auto-merge (`bosun pr --auto-merge` in a
-bosun repo) or the owner merges. This is org decision D-008, which replaces D-006 and is pending
-the owner's merge of decisions PR #6 (2026-10-26).
+bosun repo) or the owner merges. This is org decision D-008 (2026-10-26, supersedes D-006).
 
 ### Child sessions
 
@@ -51,8 +50,8 @@ One per independent work stream, each in its own repo or area. Inside a child:
 - **One push per pull request.** Run the local checks (in a bosun repo, every gate) before the
   push and do review rounds locally, so a pull request goes up once, done and green. Push again
   only for review feedback or a CI failure that cannot be reproduced locally. Do not edit a pull
-  request's body or title just to retry CI. This is bosun's AGENTS.md rule and pending org
-  decision D-007.
+  request's body or title just to retry CI. This is bosun's AGENTS.md rule and org decision
+  D-007.
 - **Practice, security-sensitive pull requests** get two independent reviewer sessions, not one.
 - **Practice, blocked pushes:** a child session's permission classifier can refuse a push when
   the instruction to push came from another session (the orchestrator). The owner then confirms
@@ -85,9 +84,10 @@ everything else goes through bosun, GitHub and CI. **Practice:** the orchestrato
 decisions and asks each as one short question with a recommended option, and makes each
 owner-only action as small as possible:
 
-- **Approve a pull request:** a comment `/bosun approve <head sha>`, typed in the GitHub app or
-  posted from the owner's own machine. Comments from Claude cloud sessions are re-attributed by the
-  proxy and never count.
+- **Approve a pull request:** in the orchestrator's chat (a signed approval, below), or with a
+  comment `/bosun approve <head sha>` typed in the GitHub app or posted from the owner's own
+  machine. An unsigned comment from a Claude cloud session is re-attributed by the proxy and never
+  counts.
 - **Release:** one approval of the `release` environment.
 - **Repo settings:** in the GitHub settings, or `hoist apply`.
 - **Human-only steps** are listed under "Blocked" in `docs/PROGRESS.md`, each with the exact
@@ -95,25 +95,38 @@ owner-only action as small as possible:
 
 ### Approvals by chat
 
-Since bosun 0.2.1 the orchestrator holds a key enrolled in `.bosun/approvers.toml`. The owner tells
-the orchestrator in its chat to approve a pull request, and the orchestrator posts the approve comment with a
-signature that `risk-check` verifies. Changes to keys, owners or CODEOWNERS always need the owner's
-own GitHub approval. Details in [Risk and review](/docs/risk/).
+Since bosun 0.2.1. Set up once: the orchestrator makes an ed25519 key
+in its own container, and the owner approves the pull request that enrolls its public key in
+`.bosun/approvers.toml` on GitHub (steps in [Risk and review](/docs/risk/)). Then, per pull request:
+
+1. **Practice:** a child finishes reviews and fixes, reports the final head SHA once, and freezes
+   the head.
+2. The orchestrator runs `bosun approve --list` and shows the owner the ready pull requests (number,
+   title, risk, files, head).
+3. **Practice:** the owner answers in the chat, for example "approve 222".
+4. The orchestrator runs `bosun approve 222@<head> --sign-key <pem>`. It posts
+   `/bosun approve <head>` with a `bosun-sig ed25519 <key id> <signature>` line, and `risk-check`
+   turns green. If the head moved, nothing is signed; the child reports the new head and the owner
+   approves again.
+
+Pull requests that change `.bosun/approvers.toml`, `governance/owners.toml` or a `CODEOWNERS` file,
+and pull requests bosun cannot see whole, still need the owner's own GitHub approval.
 
 ### Delegated decisions
 
-Since bosun 0.2.1 a repo can opt rules into `approval = "delegate"`: a delegate session then
-approves those high-risk changes itself when an independent verdict approves with confidence of at
-least 0.9 and no blocker or major findings. Critical changes (workflows, governance, the approval
-and risk system, secrets, production writes, and in bosun its own code) always go to the owner.
-bosun's own repo delegates R-ci, R-gate and R-deps (merged on `main` after 0.2.2).
+Since bosun 0.2.1 a repo can opt rules into `approval = "delegate"` and enroll a second key with
+`role = "delegate"`. A delegate session then approves those high-risk changes itself
+(`bosun approve <pr>@<head> --sign-key <pem> --as delegate`) when an independent verdict approves
+with confidence of at least 0.9 and no blocker or major findings. Critical changes (workflows,
+governance, the approval and risk system, secrets, production writes, an unseen diff, and in bosun
+its own code) always go to the owner. bosun's own repo delegates R-ci, R-gate and R-deps (since
+0.2.3). To stop delegation at once, remove the delegate key in a pull request the owner approves.
 
 ### Known gaps
 
-**Practice:** open bosun issues #234 to #238, as the orchestrator lists them: the two-job design
-for ts-pnpm stacks (trusted gates in a job that never installs pull request dependencies; bosun's
-spec already names it as the robust follow-up), pnpm's `auditConfig`, cargo-deny by path, and how
-review verdicts are aggregated.
+The two-job design for ts-pnpm stacks (bosun #234) shipped in bosun 0.2.3. **Practice:** open
+bosun issues among #235 to #238, as the orchestrator lists them: pnpm's `auditConfig`, cargo-deny
+by path, and how review verdicts of several sessions are aggregated (#238).
 
 ## Releases
 

@@ -90,8 +90,6 @@ freely, template updates never touch it.
   `/llms.txt`). Open copy gaps:
   - TODO(copy): running your own org's decisions channel (the channel is a plain splice template;
     no source describes setting one up).
-  - TODO(copy): hull v0.2.2 repos have no bosun hooks until hull v0.3.0 is tagged; no interim
-    step is documented.
   - TODO(copy): `bosun init --stack ts-pnpm` first-PR-green is unverified (bosun UC-M7-2).
   - Resolved by the refresh (2026-10-26): signed and delegated approvals (bosun 0.2.1), the
     bosun-main behaviour that shipped in 0.2.1 and 0.2.2.
@@ -104,6 +102,11 @@ freely, template updates never touch it.
   and troubleshooting entries from the orchestrator are labelled Practice. Open TODO(copy):
   D-007/D-008 once merged; bosun issues #234-#238 are cited from the orchestrator (the API is
   not enabled for bosun in this session).
+- 2026-10-27 Docs for AI agents and facts refresh: `/llms-full.txt`, `/docs/<page>.md`, a "For AI
+  agents" note on `/docs/`, `/llms.txt` lists all six tools and links the Markdown pages; hull
+  v0.3.0 (hero re-run: 54 files, 32 owned, 8 shared, 14 seed), bosun 0.2.3 (ts-pnpm two jobs),
+  D-007/D-008 settled; signed approvals documented with the exact comment format and key
+  enrollment. hull v0.3.0 ships the bosun hooks, so that TODO(copy) is resolved.
 
 ## Blocked
 

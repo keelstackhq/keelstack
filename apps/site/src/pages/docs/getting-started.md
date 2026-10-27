@@ -6,7 +6,7 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-26: splice 0.2.1, bosun 0.2.2, hoist 0.2.0,
+Versions are the released ones as of 2026-10-27: hull v0.3.0, splice 0.2.1, bosun 0.2.3, hoist 0.2.0,
 berth 0.1.0, hoard `@v0`.
 
 ## Before you start
@@ -41,19 +41,17 @@ git add -A && git commit -m "chore: initial commit from hull"
 - splice runs `git init` when needed and the template's post commands (`pnpm install`), but it
   never commits. Commit `.splice/lock.toml` with everything else and never edit it by hand.
 
-For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolchain to build). No release tag contains it
-yet, so render it from a branch:
+For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolchain to build),
+released since hull v0.3.0:
 
 ```bash
 pnpm dlx @keelstackhq/splice@0.2.1 new gh:keelstackhq/hull//template-rust my-repo \
-  --ref main --piece rust-cli:cli
+  --piece rust-cli:cli
 ```
 
-Such a repo records version `0.0.0+g<sha>`. Move it forward with `splice update --ref main` (or a
-sha); the target must be a git descendant of the locked commit. A plain `splice update`, `check`
-and the weekly bot consider only stable tags that descend from that commit, so they offer nothing
-until hull v0.3.0 is tagged. splice 0.2.0 lacked this and offered v0.2.2, which has no
-`template-rust`; use 0.2.1 or later.
+A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; splice 0.2.1 moves it
+with `splice update --ref <branch|sha>` when the target descends from the locked commit, and a
+plain `update` or `check` considers only stable tags that descend from it.
 
 ## 2. Add the channels
 
@@ -73,8 +71,8 @@ git add -A && git commit -m "chore: add rigging and decisions channels"
 - **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
   `--piece import-project` when the repo has `docs/agents/project.md` (hull repos do), else
   `--piece import-claude`; `--piece import-agents` adds a pointer to `AGENTS.md`.
-- The decisions channel brings keelstackhq's own decisions (D-001 to D-006; D-007 and D-008
-  are pending in decisions PR #6), such as how merges and tags work. The channel is an ordinary splice template, so splice can
+- The decisions channel brings keelstackhq's own decisions (D-001 to D-008), such as how
+  merges and tags work and how to save CI minutes. The channel is an ordinary splice template, so splice can
   apply one from your own repo the same way; that setup is not documented in the sources yet.
 - `node scripts/agents-index.mjs` exists only in hull repos.
 
@@ -87,7 +85,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.2
+npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.3
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -101,9 +99,9 @@ bosun init --stack rust --owner <your-github-login>
   `bosun-ok` instead, does not take `CLAUDE.md`, keeps the files hull owns, and adds the missing
   required checks to `hoist.toml` (it keeps hull's own `hoist.toml`).
 - bosun's two Claude Code hooks belong in `.claude/settings.json`. In a hull repo that file
-  belongs to hull, so `bosun init` leaves it alone. hull's `main` (the unreleased v0.3.0) ships
-  the hooks, guarded so they do nothing until `.bosun/bosun.toml` exists; with hull v0.2.2,
-  `bosun init` lists adding them as an owner step.
+  belongs to hull, so `bosun init` leaves it alone. hull v0.3.0 ships the hooks, guarded so they
+  do nothing until `.bosun/bosun.toml` exists and `bosun` is on `PATH`; with an older hull,
+  run `splice update` first, or `bosun init` lists the hooks as an owner step.
 
 The setup pull request is high risk (R-gov). Its base has no bosun workflows yet, so
 `risk-check`, `review-verdict` and `main-open` cannot run on it: the owner reviews it, comments

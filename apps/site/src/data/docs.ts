@@ -105,7 +105,7 @@ export const docs: DocPage[] = [
     slug: "risk",
     title: "Risk and review",
     summary:
-      "Risk rules and approval classes, review verdicts, owner approvals (and why cloud-session approvals do not count), asking the owner, and the kill switch.",
+      "Risk rules and approval classes, review verdicts, owner approvals on GitHub or signed from chat, delegated decisions, asking the owner, and the kill switch.",
     sources: [
       "bosun/.bosun/approvers.toml",
       "bosun/docs/spec.md",
@@ -125,6 +125,7 @@ export const docs: DocPage[] = [
     summary:
       "Releasing with hoist (and the one-time first publish), tag-on-merge, hull template releases, pinning bosun, the splice update bot and the decisions channel.",
     sources: [
+      "hull/.github/workflows/release.yml",
       "bosun/CHANGELOG.md",
       "bosun/changelog.d/README.md",
       "bosun/.github/workflows/release.yml",
