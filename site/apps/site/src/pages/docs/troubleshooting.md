@@ -111,14 +111,15 @@ re-run the failed job within 2 days (npm expires an unused trusted publisher).
 
 ### `splice update` fails in a `template-rust` repo
 
-**Why.** No hull tag contains `template-rust` yet (it is in the unreleased v0.3.0). A repo
-rendered with `--ref main` records `0.0.0+g<sha>`. splice 0.2.0's `update` looked for the latest
+**Why.** Before hull v0.3.0 no tag contained `template-rust`, so repos were rendered with
+`--ref main` and record `0.0.0+g<sha>`. splice 0.2.0's `update` looked for the latest
 stable tag (v0.2.2), which has no `template-rust` ("no splice.toml at `template-rust`"), and its
 `check` offered that update, so the weekly bot opened a broken pull request.
 
 **Fix.** Use splice 0.2.1 or later: `splice update --ref main` moves the repo forward by git
 ancestry, and a plain `update` or `check` only considers stable tags that descend from the locked
-commit. The bot's Action uses the latest splice by default.
+commit. The bot's Action uses the latest splice by default. New repos render from the v0.3.0 tag
+and need none of this.
 
 ### `splice update` says an owned file "was edited locally"
 
@@ -176,6 +177,30 @@ value first (for `delegate`, 0.2.1), then add the rule. bosun's own repo has a t
 **Practice:** a child session's permission classifier can block a push when the instruction to
 push came from another session, such as the orchestrator. The owner confirms the push in that
 child session.
+
+### `bosun pr --auto-merge` fails with "422 Auto merge is not allowed for this repository"
+
+**Why.** The repo setting "Allow auto-merge" is off (found on the rust-canary trial; bosun's fix
+text still says to retry).
+
+**Fix.** Turn on auto-merge (`hoist apply --area github`, or the repo settings), or let the
+orchestrator or the owner merge.
+
+### The edit hook refuses the claiming session's own files
+
+**Why.** With the lease taken under `BOSUN_SESSION=<session>/<task>`, the edit-lock hook sees only
+the plain session id and refuses the Edit tool on the leased paths (rust-canary trial, bosun 0.2.2).
+The per-task id is meant for wave agents in their own berth workspace.
+
+**Workaround** (from the trial, findings G7; bosun's AGENTS.md still tells every agent to set it):
+set `BOSUN_SESSION=<session>/<task>` only inside a wave agent's `berth up` workspace, and claim
+without it in a session that works on its own.
+
+### `.bosun/fold-fragments.sh` gives "permission denied"
+
+**Why.** splice writes files without their mode, so the script lands without its executable bit.
+
+**Fix.** Run it as `bash .bosun/fold-fragments.sh`; since bosun 0.2.3 the channel's docs say so.
 
 ## Exit codes
 

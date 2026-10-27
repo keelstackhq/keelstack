@@ -9,17 +9,21 @@ decisions and approves high-risk pull requests. Every tool is public under
 [keelstackhq](https://github.com/keelstackhq); these docs show how to use them in a repo of
 your own.
 
-Versions below are the released ones as of 2026-10-26. To set up a repo of your own, go to
+Versions below are the released ones as of 2026-10-27. To set up a repo of your own, go to
 [Getting started](/docs/getting-started/). How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).
+
+> **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in
+> one Markdown file), or at https://keelstack.dev/llms.txt for the index. Each page is also served
+> as Markdown next to its HTML page, for example https://keelstack.dev/docs/playbook.md.
 
 ## The tools
 
 | Tool                                                  | What it does                                                                                                                            | Released           | Get it                                                            |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------- |
-| [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.2.2             | Rendered by splice from `gh:keelstackhq/hull//template`           |
+| [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.3.0             | Rendered by splice from `gh:keelstackhq/hull//template`           |
 | [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.2.1              | `pnpm dlx @keelstackhq/splice@0.2.1 <command>`                    |
-| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.2              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
+| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.3              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
 | [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.2.0              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
 | [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions in one line of YAML. No account, no server.                                     | v0.3.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
 | [berth](https://github.com/keelstackhq/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | 0.1.0              | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
@@ -44,8 +48,7 @@ the values you chose and a hash per owned or shared file. Each file has one of t
 
 hull has two templates: `template` (pnpm workspace, Turborepo, TypeScript 7, Vite+, one CI job
 with a `ci-ok` check, a Claude Code layer) and `template-rust` (a Cargo workspace with a pinned
-toolchain, cargo-deny and cargo-nextest, and no Node). `template-rust` is on hull's `main` only,
-in the unreleased v0.3.0, so no release tag contains it yet.
+toolchain, cargo-deny and cargo-nextest, and no Node). `template-rust` is released since hull v0.3.0.
 
 ### Channels: more templates next to the main one
 
@@ -58,8 +61,8 @@ A channel is a second template applied next to the main one (or alone), with its
   `docs/agents/org-decisions.md`, imported by your agent rules (D-004).
 - **bosun** (`gh:keelstackhq/bosun//channel`): bosun's governance files, the gate, risk, verdict
   and main-health workflows, and the Claude Code hooks. `bosun init` adds it for you. In a hull
-  repo, hull owns `.claude/settings.json`, so the hooks come from hull instead: hull's `main`
-  (the unreleased v0.3.0) has them, v0.2.2 does not.
+  repo, hull owns `.claude/settings.json`, so the hooks come from hull instead (since v0.3.0,
+  guarded so they do nothing in a repo without bosun).
 
 The splice update bot (`keelstackhq/splice/action@v1`) runs `splice update --all` on a schedule
 and opens one pull request with the changes to the template and every channel.
@@ -96,9 +99,8 @@ Child sessions (the agents that write code) never merge pull requests, push or m
 force-push. They get the required checks green and may turn on auto-merge. An orchestrator session
 may merge once the required checks are green and any owner approval is in; without one, GitHub's
 auto-merge or the owner merges. Release workflows may tag on a version-bump merge, and the owner still
-approves the `release` environment; repos that are only tagged (hull, splice's `v1`) are tagged by
-the owner. This is org decision D-008, pending the owner's merge of decisions PR #6 as of
-2026-10-26; until then D-006 says agents never merge at all. Where bosun's hooks are installed
+approves the `release` environment (splice and, since v0.3.0, hull tag this way); a repo with no
+such workflow (splice's `v1` Action tag) is tagged by the owner. This is org decision D-008, which replaced D-006 on 2026-10-26. Where bosun's hooks are installed
 they refuse merge, tag and force-push commands; branch protection stays the real guard.
 
 ## Who does what

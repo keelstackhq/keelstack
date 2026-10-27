@@ -4,18 +4,18 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun 0.2.2 (2026-10-26); where 0.2.0
-behaved differently, it says so.
+checks decide whether GitHub may merge. This page follows bosun 0.2.3 (2026-10-26); where an older
+release behaved differently, it says so.
 
 ## Required checks
 
-| Check            | Posted by                                                           | Fails when                                                                                 |
-| ---------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
-| `ci-ok`          | the one job of `.github/workflows/bosun.yml`, named after the check | the pinned bosun does not install, the pin check fails, a gate fails, or the PR is a draft |
-| `bosun-ok`       | the same job, renamed, in a repo with its own `ci-ok` (`own_ci`)    | as `ci-ok`                                                                                 |
-| `risk-check`     | the `risk` workflow (a commit status)                               | the pull request is high risk and has no approval yet; see [Risk and review](/docs/risk/)  |
-| `review-verdict` | `bosun verdict post`, or the `verdict` workflow (a commit status)   | the verdict requests changes, has confidence below 0.85, or escalates                      |
-| `main-open`      | the `main-open` workflow                                            | main is red and the pull request is not a mainfix                                          |
+| Check            | Posted by                                                         | Fails when                                                                                 |
+| ---------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| `ci-ok`          | the job of `.github/workflows/bosun.yml` named after the check    | the pinned bosun does not install, the pin check fails, a gate fails, or the PR is a draft |
+| `bosun-ok`       | the same job, renamed, in a repo with its own `ci-ok` (`own_ci`)  | as `ci-ok`                                                                                 |
+| `risk-check`     | the `risk` workflow (a commit status)                             | the pull request is high risk and has no approval yet; see [Risk and review](/docs/risk/)  |
+| `review-verdict` | `bosun verdict post`, or the `verdict` workflow (a commit status) | the verdict requests changes, has confidence below 0.85, or escalates                      |
+| `main-open`      | the `main-open` workflow                                          | main is red and the pull request is not a mainfix                                          |
 
 `bosun pr --auto-merge` turns on auto-merge only when all of them are green. It reads the list
 from `BOSUN_REQUIRED_CHECKS` (comma-separated, replaces all), else the four defaults plus any extra
@@ -63,9 +63,11 @@ compared with the merge base. Agents never skip, delete or weaken a test to get 
 
 ## One job, and what runs in it
 
-Since bosun 0.2.2 the channel's `bosun.yml` runs everything in one job named after the required
-check (`ci-ok`, or `bosun-ok`); before, it took 8 jobs (9 in 0.2.1). Each job is billed as at least one minute
-on a private repo, so one job costs about 3 to 4 minutes per push instead of 10 to 12. In order:
+Since bosun 0.2.2 the channel's `bosun.yml` runs in one job (since 0.2.3, rust stacks only) named after the required
+check (`ci-ok`, or `bosun-ok`); before, it took 8 jobs (9 in 0.2.1). Each job is billed as at least
+one minute on a private repo, so one job costs about 3 to 4 minutes per push instead of 10 to 12.
+On the rust-canary trial (a hull `template-rust` repo with bosun) a pull request went from about
+13 jobs to 6 with this change. In order:
 
 1. **Docs-only check, draft check.** A draft pull request fails the check in seconds and runs no
    gate (`ready_for_review` runs them; a skipped required check would count as passed).
@@ -85,10 +87,11 @@ on a private repo, so one job costs about 3 to 4 minutes per push instead of 10 
 
 - **Edits.** A pull request body or title edit changes no file. If the head already passed, the
   edit run keeps the file gates and runs only test-integrity, which reads the body.
-- **ts-pnpm hardening.** `pnpm install` runs with `--ignore-scripts --ignore-pnpmfile`, workspace
-  settings that run code are refused, and the install must leave the checkout unchanged. bosun's
-  spec calls this best effort; the planned robust design is two jobs, with the trusted gates in
-  one that never installs pull request dependencies.
+- **ts-pnpm and mixed stacks: two jobs** (since 0.2.3). `bosun-trusted` runs test-integrity and
+  deps with no pull request code: no install, no cache, and `pnpm audit` reads the pull request's
+  lockfile with the base's pnpm config. Only after it passed does the required check's job install
+  the dependencies and run fmt, lint and test. (0.2.2 ran everything in one job with a hardened
+  install.)
 - **Other workflows.** `risk.yml` (on `pull_request_target` and `issue_comment`) and
   `verdict.yml` (on `issue_comment`) run the workflow file from the base branch and never check
   out pull request code. One limit: `risk.yml` also runs on reviews, and a review event runs the
@@ -98,8 +101,8 @@ on a private repo, so one job costs about 3 to 4 minutes per push instead of 10 
   and the matching pin together.
 
 bosun's own `ci.yml` follows the same rules with a job `ci` that does the work and a job `ci-ok`
-that aggregates it. CI minutes are also the subject of org decision D-007, pending in decisions
-PR #6 (see [Releases and updates](/docs/releases/)).
+that aggregates it. Saving CI minutes is org decision D-007 (see
+[Releases and updates](/docs/releases/)).
 
 ## With your own CI (`own_ci`)
 
@@ -120,7 +123,7 @@ root except `README.md` (which can hold doctests), skips the gates; it costs abo
 The fast path never applies with the ts-pnpm stack, where prettier checks Markdown.
 
 hull's `template` CI exits early when nothing relevant changed, docs-only pull requests
-included. hull's `template-rust` (unreleased v0.3.0) does the same, with a budget of 15 s.
+included. hull's `template-rust` (since v0.3.0) does the same, with a budget of 15 s.
 
 ## Caching
 

@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.2.2
+turns `risk-check` green only when the rules are met. This page follows bosun 0.2.3
 (2026-10-26).
 
 ## Risk rules
@@ -107,7 +107,9 @@ The `risk` workflow re-runs on the comment, so `risk-check` turns green without 
 needs a new comment. An edited comment does not count, and a newer review that requests changes
 withdraws it.
 
-### Approvals from Claude cloud sessions do not count
+### Unsigned approvals from Claude cloud sessions do not count
+
+This applies to plain `/bosun approve` comments. A signed approval (below) counts from anywhere.
 
 Only a comment written with the owner's plain user token counts: GitHub marks it with
 `performed_via_github_app: null`. Agent sessions act as the owner's login through the Claude app,
@@ -133,38 +135,65 @@ bosun approve 199@<sha> 200@<sha>   # run exactly the `data.approve_command` tha
 
 ### Signed approvals from chat
 
-Since bosun 0.2.1 the owner can approve from a Claude chat by telling the orchestrator. The orchestrator session holds an ed25519 private key in its own container. On the owner's
-chat message it posts a comment whose first line is `/bosun approve <head sha>` and a later line
-`bosun-sig ed25519 <key id> <signature>`. The signature is the proof, so author, app attribution
-and edits do not matter. It counts only when:
+Since bosun 0.2.1 the owner can approve from a Claude chat: they tell the orchestrator session,
+and the orchestrator posts a signed approve comment. The signature is the proof, so the comment's
+author, its app attribution and later edits do not matter, and it works from a Claude cloud
+session.
 
-- the key id is listed in `.bosun/approvers.toml` on the default branch (never the pull request's
-  copy, so a pull request that adds its own key does not count);
-- the signature verifies for this repo, this pull request and its current head;
-- `governance/owners.toml` lists owners and no owner's newest review on the head requests changes;
-- the pull request does not change `.bosun/approvers.toml`, `governance/owners.toml` or a
-  `CODEOWNERS` file, and bosun could see its whole diff. Key and owner changes always need the
-  owner's own GitHub approval, so a stolen key cannot enroll keys or owners.
+**The comment.** Line 1, trimmed, is the approve line; a later line, trimmed, is the signature
+(single spaces). Other text, such as a footer, is ignored:
 
-```toml
-# .bosun/approvers.toml (R-gov)
-[[key]]
-id = "orchestrator-2026-10"
-ed25519 = "<base64 of the raw 32-byte public key>"
+```text
+/bosun approve <head sha>
+bosun-sig ed25519 <key id> <base64 of the 64-byte signature>
 ```
 
-Make a key with `openssl genpkey -algorithm ed25519 -out key.pem`; its public key is
-`openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`. Enroll or rotate a key with
-a pull request to `.bosun/approvers.toml` that the owner approves on GitHub. The signer posts with
-`bosun approve <pr>@<head> --sign-key key.pem` (`--print` shows the comment without posting). A
-repo's `risk` workflow runs the bosun release pinned in `.bosun/version`, so signed approvals
-count in CI only once that pin is a release with this feature.
+The signed message is exactly the UTF-8 bytes `bosun-approve v1 <owner>/<repo>#<pr> <head sha>`,
+with no trailing newline and owner and repo in lower case. So a signature for another head,
+another pull request or another repo never verifies. `risk-check` counts it, as
+`approved by key <id>`, only when:
+
+- the key id is listed in `.bosun/approvers.toml` read from the default branch (never the pull
+  request's copy, so a pull request that adds its own key does not count);
+- the signature verifies for this repo, this pull request and its current head, and line 1 names
+  that head;
+- `governance/owners.toml` lists owners and no owner's newest review on the head requests changes;
+- the pull request does not change `.bosun/approvers.toml`, `governance/owners.toml` or a
+  `CODEOWNERS` file, and bosun could see its whole diff (no R-unseen). Key and owner changes always
+  need the owner's own GitHub approval, so a stolen key cannot enroll keys or owners.
+
+A missing or unreadable `.bosun/approvers.toml` turns the feature off; a malformed file, an
+unknown key id or a bad signature counts as no approval and never errors the check.
+
+**Enroll a key** (once per key; rotate the same way):
+
+1. Where the signer runs (the orchestrator's own container; the private key is never shared),
+   make a key: `openssl genpkey -algorithm ed25519 -out key.pem`.
+2. Print its public key: `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`.
+3. Open a pull request that adds the key to `.bosun/approvers.toml` (R-gov). The owner approves it
+   on GitHub, with a review or a plain-token `/bosun approve <sha>` comment, and it merges.
+
+   ```toml
+   [[key]]
+   id = "orchestrator-2026-10"
+   ed25519 = "<base64 of the raw 32-byte public key>"
+   role = "owner"   # the default; "delegate" for delegated decisions (below)
+   ```
+
+4. Sign and post: `bosun approve <pr>@<head> --sign-key key.pem`. The `<head>` is the commit the
+   owner approved; if the pull request moved on, nothing is signed (exit 3). `--print` shows the
+   comment without posting. `bosun approve --list` lists the ready pull requests with their heads.
+
+A removed key stops counting once its removal merges. The `risk` workflow runs the bosun release
+pinned in `.bosun/version`, so signed approvals count in CI only with a pin of 0.2.1 or later.
 
 ### Delegated decisions
 
 Since bosun 0.2.1 a repo can let one Claude session decide some high-risk pull requests itself. A
-key in `.bosun/approvers.toml` gets `role = "delegate"`; the delegate signs with
-`bosun approve <pr>@<head> --sign-key <pem> --as delegate`. `risk-check` counts it only when all
+key in `.bosun/approvers.toml` gets `role = "delegate"`; the delegate signs the message
+`bosun-delegate v1 <owner>/<repo>#<pr> <head sha>` (same comment shape) with
+`bosun approve <pr>@<head> --sign-key <pem> --as delegate`. Each role verifies only its own
+message, so a delegate signature never counts as an owner's. `risk-check` counts it only when all
 hold:
 
 - every rule matched on the head is `approval = "delegate"` (any owner rule needs the owner, and a
@@ -183,8 +212,7 @@ always go to the owner.
 
 The rules `bosun init` seeds have no `delegate` class, so the mode is off until you opt in rules.
 bosun's own repo delegates R-ci, R-gate and R-deps (after the floor, that leaves `deny.toml`, the
-toolchain files, `.config/**` and `profiles/**` to a delegate); this opt-in is merged on bosun's
-`main` and not in a release yet. To turn delegation off at once, delete the delegate key from
+toolchain files, `.config/**` and `profiles/**` to a delegate); its release does this since 0.2.3. To turn delegation off at once, delete the delegate key from
 `.bosun/approvers.toml` in a pull request the owner approves. Releases stay human through the
 `release` environment.
 
