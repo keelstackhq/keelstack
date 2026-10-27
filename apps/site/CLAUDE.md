@@ -13,6 +13,10 @@ in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 - Machine-readable docs come from the same `.md` sources (`src/lib/docs-md.ts`): each page as
   Markdown at `/docs/<page>.md` (`src/pages/docs/[slug].md.ts`, overview `/docs/index.md`) and all
   of them in `/llms-full.txt`. `public/_headers` serves the `.md` files as `text/markdown`.
+- `build` also runs `scripts/docspack.mjs`: it packs `dist/docs/*.md` into the docspack package
+  named in `docspack.json` and writes `dist/docspack/<name>-<version>.tgz`; it fails when a page is
+  missing from the pack, or when the docs changed but `docspack.json`'s `version` did not: then bump
+  the version, the URL on Getting started and `sources` (the build prints the new hash).
 - Astro runs through package scripts (`astro dev`, `astro build`); never `vp run`.
 - Astro's own `vite` resolves to the Vite+ core through the root override: one vite in the lockfile.
 - oxlint does not lint `.astro` templates; only TS/TSX is linted. Review `.astro` files by hand.
