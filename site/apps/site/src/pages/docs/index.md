@@ -17,6 +17,8 @@ child sessions is in the [Playbook](/docs/playbook/).
 > **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in
 > one Markdown file), or at https://keelstack.dev/llms.txt for the index. Each page is also served
 > as Markdown next to its HTML page, for example https://keelstack.dev/docs/playbook.md.
+> To answer offline from inside a repo, install the docs as a docspack package
+> ([Getting started, step 8](/docs/getting-started/#8-local-docs-for-agents-docspack)).
 
 ## The tools
 

@@ -211,7 +211,35 @@ bosun pr <task> --auto-merge            # after the checks are green; GitHub mer
 `--auto-merge` needs the ruleset and auto-merge from step 4. On the trial repo (private, free
 plan, so no ruleset) every pull request was merged by hand instead.
 
-## 8. Releases
+## 8. Local docs for agents (docspack)
+
+These docs are also a [docspack](https://www.npmjs.com/package/docspack) documentation package,
+`@keelstackhq/docspack`, built from the same Markdown as this site. An agent in your repo can then
+answer from them offline, with bounded output (docspack needs Node 22.5 or later):
+
+```bash
+pnpm add -D docspack@1.5.0 \
+  "@keelstackhq/docspack@https://keelstack.dev/docspack/keelstackhq-docspack-2026.10.27.tgz"
+pnpm exec docspack sync
+pnpm exec docspack ask "how do I approve a pull request from chat" --json
+```
+
+`sync` indexes the docs packages the repo depends on and makes no network requests; `ask` returns
+at most 3 chunks and 3,000 tokens by default. In a repo with hull's `docs` piece, also list it in
+`docs/packs.json` so `pnpm docs:packs` reports it; add this entry under `packs`, next to the
+existing ones:
+
+```json
+"keelstack": { "package": "@keelstackhq/docspack", "source": "vendor" }
+```
+
+keelstack.dev serves only the current version of the tarball, and your lockfile records its
+checksum. When the docs move to a new version, the old file goes away, so a fresh
+`pnpm install --frozen-lockfile` (in CI, or a new clone) fails until you run the `pnpm add` line
+again with the new file name from this page. A version never changes its content (the site's build
+refuses that). The package is not on the npm registry yet.
+
+## 9. Releases
 
 A repo that publishes packages releases through `hoist release` in its release workflow; agents
 never tag. The first publish needs the owner once (`hoist release bootstrap`, then a re-run of
