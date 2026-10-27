@@ -4,7 +4,8 @@ Notes for AI agents that are specific to this repository. `CLAUDE.md` imports th
 freely, template updates never touch it.
 
 - What this project is: the landing page of keelstack, the family of developer tools under the
-  `keelstackhq` org (hull, splice, hoard; see D-001). One static Astro site in `apps/site`,
+  `keelstackhq` org (hull, splice, hoard; see D-001). One static Astro site in `apps/site`
+  and its docs as the npm package `@keelstackhq/docspack` (`packages/docspack`),
   deployed to the Cloudflare Pages project `keelstack-landing` by `.github/workflows/deploy.yml`
   (push to `main`, or run it by hand). Nothing else lives here.
 - Generated from: `keelstackhq/hull@e485214f8c7f5bebb25c31d480a9d6b6e6b45e68` with
@@ -114,9 +115,12 @@ freely, template updates never touch it.
 - 2026-10-27 Agents round 2/2: the docs as a docspack package (`@keelstackhq/docspack`, built with
   the site, tarball at keelstack.dev/docspack/), Getting started step 8 and llms.txt name it.
   TODO(copy): an npm publish of the package (owner step).
-- 2026-10-27 docspack release: `docspack-release.yml` (push to `main` touching
-  `apps/site/docspack.json`, or by hand) checks npm for the version, then builds and publishes in
-  environment `release` with OIDC, no `NPM_TOKEN`. Owner bootstrap under Blocked.
+- 2026-10-27 docspack package: the docs package moved to `packages/docspack` (version `0.1.0`,
+  `"hull": { "release": "ts-lib" }`), released by hull v0.3.0's `release.yml` and
+  `release-plan.mjs` (hand copies: with no main `.splice/lock.toml`, `splice update` does not
+  refresh them) on a `docspack-v<version>` tag; `docspack-release.yml`, the site-served
+  tarball and `apps/site/docspack.json` are gone. Getting started installs it from npm. Owner
+  setup under Blocked.
 
 ## Blocked
 
@@ -127,22 +131,38 @@ Each item needs a human:
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
-- **docspack on npm (one time).** `.github/workflows/docspack-release.yml` publishes
-  `@keelstackhq/docspack` with npm trusted publishing, but npm needs the package to exist first.
-  1. Phone (github.com in the browser): repo Settings → Environments → New environment `release`;
-     Required reviewers: the owner; Deployment branches and tags: Selected, add `main`.
-  2. Owner's machine (needs the npm CLI and 2FA, not doable on a phone), after the deploy that
-     added `repository` to the package (2026-10-27): `npm login`, download
-     `https://keelstack.dev/docspack/keelstackhq-docspack-<version>.tgz` (the version in
-     `apps/site/docspack.json`), then `npm publish keelstackhq-docspack-<version>.tgz --access public`.
-  3. Phone (npmjs.com): package `@keelstackhq/docspack` → Settings → Trusted Publisher → GitHub
-     Actions: Organization `keelstackhq`, Repository `keelstack`, Workflow filename
-     `docspack-release.yml`, Environment `release`. Optional: Publishing access → require 2FA and
-     disallow tokens.
-  4. Later releases need nothing by hand but one tap: a PR bumps `version` and `sources` in
-     `docspack.json`; after the merge the workflow waits on `release`, the owner taps Review
-     deployments → Approve and deploy in the GitHub app or browser, and it publishes. A version
-     already on npm is skipped, so the first version from step 2 is not published twice.
+- **docspack on npm (one time).** `packages/docspack` is released like a hull ts-lib: a pushed tag
+  `docspack-v<version>` runs `.github/workflows/release.yml`, which publishes from the environment
+  `release` with npm trusted publishing (no npm token). npm needs the package to exist first.
+  1. Environment `release` with a tag rule `*-v*` and the owner as required reviewer (`gh` as a
+     repo admin):
+     ```bash
+     gh api -X PUT repos/keelstackhq/keelstack/environments/release --input - <<EOF
+     { "reviewers": [{ "type": "User", "id": $(gh api user --jq .id) }],
+       "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
+     EOF
+     gh api -X POST repos/keelstackhq/keelstack/environments/release/deployment-branch-policies \
+       -f name='*-v*' -f type=tag
+     ```
+  2. First publish of the name, as a placeholder `0.0.0` (as `hoist release bootstrap` does), on
+     the owner's machine (npm login with 2FA; nothing else needed):
+     ```bash
+     mkdir docspack-placeholder && cd docspack-placeholder
+     echo '{"name":"@keelstackhq/docspack","version":"0.0.0","description":"Placeholder; the docs start at 0.1.0."}' > package.json
+     npm login && npm publish --access public
+     ```
+  3. Trusted publisher (`npm trust` needs npm 11.15.0 or later, per hoist's README; `npx` runs one
+     without changing yours):
+     ```bash
+     npx npm@11.21.1 trust github @keelstackhq/docspack --file release.yml \
+       --repository keelstackhq/keelstack --environment release --allow-publish
+     ```
+     npm drops a trusted publisher that sees no publish within 2 days, so run step 4 for the
+     current version (`0.1.0`) right after.
+  4. Each release: a PR bumps `version` in `packages/docspack/package.json`; after the merge,
+     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`, then approve
+     the `release` deployment (Review deployments → Approve and deploy). A version already on npm
+     is skipped.
 
 <!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
 

@@ -145,3 +145,13 @@ The owner asked for docs an AI can be pointed at. Decisions:
   install needs the npm package: `.github/workflows/docspack-release.yml` publishes each new
   version (trusted publishing, environment `release`) after a one-time owner bootstrap; a hull
   `docs/packs.json` entry follows once it is on npm.
+
+## Addendum (2026-10-27): docspack as a workspace package
+
+At the owner's request the package moved out of the site build into `packages/docspack`, released
+the regular hull way: `version` in its `package.json`, `"hull": { "release": "ts-lib" }`, a human
+pushes `docspack-v<version>`, and hull v0.3.0's template-owned `release.yml` and
+`release-plan.mjs` publish it from the `release` environment with provenance. Its build copies
+`apps/site/dist/docs/*.md` and runs `docspack build` with the settings in its `package.json`.
+Getting started installs it from npm; the site no longer serves a tarball, so the version and
+checksum guard (`apps/site/docspack.json`) and `docspack-release.yml` are gone.
