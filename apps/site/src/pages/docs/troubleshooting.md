@@ -153,8 +153,11 @@ hand (as on a private repo without rulesets) leaves the state label and the leas
 ### A hook refuses a harmless command that mentions a state label
 
 In bosun 0.2.0 the label-lock hook refuses any shell command naming a `bosun:state/` label that
-does not start with `bosun`, even a read-only `grep` or a heredoc. Since 0.2.1, read-only commands
-and heredoc prose pass.
+does not start with `bosun`, even a read-only `grep` or a heredoc. Since 0.2.1, read-only shell
+commands pass. The rust-canary trial on 0.2.2 still saw read-only GitHub MCP tools (such as
+`list_issues` with a state label filter) and heredoc prose refused; bosun's `main` (after 0.2.3,
+not released yet) lets both pass. Until then, keep state labels out of heredocs and use `gh`
+for listings by label.
 
 ### `bosun doctor` reports the Claude GitHub App as missing
 
@@ -180,8 +183,9 @@ child session.
 
 ### `bosun pr --auto-merge` fails with "422 Auto merge is not allowed for this repository"
 
-**Why.** The repo setting "Allow auto-merge" is off (found on the rust-canary trial; bosun's fix
-text still says to retry).
+**Why.** The repo setting "Allow auto-merge" is off (found on the rust-canary trial). bosun 0.2.3's
+fix text still says to retry; on bosun's `main` (after 0.2.3, not released yet) it names this fix,
+and `bosun pr` also says "push the branch" when the branch is not on GitHub yet.
 
 **Fix.** Turn on auto-merge (`hoist apply --area github`, or the repo settings), or let the
 orchestrator or the owner merge.
@@ -192,8 +196,9 @@ orchestrator or the owner merge.
 the plain session id and refuses the Edit tool on the leased paths (rust-canary trial, bosun 0.2.2).
 The per-task id is meant for wave agents in their own berth workspace.
 
-**Workaround** (from the trial, findings G7; bosun's AGENTS.md still tells every agent to set it):
-set `BOSUN_SESSION=<session>/<task>` only inside a wave agent's `berth up` workspace, and claim
+**Fix.** On bosun's `main` (after 0.2.3, not released yet) a session may edit paths leased under
+its own `<session>/<task>` ids. With 0.2.3, the workaround from the trial (findings G7): set
+`BOSUN_SESSION=<session>/<task>` only inside a wave agent's `berth up` workspace, and claim
 without it in a session that works on its own.
 
 ### `.bosun/fold-fragments.sh` gives "permission denied"

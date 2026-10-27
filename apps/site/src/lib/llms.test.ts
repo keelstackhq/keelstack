@@ -2,7 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { readyDocs } from "../data/docs";
 import { docMdPath } from "./docs-md";
 import { agentRows } from "../data/content";
-import { moreTools, tools } from "../data/tools";
+import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { buildLlmsTxt } from "./llms";
 
@@ -24,7 +24,7 @@ describe("buildLlmsTxt", () => {
 
   it("lists the agent keys", () => {
     expect(out).toContain("## For agents");
-    expect(agentRows).toHaveLength(4);
+    expect(agentRows).toHaveLength(5);
     for (const r of agentRows) expect(out).toContain(r.key);
   });
 
@@ -43,9 +43,8 @@ describe("buildLlmsTxt", () => {
     expect(out).toContain("https://keelstack.dev/llms-full.txt");
   });
 
-  it("lists bosun, hoist and berth with their versions", () => {
-    expect(moreTools.map((t) => t.name)).toEqual(["bosun", "hoist", "berth"]);
-    for (const t of moreTools) {
+  it("lists all six tools with their versions", () => {
+    for (const t of tools) {
       expect(out).toContain(`- [${t.name}](${t.repo}) (${t.status}): `);
     }
   });
