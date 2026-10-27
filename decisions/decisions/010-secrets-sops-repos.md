@@ -25,11 +25,12 @@ hull docs/superpowers/specs/2026-10-27-secrets-and-ci-providers-design.md.
 - CI decrypts only with `hoist secrets exec` (the `keelstackhq/hoist/secrets` action, the
   `secrets-run` reusable workflow, or the CircleCI `secrets-exec` command), in jobs whose workflow
   and executed code come from main, a release tag or a `workflow_run` deploying an artifact; never
-  on `pull_request`, `pull_request_target`, `issue_comment` or forks. Every GitHub environment and
-  CircleCI context holding `SOPS_AGE_KEY` is restricted to `main` (or release tags), and consumers
-  pin the action by commit SHA.
+  on `pull_request`, `pull_request_target`, `issue_comment` or forks. Every GitHub environment holding
+  `SOPS_AGE_KEY` is restricted to `main` (or, for `release`, `<name>-v<semver>` tags protected by an
+  owner-only tag ruleset), every CircleCI context to `main` (no tags; releases are GitHub-only), and
+  consumers pin the action by commit SHA.
 - Agents never hold an age private key or see plaintext; decrypting commands are owner- or CI-only.
-  Changes to secrets.toml, .sops.yaml, access.toml, *.sops.yaml, workflows and .circleci/** are
+  Changes to `secrets.toml`, `.sops.yaml`, `access.toml`, `*.sops.yaml`, workflows and `.circleci/**` are
   owner-approved (bosun R-secrets).
 
 ## Consequences
