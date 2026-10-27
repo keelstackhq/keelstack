@@ -142,4 +142,6 @@ The owner asked for docs an AI can be pointed at. Decisions:
   the version does not, since a consumer's lockfile pins the tarball's checksum.
 - A repo installs it from the tarball URL (`pnpm add -D docspack@1.5.0 "@keelstackhq/docspack@<url>"`),
   then `docspack sync` and `docspack ask --json`. Only the current version is served, so a pinned
-  install needs the npm package: proposed to the orchestrator, with a hull `docs/packs.json` entry.
+  install needs the npm package: `.github/workflows/docspack-release.yml` publishes each new
+  version (trusted publishing, environment `release`) after a one-time owner bootstrap; a hull
+  `docs/packs.json` entry follows once it is on npm.

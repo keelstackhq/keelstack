@@ -114,6 +114,9 @@ freely, template updates never touch it.
 - 2026-10-27 Agents round 2/2: the docs as a docspack package (`@keelstackhq/docspack`, built with
   the site, tarball at keelstack.dev/docspack/), Getting started step 8 and llms.txt name it.
   TODO(copy): an npm publish of the package (owner step).
+- 2026-10-27 docspack release: `docspack-release.yml` (push to `main` touching
+  `apps/site/docspack.json`, or by hand) checks npm for the version, then builds and publishes in
+  environment `release` with OIDC, no `NPM_TOKEN`. Owner bootstrap under Blocked.
 
 ## Blocked
 
@@ -124,6 +127,22 @@ Each item needs a human:
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
+- **docspack on npm (one time).** `.github/workflows/docspack-release.yml` publishes
+  `@keelstackhq/docspack` with npm trusted publishing, but npm needs the package to exist first.
+  1. Phone (github.com in the browser): repo Settings → Environments → New environment `release`;
+     Required reviewers: the owner; Deployment branches and tags: Selected, add `main`.
+  2. Owner's machine (needs the npm CLI and 2FA, not doable on a phone), after the deploy that
+     added `repository` to the package (2026-10-27): `npm login`, download
+     `https://keelstack.dev/docspack/keelstackhq-docspack-<version>.tgz` (the version in
+     `apps/site/docspack.json`), then `npm publish keelstackhq-docspack-<version>.tgz --access public`.
+  3. Phone (npmjs.com): package `@keelstackhq/docspack` → Settings → Trusted Publisher → GitHub
+     Actions: Organization `keelstackhq`, Repository `keelstack`, Workflow filename
+     `docspack-release.yml`, Environment `release`. Optional: Publishing access → require 2FA and
+     disallow tokens.
+  4. Later releases need nothing by hand but one tap: a PR bumps `version` and `sources` in
+     `docspack.json`; after the merge the workflow waits on `release`, the owner taps Review
+     deployments → Approve and deploy in the GitHub app or browser, and it publishes. A version
+     already on npm is skipped, so the first version from step 2 is not published twice.
 
 <!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
 

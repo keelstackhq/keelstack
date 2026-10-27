@@ -59,6 +59,8 @@ try {
   pkg.description =
     "The keelstack docs (https://keelstack.dev/docs/) as a docspack documentation package.";
   pkg.homepage = "https://keelstack.dev/docs/";
+  // npm checks provenance from trusted publishing against this URL.
+  pkg.repository = { type: "git", url: "git+https://github.com/keelstackhq/keelstack.git" };
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
 
   const dest = join(root, "dist/docspack");
