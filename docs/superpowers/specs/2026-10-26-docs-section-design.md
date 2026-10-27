@@ -114,3 +114,18 @@ Each PR is green on its own (`pnpm run ci`, build, screenshots at 390 and 1280 p
    bootstraps and runs a repo with an orchestrator session, child sessions and waves. Parts that
    come only from the orchestrator's brief, not from a repo, are labelled **Practice**.
 6. Troubleshooting, final TODO(copy) list in the project notes.
+
+## Addendum (2026-10-27): docs for AI agents
+
+The owner asked for docs an AI can be pointed at. Decisions:
+
+- `/llms.txt` stays the index (llmstxt.org shape); its Docs section links each page's Markdown
+  version and names `/llms-full.txt`. It also lists bosun, hoist and berth (`moreTools` in
+  `src/data/tools.ts`) next to the three tools with cards.
+- `/docs/<page>.md` (overview: `/docs/index.md`) and `/llms-full.txt` are static endpoints built
+  from the same `.md` files as the HTML pages through `import.meta.glob` (`src/lib/docs-md.ts`): the
+  frontmatter is dropped, the title and summary come from `src/data/docs.ts`, site-relative
+  `/docs/...` links become absolute links to the Markdown pages, and the sources are listed at
+  the end. No hand-copied duplicate.
+- `/docs/` opens with a "For AI agents" note naming both files.
+- Tests fail when a ready page is missing from `/llms.txt` or `/llms-full.txt`.

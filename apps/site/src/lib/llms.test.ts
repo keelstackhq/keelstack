@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
-import { docHref, readyDocs } from "../data/docs";
+import { readyDocs } from "../data/docs";
+import { docMdPath } from "./docs-md";
 import { agentRows } from "../data/content";
-import { tools } from "../data/tools";
+import { moreTools, tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { buildLlmsTxt } from "./llms";
 
@@ -31,11 +32,22 @@ describe("buildLlmsTxt", () => {
     expect(out).toContain("## Docs");
     for (const d of readyDocs()) {
       expect(out).toContain(
-        `- [${d.title}](https://keelstack.dev${docHref(d.slug)}): ${d.summary}`,
+        `- [${d.title}](https://keelstack.dev${docMdPath(d.slug)}): ${d.summary}`,
       );
     }
     expect(out.indexOf("## For agents")).toBeLessThan(out.indexOf("## Docs"));
     expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("## Get started"));
+  });
+
+  it("points agents at llms-full.txt", () => {
+    expect(out).toContain("https://keelstack.dev/llms-full.txt");
+  });
+
+  it("lists bosun, hoist and berth with their versions", () => {
+    expect(moreTools.map((t) => t.name)).toEqual(["bosun", "hoist", "berth"]);
+    for (const t of moreTools) {
+      expect(out).toContain(`- [${t.name}](${t.repo}) (${t.status}): `);
+    }
   });
 
   it("includes the splice command and its caption", () => {

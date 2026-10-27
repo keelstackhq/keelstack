@@ -1,15 +1,18 @@
-import { docHref, readyDocs } from "../data/docs";
+import { readyDocs } from "../data/docs";
 import { agentRows, hero, sections } from "../data/content";
-import { tools } from "../data/tools";
+import { moreTools, tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
+import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
 
 export function buildLlmsTxt(): string {
   const on = new Set(DEFAULT_ON);
-  const toolLines = tools.map((t) => `- [${t.name}](${t.repo}) (${t.status}): ${t.pitch}`);
+  const toolLines = [...tools, ...moreTools].map(
+    (t) => `- [${t.name}](${t.repo}) (${t.status}): ${t.pitch}`,
+  );
   const agentLines = agentRows.map((r) => `- \`${r.key}\`: ${r.text}`);
   const docLines = readyDocs().map(
-    (d) => `- [${d.title}](${SITE_URL}${docHref(d.slug)}): ${d.summary}`,
+    (d) => `- [${d.title}](${SITE_URL}${docMdPath(d.slug)}): ${d.summary}`,
   );
   return [
     "# keelstack",
@@ -27,6 +30,8 @@ export function buildLlmsTxt(): string {
     ...agentLines,
     "",
     "## Docs",
+    "",
+    `All docs in one file: ${SITE_URL}/llms-full.txt. Each page as Markdown:`,
     "",
     ...docLines,
     "",

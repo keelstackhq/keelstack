@@ -9,7 +9,7 @@ workflows, or from the owner where a repo is tagged by hand.
 ## Releasing with hoist
 
 The flow of the keelstack tools themselves (hoist, berth, bosun) and of hull's `template-rust`
-(unreleased v0.3.0).
+(since hull v0.3.0).
 `.github/workflows/release.yml` runs `hoist release` on every push to `main`:
 
 1. **Release pull request.** Job `prepare` runs `hoist release prepare`: it computes the next
@@ -25,7 +25,7 @@ The flow of the keelstack tools themselves (hoist, berth, bosun) and of hull's `
 4. `prepare` then opens, updates or closes the next release pull request.
 
 Nothing releases until the owner switches it on with a repository variable (`HOIST_RELEASE` in
-hull's `template-rust` on hull `main`, `BOSUN_RELEASE` in bosun): until then a push to `main` runs `detect` only.
+hull's `template-rust`, `BOSUN_RELEASE` in bosun): until then a push to `main` runs `detect` only.
 
 - If `publish` fails, fix the cause outside the repo (a registry setting, a trusted publisher, a
   token) and **re-run the failed job**; do not push a fix commit. Finished steps are skipped.
@@ -68,12 +68,15 @@ Never publish a real npm version by hand: npm versions are immutable.
 
 splice's own `release.yml` (since 2026-10-26) skips the release pull request: a push to `main`
 whose version has no tag yet runs a `tag` job that creates the tag, and the same run releases it,
-after the `release` environment approval. The tag has to be made in the same run because a tag
+after the `release` environment approval. hull's own `release.yml` (since v0.3.0) works the same
+way for a template: a push to `main` whose `CHANGELOG.md` top heading is a new dated
+`## v<X.Y.Z> — YYYY-MM-DD` is tagged and released after the approval; `— unreleased` releases
+nothing. The tag has to be made in the same run because a tag
 pushed with `GITHUB_TOKEN` starts no other workflow.
 
 ## Releasing from hull's `template`
 
-hull's `template` (v0.2.2) uses a different `release.yml`: a person pushes a tag
+hull's `template` (v0.3.0; unchanged since v0.2.x) uses a different `release.yml`: a person pushes a tag
 `<name>-v<version>` (for example `cli-v1.2.0`) after the version bump has merged, and the workflow
 publishes that package (npm through trusted publishing with provenance, and GitHub Releases for
 CLIs). Human steps first: a `release` environment with a tag rule, the first publish of each new
@@ -132,19 +135,17 @@ To change a decision, open a pull request in the decisions repo that adds
 (`channel/pieces/snapshot/files/docs/agents/org-decisions.md`); the owner merges. Superseded
 decisions leave the index; their files stay, marked superseded.
 
-Current keelstackhq decisions (D-001 to D-006): the org and npm scope are `keelstackhq`; the
-decisions repo records settled cross-repo decisions; hull and splice share
-`docs/template-format.md`; org decisions reach repos as this channel; shared template rules
-bind both renderers; agents never merge, tag or force-push.
-
-Pending the owner's merge (decisions PR #6, 2026-10-26):
+Current keelstackhq decisions (D-001 to D-005, D-007, D-008): the org and npm scope are
+`keelstackhq`; the decisions repo records settled cross-repo decisions; hull and splice share
+`docs/template-format.md`; org decisions reach repos as this channel; shared template rules bind
+both renderers. The two newest, both settled on 2026-10-26:
 
 - **D-007, CI minutes.** Run the repo's local CI mirror before every push; one push per pull
   request, with review rounds done locally; workflows skip comment, label and edit events at job
   level; small jobs fold into one that keeps `ci-ok`; Windows and macOS only in release workflows;
   scheduled workflows at most weekly.
-- **D-008, merges and tags** (replaces D-006). Child sessions never merge, push or move tags, or
+- **D-008, merges and tags** (supersedes D-006). Child sessions never merge, push or move tags, or
   force-push; they get the required checks green and may enable auto-merge. The orchestrator
   session may merge once the required checks are green and any owner approval is in. Release
   workflows may tag on a version-bump merge, and the owner still approves `release`; tag-only repos
-  (hull, splice's `v1`) are tagged by the owner; the decisions repo stays owner-merged.
+  without such a workflow are tagged by the owner; the decisions repo stays owner-merged.

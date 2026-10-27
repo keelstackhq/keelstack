@@ -29,10 +29,10 @@ test("terminal shows the default command, real create lines and file counts", ()
   // The command that was run to record the output below.
   expect(terminal.command).toEqual([
     "pnpm dlx @keelstackhq/splice@0.2.1 new \\",
-    "gh:keelstackhq/hull//template my-repo --ref v0.2.0 \\",
+    "gh:keelstackhq/hull//template my-repo --ref v0.3.0 \\",
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.2.0, splice 0.2.1), in output order.
+  // Lines copied from `splice new` output (hull v0.3.0, splice 0.2.1), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",
@@ -40,7 +40,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     "create  apps/api/src/index.ts  seed",
     "create  apps/web/src/app.tsx  seed",
   ]);
-  expect(terminal.summary).toBe("# … 53 files: 31 owned, 8 shared, 14 seed; then pnpm install");
+  expect(terminal.summary).toBe("# … 54 files: 32 owned, 8 shared, 14 seed; then pnpm install");
 });
 
 test("stats shapes", () => {

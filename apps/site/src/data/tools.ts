@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.2.0",
+    status: "v0.3.0",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -50,5 +50,28 @@ export const tools: Tool[] = [
     detail: "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
     detailMono: true,
     repo: `${org.url}/hoard`,
+  },
+];
+
+// The other keelstack tools, listed in /llms.txt (the landing page shows cards for the three above).
+export const moreTools: { name: string; status: string; pitch: string; repo: string }[] = [
+  {
+    name: "bosun",
+    status: "v0.2.3",
+    pitch:
+      "Orchestration for agent-built repos: claims and leases, waves, gates, risk checks, review verdicts, approvals and cost.",
+    repo: `${org.url}/bosun`,
+  },
+  {
+    name: "hoist",
+    status: "v0.2.0",
+    pitch: "Provisions and verifies a repo's GitHub and Cloudflare setup, and runs releases.",
+    repo: `${org.url}/hoist`,
+  },
+  {
+    name: "berth",
+    status: "v0.1.0",
+    pitch: "An isolated workspace per parallel agent: worktree, env files, ports and a database.",
+    repo: `${org.url}/berth`,
   },
 ];
