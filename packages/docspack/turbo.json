@@ -3,7 +3,7 @@
   "extends": ["//"],
   "tasks": {
     "build": {
-      "dependsOn": ["@keelstackhq/site#build"],
+      "dependsOn": ["^build"],
       "outputs": [".llms/**", "llms.txt", "dist/**"]
     }
   }

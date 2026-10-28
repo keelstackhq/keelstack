@@ -150,8 +150,9 @@ The owner asked for docs an AI can be pointed at. Decisions:
 
 At the owner's request the package moved out of the site build into `packages/docspack`, released
 the regular hull way: `version` in its `package.json`, `"hull": { "release": "ts-lib" }`, a human
-pushes `docspack-v<version>`, and hull v0.3.0's template-owned `release.yml` and
-`release-plan.mjs` publish it from the `release` environment with provenance. Its build copies
+pushes `docspack-v<version>`, and hull's template-owned `release.yml` and `release-plan.mjs`
+(main `c355525`) publish it from the `release` environment with provenance. Its build copies
 `apps/site/dist/docs/*.md` and runs `docspack build` with the settings in its `package.json`.
-Getting started installs it from npm; the site no longer serves a tarball, so the version and
-checksum guard (`apps/site/docspack.json`) and `docspack-release.yml` are gone.
+`docspack-release.yml` is gone. The site keeps serving its tarball, and Getting started keeps
+installing it, until 0.1.0 is on npm; a follow-up PR then switches Getting started and `/llms.txt`
+to npm and removes the site's packing (`apps/site/scripts/docspack.mjs`, `docspack.json`).

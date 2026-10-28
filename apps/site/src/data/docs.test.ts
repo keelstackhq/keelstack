@@ -91,9 +91,20 @@ describe("cloud environment page", () => {
 });
 
 describe("docspack package", () => {
-  const page = readFileSync(new URL("../pages/docs/getting-started.md", import.meta.url), "utf8");
-  it("the Getting started page installs it from npm", () => {
-    expect(page).toContain("pnpm add -D docspack@1.5.0 @keelstackhq/docspack\n");
-    expect(page).not.toContain("keelstack.dev/docspack/");
+  const meta = JSON.parse(
+    readFileSync(new URL("../../docspack.json", import.meta.url), "utf8"),
+  ) as {
+    name: string;
+    version: string;
+  };
+  it("is named and versioned like a docspack vendor package", () => {
+    expect(meta.name).toBe("@keelstackhq/docspack");
+    expect(meta.version).toMatch(/^\d{4}\.\d{1,2}\.\d{1,2}$/);
+  });
+  it("the Getting started page installs the current tarball", () => {
+    const page = readFileSync(new URL("../pages/docs/getting-started.md", import.meta.url), "utf8");
+    expect(page).toContain(
+      `https://keelstack.dev/docspack/keelstackhq-docspack-${meta.version}.tgz`,
+    );
   });
 });
