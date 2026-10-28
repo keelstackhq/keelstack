@@ -214,12 +214,12 @@ plan, so no ruleset) every pull request was merged by hand instead.
 ## 8. Local docs for agents (docspack)
 
 These docs are also a [docspack](https://www.npmjs.com/package/docspack) documentation package,
-`@keelstackhq/docspack`, built from the same Markdown as this site. An agent in your repo can then
-answer from them offline, with bounded output (docspack needs Node 22.5 or later):
+[`@keelstackhq/docspack`](https://www.npmjs.com/package/@keelstackhq/docspack) on npm, built from
+the same Markdown as this site. An agent in your repo can then answer from them offline, with
+bounded output (docspack needs Node 22.5 or later):
 
 ```bash
-pnpm add -D docspack@1.5.0 \
-  "@keelstackhq/docspack@https://keelstack.dev/docspack/keelstackhq-docspack-2026.10.27.tgz"
+pnpm add -D docspack@1.5.0 @keelstackhq/docspack
 pnpm exec docspack sync
 pnpm exec docspack ask "how do I approve a pull request from chat" --json
 ```
@@ -233,11 +233,9 @@ existing ones:
 "keelstack": { "package": "@keelstackhq/docspack", "source": "vendor" }
 ```
 
-keelstack.dev serves only the current version of the tarball, and your lockfile records its
-checksum. When the docs move to a new version, the old file goes away, so a fresh
-`pnpm install --frozen-lockfile` (in CI, or a new clone) fails until you run the `pnpm add` line
-again with the new file name from this page. A version never changes its content (the site's build
-refuses that). The package is not on the npm registry yet.
+Install from the default `latest` tag (0.1.0 or later); `2026.10.27` on npm is an older build.
+Your lockfile keeps the docs version you installed. For newer docs, run `pnpm add -D @keelstackhq/docspack@latest`, then
+`pnpm exec docspack sync` again.
 
 ## 9. Releases
 

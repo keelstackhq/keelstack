@@ -10,6 +10,7 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
   hull: { release: string };
   docspack: { from: string };
   repository: { url: string; directory: string };
+  license: string;
 };
 
 describe("package.json", () => {
@@ -24,6 +25,11 @@ describe("package.json", () => {
   it("ships only the docspack payload", () => {
     expect(pkg.files).toEqual([".llms", "llms.txt"]);
     expect(pkg.docspack.from).toBe("dist/pages");
+  });
+
+  it("is MIT licensed like the other keelstackhq packages, with the license file shipped", () => {
+    expect(pkg.license).toBe("MIT");
+    expect(readFileSync(new URL("../LICENSE", import.meta.url), "utf8")).toMatch(/^MIT License\n/);
   });
 
   it("names this repo for npm provenance", () => {

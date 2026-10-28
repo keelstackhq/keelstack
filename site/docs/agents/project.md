@@ -130,6 +130,11 @@ freely, template updates never touch it.
 - 2026-10-27 Secrets: the deploy job runs in environment `production` and the template-owned
   `preview.yml` is deleted, so pull requests cannot read the Cloudflare secrets (owner steps
   under Blocked). Restore previews only with hull's two-phase preview.
+- 2026-10-28 docspack 0.1.1: the owner published 0.1.0 by hand (no provenance) and configured the
+  trusted publisher; 0.1.1 adds the MIT license (`LICENSE`, as in splice, bosun, berth and hoard)
+  and is the first release through `release.yml`, which keeps the trusted publisher alive. Getting
+  started and `/llms.txt` install from npm; the site no longer packs or serves a tarball
+  (`apps/site/scripts/docspack.mjs` and `apps/site/docspack.json` removed).
 - 2026-10-28 `splice.yml` runs in environment `splice-bot` (hull's name), so pull requests cannot
   read `SPLICE_BOT_TOKEN` (owner steps under Blocked).
 
@@ -150,25 +155,19 @@ Each item needs a human:
   (Settings → Secrets and variables → Actions). Without the secret the bot falls back to
   `GITHUB_TOKEN`.
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
-- **docspack on npm (one time).** `packages/docspack` is released like a hull ts-lib: a pushed tag
+- **docspack releases.** `packages/docspack` is released like a hull ts-lib: a pushed tag
   `docspack-v<version>` runs `.github/workflows/release.yml`, which publishes from the environment
-  `release` with npm trusted publishing (no npm token). npm facts, checked against
-  docs.npmjs.com on 2026-10-28: `npm trust` needs npm 11.15.0 or later and a package that already
-  exists on the registry; a new trusted publisher expires unless it publishes within 2 days.
-  The package has no `license` field yet: TODO(owner) pick one (splice, bosun, berth and hoard
-  are MIT; this repo has no LICENSE file).
-  1. Environment `release` with a tag rule `*-v*` and the owner as required reviewer (`gh` as a
-     repo admin):
-     ```bash
-     gh api -X PUT repos/keelstackhq/keelstack/environments/release --input - <<EOF
-     { "reviewers": [{ "type": "User", "id": $(gh api user --jq .id) }],
-       "deployment_branch_policy": { "protected_branches": false, "custom_branch_policies": true } }
-     EOF
-     gh api -X POST repos/keelstackhq/keelstack/environments/release/deployment-branch-policies \
-       -f name='*-v*' -f type=tag
-     ```
-     Then protect release tags with a tag ruleset `release-tags` (only repository admins may
-     create, move or delete `*-v*` tags):
+  `release` with npm trusted publishing (no npm token). Done by the owner: the `release`
+  environment, the trusted publisher, 0.1.0 (by hand). npm facts, checked against docs.npmjs.com
+  on 2026-10-28: a new trusted publisher expires unless it publishes within 2 days, so release
+  0.1.1 through the workflow now.
+  1. Each release: a PR bumps `version` in `packages/docspack/package.json`; after the merge,
+     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`. Before
+     approving the `release` deployment (Review deployments → Approve and deploy), confirm the tag
+     is on main: `git fetch origin main && git merge-base --is-ancestor docspack-v<version> origin/main && echo on-main`.
+     A version already on npm is skipped.
+  2. Tag ruleset `release-tags`, if not set up yet (only repository admins may create, move or
+     delete `*-v*` tags):
      ```bash
      gh api -X POST repos/keelstackhq/keelstack/rulesets --input - <<'EOF'
      { "name": "release-tags", "target": "tag", "enforcement": "active",
@@ -177,27 +176,9 @@ Each item needs a human:
        "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }] }
      EOF
      ```
-  2. First publish of the name, as a placeholder `0.0.0` (as `hoist release bootstrap` does), on
-     the owner's machine (npm login with 2FA; nothing else needed):
-     ```bash
-     mkdir docspack-placeholder && cd docspack-placeholder
-     echo '{"name":"@keelstackhq/docspack","version":"0.0.0","description":"Placeholder; the docs start at 0.1.0."}' > package.json
-     npm login && npm publish --access public
-     ```
-  3. Trusted publisher (`npm trust` needs npm 11.15.0 or later, per hoist's README; `npx` runs one
-     without changing yours):
-     ```bash
-     npx npm@11.21.1 trust github @keelstackhq/docspack --file release.yml \
-       --repository keelstackhq/keelstack --environment release --allow-publish
-     ```
-     npm drops a trusted publisher that sees no publish within 2 days, so run step 4 for the
-     current version (`0.1.0`) right after.
-  4. Each release: a PR bumps `version` in `packages/docspack/package.json`; after the merge,
-     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`. Before
-     approving the `release` deployment (Review deployments → Approve and deploy), confirm the tag
-     is on main: `git fetch origin main && git merge-base --is-ancestor docspack-v<version> origin/main && echo on-main`.
-     A version already on npm is skipped. After 0.1.0 is on npm, the follow-up PR switches Getting
-     started to npm and stops serving the tarball.
+  3. Optional: deprecate the stray versions so nobody installs them:
+     `npm deprecate @keelstackhq/docspack@2026.10.27 "old build; use latest"` and the same for
+     `@keelstackhq/docspack@0.0.0-stage`.
 
 <!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
 

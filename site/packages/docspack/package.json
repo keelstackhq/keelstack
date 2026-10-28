@@ -1,7 +1,8 @@
 {
   "name": "@keelstackhq/docspack",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "The keelstack docs (https://keelstack.dev/docs/) as a docspack documentation package.",
+  "license": "MIT",
   "type": "module",
   "homepage": "https://keelstack.dev/docs/",
   "repository": {

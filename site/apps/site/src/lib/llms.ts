@@ -4,7 +4,6 @@ import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
-import docspack from "../../docspack.json";
 
 export function buildLlmsTxt(): string {
   const on = new Set(DEFAULT_ON);
@@ -30,7 +29,7 @@ export function buildLlmsTxt(): string {
     "",
     "## Docs",
     "",
-    `All docs in one file: ${SITE_URL}/llms-full.txt. Offline with docspack: ${SITE_URL}/docspack/keelstackhq-docspack-${docspack.version}.tgz (see Getting started). Each page as Markdown:`,
+    `All docs in one file: ${SITE_URL}/llms-full.txt. Offline with docspack: https://www.npmjs.com/package/@keelstackhq/docspack (see Getting started). Each page as Markdown:`,
     "",
     ...docLines,
     "",
