@@ -22,7 +22,11 @@ orchestrator adds the id when it makes the call.
 ## 2. Paste the setup script
 
 The setup script runs as root before each session and installs the pinned tools. This is bosun's
-own, as of bosun 0.2.3 (`docs/setup-script.sh` on bosun's `main`):
+own, as of bosun 0.2.3 (`docs/setup-script.sh` on bosun's `main`). On bosun's `main` (after
+0.2.3, not released yet) the script installs splice 0.3.0, hoist and berth only from npm tarballs
+whose sha512 matches the pinned integrity, and takes the Rust version from the repo's
+`rust-toolchain.toml`; paste it again after that release. A change to `docs/setup-script.sh` needs
+the owner (R-gov).
 
 ```bash
 #!/usr/bin/env bash

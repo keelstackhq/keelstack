@@ -74,6 +74,16 @@ way for a template: a push to `main` whose `CHANGELOG.md` top heading is a new d
 nothing. The tag has to be made in the same run because a tag
 pushed with `GITHUB_TOKEN` starts no other workflow.
 
+### Container images
+
+hoist does not push OCI images yet, and a `[deploy]` script cannot either (the `publish` job has
+no `packages: write`). hoist's README documents the pattern: a separate `image` job in
+`release.yml` that runs after `publish`, only in a run that released, from the release tag, with
+`packages: write`, `attestations: write` and `id-token: write`. It pushes
+`ghcr.io/<owner>/<image>:<version>` for `linux/amd64` and `linux/arm64` only when that tag does
+not exist yet, attests the digest it built with `actions/attest-build-provenance`, and you deploy
+by digest.
+
 ## Releasing from hull's `template`
 
 hull's `template` (v0.3.0; unchanged since v0.2.x) uses a different `release.yml`: a person pushes a tag
@@ -114,14 +124,46 @@ when the repo has channels and opens or refreshes one pull request on branch `sp
 | `current`   | closes an open bot pull request                            |
 | `drift`     | fails: an owned file was edited locally; nothing is pushed |
 
-- Pass a token other than `GITHUB_TOKEN` (`SPLICE_BOT_TOKEN`: a fine-grained token with Contents,
-  Pull requests and Workflows read and write, or a GitHub App token). With `GITHUB_TOKEN` the bot
-  cannot push changes to workflow files, and its pull requests run no CI.
+- Pass a token other than `GITHUB_TOKEN`. With `GITHUB_TOKEN` the bot cannot push changes to
+  workflow files, and its pull requests run no CI. hull v0.4.0 (not tagged yet) tries, in order: a GitHub App
+  (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; Contents, Pull requests and
+  Workflows write; no personal token), then `SPLICE_BOT_TOKEN` (a fine-grained token with the same
+  permissions), then `github.token`. Keep them in the environment `splice-bot` with deployment
+  branches `main` only. Session mode: set the repository variable `SPLICE_BOT=off` and run
+  `splice update` in an agent session that opens the pull request.
+- `splice update` (0.3.1) no longer suggests `--data` for a variable that only a new piece uses.
 - In a bosun repo the update pull request always touches `.splice/**`, so it is R-gov: the owner
   approves it with `/bosun approve <head sha>` every week.
 - By hand: `splice check` (exit 1 when an update is available or owned files drifted),
   `splice diff` (writes nothing), `splice update` (clean tree needed). On conflicts, resolve the
   diff3 markers, run `splice check`, then commit.
+
+## Secrets
+
+hoist 0.3.0 (not released yet) adds `hoist secrets`:
+values encrypted with sops and age in a private secrets repo, mapped into each consumer repo by a
+`secrets.toml` that holds no values. hull v0.4.0's opt-in `secrets` piece seeds that file and a
+`deploy.yml` that runs on push to `main` in the environment `prod`.
+
+| Command                                    | Who and where                                                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `hoist secrets repo init OWNER/NAME`       | owner: creates the private secrets repo with its ruleset                        |
+| `hoist secrets edit FILE`                  | owner, secrets repo: `sops` edit with your own age key                          |
+| `hoist secrets grant OWNER/REPO --env E`   | owner: a consumer environment's key; creates `preview` and `prod`, main-only    |
+| `hoist secrets sync`                       | owner, secrets repo: `.sops.yaml` from `access.toml`, re-keys changed files     |
+| `hoist secrets revoke NAME`                | owner, secrets repo: removes a recipient, new data keys, lists values to rotate |
+| `hoist secrets rotate-key NAME`            | owner, secrets repo: routine rotation of a consumer key                         |
+| `hoist secrets check [--remote]`           | anyone: validates `access.toml` or `secrets.toml`; never decrypts               |
+| `hoist secrets exec --env E --keys A,B --` | CI only: runs a command with those keys, output redacted                        |
+
+- **Keys live only in main-only environments.** `SOPS_AGE_KEY` is an environment secret of
+  `preview` and `prod` (deployment branches: `main`), never a repository secret.
+- **Pull requests never get secrets.** `secrets exec` refuses outside CI, in an agent session, on
+  a pull request or fork, and off the default branch or a release tag. A repo whose release runs
+  decrypt secrets tags `<name>-v<version>`.
+- **Agents never decrypt.** They add a key by editing `secrets.toml` and ask the owner to store the
+  value; on bosun's `main` the hook refuses `sops`, `age -d`, `hoist secrets edit|sync|grant|revoke|rotate*`
+  and reading the age key, and those files are R-secrets.
 
 ## The decisions channel
 

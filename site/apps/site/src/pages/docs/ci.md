@@ -94,9 +94,12 @@ On the rust-canary trial (a hull `template-rust` repo with bosun) a pull request
   install.)
 - **Other workflows.** `risk.yml` (on `pull_request_target` and `issue_comment`) and
   `verdict.yml` (on `issue_comment`) run the workflow file from the base branch and never check
-  out pull request code. One limit: `risk.yml` also runs on reviews, and a review event runs the
-  pull request's copy of the file; a pull request that changes workflows is R-ci, so the owner
-  sees it. main-health runs the gates on every push to `main` and weekly (nightly before 0.2.2).
+  out pull request code. In 0.2.3 `risk.yml` also runs on reviews, and a review event runs the
+  pull request's own copy of the file with `statuses: write`, so a same-repo author could forge
+  `risk-check`. On bosun's `main` (after 0.2.3, not released yet) `risk.yml` no longer runs on
+  reviews: an owner's review, or its withdrawal, counts on the next run, and a `/bosun recheck`
+  pull request comment from an owner, member or collaborator starts a run without a push
+  (otherwise re-run the risk workflow). main-health runs the gates on every push to `main` and weekly (nightly before 0.2.2).
 - **The pin** moves with an R-gov pull request. The splice update bot brings a new channel version
   and the matching pin together.
 
@@ -116,6 +119,40 @@ of them, such as cargo-deny. Pushes, the merge queue and the weekly run still ru
 0.2.0 both CIs ran everything: the rust-canary trial measured 26 s for hull's job and 69 to 83 s
 for bosun's 8 jobs.)
 
+## CircleCI
+
+hull v0.4.0 (not tagged yet) and bosun's `main` (after
+0.2.3, not released yet) can run CI on CircleCI, for both `template` and `template-rust`:
+
+- **Both** (`circleci` piece): a CircleCI job `ci-ok` next to the unchanged GitHub `ci.yml`.
+  bosun's `circleci` channel piece adds a CircleCI job `bosun-ok` (or `ci-ok` without `own_ci`)
+  that runs `bosun.yml`'s gates with the pinned, sha256-checked bosun.
+- **CircleCI only** (`circleci-only` piece): no `ci.yml` (and no `desktop.yml` or `deploy.yml`);
+  `circleci-status.yml` mirrors CircleCI's `ci-ok` and `bosun-ok` as GitHub statuses, so the
+  ruleset still requires them. bosun's `circleci-only` piece has no GitHub `bosun.yml`, and
+  main-health reads the CircleCI status of `main`'s head.
+- On CircleCI, `bosun gate` and `test-integrity` take their base from the merge base with the
+  default branch on a pull request, and run everything on a push to the default branch.
+- hoard runs there too (since hoard 0.4.0); see [Caching](#caching).
+- Desktop builds (`circleci-only` with `tauri-app`) need a weekly scheduled trigger on `main` in
+  CircleCI's Project Settings → Triggers.
+
+An existing hull repo switches with `splice add circleci`, then `splice add circleci-only` (which
+removes `ci.yml`).
+
+## Repo-specific CI (`scripts/ci-extra.sh`)
+
+hull v0.4.0 seeds `scripts/ci-extra.sh`, a no-op that the repo owns, and runs it as the last CI step
+`ci-extra` on GitHub and CircleCI. It is skipped on docs-only and unaffected pull requests. Put
+checks that only this repo needs there instead of editing the owned workflow.
+
+## Pinned actions
+
+In hull v0.4.0 every action is pinned by full commit SHA, with its version in a comment.
+[hull's `docs/actions.md`](https://github.com/keelstackhq/hull/blob/main/docs/actions.md) lists
+them all, for an org allowlist of actions. Renovate (`helpers:pinGitHubActionDigests`) keeps the
+SHAs current in generated repos. splice's update Action is pinned the same way.
+
 ## Docs-only fast path
 
 Since bosun 0.2.1: a pull request whose files are all `*.md` under `docs/` or `plans/`, or at the
@@ -132,6 +169,9 @@ included. hull's `template-rust` (since v0.3.0) does the same, with a budget of 
   GitHub Actions cache by default (10 GB per repo, branch-scoped) or your own Cloudflare R2
   bucket. The cache never fails a build: an error is a miss. Run CI on `push` to `main` so pull
   requests read a warm cache.
+- **CircleCI:** hoard's `circleci/hoard.yml` (since hoard 0.4.0) starts the server with
+  `hoard serve --detach` and stops it with `hoard stop`. CircleCI caches are not branch-scoped:
+  with hoard 0.5.0 (not released yet), pass `restore: false` on the default branch.
 - **Rust:** `Swatinem/rust-cache@v2`. hoard caches Turborepo and Vite+ tasks, not cargo builds;
   in a cargo-only repo its step only logs a notice.
 

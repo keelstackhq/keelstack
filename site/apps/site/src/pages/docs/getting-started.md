@@ -6,8 +6,9 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-27: hull v0.3.0, splice 0.2.1, bosun 0.2.3, hoist 0.2.0,
-berth 0.1.0, hoard `@v0`.
+Versions are the released ones as of 2026-10-28: hull v0.3.1, splice 0.3.1, bosun 0.2.3, hoist 0.2.0,
+berth 0.1.0, hoard v0.4.0 (`@v0`). Notes marked hull v0.4.0 describe hull's `main`, which is not
+tagged yet; it needs splice 0.3.0 or later.
 
 ## Before you start
 
@@ -26,30 +27,43 @@ berth 0.1.0, hoard `@v0`.
 Skip to step 2 if your repo already has code and you do not want hull.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.1 new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice@0.3.1 new gh:keelstackhq/hull//template my-repo \
   --data scope=my-scope --piece preact-app:web --piece hono-worker:api
 cd my-repo
 git add -A && git commit -m "chore: initial commit from hull"
 ```
 
 - `gh:keelstackhq/hull//template` means repository `keelstackhq/hull`, directory `template`.
-  Without `--ref`, splice takes the latest stable tag.
+  Without `--ref`, splice takes the latest stable tag. This is the way to start a repo; you do not
+  need a checkout of hull.
+- `--data` keys are bare variable names (`--data scope=my-scope`); a dotted key exits 2
+  (template contract rule 9.28).
 - `base` is always rendered. `--piece ID:NAME` adds a piece and names its instance. The pieces
   and their variables are listed in
   [hull's pieces reference](https://github.com/keelstackhq/hull/blob/main/docs/pieces.md);
   `scope` is the npm scope (default `acme`).
 - splice runs `git init` when needed and the template's post commands (`pnpm install`), but it
   never commits. Commit `.splice/lock.toml` with everything else and never edit it by hand.
+- splice runs post and step commands without token- or secret-like environment variables
+  (`GH_TOKEN`, `NPM_TOKEN`, names ending in `_TOKEN`, `_SECRET`, `_KEY`, …; since 0.3.1), so a
+  post step that needs a token is not supported.
+
+hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
+`circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
+`secrets.toml` and a `deploy.yml` behind the `prod` environment; it needs hoist 0.3.0, not released
+yet; see
+[Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
+`splice add circleci`, then `splice add circleci-only`.
 
 For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolchain to build),
 released since hull v0.3.0:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.1 new gh:keelstackhq/hull//template-rust my-repo \
+pnpm dlx @keelstackhq/splice@0.3.1 new gh:keelstackhq/hull//template-rust my-repo \
   --piece rust-cli:cli
 ```
 
-A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; splice 0.2.1 moves it
+A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; splice (since 0.2.1) moves it
 with `splice update --ref <branch|sha>` when the target descends from the locked commit, and a
 plain `update` or `check` considers only stable tags that descend from it.
 
@@ -58,8 +72,8 @@ plain `update` or `check` considers only stable tags that descend from it.
 Run these in the repo root, on a clean tree:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.2.1 channel add gh:keelstackhq/hull//rigging --piece claude
-pnpm dlx @keelstackhq/splice@0.2.1 channel add gh:keelstackhq/decisions//channel \
+pnpm dlx @keelstackhq/splice@0.3.1 channel add gh:keelstackhq/hull//rigging --piece claude
+pnpm dlx @keelstackhq/splice@0.3.1 channel add gh:keelstackhq/decisions//channel \
   --track main --piece import-project
 node scripts/agents-index.mjs     # hull repos: refresh the agents index
 git add -A && git commit -m "chore: add rigging and decisions channels"
@@ -85,7 +99,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.2.1 @keelstackhq/bosun@0.2.3
+npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.2.3
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -141,9 +155,15 @@ Then, still as the owner:
 
 - Check `governance/owners.toml` (the GitHub logins whose approval counts) and
   `.github/CODEOWNERS`.
-- Add the Actions secret `SPLICE_BOT_TOKEN`: a fine-grained token for this repo with Contents,
-  Pull requests and Workflows set to read and write. Without it the weekly update pull requests
-  run no CI.
+- Give the weekly update bot a token, or the update pull requests run no CI: `SPLICE_BOT_TOKEN`,
+  a fine-grained token for this repo with Contents, Pull requests and Workflows set to read and
+  write. Store it in an environment `splice-bot` whose deployment branches are only `main`, not as
+  a repository secret: a same-repo pull request's workflow can read repository secrets. hull
+  v0.4.0 and bosun's `main` run `splice.yml` in that environment; bosun 0.2.3's channel still
+  reads a repository secret. hull v0.4.0 (not tagged yet) also takes a GitHub App with the same
+  permissions instead (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; no personal
+  token), or no bot at all: set the repository variable `SPLICE_BOT=off` and run updates from a
+  session.
 - Paste `docs/setup-script.sh` into the setup script of the repo's Claude Code cloud environment
   (network allow-list and secrets: [Cloud environment](/docs/cloud/)). It
   runs as root before each session and installs Node 24, pnpm (ts-pnpm stacks), the Rust
@@ -153,7 +173,9 @@ Then, still as the owner:
   (every 15 min, Haiku). `bosun doctor` prints their prompts.
 
 `bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
-`hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist.
+`hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. On bosun's
+`main` (after 0.2.3, not released yet) `--remote` also checks the environment of every workflow job
+and warns unless only `main` may deploy to it.
 
 ## 5. Cache CI with hoard
 
@@ -168,6 +190,12 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 
 Run the workflow on `push` to `main` as well, so pull requests start from a warm cache. For a
 cargo-only repo hoard does nothing; use `Swatinem/rust-cache@v2`.
+
+On CircleCI (since hoard 0.4.0), `circleci/hoard.yml` installs a checksum-verified release and runs
+it with `hoard serve --detach` and `hoard stop`
+([hoard's CircleCI guide](https://github.com/keelstackhq/hoard/blob/main/docs/circleci.md)).
+CircleCI caches are not branch-scoped, so a PR could save a cache that `main` restores; hoard 0.5.0
+(not released yet) adds a `restore` parameter: pass `restore: false` on the default branch.
 
 ## 6. Use berth locally
 
@@ -233,7 +261,9 @@ existing ones:
 "keelstack": { "package": "@keelstackhq/docspack", "source": "vendor" }
 ```
 
-Install from the default `latest` tag (0.1.0 or later); `2026.10.27` on npm is an older build.
+Install from the default `latest` tag (0.1.1 or later, published with npm provenance);
+`2026.10.27` on npm is an older build. hull v0.4.0's `docs` piece already lists the pack, pinned
+with an exact `version`.
 Your lockfile keeps the docs version you installed. For newer docs, run `pnpm add -D @keelstackhq/docspack@latest`, then
 `pnpm exec docspack sync` again.
 

@@ -137,6 +137,16 @@ freely, template updates never touch it.
   (`apps/site/scripts/docspack.mjs` and `apps/site/docspack.json` removed).
 - 2026-10-28 `splice.yml` runs in environment `splice-bot` (hull's name), so pull requests cannot
   read `SPLICE_BOT_TOKEN` (owner steps under Blocked).
+- 2026-10-28 Docs refresh: splice 0.3.1 (bare `--data` keys, rule 9.28; post steps without token
+  env vars; update hints), hull v0.3.1 released and v0.4.0 on `main` (CircleCI and CircleCI-only,
+  `scripts/ci-extra.sh`, actions pinned by SHA with `docs/actions.md`, `secrets` piece, App token
+  or `SPLICE_BOT=off` for the update bot, `splice-bot`/`prod` main-only environments), `hoist
+  secrets` and container images (hoist 0.3.0, pending), hoard 0.4.0 on CircleCI and 0.5.0
+  `restore` (pending), bosun `main` after 0.2.3 (risk.yml off review events, `/bosun recheck`,
+  wider R-gov/R-secrets/R-ci, doctor environments, setup script). Sources cite bosun's split spec.
+  TODO(copy): when a pending release ships, drop its "not tagged yet" / "not released yet" in
+  `apps/site/src/pages/docs/*.md` (`grep -n "not tagged yet\|not released yet"`) and bump the
+  versions: hull v0.4.0, hoist 0.3.0, hoard 0.5.0, bosun after 0.2.3.
 
 ## Blocked
 

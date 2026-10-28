@@ -23,6 +23,17 @@ matches any rule is high risk.
 | R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                         |
 | R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                        |
 
+On bosun's `main` (after 0.2.3, not released yet) the rules cover more:
+
+- **R-gov** also matches every `hoist.toml`, `docs/setup-script.sh` (its pasted copy runs as root in
+  cloud environments) and the agent files in any case (`docs/agents/**`, `**/agents.md`,
+  `**/claude.md`, `**/claude.local.md`). The root `hoist.toml` lists the ruleset's required checks,
+  so it is on the critical floor: only the owner approves it, never a delegate.
+- **R-secrets** also covers sops files (`secrets.toml`, `access.toml`, `.sops.yaml`,
+  `*.sops.yaml|json`) and age keys in added lines.
+- **R-ci** covers `.circleci/**` (on the critical floor) and the config of GitLab, Buildkite,
+  Jenkins, Azure Pipelines, Bitbucket Pipelines, Travis and Drone.
+
 bosun's own repo also has R-gate (the gate code itself) and R-ci-review (below). `risk.toml` is a
 seed, so a repo set up before a rule change adds new paths by hand.
 
