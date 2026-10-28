@@ -146,10 +146,13 @@ freely, template updates never touch it.
   wider R-gov/R-secrets/R-ci, doctor environments, setup script). Sources cite bosun's split spec.
   TODO(copy): when a pending release ships, drop its "not tagged yet" / "not released yet" in
   `apps/site/src/pages/docs/*.md` (`grep -n "not tagged yet\|not released yet"`) and bump the
-  versions: hull v0.4.0, hoist 0.3.0, hoard 0.5.0, bosun after 0.2.3.
+  versions: hoard 0.5.0, bosun after 0.2.3 (hull v0.4.0 and hoist 0.3.0 done, below).
 - 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
   Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
   releases, step 1).
+- 2026-10-28 Docs on hull v0.4.0 (tag `v0.4.0` @ `50092c9`) and hoist 0.3.0 (npm): versions bumped,
+  their "not tagged yet" / "not released yet" labels dropped; the `secrets` piece decrypts through
+  `keelstackhq/hoist/secrets`.
 - 2026-10-28 Landing on splice 0.3.1 and hull v0.4.0 (re-ran the hero command: exit 0, lock hull
   0.4.0 @ `50092c9`, 57 files: 34 owned, 8 shared, 15 seed, then `pnpm install`; the shown lines
   are unchanged), hoard v0.4.0 (runs on CircleCI too) and hoist v0.3.0 (`secrets`). hoard 0.5.0
