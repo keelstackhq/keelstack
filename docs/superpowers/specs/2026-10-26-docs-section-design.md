@@ -153,6 +153,6 @@ the regular hull way: `version` in its `package.json`, `"hull": { "release": "ts
 pushes `docspack-v<version>`, and hull's template-owned `release.yml` and `release-plan.mjs`
 (main `c355525`) publish it from the `release` environment with provenance. Its build copies
 `apps/site/dist/docs/*.md` and runs `docspack build` with the settings in its `package.json`.
-`docspack-release.yml` is gone. The site keeps serving its tarball, and Getting started keeps
-installing it, until 0.1.0 is on npm; a follow-up PR then switches Getting started and `/llms.txt`
-to npm and removes the site's packing (`apps/site/scripts/docspack.mjs`, `docspack.json`).
+`docspack-release.yml` is gone. Once 0.1.0 was on npm (2026-10-28), Getting started and
+`/llms.txt` switched to npm and the site's packing (`apps/site/scripts/docspack.mjs`,
+`docspack.json`) was removed; the package is MIT licensed like the other keelstackhq packages.
