@@ -147,6 +147,9 @@ freely, template updates never touch it.
   TODO(copy): when a pending release ships, drop its "not tagged yet" / "not released yet" in
   `apps/site/src/pages/docs/*.md` (`grep -n "not tagged yet\|not released yet"`) and bump the
   versions: hull v0.4.0, hoist 0.3.0, hoard 0.5.0, bosun after 0.2.3.
+- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
+  Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
+  releases, step 1).
 - 2026-10-28 Landing on splice 0.3.1 and hull v0.3.1 (re-ran the hero command: exit 0, 54 files:
   32 owned, 8 shared, 14 seed, then `pnpm install`; same lines as before) and hoard v0.4.0 (runs on
   CircleCI too). hull v0.4.0, hoist 0.3.0 and hoard 0.5.0 are not released yet: the cards stay on
