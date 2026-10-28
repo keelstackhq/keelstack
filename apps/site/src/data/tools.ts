@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.3.0",
+    status: "v0.4.0",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -31,7 +31,7 @@ export const tools: Tool[] = [
   {
     name: "splice",
     role: "02 · bootstrap + update",
-    status: "v0.2.1",
+    status: "v0.3.1",
     statusStyle: "outline",
     pitch:
       "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
@@ -42,10 +42,10 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "v0.3.0",
+    status: "v0.4.0",
     statusStyle: "dashed",
     pitch:
-      "A Turborepo (and Vite+) remote cache for GitHub Actions. The cache never fails your build: an error is a miss.",
+      "A Turborepo (and Vite+) remote cache for GitHub Actions and CircleCI. The cache never fails your build: an error is a miss.",
     // The README pins `@v0` while hoard is 0.x.
     detail: "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
     detailMono: true,
@@ -65,11 +65,11 @@ export const tools: Tool[] = [
   {
     name: "hoist",
     role: "05 · provision + release",
-    status: "v0.2.0",
+    status: "v0.3.0",
     statusStyle: "outline",
     pitch:
       "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",
-    detail: "plan · check · apply · release",
+    detail: "plan · check · apply · release · secrets",
     detailMono: true,
     repo: `${org.url}/hoist`,
   },
