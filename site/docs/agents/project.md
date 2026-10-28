@@ -153,6 +153,10 @@ freely, template updates never touch it.
 - 2026-10-28 Docs on hull v0.4.0 (tag `v0.4.0` @ `50092c9`) and hoist 0.3.0 (npm): versions bumped,
   their "not tagged yet" / "not released yet" labels dropped; the `secrets` piece decrypts through
   `keelstackhq/hoist/secrets`.
+- 2026-10-28 Landing on splice 0.3.1 and hull v0.4.0 (re-ran the hero command: exit 0, lock hull
+  0.4.0 @ `50092c9`, 57 files: 34 owned, 8 shared, 15 seed, then `pnpm install`; the shown lines
+  are unchanged), hoard v0.4.0 (runs on CircleCI too) and hoist v0.3.0 (`secrets`). hoard 0.5.0
+  is not released yet: its card stays on v0.4.0.
 
 ## Blocked
 
