@@ -24,15 +24,15 @@ test("hero has three variants and seconds is active", () => {
 });
 
 test("terminal shows the default command, real create lines and file counts", () => {
-  expect(terminal.title).toContain("splice 0.2.1");
+  expect(terminal.title).toContain("splice 0.3.1");
   expect(terminal.title).not.toMatch(/preview/i);
   // The command that was run to record the output below.
   expect(terminal.command).toEqual([
-    "pnpm dlx @keelstackhq/splice@0.2.1 new \\",
-    "gh:keelstackhq/hull//template my-repo --ref v0.3.0 \\",
+    "pnpm dlx @keelstackhq/splice@0.3.1 new \\",
+    "gh:keelstackhq/hull//template my-repo --ref v0.3.1 \\",
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.3.0, splice 0.2.1), in output order.
+  // Lines copied from `splice new` output (hull v0.3.1, splice 0.3.1), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",

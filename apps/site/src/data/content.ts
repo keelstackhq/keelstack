@@ -18,7 +18,7 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.2.1, hull v0.3.0, the default pieces). `output` is an excerpt of
+// Real `splice new` run (splice 0.3.1, hull v0.3.1, the default pieces). `output` is an excerpt of
 // its 54 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {

@@ -137,6 +137,10 @@ freely, template updates never touch it.
   (`apps/site/scripts/docspack.mjs` and `apps/site/docspack.json` removed).
 - 2026-10-28 `splice.yml` runs in environment `splice-bot` (hull's name), so pull requests cannot
   read `SPLICE_BOT_TOKEN` (owner steps under Blocked).
+- 2026-10-28 Landing on splice 0.3.1 and hull v0.3.1 (re-ran the hero command: exit 0, 54 files:
+  32 owned, 8 shared, 14 seed, then `pnpm install`; same lines as before) and hoard v0.4.0 (runs on
+  CircleCI too). hull v0.4.0, hoist 0.3.0 and hoard 0.5.0 are not released yet: the cards stay on
+  the released versions until they are.
 
 ## Blocked
 
