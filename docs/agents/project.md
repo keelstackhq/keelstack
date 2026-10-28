@@ -137,6 +137,9 @@ freely, template updates never touch it.
   (`apps/site/scripts/docspack.mjs` and `apps/site/docspack.json` removed).
 - 2026-10-28 `splice.yml` runs in environment `splice-bot` (hull's name), so pull requests cannot
   read `SPLICE_BOT_TOKEN` (owner steps under Blocked).
+- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
+  Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
+  releases, step 1).
 
 ## Blocked
 
