@@ -1,0 +1,40 @@
+{
+  "name": "@keelstackhq/docspack",
+  "version": "0.1.0",
+  "description": "The keelstack docs (https://keelstack.dev/docs/) as a docspack documentation package.",
+  "type": "module",
+  "homepage": "https://keelstack.dev/docs/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "packages/docspack"
+  },
+  "files": [
+    ".llms",
+    "llms.txt"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "hull": {
+    "release": "ts-lib"
+  },
+  "docspack": {
+    "from": "dist/pages"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "lint": "vp lint",
+    "format:check": "vp fmt --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "@keelstackhq/site": "workspace:*",
+    "@types/node": "catalog:",
+    "docspack": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}
