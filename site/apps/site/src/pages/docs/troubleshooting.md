@@ -90,7 +90,7 @@ workflows, and `GITHUB_TOKEN` cannot push changes to workflow files.
 **Fix.** Give the splice update bot `SPLICE_BOT_TOKEN` (a fine-grained token with Contents, Pull
 requests and Workflows read and write) in the main-only environment `splice-bot`, and the hoist
 release workflow `HOIST_RELEASE_TOKEN` (Contents and Pull requests write; in the environment
-`release-pr` on bosun's `main` and hull v0.4.0's `template-rust`). hull v0.4.0 (not tagged yet)
+`release-pr` on bosun's `main` and hull v0.4.0's `template-rust`). hull v0.4.0
 also takes GitHub Apps instead (`SPLICE_APP_CLIENT_ID` and `SPLICE_APP_KEY`; for template-rust
 releases `HOIST_RELEASE_APP_CLIENT_ID` and `HOIST_RELEASE_APP_KEY`), or `SPLICE_BOT=off` to run
 `splice update` in a session instead of the bot.

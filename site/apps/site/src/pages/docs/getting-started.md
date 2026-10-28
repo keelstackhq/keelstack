@@ -6,9 +6,8 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-28: hull v0.3.1, splice 0.3.1, bosun 0.2.3, hoist 0.2.0,
-berth 0.1.0, hoard v0.4.0 (`@v0`). Notes marked hull v0.4.0 describe hull's `main`, which is not
-tagged yet; it needs splice 0.3.0 or later.
+Versions are the released ones as of 2026-10-28: hull v0.4.0, splice 0.3.1, bosun 0.2.3, hoist 0.3.0,
+berth 0.1.0, hoard v0.4.0 (`@v0`). hull v0.4.0 needs splice 0.3.0 or later.
 
 ## Before you start
 
@@ -50,8 +49,8 @@ git add -A && git commit -m "chore: initial commit from hull"
 
 hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
 `circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
-`secrets.toml` and a `deploy.yml` behind the `prod` environment; it needs hoist 0.3.0, not released
-yet; see
+`secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist 0.3.0's
+`keelstackhq/hoist/secrets` action; see
 [Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
 `splice add circleci`, then `splice add circleci-only`.
 
@@ -127,7 +126,7 @@ Who: the owner, on their own machine, with a token that has admin on the repo, i
 the default branch after the setup pull request merged.
 
 ```bash
-npm install -g @keelstackhq/hoist@0.2.0
+npm install -g @keelstackhq/hoist@0.3.0
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 gh label create bosun:halt --color B60205
@@ -160,7 +159,7 @@ Then, still as the owner:
   write. Store it in an environment `splice-bot` whose deployment branches are only `main`, not as
   a repository secret: a same-repo pull request's workflow can read repository secrets. hull
   v0.4.0 and bosun's `main` run `splice.yml` in that environment; bosun 0.2.3's channel still
-  reads a repository secret. hull v0.4.0 (not tagged yet) also takes a GitHub App with the same
+  reads a repository secret. hull v0.4.0 also takes a GitHub App with the same
   permissions instead (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; no personal
   token), or no bot at all: set the repository variable `SPLICE_BOT=off` and run updates from a
   session.

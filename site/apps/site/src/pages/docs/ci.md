@@ -121,7 +121,7 @@ for bosun's 8 jobs.)
 
 ## CircleCI
 
-hull v0.4.0 (not tagged yet) and bosun's `main` (after
+hull v0.4.0 and bosun's `main` (after
 0.2.3, not released yet) can run CI on CircleCI, for both `template` and `template-rust`:
 
 - **Both** (`circleci` piece): a CircleCI job `ci-ok` next to the unchanged GitHub `ci.yml`.
