@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 One ordered path from an empty GitHub repo to the first merged task. Each step names who does it
-and links the page with the details. Versions as of 2026-10-27: hull v0.3.0, splice 0.2.1, bosun
-0.2.3, hoist 0.2.0, berth 0.1.0.
+and links the page with the details. Versions as of 2026-10-28: hull v0.3.1, splice 0.3.1, bosun
+0.2.3, hoist 0.2.0, berth 0.1.0, hoard v0.4.0.
 
 Machine-readable: this page is https://keelstack.dev/docs/start-here.md, and every page is in
 https://keelstack.dev/llms-full.txt.
@@ -19,7 +19,7 @@ https://keelstack.dev/llms-full.txt.
 
 ## The path
 
-1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.2.1 new
+1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.3.1 new
    gh:keelstackhq/hull//template my-repo --piece …` (or `//template-rust`), then commit.
    [Getting started, step 1](/docs/getting-started/#1-render-the-template-new-repo).
 2. **Add the channels** (agent). `splice channel add gh:keelstackhq/hull//rigging --piece claude`
@@ -30,7 +30,8 @@ https://keelstack.dev/llms-full.txt.
    app and merges it by hand, once.
    [Getting started, step 3](/docs/getting-started/#3-set-up-bosun).
 4. **Apply the repo settings** (owner, own machine). `hoist apply --area github --yes` (auto-merge,
-   the ruleset with the required checks), the `bosun:halt` label, the `SPLICE_BOT_TOKEN` secret,
+   the ruleset with the required checks), the `bosun:halt` label, the update bot's token
+   (`SPLICE_BOT_TOKEN`, or a GitHub App from hull v0.4.0, in the main-only environment `splice-bot`),
    `governance/owners.toml`, and the Routines that `bosun doctor` prints.
    [Getting started, step 4](/docs/getting-started/#4-apply-the-repo-settings).
 5. **Re-paste the setup script** (owner). The repo now has its own `docs/setup-script.sh`; paste it
