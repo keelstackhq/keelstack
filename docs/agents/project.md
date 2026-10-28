@@ -130,6 +130,8 @@ freely, template updates never touch it.
 - 2026-10-27 Secrets: the deploy job runs in environment `production` and the template-owned
   `preview.yml` is deleted, so pull requests cannot read the Cloudflare secrets (owner steps
   under Blocked). Restore previews only with hull's two-phase preview.
+- 2026-10-28 `splice.yml` runs in environment `splice-bot` (hull's name), so pull requests cannot
+  read `SPLICE_BOT_TOKEN` (owner steps under Blocked).
 
 ## Blocked
 
@@ -142,11 +144,11 @@ Each item needs a human:
 - **Cloudflare secrets to `production`.** Settings → Environments → New environment `production`,
   Deployment branches: Selected → `main`; add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
   to it; then delete both repository secrets (Settings → Secrets and variables → Actions).
-- **`SPLICE_BOT_TOKEN` to an environment.** `splice.yml` reads it with no `environment:`, so if it
-  is set it is a repository (or org) secret that any same-repo PR could read through an edited
-  workflow. Create an environment (e.g. `splice`, Deployment branches: Selected → `main`), move the
-  secret there, delete the repository secret, and add `environment: splice` to the job in
-  `splice.yml` (an agent PR; not done yet).
+- **`SPLICE_BOT_TOKEN` to `splice-bot`.** `splice.yml` now runs in the environment `splice-bot`
+  (hull's template name). Settings → Environments → New environment `splice-bot`, Deployment
+  branches: Selected → `main`; add `SPLICE_BOT_TOKEN` to it; then delete the repository secret
+  (Settings → Secrets and variables → Actions). Without the secret the bot falls back to
+  `GITHUB_TOKEN`.
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
 - **docspack on npm (one time).** `packages/docspack` is released like a hull ts-lib: a pushed tag
   `docspack-v<version>` runs `.github/workflows/release.yml`, which publishes from the environment
