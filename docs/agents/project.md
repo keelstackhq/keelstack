@@ -16,9 +16,11 @@ freely, template updates never touch it.
   - `pnpm --filter @keelstackhq/site dev`: local dev server.
   - `pnpm --filter @keelstackhq/site build`: static output in `apps/site/dist`.
   - `pnpm --filter @keelstackhq/site preview`: serve `dist` locally.
-  - Deploy: `pnpm turbo run deploy --filter=@keelstackhq/site` (Pages, branch `main`); PRs get
-    `deploy:preview` (branch `pr-<n>`) from the template's `preview.yml`. Both need the
-    `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` secrets (set).
+  - Deploy: `pnpm turbo run deploy --filter=@keelstackhq/site` (Pages, branch `main`), from the
+    `deploy` job in environment `production`, which holds `CLOUDFLARE_API_TOKEN` and
+    `CLOUDFLARE_ACCOUNT_ID` (deployment branches: `main` only). No PR previews: the template's
+    `preview.yml` is deleted on purpose (it read the Cloudflare secrets in any same-repo PR) until
+    hull's two-phase preview arrives through splice; `pnpm deploy:preview` still works by hand.
 - Conventions and decisions:
   - Page copy comes from the hull, splice and hoard READMEs and specs. Never invent features,
     numbers or release dates; mark gaps `TODO(copy)`. The domain is `keelstack.dev` (`apps/site/src/lib/site.ts`).
@@ -115,12 +117,18 @@ freely, template updates never touch it.
 - 2026-10-27 Agents round 2/2: the docs as a docspack package (`@keelstackhq/docspack`, built with
   the site, tarball at keelstack.dev/docspack/), Getting started step 8 and llms.txt name it.
   TODO(copy): an npm publish of the package (owner step).
+- 2026-10-27 docspack release: `docspack-release.yml` (push to `main` touching
+  `apps/site/docspack.json`, or by hand) checks npm for the version, then builds and publishes in
+  environment `release` with OIDC, no `NPM_TOKEN`. Owner bootstrap under Blocked.
 - 2026-10-27 docspack package: the docs package moved to `packages/docspack` (version `0.1.0`,
   `"hull": { "release": "ts-lib" }`), released by hull v0.3.0's `release.yml` and
   `release-plan.mjs` (hand copies: with no main `.splice/lock.toml`, `splice update` does not
   refresh them) on a `docspack-v<version>` tag; `docspack-release.yml`, the site-served
   tarball and `apps/site/docspack.json` are gone. Getting started installs it from npm. Owner
   setup under Blocked.
+- 2026-10-27 Secrets: the deploy job runs in environment `production` and the template-owned
+  `preview.yml` is deleted, so pull requests cannot read the Cloudflare secrets (owner steps
+  under Blocked). Restore previews only with hull's two-phase preview.
 
 ## Blocked
 
@@ -130,6 +138,9 @@ Each item needs a human:
   or Rulesets); enable the merge queue if wanted (the workflow listens to `merge_group`).
 - **Renovate.** Install the Renovate GitHub App on `keelstackhq/keelstack`; `renovate.json` is
   already present.
+- **Cloudflare secrets to `production`.** Settings → Environments → New environment `production`,
+  Deployment branches: Selected → `main`; add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`
+  to it; then delete both repository secrets (Settings → Secrets and variables → Actions).
 - **Confirm before launch.** Piece instance names other than `web` and `api` are placeholders.
 - **docspack on npm (one time).** `packages/docspack` is released like a hull ts-lib: a pushed tag
   `docspack-v<version>` runs `.github/workflows/release.yml`, which publishes from the environment
