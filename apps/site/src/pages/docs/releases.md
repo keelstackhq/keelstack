@@ -125,7 +125,7 @@ when the repo has channels and opens or refreshes one pull request on branch `sp
 | `drift`     | fails: an owned file was edited locally; nothing is pushed |
 
 - Pass a token other than `GITHUB_TOKEN`. With `GITHUB_TOKEN` the bot cannot push changes to
-  workflow files, and its pull requests run no CI. hull v0.4.0 (not tagged yet) tries, in order: a GitHub App
+  workflow files, and its pull requests run no CI. hull v0.4.0 tries, in order: a GitHub App
   (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; Contents, Pull requests and
   Workflows write; no personal token), then `SPLICE_BOT_TOKEN` (a fine-grained token with the same
   permissions), then `github.token`. Keep them in the environment `splice-bot` with deployment
@@ -140,10 +140,11 @@ when the repo has channels and opens or refreshes one pull request on branch `sp
 
 ## Secrets
 
-hoist 0.3.0 (not released yet) adds `hoist secrets`:
+hoist 0.3.0 adds `hoist secrets`:
 values encrypted with sops and age in a private secrets repo, mapped into each consumer repo by a
 `secrets.toml` that holds no values. hull v0.4.0's opt-in `secrets` piece seeds that file and a
-`deploy.yml` that runs on push to `main` in the environment `prod`.
+`deploy.yml` that runs on push to `main` in the environment `prod` and decrypts through the
+`keelstackhq/hoist/secrets` action.
 
 | Command                                    | Who and where                                                                   |
 | ------------------------------------------ | ------------------------------------------------------------------------------- |
