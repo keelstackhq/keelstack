@@ -88,8 +88,21 @@ Agents must not call these routes themselves; the merge-lock hook refuses it.
 workflows, and `GITHUB_TOKEN` cannot push changes to workflow files.
 
 **Fix.** Give the splice update bot `SPLICE_BOT_TOKEN` (a fine-grained token with Contents, Pull
-requests and Workflows read and write, or a GitHub App token), and the hoist release workflow
-`HOIST_RELEASE_TOKEN` (Contents and Pull requests write).
+requests and Workflows read and write) in the main-only environment `splice-bot`, and the hoist
+release workflow `HOIST_RELEASE_TOKEN` (Contents and Pull requests write; in the environment
+`release-pr` on bosun's `main` and hull v0.4.0's `template-rust`). hull v0.4.0 (not tagged yet)
+also takes GitHub Apps instead (`SPLICE_APP_CLIENT_ID` and `SPLICE_APP_KEY`; for template-rust
+releases `HOIST_RELEASE_APP_CLIENT_ID` and `HOIST_RELEASE_APP_KEY`), or `SPLICE_BOT=off` to run
+`splice update` in a session instead of the bot.
+
+### A splice post step fails for want of a token
+
+**Why.** Since 0.3.1, splice runs post and step commands without token- or secret-like
+environment variables (`GH_TOKEN`, `NPM_TOKEN`, `*_TOKEN`, `*_SECRET`, `*_PASSWORD`, `*_KEY`, …),
+so the bot's token never reaches tool logs or package lifecycle scripts.
+
+**Fix.** None in splice: a post step that needs a token is not supported. Run that command in a
+workflow step of its own.
 
 ### A tag was created but no release workflow ran
 
@@ -118,8 +131,8 @@ stable tag (v0.2.2), which has no `template-rust` ("no splice.toml at `template-
 
 **Fix.** Use splice 0.2.1 or later: `splice update --ref main` moves the repo forward by git
 ancestry, and a plain `update` or `check` only considers stable tags that descend from the locked
-commit. The bot's Action uses the latest splice by default. New repos render from the v0.3.0 tag
-and need none of this.
+commit. The bot's Action uses the latest splice by default. New repos render from a tag (v0.3.0
+or later) and need none of this.
 
 ### `splice update` says an owned file "was edited locally"
 

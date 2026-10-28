@@ -97,3 +97,18 @@ describe("docspack package", () => {
     expect(page).not.toContain("keelstack.dev/docspack/");
   });
 });
+
+const src = (slug: string) => docs.find((d) => d.slug === slug)!.sources;
+
+describe("sources after the 2026-10-28 refresh", () => {
+  it("cites bosun's split spec, not the old single file", () => {
+    for (const d of docs) expect(d.sources).not.toContain("bosun/docs/spec.md");
+  });
+
+  it("cites the CircleCI, actions and secrets sources", () => {
+    expect(src("ci")).toEqual(
+      expect.arrayContaining(["hull/docs/actions.md", "hoard/docs/circleci.md"]),
+    );
+    expect(src("releases")).toContain("hull/template/pieces/secrets/files/docs/agents/secrets.md");
+  });
+});
