@@ -14,11 +14,11 @@ test("every tool links to its repo in the keelstackhq org (D-001)", () => {
 
 test("statuses and styles follow the design", () => {
   expect(tools.map((t) => t.status)).toEqual([
-    "v0.3.1",
+    "v0.4.0",
     "v0.3.1",
     "v0.4.0",
     "v0.2.3",
-    "v0.2.0",
+    "v0.3.0",
     "v0.1.0",
   ]);
   expect(tools.map((t) => t.statusStyle)).toEqual([

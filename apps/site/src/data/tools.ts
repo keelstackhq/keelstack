@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.3.1",
+    status: "v0.4.0",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -65,11 +65,11 @@ export const tools: Tool[] = [
   {
     name: "hoist",
     role: "05 · provision + release",
-    status: "v0.2.0",
+    status: "v0.3.0",
     statusStyle: "outline",
     pitch:
       "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",
-    detail: "plan · check · apply · release",
+    detail: "plan · check · apply · release · secrets",
     detailMono: true,
     repo: `${org.url}/hoist`,
   },

@@ -150,10 +150,10 @@ freely, template updates never touch it.
 - 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
   Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
   releases, step 1).
-- 2026-10-28 Landing on splice 0.3.1 and hull v0.3.1 (re-ran the hero command: exit 0, 54 files:
-  32 owned, 8 shared, 14 seed, then `pnpm install`; same lines as before) and hoard v0.4.0 (runs on
-  CircleCI too). hull v0.4.0, hoist 0.3.0 and hoard 0.5.0 are not released yet: the cards stay on
-  the released versions until they are.
+- 2026-10-28 Landing on splice 0.3.1 and hull v0.4.0 (re-ran the hero command: exit 0, lock hull
+  0.4.0 @ `50092c9`, 57 files: 34 owned, 8 shared, 15 seed, then `pnpm install`; the shown lines
+  are unchanged), hoard v0.4.0 (runs on CircleCI too) and hoist v0.3.0 (`secrets`). hoard 0.5.0
+  is not released yet: its card stays on v0.4.0.
 
 ## Blocked
 

@@ -18,8 +18,8 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.3.1, hull v0.3.1, the default pieces). `output` is an excerpt of
-// its 54 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// Real `splice new` run (splice 0.3.1, hull v0.4.0, the default pieces). `output` is an excerpt of
+// its 57 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
   title: `~ · splice ${SPLICE_VERSION}`,
@@ -33,7 +33,7 @@ export const terminal = {
     { path: "apps/api/src/index.ts", cls: "seed" },
     { path: "apps/web/src/app.tsx", cls: "seed" },
   ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 54 files: 32 owned, 8 shared, 14 seed; then pnpm install",
+  summary: "# … 57 files: 34 owned, 8 shared, 15 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
