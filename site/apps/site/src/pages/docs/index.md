@@ -9,9 +9,10 @@ decisions and approves high-risk pull requests. Every tool is public under
 [keelstackhq](https://github.com/keelstackhq); these docs show how to use them in a repo of
 your own.
 
-Versions below are the released ones as of 2026-10-27. To set up a repo of your own, follow
+Versions below are the released ones as of 2026-10-29. To set up a repo of your own, follow
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
-(the details). How to run it day to day with an orchestrator session and
+(the details). [Start a project](/docs/start-project/) lists every owner step
+before agents can work on a new hull repo, with how hull's `ready` check (since hull v0.5.0) verifies each one. How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).
 
 > **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in
@@ -24,11 +25,11 @@ child sessions is in the [Playbook](/docs/playbook/).
 
 | Tool                                                  | What it does                                                                                                                            | Released           | Get it                                                            |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------- |
-| [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.4.0             | Rendered by splice from `gh:keelstackhq/hull//template`           |
+| [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.5.0             | Rendered by splice from `gh:keelstackhq/hull//template`           |
 | [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.3.1              | `pnpm dlx @keelstackhq/splice@0.3.1 <command>`                    |
-| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.2.3              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
+| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.3.0              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
 | [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.3.0              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
-| [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions (and CircleCI) in one line of YAML. No account, no server.                      | v0.4.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
+| [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions (and CircleCI) in one line of YAML. No account, no server.                      | v0.5.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
 | [berth](https://github.com/keelstackhq/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | 0.1.0              | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
 | [decisions](https://github.com/keelstackhq/decisions) | Settled cross-repo decisions, delivered to each repo as a splice channel.                                                               | tracks `main`      | `splice channel add gh:keelstackhq/decisions//channel …`          |
 

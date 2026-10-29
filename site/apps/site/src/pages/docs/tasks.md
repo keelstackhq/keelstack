@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. It follows bosun 0.2.3 (2026-10-26).
+each other, and what stops work. It follows bosun 0.3.0 (2026-10-29).
 
 ## Every command speaks JSON
 

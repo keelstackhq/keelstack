@@ -90,7 +90,7 @@ workflows, and `GITHUB_TOKEN` cannot push changes to workflow files.
 **Fix.** Give the splice update bot `SPLICE_BOT_TOKEN` (a fine-grained token with Contents, Pull
 requests and Workflows read and write) in the main-only environment `splice-bot`, and the hoist
 release workflow `HOIST_RELEASE_TOKEN` (Contents and Pull requests write; in the environment
-`release-pr` on bosun's `main` and hull v0.4.0's `template-rust`). hull v0.4.0
+`release-pr` in bosun 0.3.0 and hull v0.4.0's `template-rust`). hull v0.4.0
 also takes GitHub Apps instead (`SPLICE_APP_CLIENT_ID` and `SPLICE_APP_KEY`; for template-rust
 releases `HOIST_RELEASE_APP_CLIENT_ID` and `HOIST_RELEASE_APP_KEY`), or `SPLICE_BOT=off` to run
 `splice update` in a session instead of the bot.
@@ -168,8 +168,7 @@ hand (as on a private repo without rulesets) leaves the state label and the leas
 In bosun 0.2.0 the label-lock hook refuses any shell command naming a `bosun:state/` label that
 does not start with `bosun`, even a read-only `grep` or a heredoc. Since 0.2.1, read-only shell
 commands pass. The rust-canary trial on 0.2.2 still saw read-only GitHub MCP tools (such as
-`list_issues` with a state label filter) and heredoc prose refused; bosun's `main` (after 0.2.3,
-not released yet) lets both pass. Until then, keep state labels out of heredocs and use `gh`
+`list_issues` with a state label filter) and heredoc prose refused; bosun 0.3.0 lets both pass. On older releases, keep state labels out of heredocs and use `gh`
 for listings by label.
 
 ### `bosun doctor` reports the Claude GitHub App as missing
@@ -196,8 +195,8 @@ child session.
 
 ### `bosun pr --auto-merge` fails with "422 Auto merge is not allowed for this repository"
 
-**Why.** The repo setting "Allow auto-merge" is off (found on the rust-canary trial). bosun 0.2.3's
-fix text still says to retry; on bosun's `main` (after 0.2.3, not released yet) it names this fix,
+**Why.** The repo setting "Allow auto-merge" is off (found on the rust-canary trial). Before 0.3.0
+the fix text said to retry; since bosun 0.3.0 it names this fix,
 and `bosun pr` also says "push the branch" when the branch is not on GitHub yet.
 
 **Fix.** Turn on auto-merge (`hoist apply --area github`, or the repo settings), or let the
@@ -209,8 +208,8 @@ orchestrator or the owner merge.
 the plain session id and refuses the Edit tool on the leased paths (rust-canary trial, bosun 0.2.2).
 The per-task id is meant for wave agents in their own berth workspace.
 
-**Fix.** On bosun's `main` (after 0.2.3, not released yet) a session may edit paths leased under
-its own `<session>/<task>` ids. With 0.2.3, the workaround from the trial (findings G7): set
+**Fix.** Since bosun 0.3.0 a session may edit paths leased under
+its own `<session>/<task>` ids. On older releases, the workaround from the trial (findings G7): set
 `BOSUN_SESSION=<session>/<task>` only inside a wave agent's `berth up` workspace, and claim
 without it in a session that works on its own.
 

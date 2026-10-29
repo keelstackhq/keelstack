@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun 0.2.3 (2026-10-26); where an older
+checks decide whether GitHub may merge. This page follows bosun 0.3.0 (2026-10-29); where an older
 release behaved differently, it says so.
 
 ## Required checks
@@ -94,9 +94,9 @@ On the rust-canary trial (a hull `template-rust` repo with bosun) a pull request
   install.)
 - **Other workflows.** `risk.yml` (on `pull_request_target` and `issue_comment`) and
   `verdict.yml` (on `issue_comment`) run the workflow file from the base branch and never check
-  out pull request code. In 0.2.3 `risk.yml` also runs on reviews, and a review event runs the
+  out pull request code. Before 0.3.0 `risk.yml` also ran on reviews, and a review event ran the
   pull request's own copy of the file with `statuses: write`, so a same-repo author could forge
-  `risk-check`. On bosun's `main` (after 0.2.3, not released yet) `risk.yml` no longer runs on
+  `risk-check`. Since 0.3.0 `risk.yml` no longer runs on
   reviews: an owner's review, or its withdrawal, counts on the next run, and a `/bosun recheck`
   pull request comment from an owner, member or collaborator starts a run without a push
   (otherwise re-run the risk workflow). main-health runs the gates on every push to `main` and weekly (nightly before 0.2.2).
@@ -121,8 +121,7 @@ for bosun's 8 jobs.)
 
 ## CircleCI
 
-hull v0.4.0 and bosun's `main` (after
-0.2.3, not released yet) can run CI on CircleCI, for both `template` and `template-rust`:
+hull v0.4.0 and bosun 0.3.0 can run CI on CircleCI, for both `template` and `template-rust`:
 
 - **Both** (`circleci` piece): a CircleCI job `ci-ok` next to the unchanged GitHub `ci.yml`.
   bosun's `circleci` channel piece adds a CircleCI job `bosun-ok` (or `ci-ok` without `own_ci`)
@@ -171,7 +170,7 @@ included. hull's `template-rust` (since v0.3.0) does the same, with a budget of 
   requests read a warm cache.
 - **CircleCI:** hoard's `circleci/hoard.yml` (since hoard 0.4.0) starts the server with
   `hoard serve --detach` and stops it with `hoard stop`. CircleCI caches are not branch-scoped:
-  with hoard 0.5.0 (not released yet), pass `restore: false` on the default branch.
+  since hoard v0.5.0, pass `restore: false` on the default branch.
 - **Rust:** `Swatinem/rust-cache@v2`. hoard caches Turborepo and Vite+ tasks, not cargo builds;
   in a cargo-only repo its step only logs a notice.
 

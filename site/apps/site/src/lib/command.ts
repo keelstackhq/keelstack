@@ -17,7 +17,7 @@ export const DEFAULT_ON: readonly string[] = ["web", "api"];
 
 // The versions the hero output was recorded with; bump both together.
 export const SPLICE_VERSION = "0.3.1";
-export const HULL_REF = "v0.4.0";
+export const HULL_REF = "v0.5.0";
 
 export const CAPTION = `Pinned to hull ${HULL_REF}. Drop --ref to get the latest hull release.`;
 

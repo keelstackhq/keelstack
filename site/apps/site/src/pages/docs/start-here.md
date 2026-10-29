@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 One ordered path from an empty GitHub repo to the first merged task. Each step names who does it
-and links the page with the details. Versions as of 2026-10-28: hull v0.4.0, splice 0.3.1, bosun
-0.2.3, hoist 0.3.0, berth 0.1.0, hoard v0.4.0.
+and links the page with the details. Versions as of 2026-10-29: hull v0.5.0, splice 0.3.1, bosun
+0.3.0, hoist 0.3.0, berth 0.1.0, hoard v0.5.0.
 
 Machine-readable: this page is https://keelstack.dev/docs/start-here.md, and every page is in
 https://keelstack.dev/llms-full.txt.

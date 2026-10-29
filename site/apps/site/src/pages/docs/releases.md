@@ -163,7 +163,7 @@ values encrypted with sops and age in a private secrets repo, mapped into each c
   a pull request or fork, and off the default branch or a release tag. A repo whose release runs
   decrypt secrets tags `<name>-v<version>`.
 - **Agents never decrypt.** They add a key by editing `secrets.toml` and ask the owner to store the
-  value; on bosun's `main` the hook refuses `sops`, `age -d`, `hoist secrets edit|sync|grant|revoke|rotate*`
+  value; since bosun 0.3.0 the hook refuses `sops`, `age -d`, `hoist secrets edit|sync|grant|revoke|rotate*`
   and reading the age key, and those files are R-secrets.
 
 ## The decisions channel
