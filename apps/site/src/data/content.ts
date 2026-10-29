@@ -99,7 +99,12 @@ export const current: { label: string; title: string; text: string; accent?: boo
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
 export const sections: Record<
   "split" | "tools" | "agents" | "current" | "start",
-  { label: string; heading: string; body?: string }
+  {
+    label: string;
+    heading: string;
+    body?: string;
+    link?: { label: string; href: string; text: string };
+  }
 > = {
   split: {
     label: "01 · The split",
@@ -122,6 +127,11 @@ export const sections: Record<
     label: "05 · Get started",
     heading: "Pick your pieces.",
     body: "splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node 24 and pnpm 12.",
+    link: {
+      label: "Start a project",
+      href: "/docs/start-project/",
+      text: "Every owner step before agents work on a new repo, and how hull’s ready check (hull v0.5.0, not tagged yet) verifies it.",
+    },
   },
 };
 

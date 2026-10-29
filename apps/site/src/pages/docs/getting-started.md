@@ -66,6 +66,17 @@ A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; spl
 with `splice update --ref <branch|sha>` when the target descends from the locked commit, and a
 plain `update` or `check` considers only stable tags that descend from it.
 
+### Check that the repo is ready (hull v0.5.0, not tagged yet)
+
+A repo rendered from hull v0.5.0 ships a `ready` skill and `scripts/ready.mjs`; its `AGENTS.md`
+says to run it first. `ready` starts with seven onboarding questions (pieces, CI provider, update
+bot, approvals, GitHub Apps, secrets, bosun), asked as Claude Code forms with the recommended
+option first, and records the answers in `docs/agents/onboarding.toml`. Then
+`node scripts/ready.mjs` checks each item of hull's start checklist and prints `pass`, `fail`,
+`ask`, `manual` or `skipped`, with the fix and a link to the item; an item an answer turns off is
+`skipped`, an unanswered one `ask`. Agents start autonomous work only when it exits 0 and the owner
+has confirmed every `manual` item. The whole list, in order: [Start a project](/docs/start-project/).
+
 ## 2. Add the channels
 
 Run these in the repo root, on a clean tree:

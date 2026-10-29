@@ -11,7 +11,9 @@ your own.
 
 Versions below are the released ones as of 2026-10-27. To set up a repo of your own, follow
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
-(the details). How to run it day to day with an orchestrator session and
+(the details). [Start a project](/docs/start-project/) lists every owner step
+before agents can work on a new hull repo, with how hull's `ready` check (hull v0.5.0, not tagged
+yet) verifies each one. How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).
 
 > **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in

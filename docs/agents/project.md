@@ -165,6 +165,15 @@ freely, template updates never touch it.
   `packages/docspack/src/release-workflow.test.ts` pins the workflow's shape. `release.yml` is
   template-owned: keep the `workflow_dispatch` trigger and `tag` job when hull's copy is brought
   in again. Owner setup under Blocked (docspack releases, steps 2 and 3).
+- 2026-10-29 Start a project: `/docs/start-project/` is hull's `docs/start-checklist.md`, copied
+  verbatim into `apps/site/src/data/hull/` with its source commit and sha256
+  (`node apps/site/scripts/start-checklist.mjs <hull tag or commit>` re-copies it and rewrites
+  the page; `start-checklist.test.ts` fails on drift). Pinned to hull `1bbb3ff` until v0.5.0 is
+  tagged. Linked from Get started and the docs index; Getting started describes the `ready`
+  check and its onboarding questions. docspack 0.1.3 ships the page.
+  TODO(copy): when hull v0.5.0 is tagged, re-copy at `v0.5.0` (the script drops the page's "not
+  tagged yet") and drop "(hull v0.5.0, not tagged yet)" in `getting-started.md`, `index.md` and
+  `sections.start.link` in `content.ts` (and its test).
 
 ## Blocked
 

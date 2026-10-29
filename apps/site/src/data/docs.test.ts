@@ -12,10 +12,11 @@ const fileFor = (slug: string) => (slug === "" ? "index.md" : `${slug}.md`);
 const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
 
 describe("docs data", () => {
-  it("has the ten pages in order with unique slugs", () => {
+  it("has the eleven pages in order with unique slugs", () => {
     expect(docs.map((d) => d.slug)).toEqual([
       "",
       "start-here",
+      "start-project",
       "getting-started",
       "cloud",
       "tasks",
@@ -28,6 +29,7 @@ describe("docs data", () => {
     expect(docs.map((d) => d.title)).toEqual([
       "Overview",
       "Start here",
+      "Start a project",
       "Getting started",
       "Cloud environment",
       "Tasks and sessions",

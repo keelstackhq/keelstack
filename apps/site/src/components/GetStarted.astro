@@ -11,6 +11,14 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
   <div class="inner">
     <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
     <p class="intro">{before}<code>pnpm install</code>{after}</p>
+    {
+      sections.start.link && (
+        <p class="next">
+          <a href={sections.start.link.href}>{sections.start.link.label}</a>:{" "}
+          {sections.start.link.text}
+        </p>
+      )
+    }
     <PiecePicker client:visible />
   </div>
 </section>
@@ -31,6 +39,16 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
     line-height: 1.5;
     max-width: 640px;
     margin: 16px 0 0;
+  }
+  .next {
+    font-size: 15px;
+    color: var(--ink-2);
+    max-width: 640px;
+    margin: 8px 0 0;
+  }
+  .next a {
+    color: inherit;
+    font-weight: 600;
   }
   code {
     font-family: var(--font-mono);

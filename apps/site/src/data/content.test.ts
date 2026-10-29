@@ -103,3 +103,11 @@ test("no old org names and no empty strings", () => {
   expect(text).not.toMatch(/gh:keelstack\//);
   expect(all.every((s) => s.length > 0)).toBe(true);
 });
+
+test("get started links the Start a project checklist", () => {
+  expect(sections.start.link).toEqual({
+    label: "Start a project",
+    href: "/docs/start-project/",
+    text: "Every owner step before agents work on a new repo, and how hull’s ready check (hull v0.5.0, not tagged yet) verifies it.",
+  });
+});

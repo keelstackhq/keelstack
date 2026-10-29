@@ -57,11 +57,21 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "start-project",
+    title: "Start a project",
+    summary:
+      "Every owner step before agents work on a new hull repo, with how the ready check verifies each one (hull's start checklist).",
+    sources: ["hull/docs/start-checklist.md", "hull/template/pieces/base/files/scripts/ready.mjs"],
+    ready: true,
+  },
+  {
     slug: "getting-started",
     title: "Getting started",
     summary:
       "Step by step: template, channels, bosun, repo settings, CI cache, berth and the first task in your own repo.",
     sources: [
+      "hull/template/pieces/base/files/.claude/skills/ready/SKILL.md",
+      "hull/template/pieces/base/files/scripts/ready.mjs",
       "splice/README.md",
       "splice/docs/getting-started.md",
       "hull/README.md",
