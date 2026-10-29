@@ -5,6 +5,10 @@
     "build": {
       "dependsOn": ["^build"],
       "outputs": [".llms/**", "llms.txt", "dist/**"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/.github/workflows/release.yml"]
     }
   }
 }
