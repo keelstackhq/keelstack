@@ -11,7 +11,8 @@ your own.
 
 Versions below are the released ones as of 2026-10-29. To set up a repo of your own, follow
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
-(the details). [Start a project](/docs/start-project/) lists every owner step
+(the details). [Greenfield repo with bosun](/docs/greenfield-bosun/) walks a new bosun repo end to end, and
+[Start a project](/docs/start-project/) lists every owner step
 before agents can work on a new hull repo, with how hull's `ready` check (since hull v0.5.0) verifies each one. How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).
 

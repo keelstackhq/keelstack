@@ -183,6 +183,13 @@ freely, template updates never touch it.
   main-only `release-tag` environment, key secret from stdin, ruleset bypass, installation check),
   idempotent with `--dry-run`; `packages/docspack/src/setup-release-tag.test.ts` runs it against a
   fake `gh` and shellcheck.
+- 2026-10-29 Greenfield repo with bosun: `/docs/greenfield-bosun/` (bosun 0.3.0 and hull v0.5.0:
+  the file tree after `bosun init`, spec in `docs/superpowers/specs/` and plan in `plans/` with an
+  example that `bosun plan check` 0.3.0 accepts, the owner/agent order, plan → work, and a first
+  session prompt labelled Practice). Linked from Get started (landing), Getting started, the docs
+  index and the Start a project intro (`apps/site/scripts/start-checklist.mjs`). Landing: a
+  `ready` row under For agents; hull's card names GitHub Actions or CircleCI; bosun's card lists
+  plan and spawn.
 
 ## Blocked
 

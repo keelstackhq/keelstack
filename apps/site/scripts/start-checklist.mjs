@@ -44,7 +44,8 @@ This page is hull's
 copied verbatim. A repo rendered from ${since} or later carries the same list: its \`ready\` skill
 (\`node scripts/ready.mjs\`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
-[Getting started](/docs/getting-started/).
+[Getting started](/docs/getting-started/); for a repo that bosun runs, see
+[Greenfield repo with bosun](/docs/greenfield-bosun/).
 
 ${copy.replace(/^# .*\n\n/, "")}`;
 writeFileSync(new URL("../src/pages/docs/start-project.md", import.meta.url), page);

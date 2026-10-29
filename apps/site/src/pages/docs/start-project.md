@@ -7,7 +7,8 @@ This page is hull's
 copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
-[Getting started](/docs/getting-started/).
+[Getting started](/docs/getting-started/); for a repo that bosun runs, see
+[Greenfield repo with bosun](/docs/greenfield-bosun/).
 
 Every human step before agents can work autonomously on a new repo rendered from hull, in order:
 computer steps first, then phone steps (D-009), each with how an agent verifies it. In a rendered
