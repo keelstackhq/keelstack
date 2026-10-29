@@ -55,6 +55,7 @@ test("split has 12 chips", () => {
 test("agent rows and current cards", () => {
   expect(agentRows.map((r) => r.key)).toEqual([
     "CLAUDE.md",
+    "ready",
     "bosun",
     "--json --yes",
     "ci-ok",
@@ -104,10 +105,9 @@ test("no old org names and no empty strings", () => {
   expect(all.every((s) => s.length > 0)).toBe(true);
 });
 
-test("get started links the Start a project checklist", () => {
-  expect(sections.start.link).toEqual({
-    label: "Start a project",
-    href: "/docs/start-project/",
-    text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
-  });
+test("get started links Start a project and the greenfield bosun page", () => {
+  expect(sections.start.links?.map((l) => l.href)).toEqual([
+    "/docs/start-project/",
+    "/docs/greenfield-bosun/",
+  ]);
 });

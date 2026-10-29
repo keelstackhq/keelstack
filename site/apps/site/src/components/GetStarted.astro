@@ -12,12 +12,11 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
     <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
     <p class="intro">{before}<code>pnpm install</code>{after}</p>
     {
-      sections.start.link && (
+      sections.start.links?.map((l) => (
         <p class="next">
-          <a href={sections.start.link.href}>{sections.start.link.label}</a>:{" "}
-          {sections.start.link.text}
+          <a href={l.href}>{l.label}</a>: {l.text}
         </p>
-      )
+      ))
     }
     <PiecePicker client:visible />
   </div>

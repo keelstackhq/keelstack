@@ -24,7 +24,8 @@ export const tools: Tool[] = [
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
-    detail: "pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro, Rust, Tauri, Hono on Cloudflare",
+    detail:
+      "pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro, Rust, Tauri, Hono on Cloudflare, CI on GitHub Actions or CircleCI",
     detailMono: false,
     repo: `${org.url}/hull`,
   },
@@ -58,7 +59,7 @@ export const tools: Tool[] = [
     statusStyle: "outline",
     pitch:
       "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",
-    detail: "claim · pr · gate · risk-check · verdict · approve",
+    detail: "plan · claim · spawn · pr · gate · risk-check · verdict · approve",
     detailMono: true,
     repo: `${org.url}/bosun`,
   },

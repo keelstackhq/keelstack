@@ -65,6 +65,22 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "greenfield-bosun",
+    title: "Greenfield repo with bosun",
+    summary:
+      "A new hull repo that bosun runs: the files, where the spec and the plan go, the order of owner and agent steps, and a first session prompt.",
+    sources: [
+      "bosun/docs/spec/03-layout.md",
+      "bosun/docs/spec/05-spawn.md",
+      "bosun/docs/spec/11-seed.md",
+      "bosun/docs/spec/12-plan.md",
+      "bosun/docs/plan-format.md",
+      "bosun/src/cli/init.rs",
+      "hull/docs/start-checklist.md",
+    ],
+    ready: true,
+  },
+  {
     slug: "getting-started",
     title: "Getting started",
     summary:
