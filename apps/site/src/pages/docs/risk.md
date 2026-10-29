@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.2.3
+turns `risk-check` green only when the rules are met. This page follows bosun 0.3.0
 (2026-10-26).
 
 ## Risk rules
@@ -23,7 +23,7 @@ matches any rule is high risk.
 | R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                         |
 | R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                        |
 
-On bosun's `main` (after 0.2.3, not released yet) the rules cover more:
+Since bosun 0.3.0 the rules cover more:
 
 - **R-gov** also matches every `hoist.toml`, `docs/setup-script.sh` (its pasted copy runs as root in
   cloud environments) and the agent files in any case (`docs/agents/**`, `**/agents.md`,

@@ -20,7 +20,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.4.0",
+    status: "v0.5.0",
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -42,7 +42,7 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "v0.4.0",
+    status: "v0.5.0",
     statusStyle: "dashed",
     pitch:
       "A Turborepo (and Vite+) remote cache for GitHub Actions and CircleCI. The cache never fails your build: an error is a miss.",
@@ -54,7 +54,7 @@ export const tools: Tool[] = [
   {
     name: "bosun",
     role: "04 · agent orchestration",
-    status: "v0.2.3",
+    status: "v0.3.0",
     statusStyle: "outline",
     pitch:
       "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",

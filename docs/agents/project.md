@@ -146,10 +146,10 @@ freely, template updates never touch it.
   wider R-gov/R-secrets/R-ci, doctor environments, setup script). Sources cite bosun's split spec.
   TODO(copy): when a pending release ships, drop its "not tagged yet" / "not released yet" in
   `apps/site/src/pages/docs/*.md` (`grep -n "not tagged yet\|not released yet"`) and bump the
-  versions: hoard 0.5.0, bosun after 0.2.3 (hull v0.4.0 and hoist 0.3.0 done, below).
-- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
-  Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
-  releases, step 1).
+  versions. All done: hull v0.4.0 and hoist 0.3.0 (2026-10-28), bosun 0.3.0 and hoard v0.5.0
+  (2026-10-29, below).
+- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh. Done: tagged
+  `docspack-v0.1.2` at `19e4ae5` and published (npm `latest`).
 - 2026-10-28 Docs on hull v0.4.0 (tag `v0.4.0` @ `50092c9`) and hoist 0.3.0 (npm): versions bumped,
   their "not tagged yet" / "not released yet" labels dropped; the `secrets` piece decrypts through
   `keelstackhq/hoist/secrets`.
@@ -165,6 +165,20 @@ freely, template updates never touch it.
   `packages/docspack/src/release-workflow.test.ts` pins the workflow's shape. `release.yml` is
   template-owned: keep the `workflow_dispatch` trigger and `tag` job when hull's copy is brought
   in again. Owner setup under Blocked (docspack releases, steps 2 and 3).
+- 2026-10-29 Start a project: `/docs/start-project/` is hull's `docs/start-checklist.md`, copied
+  verbatim into `apps/site/src/data/hull/` with its source commit and sha256
+  (`node apps/site/scripts/start-checklist.mjs <hull tag or commit>` re-copies it and rewrites
+  the page; `start-checklist.test.ts` fails on drift). Pinned to hull `v0.5.0` (`b5587b9`; the
+  file is unchanged since `1bbb3ff`). Linked from Get started and the docs index; Getting started
+  describes the `ready` check and its onboarding questions. docspack 0.1.3 ships the page.
+- 2026-10-29 Landing on hull v0.5.0 (re-ran the hero command: exit 0, lock hull 0.5.0 @ `b5587b9`,
+  60 files: 36 owned, 8 shared, 16 seed, then `pnpm install`; the shown lines are unchanged).
+- 2026-10-29 Docs on bosun 0.3.0 and hoard v0.5.0 (npm and tags checked): versions "as of
+  2026-10-29", the bosun install pin and "follows bosun" lines on 0.3.0, every "not released yet"
+  label dropped (bosun 0.3.0 ships them all; hoard v0.5.0 ships `restore`). hoard's `@v0` points at v0.5.0. Landing cards: hull v0.5.0, bosun v0.3.0, hoard v0.5.0.
+  The Cloud page embeds bosun's `docs/setup-script.sh` verbatim from bosun `b31187e` (#333, pins
+  bosun 0.3.0 with sha512-checked tarballs), stored in `apps/site/src/data/bosun/` with its ref
+  and sha256; `docs.test.ts` checks the copy, the page and the pin against the bosun card.
 
 ## Blocked
 

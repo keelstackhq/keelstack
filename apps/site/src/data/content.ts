@@ -18,8 +18,8 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.3.1, hull v0.4.0, the default pieces). `output` is an excerpt of
-// its 57 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// Real `splice new` run (splice 0.3.1, hull v0.5.0, the default pieces). `output` is an excerpt of
+// its 60 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
   title: `~ · splice ${SPLICE_VERSION}`,
@@ -33,7 +33,7 @@ export const terminal = {
     { path: "apps/api/src/index.ts", cls: "seed" },
     { path: "apps/web/src/app.tsx", cls: "seed" },
   ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 57 files: 34 owned, 8 shared, 15 seed; then pnpm install",
+  summary: "# … 60 files: 36 owned, 8 shared, 16 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
@@ -99,7 +99,12 @@ export const current: { label: string; title: string; text: string; accent?: boo
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
 export const sections: Record<
   "split" | "tools" | "agents" | "current" | "start",
-  { label: string; heading: string; body?: string }
+  {
+    label: string;
+    heading: string;
+    body?: string;
+    link?: { label: string; href: string; text: string };
+  }
 > = {
   split: {
     label: "01 · The split",
@@ -122,6 +127,11 @@ export const sections: Record<
     label: "05 · Get started",
     heading: "Pick your pieces.",
     body: "splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node 24 and pnpm 12.",
+    link: {
+      label: "Start a project",
+      href: "/docs/start-project/",
+      text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
+    },
   },
 };
 
