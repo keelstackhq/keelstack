@@ -66,7 +66,7 @@ A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; spl
 with `splice update --ref <branch|sha>` when the target descends from the locked commit, and a
 plain `update` or `check` considers only stable tags that descend from it.
 
-### Check that the repo is ready (hull v0.5.0, not tagged yet)
+### Check that the repo is ready (since hull v0.5.0)
 
 A repo rendered from hull v0.5.0 ships a `ready` skill and `scripts/ready.mjs`; its `AGENTS.md`
 says to run it first. `ready` starts with seven onboarding questions (pieces, CI provider, update

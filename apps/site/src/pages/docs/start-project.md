@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/1bbb3ff347a8377792e05704f4678431c734a239/docs/start-checklist.md) at commit `1bbb3ff`,
-copied verbatim. A repo rendered from hull v0.5.0 (not tagged yet) or later carries the same list: its `ready` skill
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/b5587b99a87197c295ebb8117f936785e1aead2c/docs/start-checklist.md) at `v0.5.0`,
+copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
 [Getting started](/docs/getting-started/).

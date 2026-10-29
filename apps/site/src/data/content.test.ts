@@ -29,10 +29,10 @@ test("terminal shows the default command, real create lines and file counts", ()
   // The command that was run to record the output below.
   expect(terminal.command).toEqual([
     "pnpm dlx @keelstackhq/splice@0.3.1 new \\",
-    "gh:keelstackhq/hull//template my-repo --ref v0.4.0 \\",
+    "gh:keelstackhq/hull//template my-repo --ref v0.5.0 \\",
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.4.0, splice 0.3.1), in output order.
+  // Lines copied from `splice new` output (hull v0.5.0, splice 0.3.1), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",
@@ -40,7 +40,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     "create  apps/api/src/index.ts  seed",
     "create  apps/web/src/app.tsx  seed",
   ]);
-  expect(terminal.summary).toBe("# … 57 files: 34 owned, 8 shared, 15 seed; then pnpm install");
+  expect(terminal.summary).toBe("# … 60 files: 36 owned, 8 shared, 16 seed; then pnpm install");
 });
 
 test("stats shapes", () => {
@@ -108,6 +108,6 @@ test("get started links the Start a project checklist", () => {
   expect(sections.start.link).toEqual({
     label: "Start a project",
     href: "/docs/start-project/",
-    text: "Every owner step before agents work on a new repo, and how hull’s ready check (hull v0.5.0, not tagged yet) verifies it.",
+    text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
   });
 });

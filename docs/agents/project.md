@@ -147,9 +147,8 @@ freely, template updates never touch it.
   TODO(copy): when a pending release ships, drop its "not tagged yet" / "not released yet" in
   `apps/site/src/pages/docs/*.md` (`grep -n "not tagged yet\|not released yet"`) and bump the
   versions: hoard 0.5.0, bosun after 0.2.3 (hull v0.4.0 and hoist 0.3.0 done, below).
-- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh; merge after that PR.
-  Owner: tag `docspack-v0.1.2` on `main` and approve the `release` deployment (Blocked, docspack
-  releases, step 1).
+- 2026-10-28 docspack 0.1.2: version bump for the 2026-10-28 docs refresh. Done: tagged
+  `docspack-v0.1.2` at `19e4ae5` and published (npm `latest`).
 - 2026-10-28 Docs on hull v0.4.0 (tag `v0.4.0` @ `50092c9`) and hoist 0.3.0 (npm): versions bumped,
   their "not tagged yet" / "not released yet" labels dropped; the `secrets` piece decrypts through
   `keelstackhq/hoist/secrets`.
@@ -168,12 +167,11 @@ freely, template updates never touch it.
 - 2026-10-29 Start a project: `/docs/start-project/` is hull's `docs/start-checklist.md`, copied
   verbatim into `apps/site/src/data/hull/` with its source commit and sha256
   (`node apps/site/scripts/start-checklist.mjs <hull tag or commit>` re-copies it and rewrites
-  the page; `start-checklist.test.ts` fails on drift). Pinned to hull `1bbb3ff` until v0.5.0 is
-  tagged. Linked from Get started and the docs index; Getting started describes the `ready`
-  check and its onboarding questions. docspack 0.1.3 ships the page.
-  TODO(copy): when hull v0.5.0 is tagged, re-copy at `v0.5.0` (the script drops the page's "not
-  tagged yet") and drop "(hull v0.5.0, not tagged yet)" in `getting-started.md`, `index.md` and
-  `sections.start.link` in `content.ts` (and its test).
+  the page; `start-checklist.test.ts` fails on drift). Pinned to hull `v0.5.0` (`b5587b9`; the
+  file is unchanged since `1bbb3ff`). Linked from Get started and the docs index; Getting started
+  describes the `ready` check and its onboarding questions. docspack 0.1.3 ships the page.
+- 2026-10-29 Landing on hull v0.5.0 (re-ran the hero command: exit 0, lock hull 0.5.0 @ `b5587b9`,
+  60 files: 36 owned, 8 shared, 16 seed, then `pnpm install`; the shown lines are unchanged).
 
 ## Blocked
 
