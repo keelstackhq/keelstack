@@ -12,11 +12,12 @@ const fileFor = (slug: string) => (slug === "" ? "index.md" : `${slug}.md`);
 const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
 
 describe("docs data", () => {
-  it("has the eleven pages in order with unique slugs", () => {
+  it("has the twelve pages in order with unique slugs", () => {
     expect(docs.map((d) => d.slug)).toEqual([
       "",
       "start-here",
       "start-project",
+      "greenfield-bosun",
       "getting-started",
       "cloud",
       "tasks",
@@ -30,6 +31,7 @@ describe("docs data", () => {
       "Overview",
       "Start here",
       "Start a project",
+      "Greenfield repo with bosun",
       "Getting started",
       "Cloud environment",
       "Tasks and sessions",
@@ -126,5 +128,28 @@ describe("sources after the 2026-10-28 refresh", () => {
       expect.arrayContaining(["hull/docs/actions.md", "hoard/docs/circleci.md"]),
     );
     expect(src("releases")).toContain("hull/template/pieces/secrets/files/docs/agents/secrets.md");
+  });
+});
+
+describe("Greenfield repo with bosun page", () => {
+  const page = readFileSync(new URL("../pages/docs/greenfield-bosun.md", import.meta.url), "utf8");
+  it("comes right after Start a project and is linked from it", () => {
+    const slugs = docs.map((d) => d.slug);
+    expect(slugs.indexOf("greenfield-bosun")).toBe(slugs.indexOf("start-project") + 1);
+    const start = readFileSync(new URL("../pages/docs/start-project.md", import.meta.url), "utf8");
+    expect(start).toContain("](/docs/greenfield-bosun/)");
+  });
+  it("shows a plan in bosun's format and the documented order", () => {
+    for (const s of [
+      "project: ",
+      "### Tasks",
+      "### Done when",
+      "- UC-",
+      "bosun plan check",
+      "bosun plan import",
+      "bosun wave plan",
+      "bosun spawn",
+    ])
+      expect(page).toContain(s);
   });
 });

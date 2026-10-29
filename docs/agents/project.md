@@ -179,6 +179,13 @@ freely, template updates never touch it.
   The Cloud page embeds bosun's `docs/setup-script.sh` verbatim from bosun `b31187e` (#333, pins
   bosun 0.3.0 with sha512-checked tarballs), stored in `apps/site/src/data/bosun/` with its ref
   and sha256; `docs.test.ts` checks the copy, the page and the pin against the bosun card.
+- 2026-10-29 Greenfield repo with bosun: `/docs/greenfield-bosun/` (bosun 0.3.0 and hull v0.5.0:
+  the file tree after `bosun init`, spec in `docs/superpowers/specs/` and plan in `plans/` with an
+  example that `bosun plan check` 0.3.0 accepts, the owner/agent order, plan → work, and a first
+  session prompt labelled Practice). Linked from Get started (landing), Getting started, the docs
+  index and the Start a project intro (`apps/site/scripts/start-checklist.mjs`). Landing: a
+  `ready` row under For agents; hull's card names GitHub Actions or CircleCI; bosun's card lists
+  plan and spawn.
 
 ## Blocked
 

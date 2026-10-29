@@ -69,6 +69,10 @@ export const agentRows: { key: string; text: string }[] = [
     text: "Lean by default. Skills and a /loop default ship with the template; subagents come from hull’s rigging channel.",
   },
   {
+    key: "ready",
+    text: "hull’s ready skill asks the onboarding questions as forms and checks every owner step before agents start work alone.",
+  },
+  {
     key: "bosun",
     text: "Claims, gates, risk checks and review verdicts on GitHub. Child sessions never merge or tag; the orchestrator or auto-merge merges on green, and owners approve high-risk changes, also by chat.",
   },
@@ -103,7 +107,7 @@ export const sections: Record<
     label: string;
     heading: string;
     body?: string;
-    link?: { label: string; href: string; text: string };
+    links?: { label: string; href: string; text: string }[];
   }
 > = {
   split: {
@@ -127,11 +131,18 @@ export const sections: Record<
     label: "05 · Get started",
     heading: "Pick your pieces.",
     body: "splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node 24 and pnpm 12.",
-    link: {
-      label: "Start a project",
-      href: "/docs/start-project/",
-      text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
-    },
+    links: [
+      {
+        label: "Start a project",
+        href: "/docs/start-project/",
+        text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
+      },
+      {
+        label: "Greenfield repo with bosun",
+        href: "/docs/greenfield-bosun/",
+        text: "The files, where the spec and the plan go, the step order and a first session prompt.",
+      },
+    ],
   },
 };
 
