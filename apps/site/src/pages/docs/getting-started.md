@@ -8,8 +8,7 @@ cached CI with hoard, and berth workspaces. Do the steps in order; each one name
 
 Versions are the released ones as of 2026-10-29: hull v0.5.0, splice 0.3.1, bosun 0.3.0, hoist 0.3.0,
 berth 0.1.0, hoard v0.5.0 (`@v0` still points at v0.4.0). hull v0.4.0 and later need splice 0.3.0
-or later. Notes marked "not released yet" for bosun after 0.2.3 or hoard 0.5.0 shipped in bosun 0.3.0
-and hoard v0.5.0.
+or later.
 
 ## Before you start
 
@@ -111,7 +110,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.2.3
+npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.3.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -171,7 +170,7 @@ Then, still as the owner:
   a fine-grained token for this repo with Contents, Pull requests and Workflows set to read and
   write. Store it in an environment `splice-bot` whose deployment branches are only `main`, not as
   a repository secret: a same-repo pull request's workflow can read repository secrets. hull
-  v0.4.0 and bosun's `main` run `splice.yml` in that environment; bosun 0.2.3's channel still
+  v0.4.0 and bosun 0.3.0 run `splice.yml` in that environment; bosun 0.2.3's channel still
   reads a repository secret. hull v0.4.0 also takes a GitHub App with the same
   permissions instead (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; no personal
   token), or no bot at all: set the repository variable `SPLICE_BOT=off` and run updates from a
@@ -185,8 +184,7 @@ Then, still as the owner:
   (every 15 min, Haiku). `bosun doctor` prints their prompts.
 
 `bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
-`hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. On bosun's
-`main` (after 0.2.3, not released yet) `--remote` also checks the environment of every workflow job
+`hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. Since bosun 0.3.0, `--remote` also checks the environment of every workflow job
 and warns unless only `main` may deploy to it.
 
 ## 5. Cache CI with hoard
@@ -206,8 +204,7 @@ cargo-only repo hoard does nothing; use `Swatinem/rust-cache@v2`.
 On CircleCI (since hoard 0.4.0), `circleci/hoard.yml` installs a checksum-verified release and runs
 it with `hoard serve --detach` and `hoard stop`
 ([hoard's CircleCI guide](https://github.com/keelstackhq/hoard/blob/main/docs/circleci.md)).
-CircleCI caches are not branch-scoped, so a PR could save a cache that `main` restores; hoard 0.5.0
-(not released yet) adds a `restore` parameter: pass `restore: false` on the default branch.
+CircleCI caches are not branch-scoped, so a PR could save a cache that `main` restores; hoard v0.5.0 adds a `restore` parameter: pass `restore: false` on the default branch.
 
 ## 6. Use berth locally
 
