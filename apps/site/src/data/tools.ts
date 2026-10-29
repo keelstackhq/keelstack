@@ -42,7 +42,7 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "v0.4.0",
+    status: "v0.5.0",
     statusStyle: "dashed",
     pitch:
       "A Turborepo (and Vite+) remote cache for GitHub Actions and CircleCI. The cache never fails your build: an error is a miss.",

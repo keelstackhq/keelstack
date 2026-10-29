@@ -175,8 +175,7 @@ freely, template updates never touch it.
   60 files: 36 owned, 8 shared, 16 seed, then `pnpm install`; the shown lines are unchanged).
 - 2026-10-29 Docs on bosun 0.3.0 and hoard v0.5.0 (npm and tags checked): versions "as of
   2026-10-29", the bosun install pin and "follows bosun" lines on 0.3.0, every "not released yet"
-  label dropped (bosun 0.3.0 ships them all; hoard v0.5.0 ships `restore`). hoard's `@v0` still
-  points at v0.4.0, so the overview pins `@v0.5.0`. Landing cards: hull v0.5.0, bosun v0.3.0.
+  label dropped (bosun 0.3.0 ships them all; hoard v0.5.0 ships `restore`). hoard's `@v0` points at v0.5.0. Landing cards: hull v0.5.0, bosun v0.3.0, hoard v0.5.0.
   The Cloud page embeds bosun's `docs/setup-script.sh` verbatim from bosun `b31187e` (#333, pins
   bosun 0.3.0 with sha512-checked tarballs), stored in `apps/site/src/data/bosun/` with its ref
   and sha256; `docs.test.ts` checks the copy, the page and the pin against the bosun card.
