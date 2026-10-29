@@ -18,7 +18,10 @@ the bosun channel:
 .bosun/limits.toml         caps and budget
 .bosun/risk.toml           risk rules
 .bosun/version             the pinned bosun release (R-gov)
+.bosun/fold-fragments.sh   folds changelog.d/ fragments (run it with bash)
 governance/owners.toml     the owners whose approval counts
+hoist.toml                 the repo settings and required checks for `hoist apply`
+deny.toml, rust-toolchain.toml   rust stack only
 .github/CODEOWNERS
 .github/workflows/         bosun.yml, risk.yml, verdict.yml, main-open.yml, main-health.yml
 AGENTS.md, REVIEW.md       bosun's sections (agent rules, review rules for the verdict)
@@ -28,7 +31,9 @@ plans/<name>.md            the plan: the only input bosun reads (`--plan` copies
 ```
 
 - In a hull repo, hull owns `ci.yml`, `CLAUDE.md` and `.claude/settings.json`, and its
-  `splice.yml` stays (the channel's copy is a seed that `bosun init` skips when one exists). bosun's aggregate
+  `splice.yml` stays. `hoist.toml`, `splice.yml`, `deny.toml`, `rust-toolchain.toml` and the other
+  channel seeds are skipped when the repo already has them; `bosun init` adds bosun's required
+  checks to an existing `hoist.toml`. bosun's aggregate
   check is then `bosun-ok`, next to hull's `ci-ok`, and the bosun hooks come with hull.
 - `docs/lessons.toml` is bosun's lessons store (spec §3); `docs/agents/org-decisions.md` comes
   from the decisions channel (D-004), not from bosun.
