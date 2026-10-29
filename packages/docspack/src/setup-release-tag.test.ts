@@ -22,8 +22,10 @@ case "$*" in
 esac
 for a in "$@"; do case "$a" in -*) ;; api) ;; *) path="$a"; break;; esac; done
 case "$path" in
-  repos/keelstackhq/keelstack/rulesets) echo '[{"id":7,"name":"release-tags"}]';;
-  repos/keelstackhq/keelstack/rulesets/7) echo '{"id":7,"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]}';;
+  repos/keelstackhq/keelstack/rulesets) echo '[{"id":8,"name":"release-tags","source_type":"Organization"},{"id":7,"name":"release-tags","source_type":"Repository"}]';;
+  repos/keelstackhq/keelstack/rulesets/7)
+    if [ -n "\${FAKE_NO_BYPASS:-}" ]; then echo '{"id":7,"name":"release-tags"}'
+    else echo '{"id":7,"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"always"}]}'; fi;;
   repos/keelstackhq/keelstack/environments/release-tag) echo '{"message":"Not Found"}'; exit 1;;
   repos/keelstackhq/keelstack/environments/release-tag/deployment-branch-policies) echo '{"branch_policies":[]}';;
   repos/keelstackhq/keelstack/environments/release) echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}';;
@@ -34,7 +36,7 @@ case "$path" in
 esac
 `;
 
-function run(args: string[]) {
+function run(args: string[], extraEnv: Record<string, string> = {}) {
   const dir = mkdtempSync(join(tmpdir(), "setup-release-tag-"));
   writeFileSync(join(dir, "gh"), FAKE_GH);
   chmodSync(join(dir, "gh"), 0o755);
@@ -44,7 +46,7 @@ function run(args: string[]) {
   writeFileSync(log, "");
   const r = spawnSync("bash", [script, ...args.map((a) => (a === "KEY" ? key : a))], {
     encoding: "utf8",
-    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_LOG: log },
+    env: { ...process.env, PATH: `${dir}:${process.env.PATH}`, GH_LOG: log, ...extraEnv },
   });
   return { ...r, log: readFileSync(log, "utf8") };
 }
@@ -90,5 +92,18 @@ describe("setup-release-tag.sh", () => {
       /environments\/release(\/|\s).*-X|-X \S+ repos\/keelstackhq\/keelstack\/environments\/release\b(?!-)/,
     );
     expect(r.stdout).toContain("Summary");
+  });
+
+  it("uses the repository's own release-tags ruleset, not an org-level one", () => {
+    const r = run(ARGS);
+    expect(r.log).toMatch(/-X PUT repos\/keelstackhq\/keelstack\/rulesets\/7 /);
+    expect(r.log).not.toMatch(/rulesets\/8/);
+  });
+
+  it("stops without touching the ruleset when it cannot see the bypass list", () => {
+    const r = run(ARGS, { FAKE_NO_BYPASS: "1" });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("bypass list");
+    expect(r.log).not.toMatch(/-X PUT \S*rulesets/);
   });
 });

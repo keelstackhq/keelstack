@@ -93,11 +93,16 @@ else
 fi
 
 # 4. Ruleset bypass: add the App (Integration) to release-tags, if the ruleset exists.
-ruleset_id="$(gh api "repos/$REPO/rulesets" 2> /dev/null | jq -r --arg n "$RULESET" '.[]? | select(.name == $n) | .id' | head -n1)"
+ruleset_id="$(gh api "repos/$REPO/rulesets" 2> /dev/null | jq -r --arg n "$RULESET" '.[]? | select(.name == $n and .source_type == "Repository") | .id' | head -n1)"
 if [ -z "$ruleset_id" ]; then
   note "ruleset $RULESET not found: create it (docs/agents/project.md, Blocked → docspack releases, step 3), then re-run"
 else
   ruleset="$(gh api "repos/$REPO/rulesets/$ruleset_id")"
+  # Without bypass_actors (only admins see it), a PUT could drop the existing bypass entries.
+  if ! jq -e 'has("bypass_actors")' <<< "$ruleset" > /dev/null; then
+    echo "cannot read the bypass list of ruleset $RULESET (are you a repo admin?); nothing changed in it" >&2
+    exit 1
+  fi
   if jq -e --argjson app "$APP_ID" '.bypass_actors // [] | any(.actor_id == $app and .actor_type == "Integration")' <<< "$ruleset" > /dev/null; then
     note "ruleset $RULESET already lets App $APP_ID bypass"
   else
