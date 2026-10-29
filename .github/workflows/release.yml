@@ -2,9 +2,18 @@ name: release
 
 # A human pushes `<instance>-v<version>` (e.g. `cli-v1.2.0`); release-plan.mjs decides what it
 # publishes. npm uses trusted publishing (OIDC) with provenance: no npm token exists anywhere.
+# docspack can also start from Actions → release → Run workflow on main: the `tag` job tags
+# `docspack-v<version>` (version from packages/docspack/package.json) and this run publishes it
+# (a tag pushed with the workflow token starts no second run). D-008: a release workflow may tag.
 on:
   push:
     tags: ["*-v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "docspack version (optional; must equal packages/docspack/package.json)"
+        required: false
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -14,10 +23,50 @@ permissions:
   contents: read
 
 jobs:
+  tag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - name: Tag docspack-v<version> on main
+        id: tag
+        env:
+          REF: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::run this workflow on main, not $REF"
+            exit 1
+          fi
+          version=$(jq -r .version packages/docspack/package.json)
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$version" ]; then
+            echo "::error::version $INPUT_VERSION is not packages/docspack/package.json's $version"
+            exit 1
+          fi
+          tag="docspack-v$version"
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "::error::tag $tag already exists; bump packages/docspack/package.json first"
+            exit 1
+          fi
+          git tag "$tag" "$GITHUB_SHA"
+          git push origin "refs/tags/$tag"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
   plan:
+    needs: tag
+    if: >-
+      !cancelled()
+      && (needs.tag.result == 'success' || needs.tag.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
+      tag: ${{ steps.plan.outputs.tag }}
       kind: ${{ steps.plan.outputs.kind }}
       dir: ${{ steps.plan.outputs.dir }}
       package: ${{ steps.plan.outputs.package }}
@@ -30,10 +79,13 @@ jobs:
           fetch-depth: 0
       - name: Plan
         id: plan
+        env:
+          TAG: ${{ needs.tag.outputs.tag || github.ref_name }}
         run: |
-          node .github/scripts/release-plan.mjs > "$RUNNER_TEMP/plan.txt"
+          GITHUB_REF_NAME="$TAG" node .github/scripts/release-plan.mjs > "$RUNNER_TEMP/plan.txt"
           cat "$RUNNER_TEMP/plan.txt"
           cat "$RUNNER_TEMP/plan.txt" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
       - name: Rust toolchain (from rust-toolchain.toml)
         if: steps.plan.outputs.kind == 'rust-cli'
         run: rustup toolchain install
@@ -50,7 +102,9 @@ jobs:
 
   binaries:
     needs: plan
-    if: needs.plan.outputs.kind == 'rust-cli'
+    if: >-
+      !cancelled() && needs.plan.result == 'success'
+      && needs.plan.outputs.kind == 'rust-cli'
     strategy:
       fail-fast: true
       matrix:
@@ -119,7 +173,9 @@ jobs:
 
   github-release:
     needs: [plan, binaries]
-    if: needs.plan.outputs.kind == 'rust-cli'
+    if: >-
+      !cancelled() && needs.binaries.result == 'success'
+      && needs.plan.outputs.kind == 'rust-cli'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
@@ -145,7 +201,7 @@ jobs:
         working-directory: artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ needs.plan.outputs.tag }}
           BIN: ${{ needs.plan.outputs.bin }}
           VERSION: ${{ needs.plan.outputs.version }}
         run: |

@@ -157,6 +157,12 @@ freely, template updates never touch it.
   0.4.0 @ `50092c9`, 57 files: 34 owned, 8 shared, 15 seed, then `pnpm install`; the shown lines
   are unchanged), hoard v0.4.0 (runs on CircleCI too) and hoist v0.3.0 (`secrets`). hoard 0.5.0
   is not released yet: its card stays on v0.4.0.
+- 2026-10-29 docspack releases from the Actions tab: `release.yml` takes `workflow_dispatch` on
+  `main`; its `tag` job (actions/checkout pinned by SHA) tags `docspack-v<version>` from
+  `packages/docspack/package.json` and the same run publishes behind `release`. The tag-push
+  trigger is unchanged. `packages/docspack/src/release-workflow.test.ts` pins the workflow's shape.
+  `release.yml` is template-owned: keep the `workflow_dispatch` trigger and `tag` job when hull's
+  copy is brought in again.
 
 ## Blocked
 
@@ -182,18 +188,22 @@ Each item needs a human:
   on 2026-10-28: a new trusted publisher expires unless it publishes within 2 days, so release
   0.1.1 through the workflow now.
   1. Each release: a PR bumps `version` in `packages/docspack/package.json`; after the merge,
-     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`. Before
-     approving the `release` deployment (Review deployments → Approve and deploy), confirm the tag
-     is on main: `git fetch origin main && git merge-base --is-ancestor docspack-v<version> origin/main && echo on-main`.
-     A version already on npm is skipped.
-  2. Tag ruleset `release-tags`, if not set up yet (only repository admins may create, move or
-     delete `*-v*` tags):
+     Actions → release → Run workflow (branch `main`; `version` optional, it must equal
+     `package.json`), then approve `release` (Review deployments → Approve and deploy). The
+     `release` environment's deployment branches and tags must include `main` (the run's ref). The `tag`
+     job refuses off `main` or when `docspack-v<version>` exists, tags `main`'s head and the same
+     run publishes it. A version already on npm is skipped. Pushing the tag by hand still works:
+     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`.
+  2. Tag ruleset `release-tags`, if not set up yet (only repository admins and GitHub Actions,
+     app id 15368, for the Run workflow path, may create, move or delete `*-v*` tags; an existing
+     ruleset without the Actions entry refuses the `tag` job's push, so add it):
      ```bash
      gh api -X POST repos/keelstackhq/keelstack/rulesets --input - <<'EOF'
      { "name": "release-tags", "target": "tag", "enforcement": "active",
        "conditions": { "ref_name": { "include": ["refs/tags/*-v*"], "exclude": [] } },
        "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }],
-       "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" }] }
+       "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
+                         { "actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always" }] }
      EOF
      ```
   3. Optional: deprecate the stray versions so nobody installs them:
