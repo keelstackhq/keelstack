@@ -2,9 +2,18 @@ name: release
 
 # A human pushes `<instance>-v<version>` (e.g. `cli-v1.2.0`); release-plan.mjs decides what it
 # publishes. npm uses trusted publishing (OIDC) with provenance: no npm token exists anywhere.
+# docspack can also start from Actions → release → Run workflow on main: the `tag` job only creates
+# `docspack-v<version>` (version from packages/docspack/package.json) with the release App's token,
+# and that tag's own push run publishes. D-008: a release workflow may tag.
 on:
   push:
     tags: ["*-v[0-9]*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "docspack version (optional; must equal packages/docspack/package.json)"
+        required: false
+        type: string
 
 concurrency:
   group: release-${{ github.ref }}
@@ -14,7 +23,63 @@ permissions:
   contents: read
 
 jobs:
+  tag:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Main-only environment holding the release App's key; the App alone may bypass the
+    # `release-tags` ruleset. A tag created with its token starts the push run below.
+    environment: release-tag
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - name: Check the run and the version
+        id: check
+        env:
+          REF: ${{ github.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
+          APP_CLIENT_ID: ${{ vars.HOIST_RELEASE_APP_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          if [ "$REF" != "refs/heads/main" ]; then
+            echo "::error::run this workflow on main, not $REF"
+            exit 1
+          fi
+          if [ -z "$APP_CLIENT_ID" ]; then
+            echo "::error::set the repository variable HOIST_RELEASE_APP_CLIENT_ID (release App)"
+            exit 1
+          fi
+          version=$(jq -r .version packages/docspack/package.json)
+          if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$version" ]; then
+            echo "::error::version $INPUT_VERSION is not packages/docspack/package.json's $version"
+            exit 1
+          fi
+          echo "tag=docspack-v$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app
+        with:
+          client-id: ${{ vars.HOIST_RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.HOIST_RELEASE_APP_KEY }}
+          permission-contents: write
+      - name: Create the tag on main's head
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          TAG: ${{ steps.check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" > /dev/null 2>&1; then
+            echo "::error::tag $TAG already exists; bump packages/docspack/package.json first"
+            exit 1
+          fi
+          gh api -X POST "repos/$GITHUB_REPOSITORY/git/refs" \
+            -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" > /dev/null
+          echo "created $TAG at $GITHUB_SHA; its push run publishes after the release approval"
+
   plan:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -25,7 +90,7 @@ jobs:
       version: ${{ steps.plan.outputs.version }}
       npm_dirs: ${{ steps.plan.outputs.npm_dirs }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Plan
@@ -37,7 +102,7 @@ jobs:
       - name: Rust toolchain (from rust-toolchain.toml)
         if: steps.plan.outputs.kind == 'rust-cli'
         run: rustup toolchain install
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
         if: steps.plan.outputs.kind == 'rust-cli'
         with:
           tool: cargo-deny@0.20.2
@@ -80,7 +145,7 @@ jobs:
       BIN: ${{ needs.plan.outputs.bin }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: Rust toolchain and target
@@ -111,7 +176,7 @@ jobs:
             "out/$TARGET/$BIN" completions "$shell" > "out/completions/$BIN.$shell"
           done
           "out/$TARGET/$BIN" man > "out/$BIN.1"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
           path: out/
@@ -128,7 +193,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: release-*
           merge-multiple: true
@@ -136,7 +201,7 @@ jobs:
       - name: Checksums
         working-directory: artifacts
         run: sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: |
             artifacts/*.tar.gz
@@ -177,18 +242,18 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       NPM_DIRS: ${{ needs.plan.outputs.npm_dirs }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         if: env.KIND == 'ts-lib'
       # Node 24 bundles npm >= 11.5.1 (trusted publishing). registry-url writes .npmrc only.
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
           package-manager-cache: false # pnpm is set up only for ts-lib
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         if: env.KIND == 'rust-cli'
         with:
           pattern: release-*

@@ -7,6 +7,8 @@ come from `package.json`) and fails when a page is the source of no chunk. turbo
 `pnpm run ci` (`--affected`) rebuilds the pack when the docs change.
 
 - Released like a hull ts-lib (`"hull": { "release": "ts-lib" }`): bump `version` here when the docs
-  change, merge, then a human pushes the tag `docspack-v<version>`; `.github/workflows/release.yml`
-  (template-owned) publishes from the `release` environment with provenance.
+  change, merge, then a human runs Actions → release → Run workflow on `main` (or pushes the tag
+  `docspack-v<version>`); `.github/workflows/release.yml` (template-owned, with a local `tag` job
+  that creates the tag with the release App) publishes on the tag push from the `release`
+  environment with provenance.
 - Never push tags or publish yourself. One-time owner setup: `docs/agents/project.md`, Blocked.
