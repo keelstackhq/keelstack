@@ -179,6 +179,10 @@ freely, template updates never touch it.
   The Cloud page embeds bosun's `docs/setup-script.sh` verbatim from bosun `b31187e` (#333, pins
   bosun 0.3.0 with sha512-checked tarballs), stored in `apps/site/src/data/bosun/` with its ref
   and sha256; `docs.test.ts` checks the copy, the page and the pin against the bosun card.
+- 2026-10-29 `scripts/setup-release-tag.sh`: the owner's one-time docspack release setup (variable,
+  main-only `release-tag` environment, key secret from stdin, ruleset bypass, installation check),
+  idempotent with `--dry-run`; `packages/docspack/src/setup-release-tag.test.ts` runs it against a
+  fake `gh` and shellcheck.
 - 2026-10-29 Greenfield repo with bosun: `/docs/greenfield-bosun/` (bosun 0.3.0 and hull v0.5.0:
   the file tree after `bosun init`, spec in `docs/superpowers/specs/` and plan in `plans/` with an
   example that `bosun plan check` 0.3.0 accepts, the owner/agent order, plan → work, and a first
@@ -220,6 +224,9 @@ Each item needs a human:
      `release` stays limited to the release tags: never add branch `main` to it. That would be safe
      only with the owner as its required reviewer, since any workflow run on `main` could then
      deploy to it.
+     Steps 2 and 3 in one go, once the App exists (repo admin, authenticated `gh`, `--dry-run` first):
+     `bash scripts/setup-release-tag.sh --app-id <App ID> --client-id <Client ID> --key <app.pem>`.
+     It is idempotent, reads the key file on stdin, leaves `release` tags-only and prints a summary.
   2. Release App (once; hull's names, as in template-rust's `release.yml`): a GitHub App with
      Contents: read and write only (no Workflows), installed on `keelstackhq/keelstack` (reuse the
      org's release App if it exists). Repository variable `HOIST_RELEASE_APP_CLIENT_ID` = its
