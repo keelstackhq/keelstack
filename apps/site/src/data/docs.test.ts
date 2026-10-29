@@ -1,6 +1,6 @@
+import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
-import { SPLICE_VERSION } from "../lib/command";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
 import { tools } from "./tools";
 
@@ -84,11 +84,25 @@ describe("docs data", () => {
 
 describe("cloud environment page", () => {
   const page = readFileSync(new URL("../pages/docs/cloud.md", import.meta.url), "utf8");
-  it("embeds a setup script pinned to the versions the site shows", () => {
-    const script = page.split("```bash\n")[1]?.split("```")[0] ?? "";
-    expect(script).toContain(`SPLICE_VERSION=${SPLICE_VERSION}\n`);
-    expect(script).toContain(`BOSUN_VERSION=${bosunVersion}\n`);
-    expect(script).toContain('npm install -g "@keelstackhq/splice@${SPLICE_VERSION}"');
+  // bosun's docs/setup-script.sh, copied verbatim at a pinned bosun commit (data/bosun/).
+  const copy = readFileSync(new URL("./bosun/setup-script.sh", import.meta.url), "utf8");
+  const source = JSON.parse(
+    readFileSync(new URL("./bosun/setup-script.json", import.meta.url), "utf8"),
+  ) as { repo: string; ref: string; path: string; sha256: string };
+
+  it("embeds bosun's setup script verbatim, from a pinned commit", () => {
+    expect(source.repo).toBe("keelstackhq/bosun");
+    expect(source.path).toBe("docs/setup-script.sh");
+    expect(source.ref).toMatch(/^[0-9a-f]{40}$/);
+    expect(createHash("sha256").update(copy).digest("hex")).toBe(source.sha256);
+    expect(page.split("```bash\n")[1]?.split("```")[0]).toBe(copy);
+    expect(page).toContain(
+      `https://github.com/keelstackhq/bosun/blob/${source.ref}/docs/setup-script.sh`,
+    );
+  });
+
+  it("pins the bosun release the site shows", () => {
+    expect(copy).toContain(`BOSUN_VERSION=${bosunVersion}\n`);
   });
 });
 

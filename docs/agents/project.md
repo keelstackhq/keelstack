@@ -176,8 +176,10 @@ freely, template updates never touch it.
 - 2026-10-29 Docs on bosun 0.3.0 and hoard v0.5.0 (npm and tags checked): versions "as of
   2026-10-29", the bosun install pin and "follows bosun" lines on 0.3.0, every "not released yet"
   label dropped (bosun 0.3.0 ships them all; hoard v0.5.0 ships `restore`). hoard's `@v0` still
-  points at v0.4.0, so the overview pins `@v0.5.0`. The landing bosun card and the Cloud page's
-  script copy stay on 0.2.3 (bosun's own v0.3.0 setup script still pins `BOSUN_VERSION=0.2.3`).
+  points at v0.4.0, so the overview pins `@v0.5.0`. Landing cards: hull v0.5.0, bosun v0.3.0.
+  The Cloud page embeds bosun's `docs/setup-script.sh` verbatim from bosun `b31187e` (#333, pins
+  bosun 0.3.0 with sha512-checked tarballs), stored in `apps/site/src/data/bosun/` with its ref
+  and sha256; `docs.test.ts` checks the copy, the page and the pin against the bosun card.
 
 ## Blocked
 
