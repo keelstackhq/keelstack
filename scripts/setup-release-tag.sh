@@ -38,7 +38,7 @@ while [ $# -gt 0 ]; do
     *) echo "unknown argument: $1" >&2; usage ;;
   esac
 done
-[ -n "$APP_ID" ] && [ -n "$CLIENT_ID" ] && [ -n "$KEY" ] || usage
+if [ -z "$APP_ID" ] || [ -z "$CLIENT_ID" ] || [ -z "$KEY" ]; then usage; fi
 [[ "$APP_ID" =~ ^[0-9]+$ ]] || { echo "--app-id must be the numeric App ID (not the Client ID)" >&2; exit 2; }
 [ -r "$KEY" ] || { echo "cannot read the private key file: $KEY" >&2; exit 2; }
 command -v gh > /dev/null || { echo "gh is not on PATH" >&2; exit 2; }
