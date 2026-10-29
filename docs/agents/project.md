@@ -158,11 +158,13 @@ freely, template updates never touch it.
   are unchanged), hoard v0.4.0 (runs on CircleCI too) and hoist v0.3.0 (`secrets`). hoard 0.5.0
   is not released yet: its card stays on v0.4.0.
 - 2026-10-29 docspack releases from the Actions tab: `release.yml` takes `workflow_dispatch` on
-  `main`; its `tag` job (actions/checkout pinned by SHA) tags `docspack-v<version>` from
-  `packages/docspack/package.json` and the same run publishes behind `release`. The tag-push
-  trigger is unchanged. `packages/docspack/src/release-workflow.test.ts` pins the workflow's shape.
-  `release.yml` is template-owned: keep the `workflow_dispatch` trigger and `tag` job when hull's
-  copy is brought in again.
+  `main`; its `tag` job (environment `release-tag`, main-only) creates `docspack-v<version>` from
+  `packages/docspack/package.json` with the release App's token (`HOIST_RELEASE_APP_CLIENT_ID`,
+  `HOIST_RELEASE_APP_KEY`, as in hull's template-rust), and that tag's push run publishes behind
+  `release`. The tag-push trigger is unchanged; every action is pinned by SHA (hull v0.4.0's pins).
+  `packages/docspack/src/release-workflow.test.ts` pins the workflow's shape. `release.yml` is
+  template-owned: keep the `workflow_dispatch` trigger and `tag` job when hull's copy is brought
+  in again. Owner setup under Blocked (docspack releases, steps 2 and 3).
 
 ## Blocked
 
@@ -189,24 +191,34 @@ Each item needs a human:
   0.1.1 through the workflow now.
   1. Each release: a PR bumps `version` in `packages/docspack/package.json`; after the merge,
      Actions → release → Run workflow (branch `main`; `version` optional, it must equal
-     `package.json`), then approve `release` (Review deployments → Approve and deploy). The
-     `release` environment's deployment branches and tags must include `main` (the run's ref). The `tag`
-     job refuses off `main` or when `docspack-v<version>` exists, tags `main`'s head and the same
-     run publishes it. A version already on npm is skipped. Pushing the tag by hand still works:
-     `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`.
-  2. Tag ruleset `release-tags`, if not set up yet (only repository admins and GitHub Actions,
-     app id 15368, for the Run workflow path, may create, move or delete `*-v*` tags; an existing
-     ruleset without the Actions entry refuses the `tag` job's push, so add it):
+     `package.json`). Its `tag` job (environment `release-tag`) refuses off `main`, on a wrong
+     version or when `docspack-v<version>` exists, and creates that tag on `main`'s head with the
+     release App's token. The tag's own push run then publishes: approve `release` there (Review
+     deployments → Approve and deploy). A version already on npm is skipped. Pushing the tag by
+     hand still works: `git tag docspack-v<version> origin/main && git push origin docspack-v<version>`.
+     `release` stays limited to the release tags: never add branch `main` to it. That would be safe
+     only with the owner as its required reviewer, since any workflow run on `main` could then
+     deploy to it.
+  2. Release App (once; hull's names, as in template-rust's `release.yml`): a GitHub App with
+     Contents: read and write only (no Workflows), installed on `keelstackhq/keelstack` (reuse the
+     org's release App if it exists). Repository variable `HOIST_RELEASE_APP_CLIENT_ID` = its
+     Client ID. Environment `release-tag`: Deployment branches → Selected → `main`; environment
+     secret `HOIST_RELEASE_APP_KEY` = the App's private key (never a repository secret). Without
+     the variable the `tag` job stops with that hint.
+  3. Tag ruleset `release-tags` (only repository admins and the release App may create, move or
+     delete `*-v*` tags; the default workflow token can't). Put the App's numeric App ID (App
+     settings → About; not the Client ID) in `<APP_ID>`; on an existing ruleset, add the same
+     bypass entry:
      ```bash
      gh api -X POST repos/keelstackhq/keelstack/rulesets --input - <<'EOF'
      { "name": "release-tags", "target": "tag", "enforcement": "active",
        "conditions": { "ref_name": { "include": ["refs/tags/*-v*"], "exclude": [] } },
        "rules": [{ "type": "creation" }, { "type": "update" }, { "type": "deletion" }],
        "bypass_actors": [{ "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" },
-                         { "actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always" }] }
+                         { "actor_id": <APP_ID>, "actor_type": "Integration", "bypass_mode": "always" }] }
      EOF
      ```
-  3. Optional: deprecate the stray versions so nobody installs them:
+  4. Optional: deprecate the stray versions so nobody installs them:
      `npm deprecate @keelstackhq/docspack@2026.10.27 "old build; use latest"` and the same for
      `@keelstackhq/docspack@0.0.0-stage`.
 
