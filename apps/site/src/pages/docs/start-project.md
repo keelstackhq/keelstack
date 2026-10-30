@@ -3,7 +3,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/b5587b99a87197c295ebb8117f936785e1aead2c/docs/start-checklist.md) at `v0.5.0`,
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/bfe25967eab7f2fae4ca586fca1c0885f5288929/docs/start-checklist.md) at `v0.5.1`,
 copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
@@ -144,16 +144,22 @@ owner also runs `hoist secrets check` in the secrets repo, then `--remote` here)
 
 ### 8. Set up bosun · computer · ready: auto · optional: bosun
 
-Only with `bosun` = `yes`. `bosun init --owner <login>` opens the setup PR with the channel files;
-fill `governance/owners.toml`. `hoist apply` adds branch protection, auto-merge and the required
-checks `ci-ok`, `risk-check`, `review-verdict`, `main-open`; then environment `splice-bot` (main
-only) with secret `SPLICE_BOT_TOKEN`, and `gh label create bosun:halt --color B60205`. The owner
-approves the setup PR's head (`/bosun approve <sha>` or a review) and merges it: the gates cannot
-run before main has the workflows. Paste bosun's `docs/setup-script.sh` into the Claude Code
-environment (item 3) and create the Routines (janitor, curator, notify). Optional:
-`.bosun/approvers.toml` with the orchestrator's public key (role owner), enrolled by an R-gov PR
-the owner approves on GitHub; after that, approvals go through the Claude Code form. Bootstrap
-mode needs bosun ≥ 0.3.0 pinned.
+Only with `bosun` = `yes`; walkthrough: https://keelstack.dev/docs/greenfield-bosun/. In order:
+
+1. Write the plan first: the agent turns the brief (item 10) into `plans/<name>.md`.
+   `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (`--stack` is required) opens
+   the setup PR with the channel files; fill `governance/owners.toml`.
+2. The owner approves the setup PR's head (the Claude Code form; `/bosun approve <sha>` as the
+   fallback) and merges it: the gates cannot run before main has the workflows.
+3. `hoist apply` then adds branch protection, auto-merge and the required checks `ci-ok`,
+   `risk-check`, `review-verdict`, `main-open`; then environment `splice-bot` (main only) with
+   secret `SPLICE_BOT_TOKEN`, and `gh label create bosun:halt --color B60205`.
+4. Paste bosun's `docs/setup-script.sh` into the Claude Code environment (item 3) and create the
+   Routines (janitor, curator, notify).
+
+Optional: `.bosun/approvers.toml` with the orchestrator's public key (role owner), enrolled by an
+R-gov PR the owner approves on GitHub; after that, approvals go through the Claude Code form.
+Bootstrap mode needs bosun ≥ 0.3.0 pinned.
 
 Check: with `bosun` = `yes`, `bosun doctor` passes (the owner also runs `bosun doctor --remote`).
 
@@ -174,9 +180,12 @@ Check: `.splice/lock.toml` lists the pieces the `pieces` and `ci` answers need, 
 
 Send the brief in chat. The agent writes it as a spec in `docs/superpowers/specs/` and a plan in
 `docs/superpowers/plans/`, or, for a small project, as a `## Steps` list in
-`docs/agents/project.md`. Plans end with an owner-steps section (D-009).
+`docs/agents/project.md`. Plans end with an owner-steps section (D-009). With `bosun` = `yes`, the
+plan goes in `plans/<name>.md` in bosun's plan format (bosun reads only that); the product spec
+stays in `docs/superpowers/specs/`.
 
-Check: a `.md` file in either directory, or a `## Steps` list in `docs/agents/project.md`.
+Check: a `.md` file in either directory, or a `## Steps` list in `docs/agents/project.md`; with
+`bosun` = `yes`, a `plans/<name>.md`.
 
 <a id="approvals"></a>
 
