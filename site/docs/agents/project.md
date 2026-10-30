@@ -190,6 +190,12 @@ freely, template updates never touch it.
   index and the Start a project intro (`apps/site/scripts/start-checklist.mjs`). Landing: a
   `ready` row under For agents; hull's card names GitHub Actions or CircleCI; bosun's card lists
   plan and spawn.
+- 2026-10-30 hull v0.5.1 (`bfe2596`): the hero command pins `--ref v0.5.1` (re-ran: exit 0, lock
+  hull 0.5.1 @ `bfe2596`, 60 files: 36 owned, 8 shared, 16 seed; the shown lines are unchanged);
+  hull card and the docs' version lines on v0.5.1; Start a project re-copied at `v0.5.1` (its
+  checklist now puts the plan in `plans/<name>.md`, requires `--stack` and merges the setup PR
+  before `hoist apply`); the greenfield page follows it (plan first, approve the setup PR's head
+  with the Claude Code form). docspack 0.1.4 ships it (`docspack-v0.1.3` was tagged at `0fb8555`, before this).
 
 ## Blocked
 

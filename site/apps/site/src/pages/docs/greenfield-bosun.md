@@ -2,7 +2,7 @@
 layout: ../../layouts/Docs.astro
 ---
 
-A new repo, rendered from hull v0.5.0, that bosun runs from the first task. This page shows the
+A new repo, rendered from hull v0.5.1, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
 plan turns into work. It follows bosun 0.3.0 (2026-10-29). Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -89,15 +89,17 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 ## The order
 
 1. **Owner:** create the repo and install the [Claude GitHub App](https://github.com/apps/claude).
-2. **Agent:** render hull v0.5.0
-   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.5.0 --piece …`),
+2. **Agent:** render hull v0.5.1
+   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.5.1 --piece …`),
    then run the `ready` skill: it asks the onboarding questions as forms; answer `bosun` with `yes`.
-3. **Agent:** `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>`. It opens one setup
-   pull request, which is R-gov.
+3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in
+   `docs/superpowers/specs/`). Then `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>`
+   (`--stack` is required). It opens one setup pull request, which is R-gov.
 4. **Owner:**
    - check `governance/owners.toml`;
-   - approve and merge the setup pull request by hand: while `main` has no bosun workflows,
-     `risk-check`, `review-verdict` and `main-open` cannot run on it;
+   - approve the setup pull request's head (the Claude Code form; `/bosun approve <sha>` as the
+     fallback) and merge it: while `main` has no bosun workflows, `risk-check`, `review-verdict`
+     and `main-open` cannot run on it;
    - then run `hoist apply` (branch rules, auto-merge, the required checks);
    - create the environment `splice-bot` (branch `main` only) with `SPLICE_BOT_TOKEN`;
    - `gh label create bosun:halt --color B60205`;
