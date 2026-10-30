@@ -195,7 +195,7 @@ freely, template updates never touch it.
   hull card and the docs' version lines on v0.5.1; Start a project re-copied at `v0.5.1` (its
   checklist now puts the plan in `plans/<name>.md`, requires `--stack` and merges the setup PR
   before `hoist apply`); the greenfield page follows it (plan first, approve the setup PR's head
-  with the Claude Code form). docspack stays 0.1.3 (not on npm yet).
+  with the Claude Code form). docspack 0.1.4 ships it (`docspack-v0.1.3` was tagged at `0fb8555`, before this).
 
 ## Blocked
 
