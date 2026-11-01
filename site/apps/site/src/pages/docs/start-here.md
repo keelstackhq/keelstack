@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 One ordered path from an empty GitHub repo to the first merged task. Each step names who does it
-and links the page with the details. Versions as of 2026-10-30: hull v0.5.1, splice 0.3.1, bosun
-0.3.0, hoist 0.3.0, berth 0.1.0, hoard v0.5.0.
+and links the page with the details. Versions as of 2026-11-01: hull v0.5.2, splice 0.3.1, bosun
+0.4.0, hoist 0.3.0, berth 0.1.0, hoard v0.5.0.
 
 Machine-readable: this page is https://keelstack.dev/docs/start-here.md, and every page is in
 https://keelstack.dev/llms-full.txt.
@@ -47,8 +47,11 @@ https://keelstack.dev/llms-full.txt.
    amendment. [Getting started, step 7](/docs/getting-started/#7-run-the-first-task).
 9. **Run the first task** (agent). `bosun plan import` again (the tasks become ready),
    `bosun claim <task>`, test first, run every gate locally, `bosun pr <task>`, a fresh reviewer's
-   verdict (`bosun verdict comment` from a cloud session), then `bosun pr <task> --auto-merge`, or
-   the orchestrator merges once the checks are green and any owner approval is in.
+   verdict (`bosun verdict comment` from a cloud session). Since bosun 0.4.0 agents turn on
+   auto-merge when they open the pull request (`bosun pr <task> --auto-merge`), and the ruleset
+   merges it once the required checks pass. If GitHub reports the pull request as already
+   mergeable (`already_clean`, exit 5), the owner merges it by hand. The orchestrator does not merge
+   through bosun.
    [CI and gates](/docs/ci/), [Risk and review](/docs/risk/).
 10. **Run it day to day.** One orchestrator session plans and starts child sessions in the
     environment; the owner approves in chat and approves releases.

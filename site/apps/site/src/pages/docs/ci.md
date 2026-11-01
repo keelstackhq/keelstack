@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun 0.3.0 (2026-10-29); where an older
+checks decide whether GitHub may merge. This page follows bosun 0.4.0 (2026-11-01); where an older
 release behaved differently, it says so.
 
 ## Required checks
@@ -57,8 +57,12 @@ gate runs for all packages (`pnpm -r --include-workspace-root run test`) it also
 ## test-integrity
 
 The gate that keeps tests honest. It refuses a pull request that deletes a test, adds a skip
-marker (or a new `.only`), or lowers the assertion count, unless the task's plan allows it. A
-snapshot change needs the line `snapshot-change: <reason>` in the pull request body. Files are
+marker (or a new `.only`), or lowers the assertion count, unless the task's plan allows it: the
+task's optional `allow:` (`delete-test`, `skip`, `only`, `fewer-asserts`), taken only from the
+plan merged on the default branch. Since 0.4.0, CI and the channel's `bosun.yml` read the linked
+task's `allow` in a step before the gates, with a read-only token that never reaches pull
+request code (`bosun test-integrity --pr <n>`). A snapshot change needs the line
+`snapshot-change: <reason>` in the pull request body. Files are
 compared with the merge base. Agents never skip, delete or weaken a test to get green.
 
 ## One job, and what runs in it

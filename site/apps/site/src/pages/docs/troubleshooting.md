@@ -199,8 +199,10 @@ child session.
 the fix text said to retry; since bosun 0.3.0 it names this fix,
 and `bosun pr` also says "push the branch" when the branch is not on GitHub yet.
 
-**Fix.** Turn on auto-merge (`hoist apply --area github`, or the repo settings), or let the
-orchestrator or the owner merge.
+**Fix.** Turn on auto-merge (`hoist apply --area github`, or the repo settings). Since bosun 0.4.0
+`bosun pr --auto-merge` turns it on at once and lists unfinished checks as `pending_checks`; a pull
+request GitHub already reports as clean exits 5 (`already_clean`) and is left for the owner to
+merge.
 
 ### The edit hook refuses the claiming session's own files
 

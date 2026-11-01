@@ -4,8 +4,8 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.3.0
-(2026-10-26).
+turns `risk-check` green only when the rules are met. This page follows bosun 0.4.0
+(2026-11-01).
 
 ## Risk rules
 
@@ -19,9 +19,25 @@ matches any rule is high risk.
 | R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.splice/**`, `hoist.toml`, `REVIEW.md`, `docs/agents/**`, and every `AGENTS.md` and `CLAUDE.md` (`**/`, since 0.2.1; root files only before) |
 | R-ci                | CI decides what is verified.                        | `.github/workflows/**`; rust stacks add `deny.toml` and `rust-toolchain.toml`, ts-pnpm stacks `.npmrc`                                                                                                          |
 | R-secrets           | A secret in the repo is a leak.                     | added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`                                                                                                                                                     |
-| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency in a manifest                                                                                                                                                                                  |
+| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency, a new root pin or catalog entry, or a source change in a manifest; since 0.4.0 also `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.yarnrc` and `.yarnrc.yml` in any directory             |
 | R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                         |
 | R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                        |
+
+Since bosun 0.4.0:
+
+- **R-deps** counts new root pins, new catalog entries and source changes (git, `package =`
+  renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases), and registry and
+  install-hook config files (`.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.yarnrc`,
+  `.yarnrc.yml`): they redirect where every package comes from. It no longer counts
+  `x.workspace = true` edges, in-repo `path` dependencies or pnpm `catalog:`/`workspace:`
+  references.
+- **R-secrets** no longer flags code bindings without a literal (`let x = v`), test files and
+  fixtures (never env or config files), or a line with a trailing `bosun:allow-secret <reason>`
+  comment. Strong formats (age, PEM and PGP private keys, GitHub, `sk-`, Stripe live, AWS and
+  Slack tokens) are never exempt and match on any added line.
+- **Lockfile carry:** an approval or verdict carries across a merge of main whose only conflict is
+  `Cargo.lock` or `pnpm-lock.yaml`, when every whole entry of the regenerated lockfile is an entry
+  of the approved head's copy or main's (checked from git, entry by entry).
 
 Since bosun 0.3.0 the rules cover more:
 
@@ -141,7 +157,11 @@ bosun approve 199@<sha> 200@<sha>   # run exactly the `data.approve_command` tha
 ```
 
 `bosun approve` posts nothing if any named pull request moved to another head (exit 3); run
-`--list` again. Without `--sign-key` the posting modes refuse in a cloud session (exit 5, since
+`--list` again. Since 0.4.0 `bosun approve --list` also works without `BOSUN_OWNER_TOKEN`: it reads
+unauthenticated, writes nothing, and lists what it could not read in `data.skipped`. An owner's
+answer relayed in chat moves a needs-human task to ready with `bosun answer --chat`, counted only
+with a verified signature of an owner key in `.bosun/approvers.toml` (`--chat --sign-key` makes
+the signed form). Without `--sign-key` the posting modes refuse in a cloud session (exit 5, since
 0.2.1); `--list` still works there.
 
 ### Signed approvals from chat

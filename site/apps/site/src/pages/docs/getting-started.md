@@ -6,7 +6,7 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-10-30: hull v0.5.1, splice 0.3.1, bosun 0.3.0, hoist 0.3.0,
+Versions are the released ones as of 2026-11-01: hull v0.5.2, splice 0.3.1, bosun 0.4.0, hoist 0.3.0,
 berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
 or later.
 
@@ -69,9 +69,10 @@ plain `update` or `check` considers only stable tags that descend from it.
 
 ### Check that the repo is ready (since hull v0.5.0)
 
-A repo rendered from hull v0.5.0 ships a `ready` skill and `scripts/ready.mjs`; its `AGENTS.md`
-says to run it first. `ready` starts with seven onboarding questions (pieces, CI provider, update
-bot, approvals, GitHub Apps, secrets, bosun), asked as Claude Code forms with the recommended
+A repo rendered from hull v0.5.0 ships a `ready` skill and `scripts/ready.mjs` (`template-rust`
+too since hull v0.5.2); its `AGENTS.md` says to run it first. `ready` starts with seven onboarding
+questions (pieces, CI provider, update bot, approvals, GitHub Apps, bosun, and `secrets` in
+`template` or `release` in `template-rust`), asked as Claude Code forms with the recommended
 option first, and records the answers in `docs/agents/onboarding.toml`. Then
 `node scripts/ready.mjs` checks each item of hull's start checklist and prints `pass`, `fail`,
 `ask`, `manual` or `skipped`, with the fix and a link to the item; an item an answer turns off is
@@ -112,7 +113,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.3.0
+npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.4.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -152,14 +153,10 @@ delete-branch-on-merge, and adds a ruleset on the default branch that requires `
 
 bosun repos need auto-merge without a merge queue: `risk-check` and `review-verdict` are statuses
 on the pull request head, which a merge-queue commit would not carry. The `hoist.toml` bosun seeds
-says `merge_queue = false`. In a hull repo, `bosun init` keeps hull's `hoist.toml`, and hoist
-expects a merge queue whenever a workflow has a `merge_group` trigger (hull's and bosun's do), so
-add this to `hoist.toml` before `hoist apply`:
-
-```toml
-[github]
-merge_queue = false
-```
+says `merge_queue = false`. In a hull repo, `bosun init` keeps hull's `hoist.toml` and writes
+`merge_queue = false` into its `[github]` table (since bosun 0.3.0); hoist would otherwise expect a
+merge queue, because hull's and bosun's workflows have a `merge_group` trigger. An explicit
+`merge_queue = true` stays, with a warning: set it to `false` yourself.
 
 Without hoist, set the same by hand: a branch ruleset on the default branch with those required
 status checks, "Allow auto-merge" and "Automatically delete head branches".
@@ -182,8 +179,9 @@ Then, still as the owner:
   runs as root before each session and installs Node 24, pnpm (ts-pnpm stacks), the Rust
   toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
   and bosun.
-- Create the three Routines: janitor (every 15 min, Haiku), curator (daily, Sonnet) and notify
-  (every 15 min, Haiku). `bosun doctor` prints their prompts.
+- Create the Routines: janitor (every hour, Haiku) and curator (daily, Sonnet), plus notify
+  (every hour, Haiku) only with a `[slack]` table; without it bosun 0.4.0 has no notify Routine
+  and `bosun doctor` reports Slack as skipped. `bosun doctor` prints their prompts.
 
 `bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
 `hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. Since bosun 0.3.0, `--remote` also checks the environment of every workflow job
@@ -244,7 +242,7 @@ bosun pr <task>
 bosun review-pack <pr>                  # input for a fresh reviewer subagent
 bosun verdict comment --from verdict.json   # from a cloud session; elsewhere `verdict post`
 bosun wait --pr <pr>
-bosun pr <task> --auto-merge            # after the checks are green; GitHub merges
+bosun pr <task> --auto-merge            # since 0.4.0 at once; GitHub merges when the checks pass
 ```
 
 `--auto-merge` needs the ruleset and auto-merge from step 4. On the trial repo (private, free

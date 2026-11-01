@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. It follows bosun 0.3.0 (2026-10-29).
+each other, and what stops work. It follows bosun 0.4.0 (2026-11-01).
 
 ## Every command speaks JSON
 
@@ -56,7 +56,15 @@ Work enters as a plan file in `plans/` ([format](https://github.com/keelstackhq/
 A second import of the same plan creates nothing new. Tasks become ready only on the import run
 after their item's plan task merged. New work enters only as a plan amendment: `bosun intake`
 opens a plan task that asks for it, and after the amendment merges, `bosun plan amend <file>`
-imports the new work and closes what the plan dropped as "not planned".
+imports the new work and closes what the plan dropped as "not planned". Since 0.4.0,
+`bosun plan pr <plan> "<why>" --source <s>` opens the intake, claims the plan file and opens the
+amendment's pull request in one step. It is for amendments only: the first plan goes in through
+`bosun init --plan`.
+
+A task may carry `allow:` (`delete-test`, `skip`, `only`, `fewer-asserts`) for the changes
+test-integrity would otherwise refuse ([CI and gates](/docs/ci/#test-integrity)). It reaches the
+task only from the plan as merged on the default branch, which the owner approved, never from an
+unmerged local plan.
 
 ## Labels and states
 
@@ -103,8 +111,8 @@ task that a person merged by hand moves to merged too (`bosun pr`, `bosun reap` 
 
 - The lease lasts 30 minutes. `bosun heartbeat` extends it; run it at least every 20 minutes.
 - `bosun release <issue>` ends a lease when you stop before the task is done.
-- `bosun reap` (run by the janitor Routine every 15 minutes) ends expired leases and sets the task
-  back to ready. A dead session blocks a task for at most about 45 minutes.
+- `bosun reap` (run by the janitor Routine, hourly since 0.4.0) ends expired leases and sets the
+  task back to ready. A dead session blocks a task for at most about 90 minutes.
 - After a container restart, `bosun resume` renews the session's leases and lists, per held task,
   the state, the open pull request, its branch and the next action.
 
@@ -143,9 +151,12 @@ exit 6 with the check in the JSON.
 - `bosun wave plan <epic>` lists the tasks that can run in parallel now: no overlapping touch
   paths, all dependencies merged, at most `waves.max_parallel`.
 - `bosun wait --pr <n>` (or `--issue`, `--child`) polls GitHub with backoff inside one call
-  (5 s doubling to 60 s, default timeout 30 min) and returns the change.
-- A child reports with `bosun result <epic> --outcome merged|blocked|needs-human [--pr N]`, an
-  issue comment the parent reads with `bosun wait --child`.
+  (5 s doubling to 60 s, default timeout 30 min) and returns the change. Since 0.4.0 it renews the
+  caller's leases and registry record while it polls, reaps expired leases and members, and
+  `--pr` shows only the newest run of each check.
+- A child reports with `bosun result <epic> --outcome merged|blocked|needs-human|partial [--pr N]`,
+  an issue comment the parent reads with `bosun wait --child`. Since 0.4.0 the result lists the
+  epic's merged tasks for every outcome, and `partial` hands the epic back as ready.
 - `bosun msg <session> <text>` returns a `send_message` call; text over 500 characters is
   refused.
 
