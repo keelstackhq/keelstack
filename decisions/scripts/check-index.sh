@@ -21,8 +21,11 @@ while IFS= read -r row; do
   case "$(basename "$link")" in "$num"-*) ;; *) echo "$id: file $link does not start with $num-"; fail=1 ;; esac
   if grep -q 'Status: superseded' "$link"; then echo "$id: $link is superseded; remove it from the index"; fail=1; fi
 done < <(grep -E '^\| D-[0-9]{3} ' DECISIONS.md)
-# The channel template cannot hold symlinks, so it carries a copy of DECISIONS.md; keep it identical.
-snap=channel/pieces/snapshot/files/docs/agents/org-decisions.md
-if ! cmp -s DECISIONS.md "$snap"; then echo "$snap differs from DECISIONS.md; run: cp DECISIONS.md $snap"; fail=1; fi
+# The channel template cannot hold symlinks, so it carries a generated copy of DECISIONS.md
+# (rows not scoped `all orgs` are guarded out for the `portable` piece); keep it current.
+snap=channel/pieces/snapshot/files/docs/agents/org-decisions.md.jinja
+before=$(cat "$snap" 2>/dev/null || true)
+bash scripts/gen-snapshot.sh
+if [ "$before" != "$(cat "$snap")" ]; then echo "$snap was stale; regenerated it, commit it"; fail=1; fi
 if [ "$fail" -ne 0 ]; then exit 1; fi
 echo "DECISIONS.md ok: $lines lines, $(printf '%s\n' "$ids" | grep -c . ) decisions"
