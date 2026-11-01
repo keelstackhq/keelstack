@@ -203,7 +203,9 @@ freely, template updates never touch it.
   `approve --list`, `answer --chat`, the new R-deps and R-secrets rules, lockfile carry), ci and
   tasks (`allow:`, `plan pr`, `partial`, `wait` keepalive), greenfield and Start a project at
   v0.5.2, hero `--ref v0.5.2` (re-ran: 60 files, 36 owned, 8 shared, 16 seed; lines unchanged).
-  docspack 0.1.5. Not yet: the decisions channel for other orgs (keelstackhq/decisions #12 is not
+  docspack 0.1.5. The Cloud page embeds bosun's 0.4.0 `docs/setup-script.sh` from bosun `0d5b909`
+  (#357; the four launcher sha512 values match npm), and the landing bosun card is v0.4.0.
+  Not yet: the decisions channel for other orgs (keelstackhq/decisions #12 is not
   merged; a follow-up PR).
 
 ## Blocked
