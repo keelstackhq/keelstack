@@ -22,10 +22,14 @@ orchestrator adds the id when it makes the call.
 ## 2. Paste the setup script
 
 The setup script runs as root before each session and installs the pinned tools. This is bosun's
-own, [`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/b31187ef7d20824f6e8f19bcf95ad5e059d0b21b/docs/setup-script.sh)
-at commit `b31187e` (bosun 0.3.0 pinned), copied verbatim. It installs splice, hoist, berth and
+own, [`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/0d5b909c55e4441e8f556840efc18d24465db76a/docs/setup-script.sh)
+at commit `0d5b909` (bosun 0.4.0 pinned), copied verbatim. It installs splice, hoist, berth and
 bosun only from npm tarballs whose sha512 matches the pinned `dist.integrity` (a mismatch skips
 that tool with a warning), and takes the Rust version from the checkout's `rust-toolchain.toml`.
+Since bosun 0.4.0 it installs cargo-nextest and cargo-deny with rustup's stable default when no
+`rust-toolchain.toml` exists yet (as before the checkout), and makes Node 24 the `node` that
+resolves first when the image has an older Node earlier in `PATH`; a failed step warns and never
+fails the script. Paste it again after each bosun release.
 A change to `docs/setup-script.sh` needs the owner (R-gov).
 
 ```bash
@@ -37,28 +41,28 @@ set -euo pipefail
 # Pinned tool versions. Move a pin with a PR that edits this file (R-ci reviews it).
 NODE_MAJOR=24
 PNPM_VERSION=12.15.0
-SPLICE_VERSION=0.3.0
+SPLICE_VERSION=0.3.1
 # npm's dist.integrity (sha512) of each tool's launcher and linux binary packages, from
 # `npm view @keelstackhq/<package>@<version> dist.integrity`; move them with the version.
-SPLICE_SHA512=NmTKFPnwnLN0fNFdt7yUAikv+XXgFd3DV/kJzBTxWkXdwJn7geSl5tDmr71B3pEofjQ3V7SxMfejZcff1eAlsA==
-SPLICE_LINUX_X64_SHA512=lx56ekCHokRBLZr8iuUpRh4fG8YO99m8VXJUHiHmjZ3vx9VpqX1QtLRbplpL1lHbN36ovZqTlAgAIZJsoJ5sUQ==
-SPLICE_LINUX_ARM64_SHA512=NS1EGfcTkR2RYfnb0LH0+/zpXtbaJMKUpw+CgLWDcpnv+2K/ClLAjiVX7iUenHhaA6H4vOjC4aWSf52jL4xc4g==
-HOIST_VERSION=0.2.0
-HOIST_SHA512=GK2LeMe4A6uVva2ipIt39xPIn4ggW7Aaia95BnksSyRF6OhevCOeCebYAw2hU3106PR9ZsQ+v2YDLjq6E+3UVA==
-HOIST_LINUX_X64_SHA512=vGMKf3DA7v8U3K8697e5BtWENkcdsDmZ/vpgJj+LhDpfe8MWBcd53DBiag+LhnFhe6umPkdNTWb0ps4ft35S7Q==
-HOIST_LINUX_ARM64_SHA512=exVDP67JLgbXoBqa6vVKx7l4fpGXnLFEnJnBXhtcmnr/+swChU08absd5IUspsA6vDCXILejFEQMSUr6T30uow==
+SPLICE_SHA512=FyJMvUQ4SxjaLtECPp1YmRpMMzYwRaGsdCJ/den/PRZBkkecMyWRLq3v7UECIpJfWuIGWlDmWz48l6X9cNsxeA==
+SPLICE_LINUX_X64_SHA512=OtpywXIof4d/eP7dhvt8q3hh5k65qCpE7YtTh9EmA9RqtPtFxksBaxWT3FjWHkqJ7RQm7JCKme2xIBVnBpAhHA==
+SPLICE_LINUX_ARM64_SHA512=gJ4y/6sOgGooEkf1flpUUIt9u77T4oe7CBKzCEWXSeGwHyRH7jE3/v/lHFKtaGRF5OhW7sq+wbN3z7uCBQIkxQ==
+HOIST_VERSION=0.3.0
+HOIST_SHA512=0OO9wf3zQgSmZzGLUkLvjrdhQsUq1zGtyJ4CDi/EprxDmOFxvyxJfPpEDIez0xvwN9UNqhjwDw9x77GrFXeMVQ==
+HOIST_LINUX_X64_SHA512=dfsuZovno5ZMtepOLDhYiLQLu9K0hTdAgVVsO4VhwKw6fWnH4PGE3Ks/sqnShT+ajSzN25pETEVV9euIZvxcag==
+HOIST_LINUX_ARM64_SHA512=dFY+6R78093CTKpipt3I7c037oz2SDZ8cUgJjH00OXkbrdzTWgHqh7wytOs9/JF56aHW38K1ATS0L0jc21AmVg==
 BERTH_VERSION=0.1.0
 BERTH_SHA512=4V71F1YqcduupUm/yqc3HaK5/VMH6bD1PZa6xskA+84UiSs1UZRnkX7W+zoLPNizoT2CM1bVGmEtk2cjjYg3Eg==
 BERTH_LINUX_X64_SHA512=3eaIWInNsevz8vPlkSN+QsPnf82ULEZJz2X4KFOsP3aQR9EanDBDxmm2+J+jEvUBHKxS3xfQMT7HqCO35TUysw==
 BERTH_LINUX_ARM64_SHA512=sG6PA8qfOmThoXxL/3P+DSTnr8OL+5MieaTWBv9QfjzcC/ocITUHqi5xptPh2u+71ZY8SqpEcgE6dPmvmi5YXw==
 # The bosun release this repo pins in .bosun/version.
-BOSUN_VERSION=0.3.0
-BOSUN_SHA512=9qaNf4PstfjZ92uMdChV9gY62Rb+wlCANRrcoBsN96MfGTf5g+gA+NdVXlngFlOVDynJZd7/rjW1hHyFoE1eYw==
-BOSUN_LINUX_X64_SHA512=a+LmXD+fvpcXosaUm0bOnjCqZ4cy0DziAQRtI/havMH/nXNbpzXZPdn5c4yg59f/ff/qKA+6dwSItiUftJA/lg==
-BOSUN_LINUX_ARM64_SHA512=/aQa03VNgR8k1mYoscze8nW62MNuMFJW28ZXwR6ubkpEJRBR5MeUuEU5dNPVsWH/D3AvHIgdiU4GA5dI9Rcqvg==
+BOSUN_VERSION=0.4.0
+BOSUN_SHA512=PgbHQLJg9P14b8zsl1nY3dF8RvY1VT/2YB3TtJr8XfECFhtxRk5ouJitH3LwUClAAMVbVG16laD+3lIb0sD71w==
+BOSUN_LINUX_X64_SHA512=heHB2hOzfMu1jlelVPOiG6dTzrN/ep3jIEC2JcxhS/vX/C0FefwGrVUzxGzoEb27g1Ay817XqRsRGp8fnVHpGg==
+BOSUN_LINUX_ARM64_SHA512=NiPlqlENitXHnrOZ01Nv5F/xGLiv5CfFWC+lkfAY7hpmwSfm33NaNAav3i1Xj6E30l+jQAwfGasw/wrnyg7GDw==
 
 # Rust is not pinned here: the version is the `channel` of the checkout's rust-toolchain.toml.
-# Without one the script warns and skips Rust. `bash docs/setup-script.sh --rust-version` prints the version
+# Without one the script warns, skips the pinned toolchain and still installs the cargo tools. `bash docs/setup-script.sh --rust-version` prints the version
 # and installs nothing.
 RUST_VERSION=""
 if [ -f rust-toolchain.toml ]; then
@@ -67,12 +71,12 @@ fi
 # The channel reaches rustup as root: only a toolchain name passes, anything else is skipped like a
 # missing file (printf %q shows the rejected value safely).
 if [ -n "$RUST_VERSION" ] && ! [[ "$RUST_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-  printf 'setup-script: invalid channel %q in rust-toolchain.toml; skipping the Rust toolchain install and the cargo tools\n' "$RUST_VERSION" >&2
+  printf 'setup-script: invalid channel %q in rust-toolchain.toml; skipping the Rust toolchain install (the cargo tools still install with the default toolchain)\n' "$RUST_VERSION" >&2
   RUST_VERSION=""
   if [ "${1:-}" = --rust-version ]; then exit 1; fi
 elif [ -z "$RUST_VERSION" ]; then
   # Never fail here: a failing setup script blocks every session of the environment.
-  echo "setup-script: no rust-toolchain.toml with a channel in $PWD; skipping the Rust toolchain install and the cargo tools, rustup installs the checkout's pinned toolchain on first cargo use" >&2
+  echo "setup-script: no rust-toolchain.toml with a channel in $PWD; skipping the Rust toolchain install (the cargo tools still install with the default toolchain), rustup installs the checkout's pinned toolchain on first cargo use" >&2
   if [ "${1:-}" = --rust-version ]; then exit 1; fi
 fi
 if [ "${1:-}" = --rust-version ]; then echo "$RUST_VERSION"; exit 0; fi
@@ -83,15 +87,53 @@ if ! node --version 2>/dev/null | grep -q "^v${NODE_MAJOR}\."; then
   apt-get install -y nodejs
 fi
 
+# The image may put an older Node (/opt/node22/bin) before NodeSource's /usr/bin in PATH. Make Node 24 the
+# `node` that resolves first, whatever the PATH order: link it into a directory that later shells put
+# first (/etc/profile.d), and replace the older `node` that resolves today. Never fails: it warns.
+NODE_BIN_DIR="${SETUP_NODE_BIN_DIR:-/usr/bin}"
+NODE_LINK_DIR="${SETUP_NODE_LINK_DIR:-/usr/local/lib/bosun-node}"
+NODE_PROFILE="${SETUP_NODE_PROFILE:-/etc/profile.d/bosun-node.sh}"
+node_major_ok() { "$1" --version 2>/dev/null | grep -q "^v${NODE_MAJOR}\."; }
+if ! node_major_ok "$(command -v node || echo node)"; then
+  if node_major_ok "$NODE_BIN_DIR/node"; then
+    first="$(command -v node || true)"
+    {
+      mkdir -p "$NODE_LINK_DIR"
+      for b in node npm npx; do [ -e "$NODE_BIN_DIR/$b" ] && ln -sf "$NODE_BIN_DIR/$b" "$NODE_LINK_DIR/$b"; done
+      printf 'export PATH=%q:"$PATH"\n' "$NODE_LINK_DIR" >"$NODE_PROFILE"
+    } 2>/dev/null || echo "setup-script: could not link Node ${NODE_MAJOR} into $NODE_LINK_DIR or write $NODE_PROFILE" >&2
+    if [ -n "$first" ] && [ "$first" != "$NODE_BIN_DIR/node" ]; then
+      ln -sf "$NODE_BIN_DIR/node" "$first" 2>/dev/null ||
+        echo "setup-script: could not replace $first with $NODE_BIN_DIR/node" >&2
+    fi
+  fi
+  if ! node_major_ok "$(command -v node || echo node)"; then
+    echo "setup-script: node resolves to $(command -v node || echo none) ($(node --version 2>/dev/null || echo unknown)), not Node ${NODE_MAJOR} at $NODE_BIN_DIR/node" >&2
+  fi
+fi
+
 # pnpm 12 ships a native binary; its install.js puts it in place.
 npm install -g "pnpm@${PNPM_VERSION}"
 (cd "$(npm root -g)/pnpm" && node install.js) || true
 
 # Rust (the version read above) and the cargo tools the gates run.
+# Without a toolchain file (the checkout does not exist yet when this runs) rustup's stable default
+# serves the tools, and rustup installs the checkout's pinned toolchain on first cargo use there.
+# A failed step warns and the script goes on: a failing setup script blocks every session.
 if [ -n "$RUST_VERSION" ]; then
-  rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt,clippy
-  rustup default "${RUST_VERSION}"
-  cargo install --locked cargo-nextest cargo-deny
+  { rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt,clippy &&
+    rustup default "${RUST_VERSION}"; } ||
+    echo "setup-script: installing the Rust toolchain ${RUST_VERSION} failed; continuing" >&2
+elif command -v rustup >/dev/null 2>&1 && ! rustup show active-toolchain >/dev/null 2>&1; then
+  { rustup toolchain install stable --profile minimal --component rustfmt,clippy &&
+    rustup default stable; } ||
+    echo "setup-script: installing the stable Rust toolchain failed; continuing" >&2
+fi
+if command -v cargo >/dev/null 2>&1; then
+  cargo install --locked cargo-nextest cargo-deny ||
+    echo "setup-script: cargo install of cargo-nextest and cargo-deny failed; continuing without them" >&2
+else
+  echo "setup-script: no cargo found; skipping cargo-nextest and cargo-deny" >&2
 fi
 
 # The keelstackhq tools, pinned, install only from npm tarballs that match the pinned sha512:
