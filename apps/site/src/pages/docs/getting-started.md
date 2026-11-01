@@ -99,9 +99,18 @@ git add -A && git commit -m "chore: add rigging and decisions channels"
 - **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
   `--piece import-project` when the repo has `docs/agents/project.md` (hull repos do), else
   `--piece import-claude`; `--piece import-agents` adds a pointer to `AGENTS.md`.
-- The decisions channel brings keelstackhq's own decisions (D-001 to D-008), such as how
-  merges and tags work and how to save CI minutes. The channel is an ordinary splice template, so splice can
-  apply one from your own repo the same way; that setup is not documented in the sources yet.
+- The decisions channel brings keelstackhq's own decisions, such as how merges and tags work and
+  how to save CI minutes. Most of them name keelstackhq's own repos and process.
+- **A repo in another org** adds `--piece portable` as well. It takes only the decisions scoped
+  `all orgs` (currently D-007, D-010 and D-011):
+  `splice channel add gh:keelstackhq/decisions//channel --track main --piece portable --piece import-claude`.
+- **Your org's own decisions** can live in a repo of the same shape, for example
+  `<org>/decisions`. Copy `DECISIONS.md`, `decisions/000-template.md`, `channel/` and `scripts/`,
+  rename the channel and its snapshot file as the
+  [decisions README](https://github.com/keelstackhq/decisions#your-orgs-own-decisions-repo) lists,
+  then `splice channel add gh:<org>/decisions//channel --as <org>-decisions --track main --piece import-claude`.
+  It sits next to keelstackhq's portable channel: the files and section markers differ, so
+  neither touches the other.
 - `node scripts/agents-index.mjs` exists only in hull repos.
 
 Never edit inside a `<!-- splice:NAME:begin … -->` block or an owned file; change the source
