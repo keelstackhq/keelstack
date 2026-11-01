@@ -91,8 +91,7 @@ freely, template updates never touch it.
   the orchestrator's brief backs are labelled Practice); docs pin splice 0.2.1.
 - 2026-10-26 Docs 6/6: `/docs/troubleshooting/`; the docs section is complete (8 pages, listed in
   `/llms.txt`). Open copy gaps:
-  - TODO(copy): running your own org's decisions channel (the channel is a plain splice template;
-    no source describes setting one up).
+  - Resolved 2026-11-01: running your own org's decisions channel (decisions README, #12).
   - TODO(copy): `bosun init --stack ts-pnpm` first-PR-green is unverified (bosun UC-M7-2).
   - Resolved by the refresh (2026-10-26): signed and delegated approvals (bosun 0.2.1), the
     bosun-main behaviour that shipped in 0.2.1 and 0.2.2.
@@ -205,8 +204,9 @@ freely, template updates never touch it.
   v0.5.2, hero `--ref v0.5.2` (re-ran: 60 files, 36 owned, 8 shared, 16 seed; lines unchanged).
   docspack 0.1.5. The Cloud page embeds bosun's 0.4.0 `docs/setup-script.sh` from bosun `0d5b909`
   (#357; the four launcher sha512 values match npm), and the landing bosun card is v0.4.0.
-  Not yet: the decisions channel for other orgs (keelstackhq/decisions #12 is not
-  merged; a follow-up PR).
+  The decisions channel for other orgs followed once keelstackhq/decisions #12 merged
+  (`67fec03`): Getting started step 2 documents `--piece portable` (the `all orgs` decisions:
+  D-007, D-010, D-011) and an org's own decisions repo in the same channel shape.
 
 ## Blocked
 
