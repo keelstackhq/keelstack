@@ -196,6 +196,15 @@ freely, template updates never touch it.
   checklist now puts the plan in `plans/<name>.md`, requires `--stack` and merges the setup PR
   before `hoist apply`); the greenfield page follows it (plan first, approve the setup PR's head
   with the Claude Code form). docspack 0.1.4 ships it (`docspack-v0.1.3` was tagged at `0fb8555`, before this).
+- 2026-11-01 hull v0.5.2 (`a25ae56`) and bosun 0.4.0 (`7eb2fa4`), from feedback of a first user repo:
+  start-here step 9 (agents turn on auto-merge at PR open; the owner merges only an
+  `already_clean` PR; the orchestrator does not merge through bosun), getting-started (`ready` in
+  template-rust too, `bosun init` writes `merge_queue = false`, Routines hourly), risk (tokenless
+  `approve --list`, `answer --chat`, the new R-deps and R-secrets rules, lockfile carry), ci and
+  tasks (`allow:`, `plan pr`, `partial`, `wait` keepalive), greenfield and Start a project at
+  v0.5.2, hero `--ref v0.5.2` (re-ran: 60 files, 36 owned, 8 shared, 16 seed; lines unchanged).
+  docspack 0.1.5. Not yet: the decisions channel for other orgs (keelstackhq/decisions #12 is not
+  merged; a follow-up PR).
 
 ## Blocked
 

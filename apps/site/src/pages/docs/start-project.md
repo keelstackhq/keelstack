@@ -3,14 +3,15 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/bfe25967eab7f2fae4ca586fca1c0885f5288929/docs/start-checklist.md) at `v0.5.1`,
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/a25ae56c6677e444530cb96191295e4bc935a41e/docs/start-checklist.md) at `v0.5.2`,
 copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
 [Getting started](/docs/getting-started/); for a repo that bosun runs, see
 [Greenfield repo with bosun](/docs/greenfield-bosun/).
 
-Every human step before agents can work autonomously on a new repo rendered from hull, in order:
+Every human step before agents can work autonomously on a new repo rendered from hull (`template/`
+or `template-rust/`; both ship `ready`), in order:
 computer steps first, then phone steps (D-009), each with how an agent verifies it. In a rendered
 repo, the `ready` skill (`node scripts/ready.mjs`) runs the automatable checks and links each line
 here, at the hull tag the repo was rendered from. Agents start autonomous work only when it exits
@@ -22,15 +23,24 @@ here, at the hull tag the repo was rendered from. Agents start autonomous work o
 recommended default) and records the answers in `docs/agents/onboarding.toml` (seed). An item is
 `ask` until its questions are answered, and `skipped (chosen: …)` when an answer turns it off.
 
-| Question     | Asks                                               | Options (first = recommended)             | Decides items  |
-| ------------ | -------------------------------------------------- | ----------------------------------------- | -------------- |
-| `pieces`     | What will this repo hold?                          | `web`, `site`, `lib`, `cli`               | `render`       |
-| `ci`         | Which CI provider runs ci-ok?                      | `github`, `circleci`, `both`              | `render`       |
-| `update_bot` | Who opens the weekly splice update PRs?            | `app`, `pat`, `session`                   | `environments` |
-| `approvals`  | How are gated PRs approved?                        | `bootstrap`, `owner`                      | `approvals`    |
-| `apps`       | Which GitHub Apps are installed on the repo?       | `claude`, `renovate`, `splice`, `secrets` | `apps`         |
-| `secrets`    | Does the repo need secrets, such as deploy tokens? | `hoist`, `none`                           | `secrets`      |
-| `bosun`      | Adopt bosun governance now?                        | `yes`, `no`                               | `bosun`        |
+| Question     | Asks                                               | Options (first = recommended)                        | Decides items  | Templates       |
+| ------------ | -------------------------------------------------- | ---------------------------------------------------- | -------------- | --------------- |
+| `pieces`     | What will this repo hold?                          | `web`, `site`, `cli`, `lib`                          | `render`       | both            |
+| `ci`         | Which CI provider runs ci-ok?                      | `github`, `circleci`, `both`                         | `render`       | both            |
+| `update_bot` | Who opens the weekly splice update PRs?            | `app`, `pat`, `session`                              | `environments` | both            |
+| `approvals`  | How are gated PRs approved?                        | `bootstrap`, `owner`                                 | `approvals`    | both            |
+| `apps`       | Which GitHub Apps are installed on the repo?       | `claude`, `renovate`, `splice`, `secrets`, `release` | `apps`         | both            |
+| `release`    | Will this repo publish releases?                   | `no`, `yes`                                          | `environments` | `template-rust` |
+| `secrets`    | Does the repo need secrets, such as deploy tokens? | `hoist`, `none`                                      | `secrets`      | `template`      |
+| `bosun`      | Adopt bosun governance now?                        | `yes`, `no`                                          | `bosun`        | both            |
+
+In `template-rust`, `pieces` offers only `cli` (`rust-cli`) and `lib` (library crates), `apps`
+offers `release` instead of `secrets` (template/ the other way round), and there is no `secrets`
+question (no secrets piece: that item is skipped, and a `secrets.toml` fails). `release` is asked
+only there, because its `release.yml` publishes only with `HOIST_RELEASE=enabled`: with `no`, the
+`release` and `release-pr` environments and the release App are not needed yet, and
+`HOIST_RELEASE` must not be `enabled`. The `release-tags` ruleset stays
+required in every repo (spec §0 P2): `template/` runs `release.yml` on every `*-v*` tag push.
 
 <a id="repo"></a>
 
@@ -58,13 +68,14 @@ Configure each App → add the new repo:
 - Secrets read App `keelstackhq-secrets-read`, only with the `secrets` piece: it is installed on
   the secrets repo, not here; add the new repo to the selected repositories of the org variable
   `SECRETS_READ_APP_ID` and org secret `SECRETS_READ_APP_KEY`.
-- Release App: only for repos released by hoist (template-rust: `HOIST_RELEASE_APP_CLIENT_ID`
-  variable, `HOIST_RELEASE_APP_KEY` secret, Contents write). TODO(owner): App name.
+- Release App: only in repos released by hoist (`release` = `yes`) (template-rust:
+  `HOIST_RELEASE_APP_CLIENT_ID` variable, `HOIST_RELEASE_APP_KEY` secret, Contents write).
+  TODO(owner): App name.
 - bosun: no App yet (designed, not built); it uses the Claude App.
 - While hoist is private: hoist → Settings → Actions → Access → the keelstackhq org (once).
 
-Check: the owner's answer to `apps` includes `claude`, plus `splice` with update bot `app` and
-`secrets` with `secrets` = `hoist`.
+Check: the owner's answer to `apps` includes `claude`, plus `splice` with update bot `app`,
+`secrets` with `secrets` = `hoist`, and `release` with `release` = `yes` (template-rust).
 
 <a id="environment"></a>
 
@@ -101,9 +112,9 @@ Check: `gh api repos/OWNER/REPO/actions/permissions` reports `enabled`.
 
 - Branch ruleset on `main`: require a pull request, require status check `ci-ok` (D-008, D-011),
   block force pushes.
-- Tag ruleset `release-tags` (hull spec §0 P2): Active, bypass Repository admin only (plus the
-  release App, item 2, where one tags), include `*-v*`, restrict creations, updates and
-  deletions, block force pushes.
+- Tag ruleset `release-tags` (hull spec §0 P2, every repo): Active, bypass Repository
+  admin only (plus the release App, item 2, where one tags), include `*-v*`, restrict creations,
+  updates and deletions, block force pushes.
 
 hull's `bash scripts/owner/bootstrap-secrets.sh --check-rulesets OWNER/REPO` checks the tag
 ruleset from a hull clone.
@@ -116,13 +127,16 @@ Check: the rules on `main` require `ci-ok`; an active tag ruleset `release-tags`
 
 Create every environment the rendered workflows name (`environment:` in `.github/workflows/`),
 before their first run: a first run would auto-create an unprotected one. Deployment branches and
-tags = Selected: `release` (always; `release.yml` runs on tag pushes) gets the tag rule `*-v*` and
-the owner as required reviewer (D-008); every other one gets branch `main`: `splice-bot` (update
-bot), `preview` (web pieces), `prod` (`secrets` piece); template-rust adds `release-pr`.
+tags = Selected. `release` gets the owner as required reviewer (D-008) and, in `template/` (its
+`release.yml` runs on tag pushes), the tag rule `*-v*`; in template-rust (only with `release` =
+`yes`; its `publish` job runs on push to main) branch `main`. Every other one gets branch `main`:
+`splice-bot` (update bot), `preview` (web pieces), `prod` (`secrets` piece), and in template-rust
+`release-pr` (only with `release` = `yes`).
 TODO(owner): reviewers on `prod` (`preview` and `splice-bot` run unattended, so no reviewer).
 
-Check: each named environment exists; `release` deploys from tag `*-v*` with a required reviewer,
-the others from branch `main`. With update bot `session`, variable `SPLICE_BOT` is `off`.
+Check: each named environment exists; `release` has a required reviewer and deploys from tag
+`*-v*` (template/) or branch `main` (template-rust); the others deploy from branch `main`. With
+update bot `session`, variable `SPLICE_BOT` is `off`.
 
 <a id="secrets"></a>
 
@@ -144,9 +158,12 @@ owner also runs `hoist secrets check` in the secrets repo, then `--remote` here)
 
 ### 8. Set up bosun · computer · ready: auto · optional: bosun
 
-Only with `bosun` = `yes`; walkthrough: https://keelstack.dev/docs/greenfield-bosun/. In order:
+Only with `bosun` = `yes`, using bosun 0.4.0 (npm `@keelstackhq/bosun@0.4.0`, tag `v0.4.0` =
+`7eb2fa46b25c1cb9de34867a86c7bff29421ca54`); walkthrough:
+https://keelstack.dev/docs/greenfield-bosun/. In order:
 
-1. Write the plan first: the agent turns the brief (item 10) into `plans/<name>.md`.
+1. Write the plan first: the agent turns the brief (item 10) into `plans/<name>.md`; this first
+   plan goes in through `bosun init --plan`.
    `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (`--stack` is required) opens
    the setup PR with the channel files; fill `governance/owners.toml`.
 2. The owner approves the setup PR's head (the Claude Code form; `/bosun approve <sha>` as the
@@ -155,11 +172,13 @@ Only with `bosun` = `yes`; walkthrough: https://keelstack.dev/docs/greenfield-bo
    `risk-check`, `review-verdict`, `main-open`; then environment `splice-bot` (main only) with
    secret `SPLICE_BOT_TOKEN`, and `gh label create bosun:halt --color B60205`.
 4. Paste bosun's `docs/setup-script.sh` into the Claude Code environment (item 3) and create the
-   Routines (janitor, curator, notify).
+   Routines (janitor, curator, notify), each hourly: the cloud minimum.
 
 Optional: `.bosun/approvers.toml` with the orchestrator's public key (role owner), enrolled by an
 R-gov PR the owner approves on GitHub; after that, approvals go through the Claude Code form.
-Bootstrap mode needs bosun ≥ 0.3.0 pinned.
+
+Once the setup PR is merged, agents enable auto-merge when they open a PR; the owner merges by
+hand only when GitHub says the PR is already clean.
 
 Check: with `bosun` = `yes`, `bosun doctor` passes (the owner also runs `bosun doctor --remote`).
 
@@ -181,8 +200,11 @@ Check: `.splice/lock.toml` lists the pieces the `pieces` and `ci` answers need, 
 Send the brief in chat. The agent writes it as a spec in `docs/superpowers/specs/` and a plan in
 `docs/superpowers/plans/`, or, for a small project, as a `## Steps` list in
 `docs/agents/project.md`. Plans end with an owner-steps section (D-009). With `bosun` = `yes`, the
-plan goes in `plans/<name>.md` in bosun's plan format (bosun reads only that); the product spec
-stays in `docs/superpowers/specs/`.
+plan goes in `plans/<name>.md` in bosun's plan format (bosun reads only that); the first plan goes
+in through `bosun init --plan` (item 8), later amendments with `bosun plan pr`, which needs the
+setup PR merged (it exits 4 while main has no owners). `allow:` is optional: only for tasks that
+must delete or skip tests (`delete-test`, `skip`, `only`, `fewer-asserts`). The product spec stays
+in `docs/superpowers/specs/`.
 
 Check: a `.md` file in either directory, or a `## Steps` list in `docs/agents/project.md`; with
 `bosun` = `yes`, a `plans/<name>.md`.

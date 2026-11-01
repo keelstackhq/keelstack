@@ -5,13 +5,13 @@ const def = new Set(DEFAULT_ON);
 
 test("pins the released splice and hull versions", () => {
   expect(SPLICE_VERSION).toBe("0.3.1");
-  expect(HULL_REF).toBe("v0.5.1");
+  expect(HULL_REF).toBe("v0.5.2");
 });
 
 test("defaults: the command run for the hero output", () => {
   expect(buildCommand(def)).toBe(
     "pnpm dlx @keelstackhq/splice@0.3.1 new \\\n" +
-      "  gh:keelstackhq/hull//template my-repo --ref v0.5.1 \\\n" +
+      "  gh:keelstackhq/hull//template my-repo --ref v0.5.2 \\\n" +
       "  --piece preact-app:web --piece hono-worker:api",
   );
 });
@@ -25,7 +25,7 @@ test("keeps PIECES order whatever the insertion order", () => {
 test("nothing selected: no dangling backslash", () => {
   expect(buildCommand(new Set())).toBe(
     "pnpm dlx @keelstackhq/splice@0.3.1 new \\\n" +
-      "  gh:keelstackhq/hull//template my-repo --ref v0.5.1",
+      "  gh:keelstackhq/hull//template my-repo --ref v0.5.2",
   );
 });
 
@@ -36,7 +36,7 @@ test("no line ends in a space", () => {
 });
 
 test("caption names the pinned versions", () => {
-  expect(CAPTION).toContain("v0.5.1");
+  expect(CAPTION).toContain("v0.5.2");
   expect(CAPTION).toContain("--ref");
 });
 
