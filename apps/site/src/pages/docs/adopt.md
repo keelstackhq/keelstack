@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/5b42f1e3f24c94a4f2dfb87fd360b07495708d67/docs/adopt.md) at commit
-`5b42f1e`, copied verbatim. hull v0.6.0 and splice 0.4.0 are releasing now; until they are tagged, this follows hull's main. Its `start-checklist.md` is
+[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/9b4a0e44e10470d5aa80cc07052440cfa92a7496/docs/adopt.md) at commit
+`9b4a0e4`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site.
 
 ## Use Claude
@@ -16,8 +16,6 @@ at `https://keelstack.dev/assess/v0.6.0.mjs` with this sha256:
 
 ```text
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.
-Until hull v0.6.0 and splice 0.4.0 are tagged, step 1 works but steps 3 and 4 do not yet:
-stop after step 2 and tell me.
 
 1. Assess (read-only). Stop if the checksum does not match:
    curl -fsSL https://keelstack.dev/assess/v0.6.0.mjs -o /tmp/assess.mjs
@@ -58,18 +56,18 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 
 ## What `ready --assess` looks for
 
-`ready.mjs` runs alone. keelstack.dev hosts a pinned copy per hull tag (hull itself is private);
+`ready.mjs` runs alone. keelstack.dev hosts a copy per hull tag, pinned and checksummed;
 check its sha256 before running it, from the repo root:
 
 ```bash
 curl -fsSL https://keelstack.dev/assess/v0.6.0.mjs -o /tmp/assess.mjs
-echo "ASSESS_SHA256  /tmp/assess.mjs" | sha256sum -c
+echo "c425300387529849b84c04bcb3fb6a38aba4de920c84fdf7fe792e7e2fb4691d  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-`ASSESS_SHA256` is the sha256 of hull v0.6.0's `template/pieces/base/files/scripts/ready.mjs`
-(filled in by the release; never use an unpinned latest URL). With a hull clone, run that file
-directly. It reads files (regular files up to 1 MB, never symlinks) and writes nothing.
+The sha256 is that of hull v0.6.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
+reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 
 | Signal       | Looks for                                           | Gives            |
 | ------------ | --------------------------------------------------- | ---------------- |
