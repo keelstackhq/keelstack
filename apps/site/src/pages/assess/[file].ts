@@ -1,18 +1,19 @@
-// Serves hull's ready.mjs (the read-only assessment) at the pinned URL from src/data/hull/adopt.json,
-// byte for byte from src/data/hull/ready.mjs.txt (kept as .txt so lint and fmt leave it alone).
+// Serves hull's ready.mjs (the read-only assessment) at /assess/<tag>.mjs, one file per hull tag,
+// byte for byte from src/data/hull/assess/<tag>.mjs.txt (kept as .txt so lint and fmt leave it
+// alone). Every tag in `hosted` in src/data/hull/adopt.json stays served: old links pin them.
 import source from "../../data/hull/adopt.json";
 
-const files = import.meta.glob("../../data/hull/ready.mjs.txt", {
+const files = import.meta.glob("../../data/hull/assess/*.mjs.txt", {
   query: "?raw",
   import: "default",
   eager: true,
 }) as Record<string, string>;
 
 export function getStaticPaths() {
-  return [{ params: { file: source.assess.url.replace("/assess/", "") } }];
+  return Object.keys(source.hosted).map((tag) => ({ params: { file: `${tag}.mjs` } }));
 }
 
-export const GET = () =>
-  new Response(files["../../data/hull/ready.mjs.txt"], {
+export const GET = ({ params }: { params: { file: string } }) =>
+  new Response(files[`../../data/hull/assess/${params.file}.txt`], {
     headers: { "Content-Type": "text/javascript; charset=utf-8" },
   });

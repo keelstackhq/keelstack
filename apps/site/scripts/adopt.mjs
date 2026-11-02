@@ -1,12 +1,13 @@
 // Copies hull's docs/adopt.md and the assessment (template/pieces/base/files/scripts/ready.mjs) at
-// a ref: the doc to src/data/hull/adopt.md, the script to src/data/hull/ready.mjs.txt (served at
-// /assess/<tag>.mjs by src/pages/assess/[file].ts), both recorded
-// with their sha256 in src/data/hull/adopt.json, and writes the "Adopt an existing repo" page.
-// Usage: node scripts/adopt.mjs <hull tag or commit> <assess tag, e.g. v0.6.0> [--releasing]
+// a ref: the doc to src/data/hull/adopt.md, the script to src/data/hull/assess/<tag>.mjs.txt
+// (served at /assess/<tag>.mjs by src/pages/assess/[file].ts), both recorded with their sha256 in
+// src/data/hull/adopt.json, and writes the "Adopt an existing repo" page. Earlier tags stay in
+// `hosted` and in src/data/hull/assess/, since old links pin them.
+// Usage: node scripts/adopt.mjs <hull tag or commit> <assess tag, e.g. v0.6.1> [--releasing]
 // (--releasing marks hull <tag> and splice 0.4.0 as releasing now). adopt.test.ts checks it all.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 const [ref, tag, flag] = process.argv.slice(2);
 if (!ref || !/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
@@ -41,6 +42,8 @@ const assess = await fetchText(assessPath);
 const url = `/assess/${tag}.mjs`;
 
 const data = new URL("../src/data/hull/", import.meta.url);
+const previous = JSON.parse(readFileSync(new URL("adopt.json", data), "utf8"));
+const hosted = { ...previous.hosted, [tag]: { ref: commit, sha256: sha256(assess) } };
 writeFileSync(new URL("adopt.md", data), doc);
 writeFileSync(
   new URL("adopt.json", data),
@@ -50,13 +53,14 @@ writeFileSync(
       ref: commit,
       doc: { path: docPath, sha256: sha256(doc) },
       assess: { path: assessPath, url, sha256: sha256(assess) },
+      hosted: Object.fromEntries(Object.entries(hosted).toSorted(([a], [b]) => a.localeCompare(b))),
     },
     null,
     2,
   )}\n`,
 );
 // Served at `url` by src/pages/assess/[file].ts; .txt keeps lint and fmt off the verbatim copy.
-writeFileSync(new URL("ready.mjs.txt", data), assess);
+writeFileSync(new URL(`assess/${tag}.mjs.txt`, data), assess);
 
 const pending = releasing
   ? `\nUntil hull ${tag} and splice 0.4.0 are tagged, step 1 works but steps 3 and 4 do not yet:
@@ -88,6 +92,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    curl -fsSL https://keelstack.dev${url} -o /tmp/assess.mjs
    echo "${sha256(assess)}  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json
+   Its JSON has "schema": "hull.assess/1"; stop if it does not.
 2. Explain the result in plain words: the template, the pieces with their names and moves, the
    unsure notes and the clashes. Then ask me with AskUserQuestion forms: the template, the
    pieces and their names, which of my existing CI and config files to keep, and the channels
