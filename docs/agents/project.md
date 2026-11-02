@@ -211,12 +211,17 @@ freely, template updates never touch it.
   hull `v0.6.0` (`9b4a0e4`), after a "Use Claude" prompt (assess with a sha256 check,
   forms, `splice@0.4.0 adopt --dry-run --json`, `--force` only on the owner's word). keelstack.dev
   hosts hull's `ready.mjs` from the same commit at `/assess/v0.6.0.mjs`
-  (sha256 `c4253003…`), stored as `apps/site/src/data/hull/ready.mjs.txt` and served by
+  (sha256 `c4253003…`), stored as `apps/site/src/data/hull/ready.mjs.txt` (now `assess/v0.6.0.mjs.txt`) and served by
   `src/pages/assess/[file].ts`; `node apps/site/scripts/adopt.mjs <ref> v0.6.0 [--releasing]`
   re-copies both, `adopt.test.ts` checks them. `public/_redirects` sends adopt.md's relative
   `start-checklist.md` link to `/docs/start-project/`. Linked from Get started, Getting started,
   the docs index and Start a project. docspack 0.1.6. Re-run at the
   `v0.6.0` tag without `--releasing` once hull v0.6.0 and splice 0.4.0 were out (sha256 unchanged).
+- 2026-11-02 hull v0.6.1 (`031bdc1`): `/docs/adopt/` re-copied at the tag (adopt.md adds the
+  `--assess --json` output table, schema `hull.assess/1`; the prompt stops on another schema).
+  keelstack.dev hosts every assessment tag: `src/data/hull/assess/<tag>.mjs.txt`, recorded under
+  `hosted` in `adopt.json`; `/assess/v0.6.1.mjs` (sha256 `77f7f697…`) is current and
+  `/assess/v0.6.0.mjs` (`c4253003…`) stays served for old links. docspack 0.1.7.
 
 ## Blocked
 

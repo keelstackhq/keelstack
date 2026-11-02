@@ -1,13 +1,23 @@
 {
   "repo": "keelstackhq/hull",
-  "ref": "9b4a0e44e10470d5aa80cc07052440cfa92a7496",
+  "ref": "031bdc1391aa75fabc01a5e60bfad980862e35bc",
   "doc": {
     "path": "docs/adopt.md",
-    "sha256": "be4cc2c41f7737be3a2d24cd46e98eaeb5990edd26d35320f69ddb44b3e5130e"
+    "sha256": "460d913a715e3266288700b841424d28e741db1cb2b5ffd6764454ec8e56d66c"
   },
   "assess": {
     "path": "template/pieces/base/files/scripts/ready.mjs",
-    "url": "/assess/v0.6.0.mjs",
-    "sha256": "c425300387529849b84c04bcb3fb6a38aba4de920c84fdf7fe792e7e2fb4691d"
+    "url": "/assess/v0.6.1.mjs",
+    "sha256": "77f7f697a6b066444215b529d0aba753bffd43b38595a05d5b928e42e841ed47"
+  },
+  "hosted": {
+    "v0.6.0": {
+      "ref": "9b4a0e44e10470d5aa80cc07052440cfa92a7496",
+      "sha256": "c425300387529849b84c04bcb3fb6a38aba4de920c84fdf7fe792e7e2fb4691d"
+    },
+    "v0.6.1": {
+      "ref": "031bdc1391aa75fabc01a5e60bfad980862e35bc",
+      "sha256": "77f7f697a6b066444215b529d0aba753bffd43b38595a05d5b928e42e841ed47"
+    }
   }
 }
