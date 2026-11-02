@@ -92,7 +92,8 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    unsure notes and the clashes. Then ask me with AskUserQuestion forms: the template, the
    pieces and their names, which of my existing CI and config files to keep, and the channels
    (the decisions channel; bosun only if the stack is rust or ts-pnpm). Never decide an unsure
-   item yourself.
+   item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
+   without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
    npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref ${tag} --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.

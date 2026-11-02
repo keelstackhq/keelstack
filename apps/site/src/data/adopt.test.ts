@@ -43,6 +43,7 @@ describe("Adopt an existing repo", () => {
     expect(prompt).toContain("--dry-run --json");
     expect(prompt).toContain("--force");
     expect(prompt).not.toMatch(/latest/);
+    expect(prompt).toContain("keeping an owned base file (for example ci.yml) blocks adopt");
   });
 
   it("is a ready docs page after Greenfield repo with bosun", () => {
