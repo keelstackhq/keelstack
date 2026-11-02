@@ -81,6 +81,18 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "adopt",
+    title: "Adopt an existing repo",
+    summary:
+      "Take keelstack into a repo that already has code: the hosted, read-only assessment, a Claude Code prompt, and hull's adoption guide.",
+    sources: [
+      "hull/docs/adopt.md",
+      "hull/template/pieces/base/files/scripts/ready.mjs",
+      "splice/README.md",
+    ],
+    ready: true,
+  },
+  {
     slug: "getting-started",
     title: "Getting started",
     summary:
