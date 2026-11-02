@@ -109,5 +109,6 @@ test("get started links Start a project and the greenfield bosun page", () => {
   expect(sections.start.links?.map((l) => l.href)).toEqual([
     "/docs/start-project/",
     "/docs/greenfield-bosun/",
+    "/docs/adopt/",
   ]);
 });

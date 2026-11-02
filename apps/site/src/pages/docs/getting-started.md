@@ -79,7 +79,8 @@ option first, and records the answers in `docs/agents/onboarding.toml`. Then
 `skipped`, an unanswered one `ask`. Agents start autonomous work only when it exits 0 and the owner
 has confirmed every `manual` item. The whole list, in order: [Start a project](/docs/start-project/).
 For a new repo that bosun runs from the first task (files, plan, step order, first prompt), see
-[Greenfield repo with bosun](/docs/greenfield-bosun/).
+[Greenfield repo with bosun](/docs/greenfield-bosun/). For a repo that already has code, see
+[Adopt an existing repo](/docs/adopt/).
 
 ## 2. Add the channels
 

@@ -207,6 +207,16 @@ freely, template updates never touch it.
   The decisions channel for other orgs followed once keelstackhq/decisions #12 merged
   (`67fec03`): Getting started step 2 documents `--piece portable` (the `all orgs` decisions:
   D-007, D-010, D-011) and an org's own decisions repo in the same channel shape.
+- 2026-11-02 Adopt an existing repo: `/docs/adopt/` is hull's `docs/adopt.md` copied verbatim at
+  hull `v0.6.0` (`9b4a0e4`), after a "Use Claude" prompt (assess with a sha256 check,
+  forms, `splice@0.4.0 adopt --dry-run --json`, `--force` only on the owner's word). keelstack.dev
+  hosts hull's `ready.mjs` from the same commit at `/assess/v0.6.0.mjs`
+  (sha256 `c4253003…`), stored as `apps/site/src/data/hull/ready.mjs.txt` and served by
+  `src/pages/assess/[file].ts`; `node apps/site/scripts/adopt.mjs <ref> v0.6.0 [--releasing]`
+  re-copies both, `adopt.test.ts` checks them. `public/_redirects` sends adopt.md's relative
+  `start-checklist.md` link to `/docs/start-project/`. Linked from Get started, Getting started,
+  the docs index and Start a project. docspack 0.1.6. Re-run at the
+  `v0.6.0` tag without `--releasing` once hull v0.6.0 and splice 0.4.0 were out (sha256 unchanged).
 
 ## Blocked
 
