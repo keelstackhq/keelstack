@@ -142,6 +142,11 @@ export const sections: Record<
         href: "/docs/greenfield-bosun/",
         text: "The files, where the spec and the plan go, the step order and a first session prompt.",
       },
+      {
+        label: "Adopt an existing repo",
+        href: "/docs/adopt/",
+        text: "A read-only assessment, a Claude Code prompt and hull's adoption guide for a repo that already has code.",
+      },
     ],
   },
 };

@@ -1,0 +1,13 @@
+{
+  "repo": "keelstackhq/hull",
+  "ref": "9b4a0e44e10470d5aa80cc07052440cfa92a7496",
+  "doc": {
+    "path": "docs/adopt.md",
+    "sha256": "be4cc2c41f7737be3a2d24cd46e98eaeb5990edd26d35320f69ddb44b3e5130e"
+  },
+  "assess": {
+    "path": "template/pieces/base/files/scripts/ready.mjs",
+    "url": "/assess/v0.6.0.mjs",
+    "sha256": "c425300387529849b84c04bcb3fb6a38aba4de920c84fdf7fe792e7e2fb4691d"
+  }
+}

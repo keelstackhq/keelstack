@@ -8,7 +8,8 @@ copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
 [Getting started](/docs/getting-started/); for a repo that bosun runs, see
-[Greenfield repo with bosun](/docs/greenfield-bosun/).
+[Greenfield repo with bosun](/docs/greenfield-bosun/). A repo that already has code follows
+[Adopt an existing repo](/docs/adopt/).
 
 Every human step before agents can work autonomously on a new repo rendered from hull (`template/`
 or `template-rust/`; both ship `ready`), in order:
