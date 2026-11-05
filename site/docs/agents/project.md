@@ -222,6 +222,8 @@ freely, template updates never touch it.
   keelstack.dev hosts every assessment tag: `src/data/hull/assess/<tag>.mjs.txt`, recorded under
   `hosted` in `adopt.json`; `/assess/v0.6.1.mjs` (sha256 `77f7f697…`) is current and
   `/assess/v0.6.0.mjs` (`c4253003…`) stays served for old links. docspack 0.1.7.
+- 2026-11-05 hull v0.6.2 (`c71f820`): `/docs/adopt/` re-copied at the tag; `/assess/v0.6.2.mjs`
+  (sha256 `cfb3ee4a…`) is current, v0.6.0 and v0.6.1 stay served. docspack 0.1.8.
 
 ## Blocked
 
