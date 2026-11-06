@@ -14,7 +14,15 @@ import SectionHead from "./SectionHead.astro";
         agentRows.map((r) => (
           <div class="row">
             <dt>{r.key}</dt>
-            <dd>{r.text}</dd>
+            <dd>
+              {r.text}
+              {r.href && (
+                <>
+                  {" "}
+                  <a href={r.href}>Read the manifest</a>
+                </>
+              )}
+            </dd>
           </div>
         ))
       }
@@ -67,6 +75,11 @@ import SectionHead from "./SectionHead.astro";
   dd {
     margin: 0;
     color: var(--dark-text-2);
+  }
+  dd a {
+    color: var(--paper);
+    text-decoration: underline;
+    text-underline-offset: 3px;
   }
   @media (max-width: 419px) {
     .row {

@@ -63,7 +63,7 @@ export const split = {
     "Routes, components, workers, domain code. Seed files are rendered once and stay yours from then on.",
 };
 
-export const agentRows: { key: string; text: string }[] = [
+export const agentRows: { key: string; text: string; href?: string }[] = [
   {
     key: "CLAUDE.md",
     text: "Lean by default. Skills and a /loop default ship with the template; subagents come from hull’s rigging channel.",
@@ -79,6 +79,11 @@ export const agentRows: { key: string; text: string }[] = [
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },
   { key: "update bot", text: "Template moves; you get one pull request to review." },
+  {
+    key: "Manifest",
+    text: "How we work with agents: eight principles and what bosun enforces today.",
+    href: "/docs/operating-model/",
+  },
 ];
 
 export const current: { label: string; title: string; text: string; accent?: boolean }[] = [
@@ -165,6 +170,7 @@ export const nav: { label: string; href: string }[] = [
   { label: "Tools", href: "#tools" },
   { label: "For agents", href: "#agents" },
   { label: "Get started", href: "#start" },
+  { label: "Manifest", href: "/docs/operating-model/" },
   { label: "Docs", href: "/docs/" },
   { label: "GitHub ↗", href: org.url },
 ];

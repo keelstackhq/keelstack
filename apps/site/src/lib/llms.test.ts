@@ -24,7 +24,7 @@ describe("buildLlmsTxt", () => {
 
   it("lists the agent keys", () => {
     expect(out).toContain("## For agents");
-    expect(agentRows).toHaveLength(6);
+    expect(agentRows).toHaveLength(7);
     for (const r of agentRows) expect(out).toContain(r.key);
   });
 

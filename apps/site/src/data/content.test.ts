@@ -60,6 +60,7 @@ test("agent rows and current cards", () => {
     "--json --yes",
     "ci-ok",
     "update bot",
+    "Manifest",
   ]);
   expect(current.map((c) => c.title)).toEqual(["Replaced", "3-way merged", "Stay yours"]);
   expect(current.map((c) => !!c.accent)).toEqual([false, false, true]);
@@ -111,4 +112,11 @@ test("get started links Start a project and the greenfield bosun page", () => {
     "/docs/greenfield-bosun/",
     "/docs/adopt/",
   ]);
+});
+
+test("nav links the manifest before Docs", () => {
+  const labels = nav.map((l) => l.label);
+  expect(labels.indexOf("Manifest")).toBe(labels.indexOf("Docs") - 1);
+  expect(nav.find((l) => l.label === "Manifest")?.href).toBe("/docs/operating-model/");
+  expect(agentRows.find((r) => r.key === "Manifest")?.href).toBe("/docs/operating-model/");
 });
