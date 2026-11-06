@@ -3,22 +3,22 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/c71f820c93627816fbb892160e3b48323b81536a/docs/adopt.md) at commit
-`c71f820`, copied verbatim. Its `start-checklist.md` is
+[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/76f6ae83356ab726a816e9ee07992dd54b9a30ec/docs/adopt.md) at commit
+`76f6ae8`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site.
 
 ## Use Claude
 
 Paste this into Claude Code in the repo you want to adopt. It runs the read-only assessment
 first and asks you before anything that writes. The assessment is hull's `ready.mjs`, hosted
-at `https://keelstack.dev/assess/v0.6.2.mjs` with this sha256:
+at `https://keelstack.dev/assess/v0.7.0.mjs` with this sha256:
 `cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87`.
 
 ```text
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.
 
 1. Assess (read-only). Stop if the checksum does not match:
-   curl -fsSL https://keelstack.dev/assess/v0.6.2.mjs -o /tmp/assess.mjs
+   curl -fsSL https://keelstack.dev/assess/v0.7.0.mjs -o /tmp/assess.mjs
    echo "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json
    Its JSON has "schema": "hull.assess/1"; stop if it does not.
@@ -29,7 +29,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
    without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
-   npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.6.2 --piece <id>:<name> ... --dry-run --json
+   npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.7.0 --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.
 4. Only after I confirm: run the same command without --dry-run, resolve the conflicts, run the
    ready skill, and open a pull request with the change list and my choices. Never pass --force
@@ -61,12 +61,12 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.6.2.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev/assess/v0.7.0.mjs -o /tmp/assess.mjs
 echo "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull v0.6.2's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull v0.7.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 

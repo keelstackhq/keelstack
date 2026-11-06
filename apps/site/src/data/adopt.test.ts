@@ -22,23 +22,23 @@ const page = read("../pages/docs/adopt.md");
 describe("Adopt an existing repo", () => {
   it("pins hull's adopt.md and ready.mjs to one commit", () => {
     expect(source.repo).toBe("keelstackhq/hull");
-    // hull v0.6.2: refs/tags/v0.6.2^{}.
-    expect(source.ref).toBe("c71f820c93627816fbb892160e3b48323b81536a");
+    // hull v0.7.0 tag commit (refs/tags/v0.7.0^{}).
+    expect(source.ref).toBe("76f6ae83356ab726a816e9ee07992dd54b9a30ec");
     expect(source.doc.path).toBe("docs/adopt.md");
     expect(sha(copy)).toBe(source.doc.sha256);
     expect(source.assess.path).toBe("template/pieces/base/files/scripts/ready.mjs");
   });
 
   it("hosts the assessment at a versioned URL with the expected sha256", () => {
-    expect(source.assess.url).toBe("/assess/v0.6.2.mjs");
-    expect(sha(hosted("v0.6.2"))).toBe(
+    expect(source.assess.url).toBe("/assess/v0.7.0.mjs");
+    expect(sha(hosted("v0.7.0"))).toBe(
       "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
     );
-    expect(source.assess.sha256).toBe(sha(hosted("v0.6.2")));
+    expect(source.assess.sha256).toBe(sha(hosted("v0.7.0")));
   });
 
   it("keeps every earlier assessment served byte for byte", () => {
-    expect(Object.keys(source.hosted).toSorted()).toEqual(["v0.6.0", "v0.6.1", "v0.6.2"]);
+    expect(Object.keys(source.hosted).toSorted()).toEqual(["v0.6.0", "v0.6.1", "v0.6.2", "v0.7.0"]);
     const files = readdirSync(new URL("./hull/assess/", import.meta.url));
     expect(files.map((f) => f.replace(/\.mjs\.txt$/, "")).toSorted()).toEqual(
       Object.keys(source.hosted).toSorted(),
@@ -51,7 +51,11 @@ describe("Adopt an existing repo", () => {
       ref: "031bdc1391aa75fabc01a5e60bfad980862e35bc",
       sha256: "77f7f697a6b066444215b529d0aba753bffd43b38595a05d5b928e42e841ed47",
     });
-    expect(source.hosted["v0.6.2"]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
+    expect(source.hosted["v0.6.2"]).toEqual({
+      ref: "c71f820c93627816fbb892160e3b48323b81536a",
+      sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
+    });
+    expect(source.hosted["v0.7.0"]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
     for (const [tag, { sha256 }] of Object.entries(source.hosted)) {
       expect(sha(hosted(tag))).toBe(sha256);
     }
@@ -60,7 +64,7 @@ describe("Adopt an existing repo", () => {
   it("is the copy without its H1, after a Use Claude prompt that checks the sha256", () => {
     expect(page.endsWith(copy.replace(/^# .*\n\n/, ""))).toBe(true);
     const prompt = page.split("```text\n")[1]?.split("```")[0] ?? "";
-    expect(prompt).toContain("https://keelstack.dev/assess/v0.6.2.mjs");
+    expect(prompt).toContain("https://keelstack.dev/assess/v0.7.0.mjs");
     expect(prompt).toContain("hull.assess/1");
     expect(prompt).toContain(`${source.assess.sha256}  /tmp/assess.mjs" | sha256sum -c`);
     expect(prompt).toContain("node /tmp/assess.mjs --assess --json");
