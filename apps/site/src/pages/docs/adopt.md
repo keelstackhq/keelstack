@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/bcbc561b698610ea2c3948b85cc0d7d72e381ee1/docs/adopt.md) at commit
-`bcbc561`, copied verbatim. Its `start-checklist.md` is
+[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/76f6ae83356ab726a816e9ee07992dd54b9a30ec/docs/adopt.md) at commit
+`76f6ae8`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site.
 
 ## Use Claude

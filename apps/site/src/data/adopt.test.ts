@@ -22,8 +22,8 @@ const page = read("../pages/docs/adopt.md");
 describe("Adopt an existing repo", () => {
   it("pins hull's adopt.md and ready.mjs to one commit", () => {
     expect(source.repo).toBe("keelstackhq/hull");
-    // hull v0.7.0: release PR head until the tag exists; re-point to refs/tags/v0.7.0^{} then.
-    expect(source.ref).toBe("bcbc561b698610ea2c3948b85cc0d7d72e381ee1");
+    // hull v0.7.0 tag commit (refs/tags/v0.7.0^{}).
+    expect(source.ref).toBe("76f6ae83356ab726a816e9ee07992dd54b9a30ec");
     expect(source.doc.path).toBe("docs/adopt.md");
     expect(sha(copy)).toBe(source.doc.sha256);
     expect(source.assess.path).toBe("template/pieces/base/files/scripts/ready.mjs");

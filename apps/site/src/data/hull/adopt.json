@@ -1,6 +1,6 @@
 {
   "repo": "keelstackhq/hull",
-  "ref": "bcbc561b698610ea2c3948b85cc0d7d72e381ee1",
+  "ref": "76f6ae83356ab726a816e9ee07992dd54b9a30ec",
   "doc": {
     "path": "docs/adopt.md",
     "sha256": "500c00acd7fd8416d9b70723f8ab1ac997263d227fd8288cd60ea32811c55a96"
@@ -24,7 +24,7 @@
       "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
     },
     "v0.7.0": {
-      "ref": "bcbc561b698610ea2c3948b85cc0d7d72e381ee1",
+      "ref": "76f6ae83356ab726a816e9ee07992dd54b9a30ec",
       "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
     }
   }
