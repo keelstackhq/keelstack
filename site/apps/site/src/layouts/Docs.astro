@@ -10,6 +10,8 @@ const page = docs.find((d) => docHref(d.slug) === path);
 if (!page) throw new Error(`Docs layout: no entry in src/data/docs.ts for ${Astro.url.pathname}`);
 
 const ready = readyDocs();
+// Wide tables scroll inside their own box; tabindex lets keyboard users scroll them.
+const body = (await Astro.slots.render("default")).replaceAll("<table>", '<table tabindex="0">');
 const i = ready.findIndex((d) => d.slug === page.slug);
 const prev = i > 0 ? ready[i - 1] : undefined;
 const next = i >= 0 ? ready[i + 1] : undefined;
@@ -39,7 +41,7 @@ const next = i >= 0 ? ready[i + 1] : undefined;
     </nav>
     <main id="main" class="prose">
       <h1>{page.title}</h1>
-      <slot />
+      <Fragment set:html={body} />
       {page.sources.length > 0 && (
         <section class="sources">
           <h2>Sources</h2>
