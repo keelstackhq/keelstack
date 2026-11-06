@@ -6,15 +6,27 @@ How keelstackhq works with coding agents, in eight principles, and which part of
 checks today. The mapping follows bosun's operating model (`docs/operating-model.md`, bosun pull
 request #421); a principle that bosun does not check yet says so.
 
+## Words used here
+
+- **Boundary files**: the files that decide what passes and who approves: risk rules, limits and
+  budgets, governance, workflows and gate code. Agents may propose changes to them; humans
+  approve them.
+- **Loop**: one cycle of change and check. The loops nest: local gates, then CI, then checks of
+  `main`.
+- **Risk rule**: a path or content pattern in `.bosun/risk.toml` that makes a pull request high
+  risk. Each rule names who may approve: the owner, a **delegate** (one Claude session with its
+  own signing key, plus one clean review verdict), or **two verdicts** from two reviewer sessions.
+- **Mainfix**: a pull request that repairs a red `main`; it may merge while `main` is red.
+
 ## The manifest
 
 1. **Tend the codebase; it is not a factory.** Every change stays and becomes the ground for the
    next one, so types, module limits, gates, CI and docs exist to keep that growth healthy.
-2. **Agents write the code, inside a fence.** They build features and may improve the code and
-   its structure, but only inside limits that they cannot move.
-3. **Humans own the fence.** People decide what to build, how we know it is good, who approves
+2. **Agents write the code, within limits.** They build features and may improve the code and
+   its structure, but they do not decide the boundary files.
+3. **Humans own the limits.** People decide what to build, how we know it is good, who approves
    what, which checks run, what agents may touch and how much they may spend.
-4. **Widen the fence on measured evidence.** Agents get more room when numbers show it is safe,
+4. **Widen the limits on measured evidence.** Agents get more room when numbers show it is safe,
    never on confidence and never because agents agree with each other.
 5. **Scrutiny follows blast radius and reversibility.** A change that reaches far or is hard to
    undo waits for a human; a small one that rolls back cleanly does not.
@@ -28,28 +40,32 @@ request #421); a principle that bosun does not check yet says so.
 ## How bosun enforces it
 
 Status: **enforced** means CI, a hook or the bosun binary refuses; **partial** means some of it
-is enforced; **planned** means a ranked candidate in bosun's operating model, not built yet.
+is enforced, or it has a known gap; **planned** means a ranked candidate in bosun's operating
+model, not built yet.
 
-| Principle                | bosun mechanism                                                                                                                                                                                                                                                                                                                          | Status   |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
-| 1. Tend the codebase     | fmt, lint, test and deps gates from `profiles/*.toml`; nested loops: local `bosun gate`, then `ci.yml`, then `main-health.yml`; `main-open` blocks pull requests while `main` is red                                                                                                                                                     | enforced |
-| 2. Agents inside a fence | a worker claims a task (`bosun claim`), runs the gates, opens a draft (`bosun pr`) and gets a verdict from a fresh reviewer; lease holders never count as reviewers; a hook denies merge, tag and force-push, also through GitHub API tools                                                                                              | partial  |
-| 3. Humans own the fence  | boundary files (`.bosun/**`, `governance/**`, `.claude/**`, workflows, gate code) make a pull request high risk until the owner approves (a delegate key may approve `deny.toml`, the toolchain files and `profiles/**`); limits and budgets live in `.bosun/limits.toml`; risk rules and approver keys are read from the default branch | partial  |
-| 3. Humans own the fence  | weakening a gate is caught by path only; no check yet that a threshold went down (a risk rule `R-weaken` is planned)                                                                                                                                                                                                                     | partial  |
-| 3. Humans own the fence  | budgets warn at 80 % and stop at 100 % (exit 6); `bosun progress` shows cost per merged task, not yet per outcome that holds or owner minutes                                                                                                                                                                                            | partial  |
-| 4. Measured evidence     | the `delegate` approval class is fixed by path, not earned from revert or escape rates                                                                                                                                                                                                                                                   | partial  |
-| 4. Measured evidence     | earned autonomy per change class (revert and escape rate per risk rule) and a trust reset when the model changes                                                                                                                                                                                                                         | planned  |
-| 5. Blast radius          | `.bosun/risk.toml` rules, read from the base branch, only escalate; each rule asks for `owner`, `delegate` or `two-verdicts`; critical paths and an unseen diff always need the owner                                                                                                                                                    | enforced |
-| 5. Blast radius          | challenge in proportion: two levels only (`normal`, `high`)                                                                                                                                                                                                                                                                              | partial  |
-| 5. Reversibility         | `bosun revert <pr>` rolls back a merged change without the loop that made it                                                                                                                                                                                                                                                             | enforced |
-| 5. Reversibility         | preview and cancel: `--dry-run` on some commands, `bosun hold`, the halt issue                                                                                                                                                                                                                                                           | partial  |
-| 5. Approvals             | an owner approval is an ed25519-signed comment bound to the exact head SHA, with a key from the default branch; a new push needs a new approval                                                                                                                                                                                          | enforced |
-| 6. Escaped bug → check   | `main-triage` bisects a red `main`, `bosun revert` opens a fix pull request and a red `main` opens a lesson; a mechanizable lesson becomes a task by hand; lessons are capped at 40, so each one is mechanized or dropped                                                                                                                | partial  |
-| 6. Escaped bug → check   | after a self-heal, a follow-up task asking which gate missed the bug                                                                                                                                                                                                                                                                     | planned  |
-| 7. Decisions             | `bosun ask` and `answer` for decisions, `bosun prereqs` for human-only steps, `bosun notify` replies to the person who asked                                                                                                                                                                                                             | partial  |
-| 7. Decisions             | chat and ticket text is evidence, not instruction: `bosun intake` fences it so it cannot forge markers; not every human channel is fenced yet                                                                                                                                                                                            | partial  |
-| 8. One step stops        | an open `bosun:halt` issue from an owner, or the repo variable `BOSUN_HALT=1`: commands that start or change work exit 4; it stops the whole repo, not one loop                                                                                                                                                                          | partial  |
-| 8. One step stops        | a kill switch per loop and a loop manifest (mandate, identity, budget, stop rule)                                                                                                                                                                                                                                                        | planned  |
+| Principle                | bosun mechanism                                                                                                                                                                                                                                                                                                                        | Status   |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| 1. Tend the codebase     | fmt, lint, test and deps gates from `profiles/*.toml`; nested loops: local `bosun gate`, then `ci.yml`, then `main-health.yml`; `main-open` fails every pull request except a mainfix while `main` is red                                                                                                                              | enforced |
+| 2. Agents within limits  | a worker claims a task (`bosun claim`), runs the gates, opens a draft (`bosun pr`) and gets a verdict from a fresh reviewer; but the reviewer session is self-declared and `verdict post` writes the status directly, so an author can post its own verdict                                                                            | partial  |
+| 2. Agents within limits  | a hook denies merge, tag and force-push in shell commands and in the GitHub merge and auto-merge tools; bosun only turns on auto-merge; the hook code itself is on no risk path yet                                                                                                                                                    | partial  |
+| 2. Agents within limits  | put the hooks on a risk path; count only verdicts bound to a reviewer's workflow run                                                                                                                                                                                                                                                   | planned  |
+| 3. Humans own the limits | boundary files make a pull request high risk until the owner approves (a delegate may approve `deny.toml`, the toolchain files and `profiles/**`); limits and budgets live in `.bosun/limits.toml`; risk rules and approver keys are not read from the pull request; bootstrap mode (below) lets the orchestrator approve part of them | partial  |
+| 3. Humans own the limits | weakening a gate is caught only where the gate's file is on a risk path, and nothing checks that a threshold went down; a rule that compares base and head values is planned                                                                                                                                                           | partial  |
+| 3. Humans own the limits | budgets refuse new work at 80 % (exit 6) and return stop actions for the caller; `bosun progress` shows cost per merged task, not yet per outcome that holds or owner minutes                                                                                                                                                          | partial  |
+| 4. Measured evidence     | the delegate approval class is fixed by path, not earned from revert or escape rates                                                                                                                                                                                                                                                   | partial  |
+| 4. Measured evidence     | autonomy earned per change class (revert and escape rate per risk rule) and a trust reset when the model changes                                                                                                                                                                                                                       | planned  |
+| 5. Blast radius          | `.bosun/risk.toml` rules, read from the pull request's base commit, only escalate; each rule asks for the owner, a delegate or two verdicts; a diff that GitHub hid in part always needs the owner; bootstrap gaps (below)                                                                                                             | partial  |
+| 5. Blast radius          | challenge in proportion: two levels only (`normal`, `high`)                                                                                                                                                                                                                                                                            | partial  |
+| 5. Reversibility         | `bosun revert <pr>` rolls back a merged change without the loop that made it                                                                                                                                                                                                                                                           | enforced |
+| 5. Reversibility         | preview and cancel: `--dry-run` on some commands, `bosun hold`, the halt issue                                                                                                                                                                                                                                                         | partial  |
+| 5. Approvals             | an approval counts only on the exact head commit, by one of three routes: an owner review approval, a plain owner comment, or an ed25519-signed `/bosun approve <head_sha>` comment with a key from the default branch; a new push needs a new approval                                                                                | enforced |
+| 6. Escaped bug → check   | `main-triage` bisects a red `main`, `bosun revert` opens a mainfix and a red `main` opens a lesson; a mechanizable lesson becomes a task by hand; lessons are capped at 40, so each one is mechanized or dropped                                                                                                                       | partial  |
+| 6. Escaped bug → check   | after a self-repair, a follow-up task asking which gate missed the bug                                                                                                                                                                                                                                                                 | planned  |
+| 7. Decisions             | `bosun ask` and `answer` for decisions, `bosun prereqs` for human-only steps                                                                                                                                                                                                                                                           | partial  |
+| 7. Decisions             | `bosun notify` returns the thread replies for the caller to post; it posts nothing itself, and the notify routine is a step for a human to set up                                                                                                                                                                                      | partial  |
+| 7. Decisions             | chat and ticket text is evidence, not instruction: `bosun intake` wraps it as quoted data so it cannot pose as bosun's own markers, but only the prompt for a Slack-thread task calls it data                                                                                                                                          | partial  |
+| 8. One step stops        | an open `bosun:halt` issue from an owner, or the repo variable `BOSUN_HALT=1`: commands that start or change work exit 4; it stops the whole repo, not one loop                                                                                                                                                                        | partial  |
+| 8. One step stops        | a kill switch per loop and one manifest per loop (mandate, identity, budget, stop rule)                                                                                                                                                                                                                                                | planned  |
 
 The tests that keep the gates honest are enforced too: `test-integrity` refuses deleted tests, new
 skips and fewer asserts, and `ci-minutes` lints the workflows.
@@ -64,14 +80,22 @@ speed, and we say so.
 
 What stays human in this mode:
 
-- **The fence itself.** Governance, risk rules, the approval code and the bootstrap setting stay
-  owner-only; so do `hoist.toml`, the workflows that use environments and secrets.
-- **Tags, force-pushes and merges.** A hook denies merge, tag and force-push to every agent.
-  bosun turns on auto-merge and GitHub merges on green; the one exception is a pull request that
-  is already mergeable (`already_clean`), which the orchestrator merges (D-008).
+- **The core boundary files.** `.bosun/**`, `governance/**`, CODEOWNERS, `hoist.toml`, the risk
+  and verdict workflows and the approval code stay owner-only.
+- **Tags and force-pushes.** A hook denies tag and force-push to every agent, and denies merge
+  too.
 - **Releases and secrets.** A bootstrap approval never counts for `release.yml`, `splice.yml`,
-  a workflow that names an `environment:`, or a change that matches the secrets rule
-  (R-secrets), so the owner approves those.
+  a workflow change that names an `environment:`, or a change that matches the secrets rule
+  (R-secrets), so the owner approves those. The same holds for a workflow whose diff GitHub does
+  not show.
+
+Merges: GitHub merges on green after bosun turns on auto-merge; only a pull request that is
+already mergeable (`already_clean`) is merged by the orchestrator (D-008).
+
+What the orchestrator can still approve during the window: the rest of the
+governance paths (`.claude/**` with the hook settings, `REVIEW.md`, plans, `docs/agents/**`, agent
+and Claude instruction files) and changes that write to production (R-prod-write). Closing these
+gaps is bosun's second planned change.
 
 The owner can end the mode at any time by removing the orchestrator's key. Bootstrap mode ends on
 2026-11-30 at the latest (capped in code); after that, `[approvals] policy` (`owner`,
