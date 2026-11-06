@@ -1,13 +1,13 @@
 {
   "repo": "keelstackhq/hull",
-  "ref": "c71f820c93627816fbb892160e3b48323b81536a",
+  "ref": "bcbc561b698610ea2c3948b85cc0d7d72e381ee1",
   "doc": {
     "path": "docs/adopt.md",
-    "sha256": "35e365cb0339bc8fbe9843229befd3a7389e37c61bd356d32bbafab71ef73d34"
+    "sha256": "500c00acd7fd8416d9b70723f8ab1ac997263d227fd8288cd60ea32811c55a96"
   },
   "assess": {
     "path": "template/pieces/base/files/scripts/ready.mjs",
-    "url": "/assess/v0.6.2.mjs",
+    "url": "/assess/v0.7.0.mjs",
     "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
   },
   "hosted": {
@@ -21,6 +21,10 @@
     },
     "v0.6.2": {
       "ref": "c71f820c93627816fbb892160e3b48323b81536a",
+      "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
+    },
+    "v0.7.0": {
+      "ref": "bcbc561b698610ea2c3948b85cc0d7d72e381ee1",
       "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
     }
   }
