@@ -227,6 +227,7 @@ freely, template updates never touch it.
 - 2026-11-06 hull v0.7.0 (`76f6ae8`):
   `/docs/adopt/` re-copied; `/assess/v0.7.0.mjs` (sha256 `cfb3ee4a…`, same bytes as v0.6.2) is
   current, earlier tags stay served. docspack 0.1.9.
+- 2026-11-06 Operating model: `/docs/operating-model/` (manifest of eight principles, bosun mechanism and status per principle from bosun `docs/operating-model.md` at PR #421 head `4d661b1`, and the bootstrap mode keelstackhq runs); Manifest nav link and a For agents row on the landing. docspack 0.1.10.
 
 ## Blocked
 

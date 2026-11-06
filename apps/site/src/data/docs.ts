@@ -190,6 +190,14 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "operating-model",
+    title: "Operating model",
+    summary:
+      "How keelstackhq works with agents in eight principles, the bosun mechanism behind each one with its status, and the bootstrap mode keelstackhq runs today.",
+    sources: ["bosun/docs/operating-model.md", "bosun/README.md", "bosun/CHANGELOG.md"],
+    ready: true,
+  },
+  {
     slug: "releases",
     title: "Releases and updates",
     summary:
