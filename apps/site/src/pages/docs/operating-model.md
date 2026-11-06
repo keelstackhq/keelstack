@@ -82,12 +82,12 @@ What stays human in this mode:
 
 - **The core boundary files.** `.bosun/**`, `governance/**`, CODEOWNERS, `hoist.toml`, the risk
   and verdict workflows and the approval code stay owner-only.
-- **Tags and force-pushes.** A hook denies tag and force-push to every agent, and denies merge
-  too.
-- **Releases and secrets.** A bootstrap approval never counts for `release.yml`, `splice.yml`,
-  a workflow change that names an `environment:`, or a change that matches the secrets rule
-  (R-secrets), so the owner approves those. The same holds for a workflow whose diff GitHub does
-  not show.
+- **Tags and force-pushes.** A hook denies tag, force-push and merge to every agent. It is a
+  guard, not a sandbox, and its code is on no risk path yet.
+- **Workflows, releases and secrets.** No orchestrator approval ever counts for any workflow
+  change or CI file (GitHub workflows, CircleCI and other CI configs), which covers the release
+  and splice workflows, or for a change that matches the secrets rule (R-secrets). The owner
+  approves those.
 
 Merges: GitHub merges on green after bosun turns on auto-merge; only a pull request that is
 already mergeable (`already_clean`) is merged by the orchestrator (D-008).
@@ -99,7 +99,7 @@ gaps is bosun's second planned change.
 
 The owner can end the mode at any time by removing the orchestrator's key. Bootstrap mode ends on
 2026-11-30 at the latest (capped in code); after that, `[approvals] policy` (`owner`,
-`owner-gated` or `orchestrator`; missing means `owner`, D-014) decides when an orchestrator
+`owner-gated` or `orchestrator`; missing means `owner`; D-014, draft) decides when an orchestrator
 approval counts. A later autonomous mode for the org is not in bosun yet.
 
 See [Risk and review](/docs/risk/) for the approval steps and [Playbook](/docs/playbook/) for how
