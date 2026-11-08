@@ -201,7 +201,7 @@ export const quickstart = {
     },
     { text: "Run the git commands adopt printed, open the setup PR and merge it yourself." },
     {
-      text: "Install the Claude GitHub App, set branch protection with the link adopt prints, and turn on Allow auto-merge.",
+      text: "Install the Claude GitHub App, set branch protection with the link adopt prints (required check ci-ok, or bosun-ok if your repo already has a ci-ok job; adopt’s printed step names the right one), and turn on Allow auto-merge.",
     },
     {
       cmd: "bosun setup-snippet",

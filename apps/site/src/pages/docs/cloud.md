@@ -259,11 +259,14 @@ deb.nodesource.com
 archive.ubuntu.com
 security.ubuntu.com
 keelstack.dev
+tuf-repo-cdn.sigstore.dev
 ```
 
 **Practice:** this is the list keelstackhq uses for the setup script (NodeSource, npm, rustup,
 crates.io), GitHub release downloads and these docs. A denied host shows up as a failed command;
-add the host and start a new session.
+add the host and start a new session. `tuf-repo-cdn.sigstore.dev` is for the bootstrap's `@latest`
+fallback: it checks bosun's npm signatures with `npm audit signatures`, and without that host it
+skips the install with a warning.
 
 ## 4. Secrets and keys
 

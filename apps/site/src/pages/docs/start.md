@@ -36,7 +36,7 @@ signed in, and admin on the repo.
    its checks cannot run on that PR.
 6. **GitHub settings.** Install the [Claude GitHub App](https://github.com/apps/claude) on the
    repo. Set branch protection on the default branch with the link adopt prints, with the
-   required checks `ci-ok`, `risk-check`, `review-verdict` and `main-open`. Turn on **Allow
+   required checks `ci-ok` (`bosun-ok` if your repo already has a `ci-ok` job; adopt's printed step names the right one), `risk-check`, `review-verdict` and `main-open`. Turn on **Allow
    auto-merge** (Settings, General).
 7. **Cloud environment.** Paste the output of `bosun setup-snippet` once as the cloud
    environment's setup script. You never paste it again: it runs each checkout's own
