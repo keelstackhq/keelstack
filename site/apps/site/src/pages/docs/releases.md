@@ -108,8 +108,8 @@ which appends them under `## Unreleased` in `CHANGELOG.md` and `## Done` in
 A repo pins the bosun release it runs in `.bosun/version`; its workflows install that version
 from npm. A new channel version is a bosun release tag, and it brings the matching pin, so the
 splice update bot moves the channel files and the pin in one pull request. That pull request is
-R-gov and needs the owner's approval. After a pin change, paste `docs/setup-script.sh` into the
-cloud environment again, since it installs the pinned bosun.
+R-gov and needs the owner's approval. Since bosun 0.10.0 a pin change needs no new paste: the
+environment's bootstrap runs the checkout's own `docs/setup-script.sh`, which installs the pinned bosun.
 
 ## Template and channel updates
 

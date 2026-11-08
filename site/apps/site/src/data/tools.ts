@@ -55,7 +55,7 @@ export const tools: Tool[] = [
   {
     name: "bosun",
     role: "04 · agent orchestration",
-    status: "v0.4.0",
+    status: "v0.10.0",
     statusStyle: "outline",
     pitch:
       "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",

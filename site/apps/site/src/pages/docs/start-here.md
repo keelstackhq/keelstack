@@ -34,8 +34,8 @@ https://keelstack.dev/llms-full.txt.
    (`SPLICE_BOT_TOKEN`, or a GitHub App from hull v0.4.0, in the main-only environment `splice-bot`),
    `governance/owners.toml`, and the Routines that `bosun doctor` prints.
    [Getting started, step 4](/docs/getting-started/#4-apply-the-repo-settings).
-5. **Re-paste the setup script** (owner). The repo now has its own `docs/setup-script.sh`; paste it
-   into the environment. [Cloud environment](/docs/cloud/#2-paste-the-setup-script).
+5. **Paste the bootstrap once** (owner). The output of `bosun setup-snippet` runs the repo's own
+   `docs/setup-script.sh`; a later pin change needs no new paste. [Cloud environment](/docs/cloud/#2-paste-the-setup-script-once).
 6. **Enroll the orchestrator's signing key** (orchestrator makes the key, owner approves the pull
    request on GitHub). After this, the owner approves in chat.
    [Risk and review](/docs/risk/#signed-approvals-from-chat).

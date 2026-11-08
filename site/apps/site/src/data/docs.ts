@@ -41,6 +41,20 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "start",
+    title: "Start in 5 minutes",
+    summary:
+      "For humans: nine steps from your repo to the first plan with bosun, and the one JSON contract agents act on.",
+    sources: [
+      "bosun/README.md",
+      "bosun/AGENTS.md",
+      "bosun/docs/adopt-existing-repo.md",
+      "bosun/docs/spec/08-risk.md",
+      "bosun/CHANGELOG.md",
+    ],
+    ready: true,
+  },
+  {
     slug: "start-here",
     title: "Start here",
     summary:

@@ -228,6 +228,14 @@ freely, template updates never touch it.
   `/docs/adopt/` re-copied; `/assess/v0.7.0.mjs` (sha256 `cfb3ee4a…`, same bytes as v0.6.2) is
   current, earlier tags stay served. docspack 0.1.9.
 - 2026-11-06 Operating model: `/docs/operating-model/` (manifest of eight principles, bosun mechanism and status per principle from bosun `docs/operating-model.md` at PR #421 head `fb3d545`, and the bootstrap mode keelstackhq runs); Manifest nav link and a For agents row on the landing. docspack 0.1.10.
+- 2026-11-08 Start in 5 minutes (bosun 0.10.0, bosun `main` `b8db50c`, README from bosun PR #455):
+  a home-page section after the stats (nine human steps and a For agents block with the JSON fields
+  and exit codes), `/docs/start/`, a Start nav link and `/llms.txt` "Start in 5 minutes". Steps 3 to 6
+  and 8 need bosun `main` after 0.10.0 (adopt's commands and link, keygen, doctor's fixes): TODO(copy) drop
+  that note when the next bosun release ships. Operating model synced to bosun `main` (R-weaken
+  owner-only, held outcomes, gate-missed, trailers, autonomous policy, untrusted-text marking and
+  review_models being built). Cloud page: `bosun setup-snippet` pasted once, per-repo script at
+  `b8db50c` (bosun 0.10.0); bosun card v0.10.0. docspack 0.1.11.
 
 ## Blocked
 

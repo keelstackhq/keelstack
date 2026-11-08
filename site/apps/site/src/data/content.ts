@@ -167,6 +167,7 @@ export const footerLinks: { label: string; href: string }[] = [
 ];
 
 export const nav: { label: string; href: string }[] = [
+  { label: "Start", href: "#quickstart" },
   { label: "Tools", href: "#tools" },
   { label: "For agents", href: "#agents" },
   { label: "Get started", href: "#start" },
@@ -174,3 +175,59 @@ export const nav: { label: string; href: string }[] = [
   { label: "Docs", href: "/docs/" },
   { label: "GitHub ↗", href: org.url },
 ];
+
+// Start in 5 minutes: bosun README (PR #455), docs/adopt-existing-repo.md, AGENTS.md, spec §8 (keygen).
+// adopt's printed commands, keygen and doctor's exact fixes are on bosun main after 0.10.0.
+// TODO(copy): drop `unreleased` when the next bosun release ships them.
+export interface QuickStep {
+  cmd?: string;
+  text: string;
+}
+
+export const quickstart = {
+  label: "bosun · Start in 5 minutes",
+  heading: "From your repo to the first plan in nine steps.",
+  body: "For humans, on a computer, in a clean checkout of your repo’s default branch. You need Node, the gh CLI signed in, and admin on the repo.",
+  steps: [
+    { cmd: "npm i -g @keelstackhq/bosun", text: "Install bosun (or cargo install keel-bosun)." },
+    { cmd: "export GITHUB_TOKEN=$(gh auth token)", text: "A token with repo and workflow scopes." },
+    {
+      cmd: "bosun adopt --owner <you>",
+      text: "Writes the bosun files, makes the labels and the registry issue, and prints the exact git commands. It commits nothing.",
+    },
+    {
+      cmd: "bosun keygen --enroll",
+      text: "Your approval key. The public half goes into .bosun/approvers.toml; the private half stays outside every repo.",
+    },
+    { text: "Run the git commands adopt printed, open the setup PR and merge it yourself." },
+    {
+      text: "Install the Claude GitHub App, set branch protection with the link adopt prints (required check ci-ok, or bosun-ok if your repo already has a ci-ok job; adopt’s printed step names the right one), and turn on Allow auto-merge.",
+    },
+    {
+      cmd: "bosun setup-snippet",
+      text: "Paste its output once as the cloud environment’s setup script. You never paste it again: it runs each repo’s own pinned script.",
+    },
+    {
+      cmd: "bosun doctor",
+      text: "Do each fix it names, then run it again, until only plan is left.",
+    },
+    { text: "Write your first plan. Agents take it from there." },
+  ] satisfies QuickStep[] as QuickStep[],
+  unreleased:
+    "Steps 3 to 6 and 8 as written need bosun main after 0.10.0 (adopt’s printed commands and settings link, keygen, doctor’s exact fixes); the next bosun release ships them.",
+  more: { label: "The full path, with undo", href: "/docs/start/" },
+  agents: {
+    heading: "For agents",
+    body: "Agents call bosun commands and act on the one JSON object each prints. Do what error.fix says; make the calls in next.",
+    fields: ["ok", "exit_code", "data", "error.fix", "next"],
+    exitCodes: [
+      [0, "ok"],
+      [1, "error"],
+      [2, "usage"],
+      [3, "conflict"],
+      [4, "halted"],
+      [5, "needs-human"],
+      [6, "limit"],
+    ] as [number, string][],
+  },
+};

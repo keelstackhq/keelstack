@@ -61,3 +61,16 @@ describe("buildLlmsTxt", () => {
     expect(out).not.toContain("render.mjs");
   });
 });
+
+describe("buildLlmsTxt start in 5 minutes", () => {
+  const out = buildLlmsTxt();
+  it("lists the human steps and the agent contract before Tools", () => {
+    expect(out).toContain("## Start in 5 minutes");
+    expect(out.indexOf("## Start in 5 minutes")).toBeLessThan(out.indexOf("## Tools"));
+    expect(out).toContain("1. `npm i -g @keelstackhq/bosun`");
+    expect(out).toContain("9. ");
+    expect(out).toContain("`ok`, `exit_code`, `data`, `error.fix`, `next`");
+    expect(out).toContain("6 limit");
+    expect(out).toContain("https://keelstack.dev/docs/start.md");
+  });
+});
