@@ -184,9 +184,9 @@ Then, still as the owner:
   permissions instead (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; no personal
   token), or no bot at all: set the repository variable `SPLICE_BOT=off` and run updates from a
   session.
-- Paste `docs/setup-script.sh` into the setup script of the repo's Claude Code cloud environment
-  (network allow-list and secrets: [Cloud environment](/docs/cloud/)). It
-  runs as root before each session and installs Node 24, pnpm (ts-pnpm stacks), the Rust
+- Paste the output of `bosun setup-snippet` (bosun 0.10.0) once as the setup script of the repo's
+  Claude Code cloud environment (network allow-list and secrets: [Cloud environment](/docs/cloud/)).
+  It runs the checkout's own `docs/setup-script.sh` as root before each session, which installs Node 24, pnpm (ts-pnpm stacks), the Rust
   toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
   and bosun.
 - Create the Routines: janitor (every hour, Haiku) and curator (daily, Sonnet), plus notify

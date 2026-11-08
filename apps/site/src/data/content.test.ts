@@ -120,3 +120,34 @@ test("nav links the manifest before Docs", () => {
   expect(nav.find((l) => l.label === "Manifest")?.href).toBe("/docs/operating-model/");
   expect(agentRows.find((r) => r.key === "Manifest")?.href).toBe("/docs/operating-model/");
 });
+
+test("start in 5 minutes: the nine human steps in order, and the agent contract", () => {
+  const { quickstart } = content;
+  expect(quickstart.steps).toHaveLength(9);
+  expect(quickstart.steps.map((s) => s.cmd ?? null)).toEqual([
+    "npm i -g @keelstackhq/bosun",
+    "export GITHUB_TOKEN=$(gh auth token)",
+    "bosun adopt --owner <you>",
+    "bosun keygen --enroll",
+    null,
+    null,
+    "bosun setup-snippet",
+    "bosun doctor",
+    null,
+  ]);
+  expect(quickstart.more.href).toBe("/docs/start/");
+  expect(quickstart.agents.fields).toEqual(["ok", "exit_code", "data", "error.fix", "next"]);
+  expect(quickstart.agents.exitCodes).toEqual([
+    [0, "ok"],
+    [1, "error"],
+    [2, "usage"],
+    [3, "conflict"],
+    [4, "halted"],
+    [5, "needs-human"],
+    [6, "limit"],
+  ]);
+});
+
+test("nav links the 5-minute start first", () => {
+  expect(nav[0]).toEqual({ label: "Start", href: "#quickstart" });
+});

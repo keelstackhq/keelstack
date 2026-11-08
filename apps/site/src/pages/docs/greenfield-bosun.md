@@ -105,7 +105,7 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
    - then run `hoist apply` (branch rules, auto-merge, the required checks);
    - create the environment `splice-bot` (branch `main` only) with `SPLICE_BOT_TOKEN`;
    - `gh label create bosun:halt --color B60205`;
-   - paste `docs/setup-script.sh` into the cloud environment ([Cloud environment](/docs/cloud/));
+   - paste the output of `bosun setup-snippet` once into the cloud environment ([Cloud environment](/docs/cloud/));
    - create the Routines janitor (hourly), curator (daily) and, with `[slack]`, notify (hourly);
      `bosun doctor` prints their prompts.
 5. **Optional, owner:** add the orchestrator's public key to `.bosun/approvers.toml`. The owner
