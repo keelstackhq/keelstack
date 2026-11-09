@@ -4,7 +4,9 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull v0.8.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. It follows bosun 0.4.0 (2026-11-01). Every owner step, with the check that
+plan turns into work. The file tree and the example plan were checked on 2026-11-09 by running `bosun init --no-pr` and
+`bosun plan check` 0.11.0 on a repo rendered from hull v0.8.0; the other steps are as written for
+bosun 0.4.0 (2026-11-01) and link the pages that follow later versions. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
 [Getting started](/docs/getting-started/).
 
@@ -14,14 +16,17 @@ On top of what hull renders (see [Getting started](/docs/getting-started/)), `bo
 the bosun channel:
 
 ```text
-.bosun/bosun.toml          project, stacks, review mode
+.bosun/bosun.toml          project, stacks, review mode, [approvals], optional [slack]
 .bosun/limits.toml         caps and budget
 .bosun/risk.toml           risk rules
+.bosun/session-rules.toml  session rules
+.bosun/intake.toml         the owner's upfront answers (seed, written once; `bosun intake check`)
 .bosun/version             the pinned bosun release (R-gov)
 .bosun/fold-fragments.sh   folds changelog.d/ fragments (run it with bash)
-governance/owners.toml     the owners whose approval counts
+governance/owners.toml     the owners whose approval counts (GitHub logins, Slack IDs)
 hoist.toml                 the repo settings and required checks for `hoist apply`
-deny.toml, rust-toolchain.toml   rust stack only
+.npmrc                     ts-pnpm stack config (seed)
+deny.toml, rust-toolchain.toml   rust stack only (seed)
 .github/CODEOWNERS
 .github/workflows/         bosun.yml, risk.yml, verdict.yml, main-open.yml, main-health.yml
 AGENTS.md, REVIEW.md       bosun's sections (agent rules, review rules for the verdict)
@@ -29,6 +34,12 @@ docs/setup-script.sh       the cloud environment's setup script
 .splice/channels/bosun.toml   the channel record, kept fresh by the splice update bot
 plans/<name>.md            the plan: the only input bosun reads (`--plan` copies yours here)
 ```
+
+Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/main/docs/adopt-existing-repo.md)
+(section 3, "What lands in the repo") and its
+[layout spec](https://github.com/keelstackhq/bosun/blob/main/docs/spec/03-layout.md). For
+`session-rules.toml` see the bosun docs; the intake schema is in the layout spec. A seed is
+written once and then belongs to you; an owned file is replaced by each channel update.
 
 - In a hull repo, hull owns `ci.yml`, `CLAUDE.md` and `.claude/settings.json`, and its
   `splice.yml` stays. `hoist.toml`, `splice.yml`, `deny.toml`, `rust-toolchain.toml` and the other
@@ -50,7 +61,8 @@ bosun reads only `plans/*.md`. It has no convention for a brief or a product spe
 - The plan goes in `plans/<name>.md`, in bosun's format
   ([plan-format.md](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)). Its
   `project:` must equal `project` in `.bosun/bosun.toml`. A minimal plan, which
-  `bosun plan check` (0.4.0) accepts with no warnings:
+  `bosun plan check` (0.11.0) accepts with no warnings. A task that touches `apps/api/src/` also
+  lists a test under `apps/api/tests/`, or `plan check` warns:
 
 ```markdown
 # Plan: notes
@@ -68,10 +80,10 @@ docs/superpowers/specs/2026-10-29-notes.md.
 ### Tasks
 
 - T1: Note store and the create endpoint
-  touch: apps/api/src/notes/store.ts, apps/api/src/notes/create.ts, apps/api/src/notes/create.test.ts
+  touch: apps/api/src/notes/store.ts, apps/api/src/notes/create.ts, apps/api/tests/notes_create.test.ts
   size: 250
 - T2: List and delete endpoints
-  touch: apps/api/src/notes/list.ts, apps/api/src/notes/delete.ts, apps/api/src/notes/list.test.ts
+  touch: apps/api/src/notes/list.ts, apps/api/src/notes/delete.ts, apps/api/tests/notes_list.test.ts
   depends: T1
   size: 200
 
@@ -79,6 +91,38 @@ docs/superpowers/specs/2026-10-29-notes.md.
 
 - UC-N1-1: POST /notes returns 201 and the note, and GET /notes lists it.
 - UC-N1-2: DELETE /notes/:id removes the note, and a second DELETE returns 404.
+```
+
+The real output of `bosun plan check plans/notes.md` (0.11.0, exit 0, reformatted for reading), with no warnings:
+
+```json
+{
+  "command": "plan check",
+  "data": {
+    "file": "plans/notes.md",
+    "items": [
+      {
+        "area": "api",
+        "gated": [],
+        "id": "N1",
+        "shape": "single",
+        "shape_reasons": ["tasks form a chain of 2: no parallel gain"],
+        "size": 450,
+        "tasks": 2,
+        "title": "Notes API",
+        "ucs": 2
+      }
+    ],
+    "project": "notes",
+    "title": "Plan: notes",
+    "warnings": []
+  },
+  "error": null,
+  "exit_code": 0,
+  "next": [],
+  "ok": true,
+  "version": 1
+}
 ```
 
 Each `## <ID>: <title>` item needs an `area:` and becomes one epic. Each task needs a `touch:` and
@@ -95,7 +139,7 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
    then run the `ready` skill: it asks the onboarding questions as forms; answer `bosun` with `yes`.
 3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in
    `docs/superpowers/specs/`). This first plan goes in through `bosun init`:
-   `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (bosun 0.4.0; `--stack` is
+   `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (bosun 0.11.0; `--stack` is
    required). It opens one setup pull request, which is R-gov.
 4. **Owner:**
    - check `governance/owners.toml`;
