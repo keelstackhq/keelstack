@@ -241,6 +241,12 @@ freely, template updates never touch it.
   fixes shipped); bosun card v0.11.0; Cloud page script re-copied at `ba4ed9c` (pins 0.11.0);
   operating model on bosun 0.11.0 (reviewer model and `review_models`, untrusted-text marking,
   review-pack delta). docspack 0.1.12.
+- 2026-11-09 hull v0.8.0 (main `720442f`; no `v0.8.0` tag yet, only `release/v0.8.0`): `/docs/adopt/`
+  re-copied at that commit; `/assess/v0.8.0.mjs` (sha256 `cfb3ee4a…`, same bytes as v0.6.2) is
+  current, earlier tags stay served. New `/docs/update/` (hull's eight-step update path; the same
+  list under "Stays current" on the home page and in `/llms.txt`, pinned by `update.test.ts`).
+  TODO(copy): the bosun update path, the hero `--ref v0.5.2` re-run and the docs' version lines
+  stay on older tags until the `v0.8.0` tag exists; re-run `adopt.mjs v0.8.0 v0.8.0` at the tag.
 
 ## Blocked
 

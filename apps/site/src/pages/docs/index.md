@@ -14,6 +14,7 @@ To put bosun on a repo you already have, the shortest path is
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
 (the details). [Greenfield repo with bosun](/docs/greenfield-bosun/) walks a new bosun repo end to end,
 [Adopt an existing repo](/docs/adopt/) brings keelstack into a repo that already has code, and
+[Update](/docs/update/) brings a repo up to the newest hull, and
 [Start a project](/docs/start-project/) lists every owner step
 before agents can work on a new hull repo, with how hull's `ready` check (since hull v0.5.0) verifies each one. How to run it day to day with an orchestrator session and
 child sessions is in the [Playbook](/docs/playbook/).

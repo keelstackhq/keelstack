@@ -105,6 +105,34 @@ export const current: { label: string; title: string; text: string; accent?: boo
   },
 ];
 
+// The hull update path (hull's docs/updating.md). Shown on the home page under "Stays current",
+// on /docs/update/ and in /llms.txt; update.test pins the three to one list.
+export const update: {
+  heading: string;
+  steps: { cmd: string; note?: string }[];
+  after: string;
+  href: string;
+  guide: string;
+} = {
+  heading: "Update a repo from hull",
+  steps: [
+    { cmd: "git switch -c chore/splice-update" },
+    { cmd: "splice check --json", note: "exit 1 = update available, drift or markers" },
+    { cmd: "splice diff", note: "preview, writes nothing" },
+    { cmd: "splice update --all", note: "template + channels" },
+    {
+      cmd: "git grep -n '<<<<<<<'",
+      note: "resolve conflicts; owned files: move edits to seed files",
+    },
+    { cmd: "splice check", note: "must exit 0" },
+    { cmd: "pnpm install && pnpm run ci" },
+    { cmd: 'git commit -am "chore: splice update to hull vX.Y.Z"' },
+  ],
+  after: "The weekly splice workflow runs steps 2 to 4 and opens the PR for you.",
+  href: "/docs/update/",
+  guide: "https://github.com/keelstackhq/hull/blob/main/docs/updating.md",
+};
+
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
 export const sections: Record<
   "split" | "tools" | "agents" | "current" | "start",
