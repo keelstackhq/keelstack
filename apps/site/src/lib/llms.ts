@@ -39,7 +39,7 @@ export function buildLlmsTxt(): string {
       "",
       ...p.steps.map(
         (s, i) =>
-          `${i + 1}. ${s.cmd ? `\`${s.cmd}\`` : (s.text ?? "")}${s.cmd && s.note ? ` # ${s.note}` : ""}${!s.cmd && s.note ? ` ${s.note}` : ""}`,
+          `${i + 1}. ${s.cmd ? `\`${s.cmd}\`` : (s.text ?? "")}${s.cmd && s.note ? ` # ${s.note}` : ""}`,
       ),
       "",
       ...p.notes.map((n) => `- ${n}`),
