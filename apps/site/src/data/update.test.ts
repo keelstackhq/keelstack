@@ -52,3 +52,12 @@ test.each(["hull", "bosun"] as const)("%s: every step, note and the guide are on
   expect(page).toContain(path.guide);
   expect(llms).toContain(path.guide);
 });
+
+test("the home page shows only a short line, linking the full page", () => {
+  expect(update.short.map((x) => x.cmd ?? x.text)).toEqual([
+    "splice update --all",
+    "bosun pin --latest --pr",
+    "nothing to do",
+  ]);
+  expect(update.href).toBe("/docs/update/");
+});

@@ -114,8 +114,19 @@ interface UpdatePath {
   notes: string[];
   guide: string;
 }
-export const update: { href: string; hull: UpdatePath; bosun: UpdatePath } = {
+export const update: {
+  href: string;
+  /** The home page shows only this; the full steps are on /docs/update/ and in /llms.txt. */
+  short: { label: string; cmd?: string; text?: string }[];
+  hull: UpdatePath;
+  bosun: UpdatePath;
+} = {
   href: "/docs/update/",
+  short: [
+    { label: "hull", cmd: "splice update --all" },
+    { label: "bosun", cmd: "bosun pin --latest --pr" },
+    { label: "cloud", text: "nothing to do" },
+  ],
   hull: {
     heading: "Update hull",
     steps: [

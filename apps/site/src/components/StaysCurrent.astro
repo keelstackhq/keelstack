@@ -21,27 +21,16 @@ import SectionHead from "./SectionHead.astro";
       ))
     }
   </div>
-  <div class="updates">
+  <p class="updates">
     {
-      [update.hull, update.bosun].map((p) => (
-        <div class="update">
-          <h3 class="update-h">{p.heading}</h3>
-          <ol class="steps">
-            {p.steps.map((s) => (
-              <li>
-                {s.cmd ? <code>{s.cmd}</code> : s.text}
-                {s.cmd && s.note && <span class="note"> # {s.note}</span>}
-              </li>
-            ))}
-          </ol>
-          {p.notes.map((n) => (
-            <p class="text">{n.replaceAll("`", "")}</p>
-          ))}
-        </div>
+      update.short.map((x) => (
+        <span class="u">
+          <span class="label">{x.label}</span> {x.cmd ? <code>{x.cmd}</code> : x.text}
+        </span>
       ))
     }
-    <p class="text"><a href={update.href}>Full update guide</a></p>
-  </div>
+    <a href={update.href}>All update steps</a>
+  </p>
 </section>
 
 <style>
@@ -78,33 +67,15 @@ import SectionHead from "./SectionHead.astro";
     line-height: 1.5;
   }
   .updates {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
-    gap: 40px;
-    margin-top: 56px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 32px;
+    margin: 40px 0 0;
+    color: var(--ink-2);
   }
-  .updates > .text {
-    grid-column: 1 / -1;
-    margin: 0;
-  }
-  .update-h {
-    font-weight: 800;
-    font-size: 20px;
-    letter-spacing: -0.02em;
-    margin: 0;
-  }
-  .steps {
-    margin: 16px 0 0;
-    padding-left: 24px;
-    line-height: 1.7;
-  }
-  .steps code {
+  .updates code {
     font-family: var(--mono, "JetBrains Mono", monospace);
     font-size: 14px;
-    overflow-wrap: anywhere;
-  }
-  .note {
-    color: var(--ink-2);
-    font-size: 14px;
+    color: var(--ink);
   }
 </style>
