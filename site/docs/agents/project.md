@@ -236,6 +236,11 @@ freely, template updates never touch it.
   owner-only, held outcomes, gate-missed, trailers, autonomous policy, untrusted-text marking and
   review_models being built). Cloud page: `bosun setup-snippet` pasted once, per-repo script at
   `b8db50c` (bosun 0.10.0); bosun card v0.10.0. docspack 0.1.11.
+- 2026-11-09 bosun 0.11.0 (tag `v0.11.0`, bosun `main` `ba4ed9c`): the Start in 5 minutes note
+  about bosun `main` and its TODO(copy) are gone (adopt's commands and link, keygen and doctor's
+  fixes shipped); bosun card v0.11.0; Cloud page script re-copied at `ba4ed9c` (pins 0.11.0);
+  operating model on bosun 0.11.0 (reviewer model and `review_models`, untrusted-text marking,
+  review-pack delta). docspack 0.1.12.
 
 ## Blocked
 

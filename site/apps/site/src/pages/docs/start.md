@@ -6,10 +6,8 @@ The shortest path from a repo you already have to agents working on it with bosu
 steps once; after the first plan, agents do the rest. It follows bosun's README ("Start in 5
 minutes") and `docs/adopt-existing-repo.md`, the long version.
 
-Status: bosun 0.10.0 is the release on npm. Steps 3 to 6 and 8 as written need bosun `main` after
-0.10.0: adopt's printed commands and settings link, `bosun keygen` and doctor's exact fixes are not
-released yet.
-<!-- TODO(copy): drop this status note when the next bosun release ships them. -->
+Status: written for bosun 0.11.0, the release on npm. adopt's printed commands and settings link,
+`bosun keygen` and doctor's exact fixes shipped in 0.11.0.
 
 Machine-readable: this page is https://keelstack.dev/docs/start.md.
 

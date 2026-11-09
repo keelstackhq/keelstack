@@ -74,3 +74,9 @@ describe("buildLlmsTxt start in 5 minutes", () => {
     expect(out).toContain("https://keelstack.dev/docs/start.md");
   });
 });
+
+describe("buildLlmsTxt after bosun 0.11.0", () => {
+  it("says nothing about bosun main after 0.10.0", () => {
+    expect(buildLlmsTxt()).not.toContain("after 0.10.0");
+  });
+});
