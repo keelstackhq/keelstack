@@ -212,6 +212,14 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "update",
+    title: "Update",
+    summary:
+      "Bring a repo up to the newest hull: the eight steps from a branch to a commit, and what the weekly splice workflow does for you.",
+    sources: ["hull/docs/updating.md", "splice/README.md"],
+    ready: true,
+  },
+  {
     slug: "releases",
     title: "Releases and updates",
     summary:

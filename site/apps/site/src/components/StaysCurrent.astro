@@ -1,5 +1,5 @@
 ---
-import { current, sections } from "../data/content";
+import { current, sections, update } from "../data/content";
 import SectionHead from "./SectionHead.astro";
 ---
 
@@ -20,6 +20,22 @@ import SectionHead from "./SectionHead.astro";
         </div>
       ))
     }
+  </div>
+  <div class="update">
+    <h3 class="update-h">{update.heading}</h3>
+    <ol class="steps">
+      {
+        update.steps.map((s) => (
+          <li>
+            <code>{s.cmd}</code>
+            {s.note && <span class="note"> # {s.note}</span>}
+          </li>
+        ))
+      }
+    </ol>
+    <p class="text">
+      {update.after} <a href={update.href}>Full update guide</a>
+    </p>
   </div>
 </section>
 
@@ -55,5 +71,28 @@ import SectionHead from "./SectionHead.astro";
     color: var(--ink-2);
     margin-top: 8px;
     line-height: 1.5;
+  }
+  .update {
+    margin-top: 56px;
+  }
+  .update-h {
+    font-weight: 800;
+    font-size: 20px;
+    letter-spacing: -0.02em;
+    margin: 0;
+  }
+  .steps {
+    margin: 16px 0 0;
+    padding-left: 24px;
+    line-height: 1.7;
+  }
+  .steps code {
+    font-family: var(--mono, "JetBrains Mono", monospace);
+    font-size: 14px;
+    overflow-wrap: anywhere;
+  }
+  .note {
+    color: var(--ink-2);
+    font-size: 14px;
   }
 </style>
