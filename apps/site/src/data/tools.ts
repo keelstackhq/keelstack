@@ -32,7 +32,7 @@ export const tools: Tool[] = [
   {
     name: "splice",
     role: "02 · bootstrap + update",
-    status: "v0.3.1",
+    status: "v0.4.0",
     statusStyle: "outline",
     pitch:
       "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
@@ -66,7 +66,7 @@ export const tools: Tool[] = [
   {
     name: "hoist",
     role: "05 · provision + release",
-    status: "v0.3.0",
+    status: "v0.4.1",
     statusStyle: "outline",
     pitch:
       "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",

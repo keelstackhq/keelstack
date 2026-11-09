@@ -10,7 +10,7 @@ decisions and approves high-risk pull requests. Every tool is public under
 your own.
 
 To put bosun on a repo you already have, the shortest path is
-[Start in 5 minutes](/docs/start/). Versions below are the released ones as of 2026-11-01. To set up a repo of your own, follow
+[Start in 5 minutes](/docs/start/). Versions below are the released ones as of 2026-11-09. To set up a repo of your own, follow
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
 (the details). [Greenfield repo with bosun](/docs/greenfield-bosun/) walks a new bosun repo end to end,
 [Adopt an existing repo](/docs/adopt/) brings keelstack into a repo that already has code,
@@ -30,9 +30,9 @@ child sessions is in the [Playbook](/docs/playbook/).
 | Tool                                                  | What it does                                                                                                                            | Released           | Get it                                                            |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | ----------------------------------------------------------------- |
 | [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | v0.8.0             | Rendered by splice from `gh:keelstackhq/hull//template`           |
-| [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.3.1              | `pnpm dlx @keelstackhq/splice@0.3.1 <command>`                    |
-| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.4.0              | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
-| [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.3.0              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
+| [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | 0.4.0              | `pnpm dlx @keelstackhq/splice@0.4.0 <command>`                    |
+| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | 0.11.0             | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
+| [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | 0.4.1              | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
 | [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions (and CircleCI) in one line of YAML. No account, no server.                      | v0.5.0 (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
 | [berth](https://github.com/keelstackhq/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | 0.1.0              | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
 | [decisions](https://github.com/keelstackhq/decisions) | Settled cross-repo decisions, delivered to each repo as a splice channel.                                                               | tracks `main`      | `splice channel add gh:keelstackhq/decisions//channel …`          |
