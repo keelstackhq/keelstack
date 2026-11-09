@@ -14,7 +14,7 @@ test("the hull update path is the same on the page, the home block and llms.txt"
     "git grep -n '<<<<<<<'",
     "splice check",
     "pnpm install && pnpm run ci",
-    'git commit -am "chore: splice update to hull vX.Y.Z"',
+    'git add -A && git commit -m "chore: splice update to hull vX.Y.Z"',
   ]);
   const llms = buildLlmsTxt();
   for (const s of update.steps) {

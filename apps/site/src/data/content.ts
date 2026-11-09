@@ -126,11 +126,13 @@ export const update: {
     },
     { cmd: "splice check", note: "must exit 0" },
     { cmd: "pnpm install && pnpm run ci" },
-    { cmd: 'git commit -am "chore: splice update to hull vX.Y.Z"' },
+    { cmd: 'git add -A && git commit -m "chore: splice update to hull vX.Y.Z"' },
   ],
-  after: "The weekly splice workflow runs steps 2 to 4 and opens the PR for you.",
+  after:
+    "Normally you do not run this: the weekly splice workflow (splice update --all) opens the PR on splice/update.",
   href: "/docs/update/",
-  guide: "https://github.com/keelstackhq/hull/blob/main/docs/updating.md",
+  guide:
+    "https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/updating.md",
 };
 
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
