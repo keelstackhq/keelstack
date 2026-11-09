@@ -22,7 +22,7 @@ const page = read("../pages/docs/adopt.md");
 describe("Adopt an existing repo", () => {
   it("pins hull's adopt.md and ready.mjs to one commit", () => {
     expect(source.repo).toBe("keelstackhq/hull");
-    // hull v0.8.0 release: main at 720442f (no tag when copied).
+    // hull v0.8.0 release: main at 720442f (tag v0.8.0 -> 720442f).
     expect(source.ref).toBe("720442f7557168f139d8d836ceddd8aebe4e7952");
     expect(source.doc.path).toBe("docs/adopt.md");
     expect(sha(copy)).toBe(source.doc.sha256);

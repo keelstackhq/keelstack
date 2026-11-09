@@ -246,13 +246,25 @@ freely, template updates never touch it.
   current, earlier tags stay served. New `/docs/update/` (hull's eight-step update path; the same
   list under "Stays current" on the home page and in `/llms.txt`, pinned by `update.test.ts`).
   docspack 0.1.13. The adopt prompt pins `--ref` to the commit until the tag exists.
-  TODO(copy): the hero `--ref v0.5.2` re-run and the docs' version lines
-  stay on older tags until the `v0.8.0` tag exists; re-run `adopt.mjs v0.8.0 v0.8.0` at the tag.
 - 2026-11-09 Update bosun: `/docs/update/`, the home "Stays current" block and `/llms.txt` carry
   the bosun path (`bosun pin --latest --check` / `--pr`, setup-snippet once, `splice update
   --channel bosun`) next to hull's, plus hull's "splice 0.3.0+" and "merge only when `ci-ok` is
   green" lines. The bosun guide link (`bosun/docs/update.md` on `main`) lands with bosun #477;
   check it resolves. docspack 0.1.14.
+
+- 2026-11-09 hull v0.8.0 tagged (`v0.8.0` -> `720442f`): `adopt.mjs v0.8.0 v0.8.0` re-run at the tag
+  (adopt prompt `--ref v0.8.0`; same bytes) and `start-checklist.mjs v0.8.0` (adds a link to
+  Adopt an existing repo). Hero command pins `--ref v0.8.0` (re-ran with splice 0.3.1: exit 0, lock
+  hull 0.8.0 @ `720442f`, 61 files: 36 owned, 8 shared, 17 seed; the shown lines are unchanged);
+  hull card v0.8.0; Getting started and Start here name hull v0.8.0. Greenfield still describes
+  a repo rendered from hull v0.5.2 (file tree not re-checked). docspack 0.1.15.
+- 2026-11-09 Version sweep (npm and tags checked): splice 0.4.0 (hero re-run: same 61 create lines),
+  bosun 0.11.0, hoist 0.4.1, hoard v0.5.0, berth 0.1.0 in the hero, cards, docs index, Start here
+  and Getting started; Greenfield renders from hull v0.8.0 (`splice new` re-run OK). docspack 0.1.16.
+  TODO(copy): Greenfield still follows bosun 0.4.0. A re-run of `bosun init` 0.11.0 --no-pr on a
+  hull v0.8.0 repo adds `.bosun/intake.toml`, `.bosun/session-rules.toml` and `.npmrc` to its tree,
+  and `bosun plan check` 0.11.0 warns on the example plan (touch: apps/api/tests/); fix the page
+  from bosun's docs, not from memory.
 
 ## Blocked
 

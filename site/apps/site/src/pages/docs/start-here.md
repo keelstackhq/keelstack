@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 One ordered path from an empty GitHub repo to the first merged task. Each step names who does it
-and links the page with the details. Versions as of 2026-11-01: hull v0.5.2, splice 0.3.1, bosun
-0.4.0, hoist 0.3.0, berth 0.1.0, hoard v0.5.0.
+and links the page with the details. Latest releases as of 2026-11-09: hull v0.8.0, splice 0.4.0, bosun
+0.11.0, hoist 0.4.1, berth 0.1.0, hoard v0.5.0.
 
 Machine-readable: this page is https://keelstack.dev/docs/start-here.md, and every page is in
 https://keelstack.dev/llms-full.txt.
@@ -19,7 +19,7 @@ https://keelstack.dev/llms-full.txt.
 
 ## The path
 
-1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.3.1 new
+1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.4.0 new
    gh:keelstackhq/hull//template my-repo --piece …` (or `//template-rust`), then commit.
    [Getting started, step 1](/docs/getting-started/#1-render-the-template-new-repo).
 2. **Add the channels** (agent). `splice channel add gh:keelstackhq/hull//rigging --piece claude`
