@@ -265,8 +265,10 @@ freely, template updates never touch it.
   0.11.0 on a hull v0.8.0 render; the tree now lists `.bosun/session-rules.toml`,
   `.bosun/intake.toml` and `.npmrc`, described from bosun's adopt guide and layout spec (bosun
   `01770b8`). The example plan lists tests under `apps/api/tests/` and `bosun plan check` 0.11.0
-  passes with no warnings (real output on the page). The other steps are still as written for
-  bosun 0.4.0 (the page says so). docspack 0.1.17 in the repo; npm `latest` is 0.1.7 (the docs
+  passes with no warnings (real output on the page). Every other step was checked against
+  `bosun --help`, each subcommand's `--help`, `bosun doctor` 0.11.0 and bosun's docs: `bosun pr
+  --ready` (`--auto-merge` is an alias), `bosun keygen --enroll`, the doctor's kill-switch
+  command and Routines (`data.routines`), `--keep-plan-tasks-open`. docspack 0.1.17 in the repo; npm `latest` is 0.1.7 (the docs
   text claims only "0.1.1 or later"): an owner release of `docspack-v0.1.17` publishes all of it.
 
 ## Blocked

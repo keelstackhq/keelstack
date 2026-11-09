@@ -4,9 +4,10 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull v0.8.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. The file tree and the example plan were checked on 2026-11-09 by running `bosun init --no-pr` and
-`bosun plan check` 0.11.0 on a repo rendered from hull v0.8.0; the other steps are as written for
-bosun 0.4.0 (2026-11-01) and link the pages that follow later versions. Every owner step, with the check that
+plan turns into work. It follows bosun 0.11.0 (2026-11-09): the file tree and the example plan come from running
+`bosun init --no-pr` and `bosun plan check` 0.11.0 on a repo rendered from hull v0.8.0, and every
+command and flag below was checked against `bosun --help`, each subcommand's `--help` and bosun's
+docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
 [Getting started](/docs/getting-started/).
 
@@ -148,17 +149,21 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
      and `main-open` cannot run on it;
    - then run `hoist apply` (branch rules, auto-merge, the required checks);
    - create the environment `splice-bot` (branch `main` only) with `SPLICE_BOT_TOKEN`;
-   - `gh label create bosun:halt --color B60205`;
+   - `gh label create bosun:halt --color B60205 --repo <owner>/<repo>` (the kill switch; `bosun doctor`
+     prints this exact command while it is missing);
    - paste the output of `bosun setup-snippet` once into the cloud environment ([Cloud environment](/docs/cloud/));
-   - create the Routines janitor (hourly), curator (daily) and, with `[slack]`, notify (hourly);
-     `bosun doctor` prints their prompts.
-5. **Optional, owner:** add the orchestrator's public key to `.bosun/approvers.toml`. The owner
-   approves that pull request on GitHub; after it, approvals come as chat forms
+   - create the Routines janitor (hourly) and curator (daily), and with `[slack]` notify (hourly):
+     `bosun doctor` prints their prompts in `data.routines`; then set `BOSUN_ROUTINES_OK=1`.
+5. **Optional, owner:** enroll an approval key: `bosun keygen --enroll` makes it and adds its public
+   half to `.bosun/approvers.toml` (run it only on the machine that signs; if the orchestrator signs
+   for you, its session runs it and opens a pull request with the file). The owner approves that
+   pull request on GitHub; after it, approvals come as chat forms
    ([Risk and review](/docs/risk/#signed-approvals-from-chat)).
 6. **Verify:** `bosun doctor`, then `bosun doctor --remote` (owner); `ready` exits 0.
 
 Once the setup pull request is merged, agents turn on auto-merge when they open a pull request
-(`bosun pr <task> --auto-merge`), and the ruleset merges it once the checks pass. The owner merges
+(`bosun pr <task> --ready`: it needs the pushed HEAD and the `bosun gate` stamps, marks the draft
+pull request ready and turns on auto-merge; `--auto-merge` is an old alias), and the ruleset merges it once the checks pass. The owner merges
 by hand only when GitHub reports a pull request as already clean.
 
 ## From plan to work
@@ -172,9 +177,11 @@ bosun wait --pr <pr>               # or `bosun status`: sessions, leases, tasks 
 ```
 
 The plan tasks are ready at once; the owner approves the plan pull requests. Tasks become ready
-on the import run after their plan task merged. New work enters as an amendment:
+on the import run after their plan task merged. When the plan file on the default branch is already
+byte-identical to the one imported, import closes the plan tasks (`--keep-plan-tasks-open` keeps
+them open); `bosun plan import --dry-run` shows what it would create. New work enters as an amendment:
 `bosun plan pr plans/<name>.md "<why>" --source human` opens the intake and the plan pull request
-in one step (it needs the setup pull request merged), then, after it merges,
+in one step, then, after it merges,
 `bosun plan amend plans/<name>.md`. `allow:` on a task is optional, only for tasks that must
 delete or skip tests (`delete-test`, `skip`, `only`, `fewer-asserts`). A child that hands an epic
 back unfinished reports `bosun result <epic> --outcome partial`. Details: [Tasks and sessions](/docs/tasks/) and
@@ -190,6 +197,6 @@ write plans/<name>.md in bosun's plan format from the spec in docs/superpowers/s
 bosun plan check, then bosun init --stack <stack> --plan plans/<name>.md --owner <my login>
 and tell me the setup pull request to approve and merge. Once it is merged, run bosun plan
 import, run the plan tasks, then bosun spawn one session per epic (area), with auto-merge on
-every pull request. Coordinate with bosun wait and bosun status; for new work use bosun plan pr.
+every pull request (bosun pr <task> --ready). Coordinate with bosun wait and bosun status; for new work use bosun plan pr.
 Ask me through forms whenever a step needs the owner.
 ```
