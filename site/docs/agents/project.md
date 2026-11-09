@@ -246,8 +246,13 @@ freely, template updates never touch it.
   current, earlier tags stay served. New `/docs/update/` (hull's eight-step update path; the same
   list under "Stays current" on the home page and in `/llms.txt`, pinned by `update.test.ts`).
   docspack 0.1.13. The adopt prompt pins `--ref` to the commit until the tag exists.
-  TODO(copy): the bosun update path, the hero `--ref v0.5.2` re-run and the docs' version lines
+  TODO(copy): the hero `--ref v0.5.2` re-run and the docs' version lines
   stay on older tags until the `v0.8.0` tag exists; re-run `adopt.mjs v0.8.0 v0.8.0` at the tag.
+- 2026-11-09 Update bosun: `/docs/update/`, the home "Stays current" block and `/llms.txt` carry
+  the bosun path (`bosun pin --latest --check` / `--pr`, setup-snippet once, `splice update
+  --channel bosun`) next to hull's, plus hull's "splice 0.3.0+" and "merge only when `ci-ok` is
+  green" lines. The bosun guide link (`bosun/docs/update.md` on `main`) lands with bosun #477;
+  check it resolves. docspack 0.1.14.
 
 ## Blocked
 

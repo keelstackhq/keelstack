@@ -215,8 +215,8 @@ export const docs: DocPage[] = [
     slug: "update",
     title: "Update",
     summary:
-      "Bring a repo up to the newest hull: the eight steps from a branch to a commit, and what the weekly splice workflow does for you.",
-    sources: ["hull/docs/updating.md", "splice/README.md"],
+      "Bring a repo up to the newest hull (eight steps from a branch to a commit) and the newest bosun (a pin PR), with the guides for both.",
+    sources: ["hull/docs/updating.md", "bosun/docs/update.md", "splice/README.md"],
     ready: true,
   },
   {
