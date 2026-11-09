@@ -17,9 +17,9 @@ the bosun channel:
 
 ```text
 .bosun/bosun.toml          project, stacks, review mode, [approvals], optional [slack]
-.bosun/limits.toml         caps and budget
-.bosun/risk.toml           risk rules
-.bosun/session-rules.toml  session rules
+.bosun/limits.toml         caps and budget (seed)
+.bosun/risk.toml           risk rules (seed)
+.bosun/session-rules.toml  session rules (seed)
 .bosun/intake.toml         the owner's upfront answers (seed, written once; `bosun intake check`)
 .bosun/version             the pinned bosun release (R-gov)
 .bosun/fold-fragments.sh   folds changelog.d/ fragments (run it with bash)
@@ -35,9 +35,9 @@ docs/setup-script.sh       the cloud environment's setup script
 plans/<name>.md            the plan: the only input bosun reads (`--plan` copies yours here)
 ```
 
-Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/main/docs/adopt-existing-repo.md)
+Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/01770b8/docs/adopt-existing-repo.md)
 (section 3, "What lands in the repo") and its
-[layout spec](https://github.com/keelstackhq/bosun/blob/main/docs/spec/03-layout.md). For
+[layout spec](https://github.com/keelstackhq/bosun/blob/01770b8/docs/spec/03-layout.md). For
 `session-rules.toml` see the bosun docs; the intake schema is in the layout spec. A seed is
 written once and then belongs to you; an owned file is replaced by each channel update.
 
