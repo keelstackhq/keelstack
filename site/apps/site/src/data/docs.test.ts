@@ -141,6 +141,21 @@ describe("sources after the 2026-10-28 refresh", () => {
 
 describe("Greenfield repo with bosun page", () => {
   const page = readFileSync(new URL("../pages/docs/greenfield-bosun.md", import.meta.url), "utf8");
+  it("shows the bosun 0.11.0 tree and a plan that plan check accepts without warnings", () => {
+    for (const f of [".bosun/intake.toml", ".bosun/session-rules.toml", ".npmrc"]) {
+      expect(page).toContain(f);
+    }
+    expect(page).toContain("apps/api/tests/notes_create.test.ts");
+    expect(page).toContain('"warnings": []');
+    expect(page).toContain("`bosun plan check` (0.11.0) accepts with no warnings");
+    // Steps checked against bosun 0.11.0's --help and docs.
+    expect(page).toContain("`bosun pr <task> --ready`");
+    expect(page).toContain("`bosun keygen --enroll`");
+    expect(page).toContain("--keep-plan-tasks-open");
+    expect(page).toContain("required unless you pass `--intake <file>`");
+    expect(page).not.toMatch(/as written for\s+bosun 0\.4\.0/);
+  });
+
   it("comes right after Start a project and is linked from it", () => {
     const slugs = docs.map((d) => d.slug);
     expect(slugs.indexOf("greenfield-bosun")).toBe(slugs.indexOf("start-project") + 1);

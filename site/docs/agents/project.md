@@ -261,10 +261,15 @@ freely, template updates never touch it.
 - 2026-11-09 Version sweep (npm and tags checked): splice 0.4.0 (hero re-run: same 61 create lines),
   bosun 0.11.0, hoist 0.4.1, hoard v0.5.0, berth 0.1.0 in the hero, cards, docs index, Start here
   and Getting started; Greenfield renders from hull v0.8.0 (`splice new` re-run OK). docspack 0.1.16.
-  TODO(copy): Greenfield still follows bosun 0.4.0. A re-run of `bosun init` 0.11.0 --no-pr on a
-  hull v0.8.0 repo adds `.bosun/intake.toml`, `.bosun/session-rules.toml` and `.npmrc` to its tree,
-  and `bosun plan check` 0.11.0 warns on the example plan (touch: apps/api/tests/); fix the page
-  from bosun's docs, not from memory.
+- 2026-11-09 Greenfield on bosun 0.11.0: ran `bosun init --stack ts-pnpm --plan ... --owner ... --no-pr`
+  0.11.0 on a hull v0.8.0 render; the tree now lists `.bosun/session-rules.toml`,
+  `.bosun/intake.toml` and `.npmrc`, described from bosun's adopt guide and layout spec (bosun
+  `01770b8`). The example plan lists tests under `apps/api/tests/` and `bosun plan check` 0.11.0
+  passes with no warnings (real output on the page). Every other step was checked against
+  `bosun --help`, each subcommand's `--help`, `bosun doctor` 0.11.0 and bosun's docs: `bosun pr
+  --ready` (`--auto-merge` is an alias), `bosun keygen --enroll`, the doctor's kill-switch
+  command and Routines (`data.routines`), `--keep-plan-tasks-open`. docspack 0.1.17 in the repo; npm `latest` is 0.1.7 (the docs
+  text claims only "0.1.1 or later"): an owner release of `docspack-v0.1.17` publishes all of it.
 
 ## Blocked
 
