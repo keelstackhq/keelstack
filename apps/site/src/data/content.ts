@@ -177,8 +177,7 @@ export const nav: { label: string; href: string }[] = [
 ];
 
 // Start in 5 minutes: bosun README (PR #455), docs/adopt-existing-repo.md, AGENTS.md, spec §8 (keygen).
-// adopt's printed commands, keygen and doctor's exact fixes are on bosun main after 0.10.0.
-// TODO(copy): drop `unreleased` when the next bosun release ships them.
+// adopt's printed commands, keygen and doctor's exact fixes ship in bosun 0.11.0.
 export interface QuickStep {
   cmd?: string;
   text: string;
@@ -213,8 +212,6 @@ export const quickstart = {
     },
     { text: "Write your first plan. Agents take it from there." },
   ] satisfies QuickStep[] as QuickStep[],
-  unreleased:
-    "Steps 3 to 6 and 8 as written need bosun main after 0.10.0 (adopt’s printed commands and settings link, keygen, doctor’s exact fixes); the next bosun release ships them.",
   more: { label: "The full path, with undo", href: "/docs/start/" },
   agents: {
     heading: "For agents",

@@ -151,3 +151,7 @@ test("start in 5 minutes: the nine human steps in order, and the agent contract"
 test("nav links the 5-minute start first", () => {
   expect(nav[0]).toEqual({ label: "Start", href: "#quickstart" });
 });
+
+test("start in 5 minutes runs on released bosun: no unreleased note", () => {
+  expect("unreleased" in content.quickstart).toBe(false);
+});

@@ -28,8 +28,6 @@ export function buildLlmsTxt(): string {
     "",
     ...steps,
     "",
-    quickstart.unreleased,
-    "",
     `Agents: call bosun commands and act on the one JSON object each prints (${fields}). Do what \`error.fix\` says; make the calls in \`next\`. Exit codes: ${codes}.`,
     "",
     "## Tools",
