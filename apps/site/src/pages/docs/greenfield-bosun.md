@@ -163,8 +163,9 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 
 Once the setup pull request is merged, agents turn on auto-merge when they open a pull request
 (`bosun pr <task> --ready`: it needs the pushed HEAD and the `bosun gate` stamps, marks the draft
-pull request ready and turns on auto-merge; `--auto-merge` is an old alias), and the ruleset merges it once the checks pass. The owner merges
-by hand only when GitHub reports a pull request as already clean.
+pull request ready and turns on auto-merge; `--auto-merge` is an old alias), and the ruleset merges
+it once the checks pass. The owner merges by hand only when GitHub reports a pull request as
+already clean.
 
 ## From plan to work
 
@@ -197,6 +198,7 @@ write plans/<name>.md in bosun's plan format from the spec in docs/superpowers/s
 bosun plan check, then bosun init --stack <stack> --plan plans/<name>.md --owner <my login>
 and tell me the setup pull request to approve and merge. Once it is merged, run bosun plan
 import, run the plan tasks, then bosun spawn one session per epic (area), with auto-merge on
-every pull request (bosun pr <task> --ready). Coordinate with bosun wait and bosun status; for new work use bosun plan pr.
+every pull request (bosun pr <task> --ready). Coordinate with bosun wait and bosun status; for
+new work use bosun plan pr.
 Ask me through forms whenever a step needs the owner.
 ```

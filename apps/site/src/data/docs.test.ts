@@ -152,7 +152,7 @@ describe("Greenfield repo with bosun page", () => {
     expect(page).toContain("`bosun pr <task> --ready`");
     expect(page).toContain("`bosun keygen --enroll`");
     expect(page).toContain("--keep-plan-tasks-open");
-    expect(page).not.toContain("as written for\nbosun 0.4.0");
+    expect(page).not.toMatch(/as written for\s+bosun 0\.4\.0/);
   });
 
   it("comes right after Start a project and is linked from it", () => {
