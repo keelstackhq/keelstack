@@ -105,34 +105,61 @@ export const current: { label: string; title: string; text: string; accent?: boo
   },
 ];
 
-// The hull update path (hull's docs/updating.md). Shown on the home page under "Stays current",
-// on /docs/update/ and in /llms.txt; update.test pins the three to one list.
-export const update: {
+// The update paths (hull's docs/updating.md, bosun's docs/update.md). Shown on the home page under
+// "Stays current", on /docs/update/ and in /llms.txt; update.test pins the three to one list.
+interface UpdatePath {
   heading: string;
-  steps: { cmd: string; note?: string }[];
-  after: string;
-  href: string;
+  /** `cmd` is a command, `text` a plain step, `note` a trailing comment. */
+  steps: { cmd?: string; text?: string; note?: string }[];
+  notes: string[];
   guide: string;
-} = {
-  heading: "Update a repo from hull",
-  steps: [
-    { cmd: "git switch -c chore/splice-update" },
-    { cmd: "splice check --json", note: "exit 1 = update available, drift or markers" },
-    { cmd: "splice diff", note: "preview, writes nothing" },
-    { cmd: "splice update --all", note: "template + channels" },
-    {
-      cmd: "git grep -n '<<<<<<<'",
-      note: "resolve conflicts; owned files: move edits to seed files",
-    },
-    { cmd: "splice check", note: "must exit 0" },
-    { cmd: "pnpm install && pnpm run ci" },
-    { cmd: 'git add -A && git commit -m "chore: splice update to hull vX.Y.Z"' },
-  ],
-  after:
-    "Normally you do not run this: the weekly splice workflow (splice update --all) opens the PR on splice/update.",
+}
+export const update: { href: string; hull: UpdatePath; bosun: UpdatePath } = {
   href: "/docs/update/",
-  guide:
-    "https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/updating.md",
+  hull: {
+    heading: "Update hull",
+    steps: [
+      { cmd: "git switch -c chore/splice-update" },
+      { cmd: "splice check --json", note: "exit 1 = update available, drift or markers" },
+      { cmd: "splice diff", note: "preview, writes nothing" },
+      { cmd: "splice update --all", note: "template + channels" },
+      {
+        cmd: "git grep -n '<<<<<<<'",
+        note: "resolve conflicts; owned files: move edits to seed files",
+      },
+      { cmd: "splice check", note: "must exit 0" },
+      { cmd: "pnpm install && pnpm run ci" },
+      { cmd: 'git add -A && git commit -m "chore: splice update to hull vX.Y.Z"' },
+    ],
+    notes: [
+      "Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.",
+      "Needs splice 0.3.0 or later (`pnpm dlx @keelstackhq/splice` works without installing it).",
+      "Merge only when `ci-ok` is green.",
+    ],
+    guide:
+      "https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/updating.md",
+  },
+  bosun: {
+    heading: "Update bosun",
+    steps: [
+      { cmd: "bosun doctor", note: 'step 17 "update" gives the fix; warns, never fails' },
+      { cmd: "bosun pin --latest --check", note: "list only, writes nothing" },
+      {
+        cmd: "bosun pin --latest --pr",
+        note: "verifies npm sha512, branch bosun/pin, draft PR (default branch, clean tree)",
+      },
+      { text: "The owner approves; auto-merge lands it on green." },
+      {
+        cmd: "npm i -g @keelstackhq/bosun@<new> && bosun --version",
+        note: "your machine, after the merge",
+      },
+    ],
+    notes: [
+      "Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.",
+      "Channel repos: `splice update --channel bosun`.",
+    ],
+    guide: "https://github.com/keelstackhq/bosun/blob/main/docs/update.md",
+  },
 };
 
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
