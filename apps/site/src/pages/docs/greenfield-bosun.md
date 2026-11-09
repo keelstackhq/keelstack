@@ -141,7 +141,8 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in
    `docs/superpowers/specs/`). This first plan goes in through `bosun init`:
    `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (bosun 0.11.0; `--stack` is
-   required). It opens one setup pull request, which is R-gov.
+   required unless you pass `--intake <file>`, which derives `--stack`, `--owner` and `--plan` from the
+   owner's intake file). It opens one setup pull request, which is R-gov.
 4. **Owner:**
    - check `governance/owners.toml`;
    - approve the setup pull request's head (the Claude Code form; `/bosun approve <sha>` as the
