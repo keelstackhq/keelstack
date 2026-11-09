@@ -6,8 +6,8 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-11-01: hull v0.5.2, splice 0.3.1, bosun 0.4.0, hoist 0.3.0,
-berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
+Latest releases as of 2026-11-09: hull v0.8.0, splice 0.4.0, bosun 0.11.0,
+hoist 0.4.1, berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
 or later.
 
 ## Before you start
@@ -27,7 +27,7 @@ or later.
 Skip to step 2 if your repo already has code and you do not want hull.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.3.1 new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo \
   --data scope=my-scope --piece preact-app:web --piece hono-worker:api
 cd my-repo
 git add -A && git commit -m "chore: initial commit from hull"
@@ -59,7 +59,7 @@ For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolch
 released since hull v0.3.0:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.3.1 new gh:keelstackhq/hull//template-rust my-repo \
+pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template-rust my-repo \
   --piece rust-cli:cli
 ```
 
@@ -87,8 +87,8 @@ For a new repo that bosun runs from the first task (files, plan, step order, fir
 Run these in the repo root, on a clean tree:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.3.1 channel add gh:keelstackhq/hull//rigging --piece claude
-pnpm dlx @keelstackhq/splice@0.3.1 channel add gh:keelstackhq/decisions//channel \
+pnpm dlx @keelstackhq/splice@0.4.0 channel add gh:keelstackhq/hull//rigging --piece claude
+pnpm dlx @keelstackhq/splice@0.4.0 channel add gh:keelstackhq/decisions//channel \
   --track main --piece import-project
 node scripts/agents-index.mjs     # hull repos: refresh the agents index
 git add -A && git commit -m "chore: add rigging and decisions channels"
@@ -123,7 +123,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.3.1 @keelstackhq/bosun@0.4.0
+npm install -g @keelstackhq/splice@0.4.0 @keelstackhq/bosun@0.11.0
 bosun init --stack rust --owner <your-github-login>
 ```
 

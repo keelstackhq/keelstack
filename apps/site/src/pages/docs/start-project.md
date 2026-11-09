@@ -3,7 +3,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/a25ae56c6677e444530cb96191295e4bc935a41e/docs/start-checklist.md) at `v0.5.2`,
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/start-checklist.md) at `v0.8.0`,
 copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
@@ -17,6 +17,9 @@ computer steps first, then phone steps (D-009), each with how an agent verifies 
 repo, the `ready` skill (`node scripts/ready.mjs`) runs the automatable checks and links each line
 here, at the hull tag the repo was rendered from. Agents start autonomous work only when it exits
 0 and the owner has confirmed every `manual` item. `TODO(owner)` marks facts not yet written down.
+
+An existing repo? Start with [Adopt an existing repo](adopt.md): it ends with `ready` and the
+items below.
 
 ## Onboarding questions
 
