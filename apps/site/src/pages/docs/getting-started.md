@@ -6,8 +6,8 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Versions are the released ones as of 2026-11-01: hull v0.5.2, splice 0.3.1, bosun 0.4.0, hoist 0.3.0,
-berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
+Versions are the released ones: hull v0.8.0 (as of 2026-11-09); as of 2026-11-01 splice 0.3.1, bosun 0.4.0,
+hoist 0.3.0, berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
 or later.
 
 ## Before you start
