@@ -25,9 +25,9 @@ taps. On 2026-11-05 the owner said: build everything autonomously; no owner appr
 - Still out of reach: steps GitHub reserves for a human (environment approvals such as the release
   tap), secrets, and actions refused by permission checks; the orchestrator reports those once and
   continues with other work. Agents still never force-push, and child sessions never merge.
-- The owner ends this mode by saying so; D-012 then applies again.
+- The owner ends this mode by saying so; D-018 then applies again.
 
 ## Consequences
 
-- D-012 owner forms and bootstrap-mode limits no longer gate merges while this mode is on.
+- D-018 owner chat approvals and bootstrap-mode limits no longer gate merges while this mode is on.
 - The owner sees results, not requests.
