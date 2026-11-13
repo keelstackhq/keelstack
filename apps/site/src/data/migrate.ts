@@ -1,5 +1,5 @@
-// Move a repo to bosun booster: copy from bosun docs/migrate-booster.md (bosun PR #576, branch
-// docs/migrate-booster at f6260ce) and docs/quickstart.md. Re-sync when #576 merges.
+// Move a repo to bosun booster: copy from bosun docs/migrate-booster.md (bosun main at eebe20c,
+// merged from PR #576) and docs/quickstart.md.
 // bosun 0.14.0 and hull v0.9.0 are released. Names no client org or repo.
 
 export const RUNBOOK_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md";
@@ -14,7 +14,7 @@ export const migrate = {
   owner:
     "The owner still approves every PR that touches .bosun/** or .claude/**, including the [mode] PR and the pin PR. A lighter mode is R-weaken: the owner approves it too. Agents never merge, tag or force-push; they turn on auto-merge.",
   fastLane:
-    "Fast lane: the orchestrator approves a PR that changes only src/, tests/, docs/ or changelog.d/. Every verdict on the exact head must be clean, one verdict must come from an independent reviewer session, and the PR must close an open task its author leases. Targets: red-CI rate under 20 %, at most 3 owner touches a day.",
+    "Fast lane: the orchestrator approves a PR whose paths are on the D-017 allowlist and not on its deny list. Every verdict on the exact head must be clean, one verdict must come from an independent reviewer session, and the PR must close an open task its author leases. A mode never sets the orchestrator policy, and an explicit [approvals] policy in the file wins. Targets: red-CI rate under 20 %, at most 3 owner touches a day.",
   knobs: [
     ["[approvals] policy", "repo value", "autonomous (when unset)", "Fast-lane approval."],
     ["push_gates", "push", "push", "Same: a git push needs gate stamps."],
@@ -48,7 +48,7 @@ export const migrate = {
     ],
     [
       "Pin the registry",
-      "Commit .bosun/registry with the number of the open bosun:registry issue.",
+      "Commit .bosun/registry with the number of the open bosun:registry issue (in a cloud session gh is absent: bosun doctor names it).",
     ],
     [
       "Epic markers",
@@ -59,7 +59,10 @@ export const migrate = {
       'One PR with [mode] name = "steady"; watch two weeks; then a PR with name = "booster". Both are R-gov and R-weaken.',
     ],
     ["Join", "After the merge the orchestrator runs bosun join."],
-    ["Amend the plans", "bosun plan amend <plan> for every plan, now that the knob is on."],
+    [
+      "Amend the plans",
+      "bosun plan amend <plan> for every plan, now that budget_feature is not off.",
+    ],
     [
       "Verify",
       'bosun mode shows "booster"; bosun metrics --days 7 shows data.brake. Watch two weeks.',
