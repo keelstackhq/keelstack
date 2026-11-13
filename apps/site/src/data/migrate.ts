@@ -104,7 +104,7 @@ export const migrate = {
   web: {
     heading: "Claude Code on the web",
     intro:
-      "A cloud container. The environment is shared and set once per repo in the cloud environment menu (session title bar, Edit). The owner does steps 1 and 3 to 5; the agent can check step 2 (the hosts).",
+      "A cloud container. The environment is shared and is set in the cloud environment menu (session title bar, Edit). The owner does steps 1 and 3 to 5; the agent can check step 2 (the hosts).",
     setupLabel:
       "1. Setup script. Run this, then paste data.script into the environment's Setup script field, once:",
     setup: "bosun setup-snippet",
