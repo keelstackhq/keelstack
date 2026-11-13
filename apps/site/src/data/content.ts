@@ -220,6 +220,11 @@ export const sections: Record<
         href: "/docs/adopt/",
         text: "A read-only assessment, a Claude Code prompt and hull's adoption guide for a repo that already has code.",
       },
+      {
+        label: "Move a repo to bosun booster",
+        href: "/migrate/",
+        text: "For a repo already on hull and bosun: what booster changes, the steps, and a prompt for Claude Code locally, on the web or in Slack.",
+      },
     ],
   },
 };
@@ -232,6 +237,7 @@ export const footerLinks: { label: string; href: string }[] = [
   { label: "hoist", href: `${org.url}/hoist` },
   { label: "berth", href: `${org.url}/berth` },
   { label: "decisions", href: `${org.url}/decisions` },
+  { label: "Migrate to booster", href: "/migrate/" },
 ];
 
 export const nav: { label: string; href: string }[] = [
@@ -241,6 +247,7 @@ export const nav: { label: string; href: string }[] = [
   { label: "Get started", href: "#start" },
   { label: "Manifest", href: "/docs/operating-model/" },
   { label: "Docs", href: "/docs/" },
+  { label: "Migrate", href: "/migrate/" },
   { label: "GitHub ↗", href: org.url },
 ];
 
