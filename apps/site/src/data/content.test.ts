@@ -88,6 +88,7 @@ test("links stay in the keelstackhq org or on the page", () => {
     "hoist",
     "berth",
     "decisions",
+    "Migrate to booster",
   ]);
   expect(footerLinks[6]?.href).toBe(`${org.url}/decisions`);
 });
@@ -111,6 +112,7 @@ test("get started links Start a project and the greenfield bosun page", () => {
     "/docs/start-project/",
     "/docs/greenfield-bosun/",
     "/docs/adopt/",
+    "/migrate/",
   ]);
 });
 
