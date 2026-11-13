@@ -71,3 +71,17 @@ test("copy never names a client org or repo", () => {
   expect(orgs.length).toBeGreaterThan(0);
   expect(new Set(orgs)).toEqual(new Set(["keelstackhq"]));
 });
+
+test("registry step follows bosun main: number comes from bosun join, not doctor", () => {
+  const step = migrate.steps.find((x) => x[0] === "Pin the registry");
+  expect(step?.[1]).toContain("bosun join");
+  expect(step?.[1]).toContain("data.registry_issue");
+  expect(step?.[1]).not.toMatch(/doctor names/);
+  expect(JSON.stringify(migrate)).not.toMatch(/doctor names/);
+});
+
+test("web intro: owner does steps 1 and 3 to 5, the agent can check step 2", () => {
+  expect(migrate.web.intro).toContain("steps 1 and 3 to 5");
+  expect(migrate.web.intro).toContain("step 2");
+  expect(migrate.web.intro).not.toContain("once per repo");
+});

@@ -48,7 +48,7 @@ export const migrate = {
     ],
     [
       "Pin the registry",
-      "Commit .bosun/registry with the number of the open bosun:registry issue (in a cloud session gh is absent: bosun doctor names it).",
+      "Commit .bosun/registry with the number of the open bosun:registry issue. In a cloud session gh is absent: run bosun join and read data.registry_issue, and check it is the real registry before you pin it. Until a pin exists, bosun doctor warns with advice but no number.",
     ],
     [
       "Epic markers",
@@ -104,7 +104,7 @@ export const migrate = {
   web: {
     heading: "Claude Code on the web",
     intro:
-      "A cloud container. The environment is shared; the owner sets it up once per repo in the cloud environment menu (session title bar, Edit).",
+      "A cloud container. The environment is shared and set once per repo in the cloud environment menu (session title bar, Edit). The owner does steps 1 and 3 to 5; the agent can check step 2 (the hosts).",
     setupLabel:
       "1. Setup script. Run this, then paste data.script into the environment's Setup script field, once:",
     setup: "bosun setup-snippet",
