@@ -2,6 +2,7 @@ import { readyDocs } from "../data/docs";
 import { agentRows, hero, quickstart, sections, update } from "../data/content";
 import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
+import { migrate, RUNBOOK_URL } from "../data/migrate";
 import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
 
@@ -61,6 +62,12 @@ export function buildLlmsTxt(): string {
     `All docs in one file: ${SITE_URL}/llms-full.txt. Offline with docspack: https://www.npmjs.com/package/@keelstackhq/docspack (see Getting started). Each page as Markdown:`,
     "",
     ...docLines,
+    "",
+    "## Move a repo to bosun booster",
+    "",
+    `${migrate.forWho} Page: ${SITE_URL}/migrate/`,
+    "",
+    `Sections: Claude Code locally, Claude Code on the web (setup script, network hosts, variables vs secrets, [cloud] environment_id), Claude Tag in Slack; each ends with a prompt for Claude. Full runbook: ${RUNBOOK_URL}`,
     "",
     "## Get started",
     "",
