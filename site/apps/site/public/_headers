@@ -2,3 +2,8 @@
   Content-Type: text/markdown; charset=utf-8
 /assess/*
   Content-Type: text/javascript; charset=utf-8
+/_astro/*
+  Cache-Control: public, max-age=31536000, immutable
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin

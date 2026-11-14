@@ -6,6 +6,7 @@ import {
   ADOPT_BOSUN_OWNER,
   adoptBosunBlock,
   adoptHullBlock,
+  installBlock,
   APPROVE_COMMENT,
   APPROVE_HOW,
   cliBlock,
@@ -58,14 +59,14 @@ test("each /docs/start block sits in its own scenario section, whole and in orde
   const want: [string, string][] = [
     ["a", newRepoBlock(versions)],
     ["b", adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256)],
-    ["b", adoptBosunBlock(versions)],
+    ["b", adoptBosunBlock],
     [
       "c",
       MIGRATE_COMMANDS.split("\n")
         .map((l) => l.split("   #")[0])
         .join("\n"),
     ],
-    ["e", cliBlock(versions)],
+    ["e", cliBlock],
     ["e", SETUP_SHORT],
     ["e", SLACK_TOML],
     ["e", SLACK_COMMANDS],
@@ -84,8 +85,8 @@ test("/docs/start carries the shared blocks", () => {
   const blocks = [
     newRepoBlock(versions),
     adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256),
-    adoptBosunBlock(versions),
-    cliBlock(versions),
+    adoptBosunBlock,
+    cliBlock,
     SETUP_SHORT,
     SLACK_TOML,
     SLACK_COMMANDS,
@@ -109,7 +110,7 @@ test("/docs/adopt leads with the same assess, splice adopt and bosun adopt block
   const head = adopt.split("## Use Claude")[0] ?? "";
   for (const b of [
     adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256),
-    adoptBosunBlock(versions),
+    adoptBosunBlock,
   ]) {
     expect(head).toContain(b);
   }
@@ -170,4 +171,10 @@ test("no docs page that pins a version names an older hull, bosun or hoist", () 
   expect(read("docs/start.md")).toContain(
     `hull ${versions.hull}, splice ${versions.splice}, bosun ${bare(versions.bosun)}`,
   );
+});
+
+test("the bosun install line is on /docs/start once, in the setup block", () => {
+  expect(start).toContain(installBlock(versions));
+  expect(start.split(`npm i -g @keelstackhq/bosun@${bare(versions.bosun)}`)).toHaveLength(2);
+  expect(start.split("export GITHUB_TOKEN=$(gh auth token)").length).toBeLessThanOrEqual(3);
 });

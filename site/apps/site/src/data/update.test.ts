@@ -6,7 +6,7 @@ import { buildLlmsTxt } from "../lib/llms";
 const page = readFileSync(new URL("../pages/docs/update.md", import.meta.url), "utf8");
 const llms = buildLlmsTxt();
 
-test("the hull update path is the same on the page and in llms.txt", () => {
+test("the hull update path is on the page", () => {
   expect(update.hull.steps.map((s) => s.cmd)).toEqual([
     "git switch -c chore/splice-update",
     "splice check --json",
@@ -24,7 +24,7 @@ test("the hull update path is the same on the page and in llms.txt", () => {
   ]);
 });
 
-test("the bosun update path is the same on the page and in llms.txt", () => {
+test("the bosun update path is on the page", () => {
   expect(update.bosun.steps.map((s) => s.cmd ?? null)).toEqual([
     "bosun doctor",
     "bosun pin --latest --check",
@@ -35,22 +35,14 @@ test("the bosun update path is the same on the page and in llms.txt", () => {
   expect(update.bosun.guide).toBe("https://github.com/keelstackhq/bosun/blob/main/docs/update.md");
 });
 
-test.each(["hull", "bosun"] as const)("%s: every step, note and the guide are on both", (k) => {
+test.each(["hull", "bosun"] as const)("%s: every step, note and the guide are on the page", (k) => {
   const path = update[k];
   for (const s of path.steps) {
-    for (const part of [s.cmd && `\`${s.cmd}\``, s.note, s.text]) {
-      if (part) {
-        expect(page).toContain(part);
-        expect(llms).toContain(part);
-      }
-    }
+    for (const part of [s.cmd && `\`${s.cmd}\``, s.note, s.text])
+      if (part) expect(page).toContain(part);
   }
-  for (const n of path.notes) {
-    expect(page).toContain(n);
-    expect(llms).toContain(n);
-  }
+  for (const n of path.notes) expect(page).toContain(n);
   expect(page).toContain(path.guide);
-  expect(llms).toContain(path.guide);
 });
 
 test("the home page shows only a short line, linking the full page", () => {
@@ -60,4 +52,10 @@ test("the home page shows only a short line, linking the full page", () => {
     "nothing to do",
   ]);
   expect(update.href).toBe("/docs/update/");
+});
+
+test("llms.txt links the update page and names both one-line commands", () => {
+  expect(llms).toContain("https://keelstack.dev/docs/update.md");
+  expect(llms).toContain("splice update --all");
+  expect(llms).toContain("bosun pin --latest --pr");
 });

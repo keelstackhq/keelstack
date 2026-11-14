@@ -93,10 +93,10 @@ ${adoptHullBlock({ ...versions, hull: isCommit ? commit : tag }, url, sha256(ass
 
 ${ADOPT_HULL_NOTE}
 
-With bosun alone (no hull, no splice):
+With bosun alone (no hull, no splice), after the install in [Setup](/docs/start/#setup):
 
 \`\`\`bash
-${adoptBosunBlock(versions)}
+${adoptBosunBlock}
 \`\`\`
 
 ${ADOPT_BOSUN_OWNER}
@@ -104,14 +104,12 @@ ${ADOPT_BOSUN_OWNER}
 ## Use Claude
 
 Paste this into Claude Code in the repo you want to adopt. It runs the read-only assessment
-first and asks you before anything that writes. The assessment is hull's \`ready.mjs\`, hosted
-at \`https://keelstack.dev${url}\` with this sha256:
-\`${sha256(assess)}\`.
+first (hosted, sha256-pinned in the prompt) and asks you before anything that writes.
 
 \`\`\`text
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.${pending}
 
-1. Assess (read-only). Stop if the checksum does not match:
+1. Assess (read-only). Stop if the checksum does not match (it is pinned here, not fetched):
    curl -fsSL https://keelstack.dev${url} -o /tmp/assess.mjs
    echo "${sha256(assess)}  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json

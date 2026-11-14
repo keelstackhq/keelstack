@@ -8,6 +8,15 @@ Steps for the owner start with "Owner". Everything else an agent does.
 
 Machine-readable: this page is https://keelstack.dev/docs/start.md.
 
+## Setup
+
+Once on your machine (every block below assumes it):
+
+```bash
+npm i -g @keelstackhq/bosun@0.15.0
+export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
+```
+
 1. [New repo](#a): hull and bosun.
 2. [Adopt a repo](#b): hull assess and splice adopt, or bosun alone.
 3. [Change mode](#c): gatekeeper, steady, booster, autonomous.
@@ -22,7 +31,6 @@ Machine-readable: this page is https://keelstack.dev/docs/start.md.
 ```bash
 pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo --ref v0.10.0 --piece preact-app:web --piece hono-worker:api
 cd my-repo && pnpm install && pnpm run ci
-npm i -g @keelstackhq/bosun@0.15.0 && export GITHUB_TOKEN=$(gh auth token)
 bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR
 bosun doctor
 ```
@@ -45,10 +53,9 @@ npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.
 
 Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.
 
-With bosun alone (no hull, no splice):
+With bosun alone (no hull, no splice), after [Setup](#setup):
 
 ```bash
-npm i -g @keelstackhq/bosun@0.15.0 && export GITHUB_TOKEN=$(gh auth token)
 bosun adopt --dry-run                    # writes nothing
 bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor
@@ -90,12 +97,10 @@ Cloud sessions need nothing: they run the repo's own setup script. Merge only wh
 
 ## E. Where agents run
 
-**Claude Code CLI.** On your machine, in the repo, clean default branch, then paste the prompt.
+**Claude Code CLI.** After [Setup](#setup), in the repo on a clean default branch, then paste the prompt.
 
 ```bash
-npm i -g @keelstackhq/bosun@0.15.0
-export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
-bosun doctor                           # each missing step with its fix
+bosun doctor   # each missing step with its fix
 ```
 
 **Claude Code on the web.** Once per repo, in the environment's Setup script (`bosun setup-snippet` prints it as `data.short`):
@@ -143,7 +148,7 @@ Opt-in CI signer (keyless fast lane) and Slack digest: [Risk and approvals](/doc
 
 ## Long form: bosun on an existing repo, nine steps
 
-1. **Install bosun.** `npm i -g @keelstackhq/bosun` (or `cargo install keel-bosun`).
+1. **Install bosun.** As in [Setup](#setup) (or `cargo install keel-bosun`).
 2. **Give it a token.** `export GITHUB_TOKEN=$(gh auth token)`, with the repo and workflow scopes.
 3. **Adopt.** `bosun adopt --owner <you>` writes bosun's files into your worktree, makes the
    labels and the registry issue, and commits nothing. Its JSON lists the exact git commands in

@@ -35,7 +35,7 @@ https://keelstack.dev/llms-full.txt.
    `governance/owners.toml`, and the Routines that `bosun doctor` prints.
    [Getting started, step 4](/docs/getting-started/#4-apply-the-repo-settings).
 5. **Paste the bootstrap once** (owner). The output of `bosun setup-snippet` runs the repo's own
-   `docs/setup-script.sh`; a later pin change needs no new paste. [Cloud environment](/docs/cloud/#2-paste-the-setup-script-once).
+   `docs/setup-script.sh`; a later pin change needs no new paste. [Cloud environment](/docs/cloud/#short-version).
 6. **Enroll the orchestrator's signing key** (orchestrator makes the key, owner approves the pull
    request on GitHub). After this, the owner approves in chat.
    [Risk and review](/docs/risk/#signed-approvals-from-chat).

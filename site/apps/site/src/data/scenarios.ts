@@ -131,11 +131,17 @@ export const APPROVE_HOW = [
 
 // --- Scenario blocks (versions come from data/versions.ts) ---
 
+/** The one bosun install, shown once at the top of /docs/start; every scenario block assumes it. */
+export const installBlock = (v: Versions): string =>
+  [
+    `npm i -g @keelstackhq/bosun@${v.bosun}`,
+    "export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file",
+  ].join("\n");
+
 export const newRepoBlock = (v: Versions): string =>
   [
     `pnpm dlx @keelstackhq/splice@${v.splice} new gh:keelstackhq/hull//template my-repo --ref ${v.hull} --piece preact-app:web --piece hono-worker:api`,
     "cd my-repo && pnpm install && pnpm run ci",
-    `npm i -g @keelstackhq/bosun@${v.bosun} && export GITHUB_TOKEN=$(gh auth token)`,
     "bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR",
     "bosun doctor",
   ].join("\n");
@@ -154,20 +160,13 @@ export const adoptHullBlock = (v: Versions, assessUrl: string, sha: string): str
 export const ADOPT_HULL_NOTE =
   "Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.";
 
-export const adoptBosunBlock = (v: Versions): string =>
-  [
-    `npm i -g @keelstackhq/bosun@${v.bosun} && export GITHUB_TOKEN=$(gh auth token)`,
-    "bosun adopt --dry-run                    # writes nothing",
-    "bosun adopt --owner <login>              # writes bosun's files; commits nothing",
-    "bosun doctor",
-  ].join("\n");
+export const adoptBosunBlock: string = [
+  "bosun adopt --dry-run                    # writes nothing",
+  "bosun adopt --owner <login>              # writes bosun's files; commits nothing",
+  "bosun doctor",
+].join("\n");
 
 export const ADOPT_BOSUN_OWNER =
   "Owner: run bosun keygen --enroll first (in the orchestrator's container) and commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.";
 
-export const cliBlock = (v: Versions): string =>
-  [
-    `npm i -g @keelstackhq/bosun@${v.bosun}`,
-    "export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file",
-    "bosun doctor                           # each missing step with its fix",
-  ].join("\n");
+export const cliBlock = "bosun doctor   # each missing step with its fix";

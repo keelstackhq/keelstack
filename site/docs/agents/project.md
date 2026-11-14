@@ -280,6 +280,13 @@ freely, template updates never touch it.
   lines unchanged); greenfield re-checked with `bosun init` and `plan check` 0.15.0 (adds
   `signer.yml`). risk, tasks, ci and the operating model re-synced to bosun 0.15.0 (`834c4c8`),
   linking spec sections instead of copying. docspack 0.1.18.
+- 2026-11-14 Round 2 (agent-first): `/docs/start` has one Setup block (bosun install, token) that
+  the scenario blocks assume; adopt.md's Use Claude prompt points at the one assess block under
+  The short path (hull's verbatim guide keeps its own copy); `/llms.txt` is an index under 6 KB
+  (no copied command blocks; all exact blocks live in `/docs/start.md`); migrate ref `834c4c8`;
+  dead anchor and `adopt.md` relative-link redirect fixed; `_headers` caches `/_astro/*` immutable.
+  Versions rechecked against tags and npm (hull v0.10.0, splice 0.4.0, bosun 0.15.0 = main
+  `834c4c8`, hoist 0.4.1). docspack 0.1.19.
 
 ## Blocked
 

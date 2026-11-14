@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import { readyDocs } from "../data/docs";
 import { docMdPath } from "./docs-md";
-import { agentRows } from "../data/content";
 import { tools } from "../data/tools";
-import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { buildLlmsTxt } from "./llms";
 
 describe("buildLlmsTxt", () => {
@@ -22,21 +20,15 @@ describe("buildLlmsTxt", () => {
     }
   });
 
-  it("lists the agent keys", () => {
-    expect(out).toContain("## For agents");
-    expect(agentRows).toHaveLength(7);
-    for (const r of agentRows) expect(out).toContain(r.key);
-  });
-
-  it("lists the ready docs pages between agents and get started", () => {
+  it("lists the ready docs pages between start here and tools", () => {
     expect(out).toContain("## Docs");
     for (const d of readyDocs()) {
       expect(out).toContain(
         `- [${d.title}](https://keelstack.dev${docMdPath(d.slug)}): ${d.summary}`,
       );
     }
-    expect(out.indexOf("## For agents")).toBeLessThan(out.indexOf("## Docs"));
-    expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("## Get started"));
+    expect(out.indexOf("## Start here")).toBeLessThan(out.indexOf("## Docs"));
+    expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("## Tools"));
   });
 
   it("points agents at llms-full.txt", () => {
@@ -54,24 +46,19 @@ describe("buildLlmsTxt", () => {
     }
   });
 
-  it("includes the splice command and its caption", () => {
-    expect(out).toContain("## Get started");
-    expect(out).toContain(buildCommand(new Set(DEFAULT_ON)));
-    expect(out).toContain(`\n${CAPTION}\n`);
-    expect(out).not.toContain("render.mjs");
+  it("stays an index: under 6 KB and without a copied command block", () => {
+    expect(out.length).toBeLessThan(6000);
+    expect(out).not.toContain("```");
   });
 });
 
-describe("buildLlmsTxt start in 5 minutes", () => {
+describe("buildLlmsTxt start here", () => {
   const out = buildLlmsTxt();
-  it("lists the human steps and the agent contract before Tools", () => {
-    expect(out).toContain("## Start in 5 minutes");
-    expect(out.indexOf("## Start in 5 minutes")).toBeLessThan(out.indexOf("## Tools"));
-    expect(out).toContain("1. `npm i -g @keelstackhq/bosun`");
-    expect(out).toContain("9. ");
+  it("points at /docs/start.md and states the agent contract", () => {
+    expect(out).toContain("## Start here");
+    expect(out).toContain("https://keelstack.dev/docs/start.md");
     expect(out).toContain("`ok`, `exit_code`, `data`, `error.fix`, `next`");
     expect(out).toContain("6 limit");
-    expect(out).toContain("https://keelstack.dev/docs/start.md");
   });
 });
 

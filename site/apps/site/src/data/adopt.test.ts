@@ -82,7 +82,7 @@ describe("Adopt an existing repo", () => {
     }
   });
 
-  it("is the copy without its H1, after a Use Claude prompt that checks the sha256", () => {
+  it("is the copy without its H1, after a Use Claude prompt that pins the sha256", () => {
     expect(page.endsWith(copy.replace(/^# .*\n\n/, ""))).toBe(true);
     const prompt = page.split("```text\n")[1]?.split("```")[0] ?? "";
     expect(prompt).toContain(`https://keelstack.dev/assess/${versions.hull}.mjs`);

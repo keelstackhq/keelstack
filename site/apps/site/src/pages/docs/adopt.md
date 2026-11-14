@@ -20,10 +20,9 @@ npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.
 
 Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.
 
-With bosun alone (no hull, no splice):
+With bosun alone (no hull, no splice), after the install in [Setup](/docs/start/#setup):
 
 ```bash
-npm i -g @keelstackhq/bosun@0.15.0 && export GITHUB_TOKEN=$(gh auth token)
 bosun adopt --dry-run                    # writes nothing
 bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor
@@ -34,14 +33,12 @@ Owner: run bosun keygen --enroll first (in the orchestrator's container) and com
 ## Use Claude
 
 Paste this into Claude Code in the repo you want to adopt. It runs the read-only assessment
-first and asks you before anything that writes. The assessment is hull's `ready.mjs`, hosted
-at `https://keelstack.dev/assess/v0.10.0.mjs` with this sha256:
-`2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91`.
+first (hosted, sha256-pinned in the prompt) and asks you before anything that writes.
 
 ```text
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.
 
-1. Assess (read-only). Stop if the checksum does not match:
+1. Assess (read-only). Stop if the checksum does not match (it is pinned here, not fetched):
    curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
    echo "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json

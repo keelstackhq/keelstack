@@ -1,22 +1,17 @@
 import { readyDocs } from "../data/docs";
-import { agentRows, hero, quickstart, sections, update } from "../data/content";
+import { hero, quickstart } from "../data/content";
 import { tools } from "../data/tools";
-import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
-import { migrate, RUNBOOK_URL } from "../data/migrate";
+import { RUNBOOK_URL } from "../data/migrate";
 import { scenarios } from "../data/scenarios";
 import { versions } from "../data/versions";
 import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
 
+// An index, not a copy: every exact command block lives once, in /docs/start.md.
 export function buildLlmsTxt(): string {
-  const on = new Set(DEFAULT_ON);
   const toolLines = tools.map((t) => `- [${t.name}](${t.repo}) (${t.status}): ${t.pitch}`);
-  const agentLines = agentRows.map((r) => `- \`${r.key}\`: ${r.text}`);
   const docLines = readyDocs().map(
     (d) => `- [${d.title}](${SITE_URL}${docMdPath(d.slug)}): ${d.summary}`,
-  );
-  const steps = quickstart.steps.map(
-    (s, i) => `${i + 1}. ${s.cmd ? `\`${s.cmd}\`: ` : ""}${s.text}`,
   );
   const fields = quickstart.agents.fields.map((f) => `\`${f}\``).join(", ");
   const codes = quickstart.agents.exitCodes.map(([n, name]) => `${n} ${name}`).join(", ");
@@ -25,69 +20,27 @@ export function buildLlmsTxt(): string {
     "",
     `> ${hero.body}`,
     "",
-    "## Pick your path",
+    "## Start here",
     "",
-    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}. One exact block per scenario: ${SITE_URL}${docMdPath("start")}`,
+    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}. Read ${SITE_URL}${docMdPath("start")}: a one-time setup block, then one exact copy-paste block per scenario.`,
     "",
     ...scenarios.map(
       (s) => `- ${s.id.toUpperCase()}. ${s.title}: ${s.summary} ${SITE_URL}/docs/start/#${s.id}`,
     ),
     "",
-    "## Start in 5 minutes",
+    `Agents: bosun prints one JSON object per command (${fields}). Do what \`error.fix\` says; make the calls in \`next\`; never work around a refusal. Exit codes: ${codes}.`,
     "",
-    `Humans, with bosun: ${quickstart.body} Full page: ${SITE_URL}${docMdPath("start")}`,
-    "",
-    ...steps,
-    "",
-    `Agents: call bosun commands and act on the one JSON object each prints (${fields}). Do what \`error.fix\` says; make the calls in \`next\`. Exit codes: ${codes}.`,
-    "",
-    "## Update",
-    "",
-    `Page: ${SITE_URL}${docMdPath("update")}`,
-    "",
-    ...[update.hull, update.bosun].flatMap((p) => [
-      `### ${p.heading}`,
-      "",
-      ...p.steps.map(
-        (s, i) =>
-          `${i + 1}. ${s.cmd ? `\`${s.cmd}\`` : (s.text ?? "")}${s.cmd && s.note ? ` # ${s.note}` : ""}`,
-      ),
-      "",
-      ...p.notes.map((n) => `- ${n}`),
-      `- Full guide: ${p.guide}`,
-      "",
-    ]),
-    "## Tools",
-    "",
-    ...toolLines,
-    "",
-    "## For agents",
-    "",
-    sections.agents.body ?? "",
-    "",
-    ...agentLines,
+    `Upgrade: ${SITE_URL}${docMdPath("update")} (hull: \`splice update --all\`; bosun: \`bosun pin --latest --pr\`). Move a repo to bosun booster: ${SITE_URL}/migrate/ (${RUNBOOK_URL}).`,
     "",
     "## Docs",
     "",
-    `All docs in one file: ${SITE_URL}/llms-full.txt. Offline with docspack: https://www.npmjs.com/package/@keelstackhq/docspack (see Getting started). Each page as Markdown:`,
+    `All docs in one file: ${SITE_URL}/llms-full.txt. Offline: https://www.npmjs.com/package/@keelstackhq/docspack. Each page as Markdown:`,
     "",
     ...docLines,
     "",
-    "## Move a repo to bosun booster",
+    "## Tools",
     "",
-    `${migrate.forWho} Page: ${SITE_URL}/migrate/`,
-    "",
-    `Sections: Claude Code locally, Claude Code on the web (setup script, network hosts, variables vs secrets, [cloud] environment_id), Claude Tag in Slack; each ends with a prompt for Claude. Full runbook: ${RUNBOOK_URL}`,
-    "",
-    "## Get started",
-    "",
-    sections.start.body ?? "",
-    "",
-    CAPTION,
-    "",
-    "```sh",
-    buildCommand(on),
-    "```",
+    ...toolLines,
     "",
   ].join("\n");
 }
