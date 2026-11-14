@@ -30,6 +30,14 @@
     "v0.8.0": {
       "ref": "720442f7557168f139d8d836ceddd8aebe4e7952",
       "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
+    },
+    "v0.9.0": {
+      "ref": "889acba094fa1b4a7c43b7ad0bcb9fab8e642c04",
+      "sha256": "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87"
+    },
+    "v0.10.0": {
+      "ref": "f2b6a688c1b07e46ac92a9ddab2595d48262c3df",
+      "sha256": "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91"
     }
   }
 }
