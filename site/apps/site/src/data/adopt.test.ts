@@ -39,11 +39,13 @@ describe("Adopt an existing repo", () => {
 
   it("keeps every earlier assessment served byte for byte", () => {
     expect(Object.keys(source.hosted).toSorted()).toEqual([
+      "v0.10.0",
       "v0.6.0",
       "v0.6.1",
       "v0.6.2",
       "v0.7.0",
       "v0.8.0",
+      "v0.9.0",
     ]);
     const files = readdirSync(new URL("./hull/assess/", import.meta.url));
     expect(files.map((f) => f.replace(/\.mjs\.txt$/, "")).toSorted()).toEqual(
@@ -66,6 +68,14 @@ describe("Adopt an existing repo", () => {
       sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
     });
     expect(source.hosted["v0.8.0"]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
+    expect(source.hosted["v0.9.0"]).toEqual({
+      ref: "889acba094fa1b4a7c43b7ad0bcb9fab8e642c04",
+      sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
+    });
+    expect(source.hosted["v0.10.0"]).toEqual({
+      ref: "f2b6a688c1b07e46ac92a9ddab2595d48262c3df",
+      sha256: "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91",
+    });
     for (const [tag, { sha256 }] of Object.entries(source.hosted)) {
       expect(sha(hosted(tag))).toBe(sha256);
     }
