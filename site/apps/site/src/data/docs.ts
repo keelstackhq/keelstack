@@ -42,10 +42,16 @@ export const docs: DocPage[] = [
   },
   {
     slug: "start",
-    title: "Start in 5 minutes",
+    title: "Start: pick your scenario",
     summary:
-      "For humans: nine steps from your repo to the first plan with bosun, and the one JSON contract agents act on.",
+      "One exact block each: new repo, adopt a repo, change bosun mode, upgrade, where agents run, approvals; then the nine steps for bosun on an existing repo.",
     sources: [
+      "bosun/docs/quickstart.md",
+      "bosun/docs/migrate-booster.md",
+      "bosun/docs/update.md",
+      "bosun/docs/spec/10-slack.md",
+      "hull/docs/adopt.md",
+      "hull/docs/updating.md",
       "bosun/README.md",
       "bosun/AGENTS.md",
       "bosun/docs/adopt-existing-repo.md",
@@ -138,7 +144,7 @@ export const docs: DocPage[] = [
     slug: "cloud",
     title: "Cloud environment",
     summary:
-      "A dedicated Claude Code cloud environment: setup script, network allow-list, secrets and keys, and the owner's phone steps.",
+      "A dedicated Claude Code cloud environment: the short setup script, network hosts, variables, [cloud] environment_id, limits, secrets and keys, and the owner's phone steps.",
     sources: [
       "bosun/docs/setup-script.sh",
       "bosun/channel/pieces/core/files/docs/setup-script.sh.jinja",

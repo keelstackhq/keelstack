@@ -21,7 +21,7 @@ Work on a branch, so the update is one reviewable change:
 - Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.
 - Needs splice 0.3.0 or later (`pnpm dlx @keelstackhq/splice` works without installing it).
 - Merge only when `ci-ok` is green.
-- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/updating.md) at commit `720442f`.
+- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/updating.md) at tag `v0.10.0` (`f2b6a68`).
 
 ## Update bosun
 

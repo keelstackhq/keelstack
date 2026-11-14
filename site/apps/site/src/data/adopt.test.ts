@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docs } from "./docs";
+import { versions } from "./versions";
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const sha = (s: string) => createHash("sha256").update(s).digest("hex");
@@ -22,19 +23,19 @@ const page = read("../pages/docs/adopt.md");
 describe("Adopt an existing repo", () => {
   it("pins hull's adopt.md and ready.mjs to one commit", () => {
     expect(source.repo).toBe("keelstackhq/hull");
-    // hull v0.8.0 release: main at 720442f (tag v0.8.0 -> 720442f).
-    expect(source.ref).toBe("720442f7557168f139d8d836ceddd8aebe4e7952");
+    // hull v0.10.0 release (tag v0.10.0 -> f2b6a68).
+    expect(source.ref).toBe("f2b6a688c1b07e46ac92a9ddab2595d48262c3df");
     expect(source.doc.path).toBe("docs/adopt.md");
     expect(sha(copy)).toBe(source.doc.sha256);
     expect(source.assess.path).toBe("template/pieces/base/files/scripts/ready.mjs");
   });
 
   it("hosts the assessment at a versioned URL with the expected sha256", () => {
-    expect(source.assess.url).toBe("/assess/v0.8.0.mjs");
-    expect(sha(hosted("v0.8.0"))).toBe(
-      "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
+    expect(source.assess.url).toBe(`/assess/${versions.hull}.mjs`);
+    expect(sha(hosted(versions.hull))).toBe(
+      "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91",
     );
-    expect(source.assess.sha256).toBe(sha(hosted("v0.8.0")));
+    expect(source.assess.sha256).toBe(sha(hosted(versions.hull)));
   });
 
   it("keeps every earlier assessment served byte for byte", () => {
@@ -67,7 +68,7 @@ describe("Adopt an existing repo", () => {
       ref: "76f6ae83356ab726a816e9ee07992dd54b9a30ec",
       sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
     });
-    expect(source.hosted["v0.8.0"]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
+    expect(source.hosted[versions.hull]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
     expect(source.hosted["v0.9.0"]).toEqual({
       ref: "889acba094fa1b4a7c43b7ad0bcb9fab8e642c04",
       sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
@@ -84,11 +85,11 @@ describe("Adopt an existing repo", () => {
   it("is the copy without its H1, after a Use Claude prompt that checks the sha256", () => {
     expect(page.endsWith(copy.replace(/^# .*\n\n/, ""))).toBe(true);
     const prompt = page.split("```text\n")[1]?.split("```")[0] ?? "";
-    expect(prompt).toContain("https://keelstack.dev/assess/v0.8.0.mjs");
+    expect(prompt).toContain(`https://keelstack.dev/assess/${versions.hull}.mjs`);
     expect(prompt).toContain("hull.assess/1");
     expect(prompt).toContain(`${source.assess.sha256}  /tmp/assess.mjs" | sha256sum -c`);
     expect(prompt).toContain("node /tmp/assess.mjs --assess --json");
-    expect(prompt).toContain("@keelstackhq/splice@0.4.0 adopt");
+    expect(prompt).toContain(`@keelstackhq/splice@${versions.splice} adopt`);
     expect(prompt).toContain("--dry-run --json");
     expect(prompt).toContain("--force");
     expect(prompt).not.toMatch(/latest/);

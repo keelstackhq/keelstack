@@ -21,7 +21,7 @@ const { local, web, slack, quick, does } = migrate;
         <li><a href="#local">{local.heading}</a></li>
         <li><a href="#web">{web.heading}</a></li>
         <li><a href="#slack">{slack.heading}</a></li>
-        <li><a href="#changes">What booster changes</a></li>
+        <li><a href="#changes">The mode ladder</a></li>
         <li><a href="#manual">The manual path</a></li>
       </ul>
     </nav>
@@ -51,22 +51,26 @@ const { local, web, slack, quick, does } = migrate;
     <h2 id="slack">{slack.heading}</h2>
     <ol>{slack.steps.map((n) => <li>{n}</li>)}</ol>
 
-    <h2 id="changes">What booster changes</h2>
+    <h2 id="changes">The mode ladder</h2>
     <table tabindex="0">
       <thead>
-        <tr>{migrate.knobHead.map((h) => <th>{h}</th>)}</tr>
+        <tr>{migrate.ladderHead.map((h) => <th>{h}</th>)}</tr>
       </thead>
       <tbody>
-        {migrate.knobs.map((row) => (
+        {migrate.ladder.map((row) => (
           <tr>
             <td><code>{row[0]}</code></td>
-            <td><code>{row[1]}</code></td>
-            <td><code>{row[2]}</code></td>
-            <td>{row[3]}</td>
+            <td>{row[1]}</td>
+            <td>{row[2]}</td>
           </tr>
         ))}
       </tbody>
     </table>
+    <pre><code>{migrate.flags}</code></pre>
+    <ul>{migrate.notes.map((n) => <li>{n}</li>)}</ul>
+    <p>
+      Every knob, per mode: <a href={migrate.knobsUrl}>the knob table in bosun's quickstart</a>.
+    </p>
     <p>{migrate.fastLane}</p>
 
     <h2 id="manual">The manual path</h2>

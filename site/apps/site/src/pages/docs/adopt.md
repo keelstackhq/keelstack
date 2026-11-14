@@ -3,23 +3,47 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/adopt.md) at commit
-`720442f`, copied verbatim. Its `start-checklist.md` is
+[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/adopt.md) at commit
+`f2b6a68`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site.
+
+## The short path
+
+With hull: assess first, then splice adopt as a dry run.
+
+```bash
+curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
+echo "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91  /tmp/assess.mjs" | sha256sum -c
+node /tmp/assess.mjs --assess --json
+npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.0 --piece <id>:<name> ... --dry-run --json
+```
+
+Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.
+
+With bosun alone (no hull, no splice):
+
+```bash
+npm i -g @keelstackhq/bosun@0.15.0 && export GITHUB_TOKEN=$(gh auth token)
+bosun adopt --dry-run                    # writes nothing
+bosun adopt --owner <login>              # writes bosun's files; commits nothing
+bosun doctor
+```
+
+Owner: run bosun keygen --enroll first (in the orchestrator's container) and commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
 
 ## Use Claude
 
 Paste this into Claude Code in the repo you want to adopt. It runs the read-only assessment
 first and asks you before anything that writes. The assessment is hull's `ready.mjs`, hosted
-at `https://keelstack.dev/assess/v0.8.0.mjs` with this sha256:
-`cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87`.
+at `https://keelstack.dev/assess/v0.10.0.mjs` with this sha256:
+`2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91`.
 
 ```text
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.
 
 1. Assess (read-only). Stop if the checksum does not match:
-   curl -fsSL https://keelstack.dev/assess/v0.8.0.mjs -o /tmp/assess.mjs
-   echo "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87  /tmp/assess.mjs" | sha256sum -c
+   curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
+   echo "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json
    Its JSON has "schema": "hull.assess/1"; stop if it does not.
 2. Explain the result in plain words: the template, the pieces with their names and moves, the
@@ -29,7 +53,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
    without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
-   npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.8.0 --piece <id>:<name> ... --dry-run --json
+   npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.0 --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.
 4. Only after I confirm: run the same command without --dry-run, resolve the conflicts, run the
    ready skill, and open a pull request with the change list and my choices. Never pass --force
@@ -61,12 +85,12 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.8.0.mjs -o /tmp/assess.mjs
-echo "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87  /tmp/assess.mjs" | sha256sum -c
+curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
+echo "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull v0.8.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull v0.10.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 
@@ -123,14 +147,14 @@ on any breaking change (a removed, renamed or retyped field); otherwise fields a
 - **owned**: refused when it exists and differs from the template's (dry-run action `conflict`,
   message "refuse: `<path>`"; an identical file is `skip`); `--force` would replace it (`update`,
   "replace: `<path>`").
-  - `template/`: `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/docs-lookup/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.github/scripts/affected.mjs`, `.github/scripts/preview.mjs`, `.github/scripts/release-plan.mjs`, `.github/scripts/rust-affected.mjs`, `.github/workflows/ci.yml`, `.github/workflows/desktop.yml`, `.github/workflows/preview-deploy.yml`, `.github/workflows/preview.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `.node-version`, `CLAUDE.md`, `Cargo.toml`, `renovate.json`, `rust-toolchain.toml`, `scripts/agents-index.mjs`, `scripts/ready.mjs`, `tsconfig.base.json`, `vite.config.ts`, `packages/shared/tsconfig.json`, `packages/shared/vite.config.ts`
-  - `template-rust/`: `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.config/nextest.toml`, `.github/scripts/docs-only.mjs`, `.github/scripts/release-pending.mjs`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `CLAUDE.md`, `deny.toml`, `renovate.json`, `rust-toolchain.toml`, `rustfmt.toml`, `scripts/agents-index.mjs`, `scripts/ready.mjs`
+  - `template/`: `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/docs-lookup/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.github/scripts/affected.mjs`, `.github/scripts/preview.mjs`, `.github/scripts/release-plan.mjs`, `.github/scripts/rust-affected.mjs`, `.github/workflows/ci.yml`, `.github/workflows/desktop.yml`, `.github/workflows/preview-deploy.yml`, `.github/workflows/preview.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `.node-version`, `CLAUDE.md`, `Cargo.toml`, `renovate.json`, `rust-toolchain.toml`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/ready.mjs`, `tsconfig.base.json`, `vite.config.ts`, `packages/shared/tsconfig.json`, `packages/shared/vite.config.ts`
+  - `template-rust/`: `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.config/nextest.toml`, `.github/scripts/docs-only.mjs`, `.github/scripts/release-pending.mjs`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `CLAUDE.md`, `deny.toml`, `renovate.json`, `rust-toolchain.toml`, `rustfmt.toml`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/ready.mjs`
 - **shared**: merged (dry-run action `merge`, or `conflict` when both sides changed).
   - `template/`: `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `packages/shared/package.json`
   - `template-rust/`: `Cargo.toml`, `crates/common/Cargo.toml`
 - **seed**: kept as they are (dry-run action `skip`).
   - `template/`: `AGENTS.md`, `README.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `packages/shared/src/**`
-  - `template-rust/`: `AGENTS.md`, `README.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `hoist.toml`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `crates/common/src/**`
+  - `template-rust/`: `AGENTS.md`, `README.md`, `deny.local.toml`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `hoist.toml`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `crates/common/src/**`
 - **targets**: a piece's target directory that already exists and is not the piece's source.
 
 Every other file the template writes is new (`create`). Pieces add more files under their target.

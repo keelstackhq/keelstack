@@ -1,3 +1,4 @@
+import { versions } from "./versions";
 import { expect, test } from "vite-plus/test";
 import * as content from "./content";
 import { org, tools } from "./tools";
@@ -24,15 +25,15 @@ test("hero has three variants and seconds is active", () => {
 });
 
 test("terminal shows the default command, real create lines and file counts", () => {
-  expect(terminal.title).toContain("splice 0.4.0");
+  expect(terminal.title).toContain(`splice ${versions.splice}`);
   expect(terminal.title).not.toMatch(/preview/i);
   // The command that was run to record the output below.
   expect(terminal.command).toEqual([
-    "pnpm dlx @keelstackhq/splice@0.4.0 new \\",
-    "gh:keelstackhq/hull//template my-repo --ref v0.8.0 \\",
+    `pnpm dlx @keelstackhq/splice@${versions.splice} new \\`,
+    `gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\`,
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.8.0, splice 0.4.0), in output order.
+  // Lines copied from `splice new` output (hull v0.10.0, splice 0.4.0), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",
@@ -40,7 +41,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     "create  apps/api/src/index.ts  seed",
     "create  apps/web/src/app.tsx  seed",
   ]);
-  expect(terminal.summary).toBe("# … 61 files: 36 owned, 8 shared, 17 seed; then pnpm install");
+  expect(terminal.summary).toBe("# … 62 files: 37 owned, 8 shared, 17 seed; then pnpm install");
 });
 
 test("stats shapes", () => {

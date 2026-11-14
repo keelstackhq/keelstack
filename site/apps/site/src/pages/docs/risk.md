@@ -4,8 +4,21 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.4.0
-(2026-11-01).
+turns `risk-check` green only when the rules are met. This page follows bosun 0.15.0 (2026-11-14).
+Long details live in bosun's
+[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md).
+
+## Cheat sheet: who approves what
+
+| Case                          | What happens                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Normal risk (no rule matches) | A normal-risk PR (no rule in .bosun/risk.toml matches) merges on green CI and a clean review verdict. No approval.                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| High risk (a rule matches)    | The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: .bosun/**, governance/**, .claude/**, .splice/**, docs/setup-script.sh, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane. |
+
+How the owner approves:
+
+- Chat form: Claude asks in the Claude Code chat (repo, PR, head SHA; approve or hold) and posts the signed approval.
+- GitHub: comment `/bosun approve <40-character head SHA>` from the owner account; a new push needs a new comment.
 
 ## Risk rules
 
@@ -14,45 +27,45 @@ channel updates do not change it; add rules for the paths
 of your project that need an owner, such as auth, payments or migrations). A pull request that
 matches any rule is high risk.
 
-| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                         |
-| ------------------- | --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.splice/**`, `hoist.toml`, `REVIEW.md`, `docs/agents/**`, and every `AGENTS.md` and `CLAUDE.md` (`**/`, since 0.2.1; root files only before) |
-| R-ci                | CI decides what is verified.                        | `.github/workflows/**`; rust stacks add `deny.toml` and `rust-toolchain.toml`, ts-pnpm stacks `.npmrc`                                                                                                          |
-| R-secrets           | A secret in the repo is a leak.                     | added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`                                                                                                                                                     |
-| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency, a new root pin or catalog entry, or a source change in a manifest; since 0.4.0 also `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.yarnrc` and `.yarnrc.yml` in any directory             |
-| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                         |
-| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                        |
+| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                                                                                                    |
+| ------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.claude-plugin/**`, `.splice/**`, every `hoist.toml`, `docs/setup-script.sh`, `REVIEW.md`, `docs/agents/**`, `**/plans/**`, and every `AGENTS.md` and `CLAUDE.md` (any case)                                            |
+| R-ci                | CI decides what is verified.                        | `.github/workflows/**`, `.github/actions/**`, every `action.yml`, `.circleci/**`, and the config of GitLab, Buildkite, Jenkins, Azure Pipelines, Bitbucket Pipelines, Travis and Drone; rust stacks add `deny.toml` (also `deny.local.toml`, `scripts/deny.mjs`) and `rust-toolchain.toml` |
+| R-secrets           | A secret in the repo is a leak.                     | sops files (`secrets.toml`, `access.toml`, `*.sops.*`), and added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`, an age secret key or `SOPS_AGE_KEY`                                                                                                                               |
+| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency, a new root pin or catalog entry, or a source change in a manifest; any change to `.cargo/config.toml`, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`, `.yarn/plugins/**` or `.yarn/releases/**` in any directory                                    |
+| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                                                                                                    |
+| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                                                                                                   |
+| R-weaken (built in) | A loosened gate weakens every later check.          | a base-to-head compare finds a raised cap, a lowered lint or deny level, a lower coverage floor, removed CI steps, fewer tests or more skips, a growing `*_ALLOWED` list, or a move to a lighter mode; the findings are the evidence                                                       |
+| R-plan (built in)   | The PR is never rated below its task.               | a linked task is `risk: high` in the plan                                                                                                                                                                                                                                                  |
+| R-bundle (built in) | Gated work needs its own PR.                        | one PR closes several tasks and changes a gated path                                                                                                                                                                                                                                       |
+| R-revert (built in) | A revert must undo exactly what it names.           | a `bosun revert` PR that is not the exact inverse of the PR it names, or whose original needed the owner                                                                                                                                                                                   |
 
-Since bosun 0.4.0:
+Each rule's exact paths and the built-in judgments are in the
+[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md).
+`risk.toml` is a seed, so a repo set up before a rule change adds new paths by hand. bosun's own
+repo also has R-gate (the gate code itself) and R-ci-review (below).
 
+- **Only the owner approves R-weaken.** No orchestrator, bootstrap, policy, autonomous or delegate
+  signature counts on it, nor on a PR with the `weaken` capability. Agents may propose
+  loosening a gate, never apply it. A lighter mode in `[mode]` is itself an R-weaken change
+  ([modes](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md)).
 - **R-deps** counts new root pins, new catalog entries and source changes (git, `package =`
-  renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases), and registry and
-  install-hook config files (`.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.yarnrc`,
-  `.yarnrc.yml`): they redirect where every package comes from. It no longer counts
+  renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases), and the registry and
+  install-hook files above: they redirect where every package comes from. It does not count
   `x.workspace = true` edges, in-repo `path` dependencies or pnpm `catalog:`/`workspace:`
   references.
-- **R-secrets** no longer flags code bindings without a literal (`let x = v`), test files and
+- **R-secrets** does not flag code bindings without a literal (`let x = v`), test files and
   fixtures (never env or config files), or a line with a trailing `bosun:allow-secret <reason>`
   comment. Strong formats (age, PEM and PGP private keys, GitHub, `sk-`, Stripe live, AWS and
   Slack tokens) are never exempt and match on any added line.
-- **Lockfile carry:** an approval or verdict carries across a merge of main whose only conflict is
-  `Cargo.lock` or `pnpm-lock.yaml`, when every whole entry of the regenerated lockfile is an entry
-  of the approved head's copy or main's (checked from git, entry by entry).
-
-Since bosun 0.3.0 the rules cover more:
-
-- **R-gov** also matches every `hoist.toml`, `docs/setup-script.sh` (its pasted copy runs as root in
-  cloud environments) and the agent files in any case (`docs/agents/**`, `**/agents.md`,
-  `**/claude.md`, `**/claude.local.md`). The root `hoist.toml` lists the ruleset's required checks,
-  so it is on the critical floor: only the owner approves it, never a delegate.
-- **R-secrets** also covers sops files (`secrets.toml`, `access.toml`, `.sops.yaml`,
-  `*.sops.yaml|json`) and age keys in added lines.
-- **R-ci** covers `.circleci/**` (on the critical floor) and the config of GitLab, Buildkite,
-  Jenkins, Azure Pipelines, Bitbucket Pipelines, Travis and Drone.
-
-bosun's own repo also has R-gate (the gate code itself) and R-ci-review (below). `risk.toml` is a
-seed, so a repo set up before a rule change adds new paths by hand.
-
+- **The root `hoist.toml` is on the critical floor** (below): it lists the ruleset's required checks,
+  so only the owner approves it, never a delegate.
+- **Approvals and verdicts carry over a merge of main.** A high-risk approval, and the
+  `review-verdict` status, carry to a head that is at most 5 clean merges of the default branch
+  into the approved head, when no owner withdrew. A merge whose only conflict is `Cargo.lock` or
+  `pnpm-lock.yaml` carries too, when every whole entry of the regenerated lockfile is an entry of the
+  approved head's copy or main's. Only the approval carries; rules, owners and keys are
+  recomputed on the new head.
 - **Rules come from the base branch.** `risk-check` evaluates the rules of the pull request's
   base, never its head, so a pull request cannot change the rules that judge it.
 - **Rules only escalate.** Nothing lowers the risk.
@@ -61,6 +74,10 @@ seed, so a repo set up before a rule change adds new paths by hand.
   so a secret is not copied into the pull request body.
 - **Capabilities** come from the linked task's metadata and from `bosun:capability/<c>` labels.
 - **Keep risky tasks small:** the target is under 100 changed lines.
+- **`risk-check` posts `pending` while it judges**, so auto-merge waits; a run that cannot finish
+  posts `error`. A stuck `pending` or `error` only blocks: comment `/bosun recheck` (owners,
+  members and collaborators only) or re-run the `risk` workflow. A cloud session, which cannot
+  post statuses, can read the judgment with `bosun risk-check <pr> --dry-run`.
 
 bosun writes a Risk note into the pull request body: which rules matched, why, and what the
 approver must check.
@@ -104,10 +121,16 @@ verdict:
 }
 ```
 
-- Approve needs confidence of at least 0.85 and no blocker finding.
+- Approve needs confidence of at least 0.85 and no blocker finding; the status text shows the
+  threshold (`approve 0.80 (approves at 0.85)`).
+- A pack with more than one chunk of the diff needs every chunk listed in `chunks_reviewed`.
 - `escalate_risk: true` is never green; it sends the task to needs-human.
 - A request for changes moves the task to fixing.
-- A later review of the same pull request covers only the new commits (a delta review).
+- A later review of the same pull request covers only the new commits (a delta review); after a
+  merge of main it lists only the pull request's own files.
+- Each verdict carries the reviewer's model. The optional `[approvals] review_models` in
+  `.bosun/bosun.toml` limits which models count for two-verdicts, delegate and autonomous
+  approval; it does not limit the plain `review-verdict` status.
 - Where to post it:
   - `bosun verdict post --from -` writes the `review-verdict` status directly.
   - A Claude cloud session cannot write commit statuses (its proxy answers 403), so it runs
@@ -132,7 +155,11 @@ A pull request with an owner rule needs the approval of a login listed in
 
 The `risk` workflow re-runs on the comment, so `risk-check` turns green without a push. A new push
 needs a new comment. An edited comment does not count, and a newer review that requests changes
-withdraws it.
+withdraws it (and every signed or delegated approval with it). No review event runs the `risk`
+workflow, so a withdrawal counts on the next run: comment `/bosun recheck` or re-run the workflow.
+A dismissed request for changes still withdraws; a fresh plain-token comment from that owner, or a
+signed `v2` approval that names the dismissed review, clears it (details in the
+[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md)).
 
 ### Unsigned approvals from Claude cloud sessions do not count
 
@@ -199,10 +226,12 @@ unknown key id or a bad signature counts as no approval and never errors the che
 **Enroll a key** (once per key; rotate the same way):
 
 1. Where the signer runs (the orchestrator's own container; the private key is never shared),
-   make a key: `openssl genpkey -algorithm ed25519 -out key.pem`.
-2. Print its public key: `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`.
-3. Open a pull request that adds the key to `.bosun/approvers.toml` (R-gov). The owner approves it
-   on GitHub, with a review or a plain-token `/bosun approve <sha>` comment, and it merges.
+   make the key and its block: `bosun keygen --id <key id> --out <pem outside any git worktree>
+   --enroll`. The PEM is mode 0600 and never overwritten; `--enroll` appends the block below to
+   `.bosun/approvers.toml`. (By hand: `openssl genpkey -algorithm ed25519`, then the public key
+   with `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`.)
+2. Open a pull request with that change (R-gov). The owner approves it on GitHub, with a review
+   or a plain-token `/bosun approve <sha>` comment, and it merges.
 
    ```toml
    [[key]]
@@ -211,7 +240,7 @@ unknown key id or a bad signature counts as no approval and never errors the che
    role = "owner"   # the default; "delegate" for delegated decisions (below)
    ```
 
-4. Sign and post: `bosun approve <pr>@<head> --sign-key key.pem`. The `<head>` is the commit the
+3. Sign and post: `bosun approve <pr>@<head> --sign-key <pem>`. The `<head>` is the commit the
    owner approved; if the pull request moved on, nothing is signed (exit 3). `--print` shows the
    comment without posting. `bosun approve --list` lists the ready pull requests with their heads.
 
@@ -237,8 +266,9 @@ hold:
 - the owner checks of signed approvals above.
 
 **The critical floor** is hard-coded, whatever a rule says: R-secrets, R-prod-write, R-unseen, and
-any change to `.bosun/**`, `governance/**`, a `CODEOWNERS` file, `.github/workflows/**` or
-`.github/actions/**`. In bosun's own repo all of its code and manifests are critical too. Those
+any change to `.bosun/**`, `governance/**`, a `CODEOWNERS` file, the root `hoist.toml`,
+`.github/workflows/**`, `.github/actions/**`, any `action.yml`, `.circleci/**` or another CI
+provider's config. In bosun's own repo all of its code and manifests are critical too. Those
 always go to the owner.
 
 The rules `bosun init` seeds have no `delegate` class, so the mode is off until you opt in rules.
@@ -250,6 +280,19 @@ toolchain files, `.config/**` and `profiles/**` to a delegate); its release does
 The `delegate` value needs a pinned release that knows it: a `risk.toml` on the default branch
 that uses a value the pinned bosun cannot parse fails every pull request (see
 [Troubleshooting](/docs/troubleshooting/)).
+
+### Approval policy and bootstrap mode
+
+`[approvals] policy` in `.bosun/bosun.toml` says when the orchestrator's own signature counts
+(`owner`, the default, `owner-gated`, `orchestrator` or `autonomous`; `bosun adopt --policy` writes
+it). A workflow or CI file change, R-weaken, R-secrets and R-prod-write always need the owner.
+Bootstrap mode (`bootstrap_until`, capped at 2026-11-30 in bosun's code) lets the orchestrator
+sign gated approvals until that day, after green checks and an independent clean verdict; see
+[Operating model](/docs/operating-model/). Under `autonomous` it may approve only paths under
+`src/`, `tests/`, `docs/`, `changelog.d/` or `.changeset/*.md`, with a clean verdict from a
+session that holds no lease on the task. The boosters that use it are in
+[modes](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md).
+Set a value only after `.bosun/version` pins a release that reads it.
 
 ## Asking the owner
 
@@ -269,3 +312,24 @@ While an issue with that label, opened by an owner, is open, every command that 
 work exits 4. Close the issue to resume. An issue opened by anyone else is ignored. Agents must
 never close it, but bosun cannot enforce that yet; against a misbehaving agent also set the repo
 variable `BOSUN_HALT=1`, which agents cannot change.
+
+## Opt-in CI signer and Slack digest
+
+Both are off by default.
+
+**CI signer** (keyless fast lane for cloud and Claude Tag sessions, which hold no secrets). Four steps, once per repo:
+
+1. Pin a release that reads the key, then set `signer = true` under [approvals] and [checks] mode = "checks" (with the gate App) in .bosun/bosun.toml, in an owner-approved PR (R-weaken). It needs the autonomous policy.
+2. `bosun keygen --role signer --id signer-ci --out <pem outside the repo> --enroll`
+3. Merge that .bosun/approvers.toml PR (R-gov: the owner approves).
+4. Create the GitHub environment bosun-signer (deployment branches: the default branch only) with the secret BOSUN_SIGNER_KEY set to the PEM, then delete the PEM.
+
+The signer key verifies only the autonomous form, so a leaked key can sign at most what the fast lane already lets the orchestrator approve. Verdict session tags are self-declared, so independence rests on honest agents.
+
+**Slack digest.** The digest (`bosun digest`; one a day from steady up) lists the approvals waiting. `bosun notify` posts it only when `notify` in the `[slack]` table names it:
+
+```toml
+notify = ["owner-question", "main-red", "budget-halt", "halt", "thread-result", "digest"]
+```
+
+Slack never approves: the owner approves by chat form or on GitHub; Slack only carries the links.

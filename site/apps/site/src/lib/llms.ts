@@ -3,6 +3,8 @@ import { agentRows, hero, quickstart, sections, update } from "../data/content";
 import { tools } from "../data/tools";
 import { buildCommand, CAPTION, DEFAULT_ON } from "./command";
 import { migrate, RUNBOOK_URL } from "../data/migrate";
+import { scenarios } from "../data/scenarios";
+import { versions } from "../data/versions";
 import { docMdPath } from "./docs-md";
 import { SITE_URL } from "./site";
 
@@ -22,6 +24,14 @@ export function buildLlmsTxt(): string {
     "# keelstack",
     "",
     `> ${hero.body}`,
+    "",
+    "## Pick your path",
+    "",
+    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}. One exact block per scenario: ${SITE_URL}${docMdPath("start")}`,
+    "",
+    ...scenarios.map(
+      (s) => `- ${s.id.toUpperCase()}. ${s.title}: ${s.summary} ${SITE_URL}/docs/start/#${s.id}`,
+    ),
     "",
     "## Start in 5 minutes",
     "",

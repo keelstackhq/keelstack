@@ -4,8 +4,9 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun 0.4.0 (2026-11-01); where an older
-release behaved differently, it says so.
+checks decide whether GitHub may merge. This page follows bosun 0.15.0 (2026-11-14). Long details are in bosun's specs:
+[gates](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/07-gates.md), [main-health](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/09-main-health.md) and
+[gate App checks](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/15-app-checks.md).
 
 ## Required checks
 
@@ -22,9 +23,22 @@ from `BOSUN_REQUIRED_CHECKS` (comma-separated, replaces all), else the four defa
 entries in `hoist.toml` `[github] required_checks` on the default branch. `hoist apply` makes the
 same list required on the default branch.
 
-`risk-check` and `review-verdict` are commit statuses, not check runs, because only GitHub Apps can
-create check runs. They sit on the pull request head, which a merge-queue commit does not carry,
-so bosun repos use auto-merge without a merge queue (`merge_queue = false` in `hoist.toml`).
+By default `risk-check`, `review-verdict` and `main-open` are commit statuses, which any workflow
+with `statuses: write` can post. They sit on the pull request head, which a merge-queue commit does
+not carry, so bosun repos use auto-merge without a merge queue (`merge_queue = false` in
+`hoist.toml`).
+
+### Gate App check runs (opt-in)
+
+`[checks] mode` in `.bosun/bosun.toml` is `statuses` (default), `dual` (a status and a check run
+of a dedicated GitHub App, the gate App) or `checks` (only the App's check runs). In `checks`
+mode bosun reads its gates back only from the gate App, `bosun verdict post` is refused (use
+`bosun verdict comment`), and the ruleset can pin each required check to the App, so no other
+workflow can forge it. A `[checks]` change is R-weaken. The channel's gate jobs (`risk`,
+`verdict`, `main-open`, `main-health`) run in the environment `bosun-app` and mint the App token
+from the variable `BOSUN_APP_CLIENT_ID` (set it there before taking the channel update that
+reads it; `BOSUN_APP_ID` is no longer read). Setup and limits: see
+[App checks](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/15-app-checks.md).
 
 ## The gate contract
 
@@ -33,13 +47,16 @@ so bosun repos use auto-merge without a merge queue (`merge_queue = false` in `h
 | fmt            | pull request                                        | `cargo fmt --check`                                  | `pnpm run format:check`                |
 | lint           | pull request                                        | `cargo clippy --all-targets --locked -- -D warnings` | `pnpm run lint`                        |
 | types          | pull request                                        | (in lint)                                            | `pnpm run typecheck`                   |
-| test           | pull request (affected packages), merge queue (all) | `cargo nextest run --locked -p {packages}`           | `pnpm --filter ...<pkg> run test`      |
+| test           | pull request (affected packages), merge queue (all) | `cargo test --locked -p {packages}`                  | `pnpm --filter ...<pkg> run test`      |
 | deps           | pull request                                        | `cargo deny check`                                   | `pnpm audit --prod --audit-level high` |
 | test-integrity | always                                              | built in                                             | built in                               |
+| ci-minutes     | always                                              | built in                                             | built in                               |
 
-The table is the spec's gate contract. The channel's `bosun.yml` runs five of them, one after
-another in one job (below), in the order test-integrity, deps, fmt, lint, test. A profile maps gates to commands; the ts-pnpm profile calls
-the workspace's root `package.json` scripts, so the repo chooses its own tools. When the ts-pnpm `test`
+The table is the spec's gate contract. The channel's `bosun.yml` runs six of them, one after
+another in one job (below), in the order test-integrity, ci-minutes, deps, fmt, lint, test. A profile maps gates to commands; the ts-pnpm profile calls
+the workspace's root `package.json` scripts, so the repo chooses its own tools. The rust `test` gate runs `cargo test --locked` (it also runs doctests); it runs nextest
+instead when `cargo nextest` is installed, and a repo keeps nextest with a
+`.bosun/profiles/rust.toml` override. When the ts-pnpm `test`
 gate runs for all packages (`pnpm -r --include-workspace-root run test`) it also runs the root
 `test` script, so that script must not itself be a recursive `pnpm -r run test`.
 
@@ -65,6 +82,13 @@ request code (`bosun test-integrity --pr <n>`). A snapshot change needs the line
 `snapshot-change: <reason>` in the pull request body. Files are
 compared with the merge base. Agents never skip, delete or weaken a test to get green.
 
+`bosun gate ci-minutes` reads `.github/workflows` (no repo code, no GitHub) and fails a workflow
+that wastes CI minutes: a heavy pull request job that does not skip drafts, an aggregate check
+that skips a draft, a trigger without `ready_for_review`, a workflow without cancelling
+`concurrency`, or a heavy job (macOS, Windows, a matrix) without `paths`. A comment
+`# ci-minutes: allow <concurrency|paths> <reason>` switches off the last two for one file. The
+channel skips the gate when the pinned bosun is older than 0.7.0.
+
 ## One job, and what runs in it
 
 Since bosun 0.2.2 the channel's `bosun.yml` runs in one job (since 0.2.3, rust stacks only) named after the required
@@ -80,8 +104,8 @@ On the rust-canary trial (a hull `template-rust` repo with bosun) a pull request
    bosun from the change under review. The setup pull request, whose base has no pin yet, uses its
    own and says so in a warning.
 3. **The base's config.** Before any toolchain runs, the job puts the base commit's `.bosun/`,
-   every `.cargo` directory, every `rust-toolchain(.toml)`, every `.npmrc` and `.pnpmfile.*` over
-   the checkout
+   every `.cargo` directory, every `rust-toolchain(.toml)`, every `.npmrc` and `.pnpmfile.*`, and every
+   `deny.toml` and `deny.exceptions.toml` (also dot-prefixed), over the checkout
    and deletes those the base lacks. A pull request's edits to them apply only after merge; the run
    prints a notice naming them. The toolchain comes from the base's `rust-toolchain.toml`
    (`RUSTUP_TOOLCHAIN`), and cargo's `RUSTC` and wrappers are overridden.
@@ -89,6 +113,9 @@ On the rust-canary trial (a hull `template-rust` repo with bosun) a pull request
    request code, and the job stops at the first failure, so pull request code never runs after a
    failure it could hide.
 
+- **Drafts.** Heavy jobs skip a draft pull request; the required check fails in seconds with
+  `draft: CI not run, mark ready for review`, and `bosun pr --ready` (see
+  [Tasks and sessions](/docs/tasks/)) marks it ready.
 - **Edits.** A pull request body or title edit changes no file. If the head already passed, the
   edit run keeps the file gates and runs only test-integrity, which reads the body.
 - **ts-pnpm and mixed stacks: two jobs** (since 0.2.3). `bosun-trusted` runs test-integrity and
@@ -111,15 +138,18 @@ bosun's own `ci.yml` follows the same rules with a job `ci` that does the work a
 that aggregates it. Saving CI minutes is org decision D-007 (see
 [Releases and updates](/docs/releases/)).
 
+When a check fails, `bosun ci-log <pr>` prints each failed job's first lines, last lines and up to
+20 error lines from the middle.
+
 ## With your own CI (`own_ci`)
 
 Next to a hull template, which has its own `ci.yml` with a `ci-ok` job, `bosun init` sets
 `own_ci`: bosun's aggregate job is named `bosun-ok`, a fifth required check, and main-health
 closes main-red only when the latest push run on `main` of both workflows is green.
 
-Since bosun 0.2.1 a pull request with `own_ci` runs only the `test-integrity` gate and relies on
+Since bosun 0.2.1 a pull request with `own_ci` runs only the `test-integrity` and `ci-minutes` gates and relies on
 the repo's `ci-ok` for the rest; set the repo variable `BOSUN_ALL_GATES=1` when that CI lacks one
-of them, such as cargo-deny. Pushes, the merge queue and the weekly run still run all five. (In
+of them, such as cargo-deny. Pushes, the merge queue and the weekly run still run all six. (In
 0.2.0 both CIs ran everything: the rust-canary trial measured 26 s for hull's job and 69 to 83 s
 for bosun's 8 jobs.)
 

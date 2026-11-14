@@ -270,6 +270,16 @@ freely, template updates never touch it.
   --ready` (`--auto-merge` is an alias), `bosun keygen --enroll`, the doctor's kill-switch
   command and Routines (`data.routines`), `--keep-plan-tasks-open`. docspack 0.1.17 in the repo; npm `latest` is 0.1.7 (the docs
   text claims only "0.1.1 or later"): an owner release of `docspack-v0.1.17` publishes all of it.
+- 2026-11-14 Scenario paths: `/docs/start` is a picker (A new repo, B adopt, C change mode, D upgrade,
+  E where agents run, F approvals) with one block each, the landing has "Pick your path" cards, and
+  the adopt, cloud (short setup script first), risk (cheat sheet, CI signer, digest), update and
+  migrate pages share constants in `apps/site/src/data/scenarios.ts`; one version table in
+  `apps/site/src/data/versions.ts` (hull v0.10.0, splice 0.4.0, bosun 0.15.0, hoist 0.4.1). hull v0.10.0
+  adopt and start-checklist re-copied, assess sha256 `2fb956cb…`; bosun `docs/setup-script.sh`
+  re-copied at bosun `834c4c8`. Hero re-run at hull v0.10.0 (62 files: 37 owned, 8 shared, 17 seed;
+  lines unchanged); greenfield re-checked with `bosun init` and `plan check` 0.15.0 (adds
+  `signer.yml`). risk, tasks, ci and the operating model re-synced to bosun 0.15.0 (`834c4c8`),
+  linking spec sections instead of copying. docspack 0.1.18.
 
 ## Blocked
 

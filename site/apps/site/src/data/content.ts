@@ -1,5 +1,6 @@
 // Page copy from the design reference. Names follow D-001 (`keelstackhq`).
 import { buildCommand, DEFAULT_ON, SPLICE_VERSION } from "../lib/command";
+import { scenarios } from "./scenarios";
 import { org } from "./tools";
 
 export interface HeroVariant {
@@ -18,8 +19,8 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.4.0, hull v0.8.0, the default pieces). `output` is an excerpt of
-// its 61 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// Real `splice new` run (splice 0.4.0, hull v0.10.0, the default pieces). `output` is an excerpt of
+// its 62 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
   title: `~ · splice ${SPLICE_VERSION}`,
@@ -33,7 +34,7 @@ export const terminal = {
     { path: "apps/api/src/index.ts", cls: "seed" },
     { path: "apps/web/src/app.tsx", cls: "seed" },
   ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 61 files: 36 owned, 8 shared, 17 seed; then pnpm install",
+  summary: "# … 62 files: 37 owned, 8 shared, 17 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
@@ -148,7 +149,7 @@ export const update: {
       "Merge only when `ci-ok` is green.",
     ],
     guide:
-      "https://github.com/keelstackhq/hull/blob/720442f7557168f139d8d836ceddd8aebe4e7952/docs/updating.md",
+      "https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/updating.md",
   },
   bosun: {
     heading: "Update bosun",
@@ -252,7 +253,7 @@ export const nav: { label: string; href: string }[] = [
 ];
 
 // Start in 5 minutes: bosun README (PR #455), docs/adopt-existing-repo.md, AGENTS.md, spec §8 (keygen).
-// adopt's printed commands, keygen and doctor's exact fixes ship in bosun 0.11.0.
+// adopt's printed commands, keygen and doctor's exact fixes ship in bosun 0.11.0 and later.
 export interface QuickStep {
   cmd?: string;
   text: string;
@@ -302,4 +303,11 @@ export const quickstart = {
       [6, "limit"],
     ] as [number, string][],
   },
+};
+
+// "Pick your path" cards on the landing page: one per scenario of /docs/start, linking to its anchor.
+export const pickPath = {
+  label: "Pick your path",
+  heading: "One short block for each thing you want to do.",
+  cards: scenarios.map((s) => ({ ...s, href: `/docs/start/#${s.id}` })),
 };

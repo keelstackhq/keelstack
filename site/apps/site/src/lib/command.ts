@@ -1,3 +1,5 @@
+import { versions } from "../data/versions";
+
 export interface Piece {
   piece: string;
   name: string;
@@ -16,8 +18,8 @@ export const PIECES: readonly Piece[] = [
 export const DEFAULT_ON: readonly string[] = ["web", "api"];
 
 // The versions the hero output was recorded with; bump both together.
-export const SPLICE_VERSION = "0.4.0";
-export const HULL_REF = "v0.8.0";
+export const SPLICE_VERSION: string = versions.splice;
+export const HULL_REF: string = versions.hull;
 
 export const CAPTION = `Pinned to hull ${HULL_REF}. Drop --ref to get the latest hull release.`;
 

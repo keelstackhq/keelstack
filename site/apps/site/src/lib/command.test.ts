@@ -1,17 +1,18 @@
 import { expect, test } from "vite-plus/test";
+import { versions } from "../data/versions";
 import { CAPTION, DEFAULT_ON, HULL_REF, PIECES, SPLICE_VERSION, buildCommand } from "./command";
 
 const def = new Set(DEFAULT_ON);
 
 test("pins the released splice and hull versions", () => {
-  expect(SPLICE_VERSION).toBe("0.4.0");
-  expect(HULL_REF).toBe("v0.8.0");
+  expect(SPLICE_VERSION).toBe(versions.splice);
+  expect(HULL_REF).toBe(versions.hull);
 });
 
 test("defaults: the command run for the hero output", () => {
   expect(buildCommand(def)).toBe(
-    "pnpm dlx @keelstackhq/splice@0.4.0 new \\\n" +
-      "  gh:keelstackhq/hull//template my-repo --ref v0.8.0 \\\n" +
+    `pnpm dlx @keelstackhq/splice@${versions.splice} new \\\n` +
+      `  gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\\n` +
       "  --piece preact-app:web --piece hono-worker:api",
   );
 });
@@ -24,8 +25,8 @@ test("keeps PIECES order whatever the insertion order", () => {
 
 test("nothing selected: no dangling backslash", () => {
   expect(buildCommand(new Set())).toBe(
-    "pnpm dlx @keelstackhq/splice@0.4.0 new \\\n" +
-      "  gh:keelstackhq/hull//template my-repo --ref v0.8.0",
+    `pnpm dlx @keelstackhq/splice@${versions.splice} new \\\n` +
+      `  gh:keelstackhq/hull//template my-repo --ref ${versions.hull}`,
   );
 });
 
@@ -36,7 +37,7 @@ test("no line ends in a space", () => {
 });
 
 test("caption names the pinned versions", () => {
-  expect(CAPTION).toContain("v0.8.0");
+  expect(CAPTION).toContain(versions.hull);
   expect(CAPTION).toContain("--ref");
 });
 

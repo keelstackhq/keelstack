@@ -7,6 +7,30 @@ cloud environment: a container with a setup script, a network policy and saved s
 repo an environment of its own and start every session in it. The product's reference for these
 settings is [Cloud environments](https://code.claude.com/docs/en/cloud-environments).
 
+## Short version
+
+1. **Setup script**, pasted once (`bosun setup-snippet` prints it as `data.short`; Environments > Setup script). It never changes: each repo's own `docs/setup-script.sh` pins the tools.
+
+```bash
+for d in . ./*/; do
+  [ -f "$d/.bosun/version" ] && [ -f "$d/docs/setup-script.sh" ] || continue
+  (cd "$d" && timeout -k 10 1800 bash docs/setup-script.sh </dev/null) || echo "bosun: $d/docs/setup-script.sh failed" >&2
+done; exit 0
+```
+
+2. Network access: Limited, with Allow package managers ticked. Add only the hosts your repo's docs/setup-script.sh downloads from: a Rust repo needs github.com and release-assets.githubusercontent.com (prebuilt cargo tools); a repo that only uses npm needs none. No secrets in environment variables and no PAT: GitHub comes from the Claude GitHub App.
+3. **Variables:** only non-secret settings. When `[session]` in `.bosun/bosun.toml` sets an auto-compact window, `bosun setup-snippet` prints `data.autocompact.cloud_env`: paste those under Environments > the environment > Environment variables.
+4. **Tell bosun the environment** (an R-gov PR the owner approves), so spawned children run in it:
+
+```toml
+[cloud]
+environment_id = "env_..."   # the cloud environment the spawned children run in
+```
+
+5. **Limits:** the script runs as root before each session and stops after 1800 seconds; a failed repo script only warns. It cannot read the environment's variables or secrets. A denied host shows up as a failed command: add the host and start a new session.
+
+The rest of this page is the long form, for when something needs a hand.
+
 ## 1. Create a dedicated environment
 
 Create a new environment for the repo instead of using Default. You change its settings from the
@@ -19,7 +43,7 @@ explicitly, call `list_environments` and use the `env_…` id of your environmen
 `create_session`'s `environment_id`. bosun returns the `create_session` call in `next`; the
 orchestrator adds the id when it makes the call.
 
-## 2. Paste the setup script once
+## 2. The repo's own setup script (long form)
 
 Since bosun 0.10.0 you paste the output of `bosun setup-snippet` once as the environment's setup
 script (Environments > Setup script). It is a bootstrap that never needs a change: it runs as root
@@ -30,8 +54,8 @@ versions and their sha512 checksums and moves them only by reviewed pull request
 (R-gov).
 
 The script below is bosun's own,
-[`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/ba4ed9cf98404ddd40c130bff4ecd4fe277d6675/docs/setup-script.sh)
-at commit `ba4ed9c` (bosun 0.11.0 pinned), copied verbatim.
+[`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/setup-script.sh)
+at commit `834c4c8` (bosun 0.15.0 pinned), copied verbatim.
 
 ```bash
 #!/usr/bin/env bash
@@ -58,6 +82,23 @@ BERTH_VERSION=0.1.0
 BERTH_SHA512=4V71F1YqcduupUm/yqc3HaK5/VMH6bD1PZa6xskA+84UiSs1UZRnkX7W+zoLPNizoT2CM1bVGmEtk2cjjYg3Eg==
 BERTH_LINUX_X64_SHA512=3eaIWInNsevz8vPlkSN+QsPnf82ULEZJz2X4KFOsP3aQR9EanDBDxmm2+J+jEvUBHKxS3xfQMT7HqCO35TUysw==
 BERTH_LINUX_ARM64_SHA512=sG6PA8qfOmThoXxL/3P+DSTnr8OL+5MieaTWBv9QfjzcC/ocITUHqi5xptPh2u+71ZY8SqpEcgE6dPmvmi5YXw==
+# cargo-deny's prebuilt binary as npm packages (@keelstackhq/cargo-deny, its launcher, and
+# cargo-deny-linux-<arch>), pinned like the tools above. Empty until their first publish: then the
+# Rust step builds it with `cargo install --locked cargo-deny` (minutes) instead.
+CARGO_DENY_VERSION=""
+CARGO_DENY_SHA512=""
+CARGO_DENY_LINUX_X64_SHA512=""
+CARGO_DENY_LINUX_ARM64_SHA512=""
+# Prebuilt cargo tools (cargo install builds them from source: minutes). Release tarballs from
+# github.com (served by release-assets.githubusercontent.com), each pinned by the sha256 of the
+# tarball for this machine; a mismatch or a failed download falls back to `cargo install --locked`.
+# Move a pin with its checksums: curl -fsSL <asset url> | sha256sum.
+NEXTEST_VERSION=0.9.152
+NEXTEST_LINUX_X64_SHA256=d039b43c3e0958441b6ad0a39c8884d018b3d2e8fb9928f209074b1100b5e17a
+NEXTEST_LINUX_ARM64_SHA256=ca1f81a5b86533eb45ab97e0064aa88e925e53aab9a698ca6331a7cad1f85f07
+CARGO_DENY_BIN_VERSION=0.20.2
+CARGO_DENY_BIN_LINUX_X64_SHA256=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f
+CARGO_DENY_BIN_LINUX_ARM64_SHA256=995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d
 # Claude Code plugins. `keelstack` is bosun's marketplace (.claude-plugin/marketplace.json on this
 # branch of keelstackhq/bosun, owner-reviewed); it pins each plugin source by sha. A marketplace ref
 # must be a branch or tag (`#<sha>` fails to clone). Move the plugin pins with marketplace.json;
@@ -66,14 +107,22 @@ KEELSTACK_MARKETPLACE_REF=main
 SUPERPOWERS_SHA=22f0b463e7a5e579904dd6211a520321035526f7
 CAVEMAN_SHA=a9cc1f7b82598852e8c6b8e599dde6ac2491b26e
 # The bosun release this repo pins in .bosun/version.
-BOSUN_VERSION=0.11.0
-BOSUN_SHA512=BV3R+ekqyvkeogr4wDFjmXeluEZilN1cSmKQrxcGa97Cglp+yv68MZRtmFvxJJ9tmUDBSkDg0avDuOrZfUkbcA==
-BOSUN_LINUX_X64_SHA512=2YqfSb3zK2MUuVA5Tjsa3MmFM1/3BCC9LcntsSph3OiVmLREzWhb4SRI6AEU0/7R9CYrp7CeKQNvz6ob6lVkcA==
-BOSUN_LINUX_ARM64_SHA512=cw/Hj+t7Tge3SOzg6VRCeuJk3zmNYAtZcAC/j2OywpwT8pWDyDSfAP3AEVx61YojSGD0utpO6GydTQR8T48eyw==
+BOSUN_VERSION=0.15.0
+BOSUN_SHA512=C3ZV006QyHgVTsfJu1BqHOOV8PeWEDJ5acQ+jAP+Aufe3aYGEjG8FWWqU0Sw86NzGy6u+wu+BJeX0LlXou71tQ==
+BOSUN_LINUX_X64_SHA512=a521uLd2ZM47QxTOelYfCxUhFh8PhvX3RkZcYc9jes9SXlCPGVFAk4g/SCxNzK8FRUmpecuPompEvoW34bnM/g==
+BOSUN_LINUX_ARM64_SHA512=rFZxI5scPYMZc6vJlJz/tyCCrTtVhSvhYFsNqZZP8ZVMP+jAU4UeOZPirBzF6RjqdsWrURg+vnw9uiSP2YL4Wg==
+
+# Stacks of this checkout: Rust steps run only with a Cargo.toml or a toolchain file, pnpm only
+# with a pnpm-lock.yaml, a pnpm-workspace.yaml or a package.json `packageManager` of pnpm.
+HAS_RUST=""
+if [ -f Cargo.toml ] || [ -f rust-toolchain.toml ]; then HAS_RUST=1; fi
+HAS_PNPM=""
+if [ -f pnpm-lock.yaml ] || [ -f pnpm-workspace.yaml ] || grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"pnpm@' package.json 2>/dev/null; then HAS_PNPM=1; fi
 
 # Rust is not pinned here: the version is the `channel` of the checkout's rust-toolchain.toml.
-# Without one the script warns, skips the pinned toolchain and still installs the cargo tools. `bash docs/setup-script.sh --rust-version` prints the version
-# and installs nothing.
+# Without one a Rust checkout warns, skips the pinned toolchain and still installs cargo-deny. A
+# checkout with neither Cargo.toml nor rust-toolchain.toml gets no Rust step. `bash
+# docs/setup-script.sh --rust-version` prints the version and installs nothing.
 RUST_VERSION=""
 if [ -f rust-toolchain.toml ]; then
   RUST_VERSION="$(sed -nE "s/^[[:space:]]*channel[[:space:]]*=[[:space:]]*[\"']([^\"']*)[\"'].*/\1/p" rust-toolchain.toml | head -n1)"
@@ -81,12 +130,14 @@ fi
 # The channel reaches rustup as root: only a toolchain name passes, anything else is skipped like a
 # missing file (printf %q shows the rejected value safely).
 if [ -n "$RUST_VERSION" ] && ! [[ "$RUST_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
-  printf 'setup-script: invalid channel %q in rust-toolchain.toml; skipping the Rust toolchain install (the cargo tools still install with the default toolchain)\n' "$RUST_VERSION" >&2
+  printf 'setup-script: invalid channel %q in rust-toolchain.toml; skipping the Rust toolchain install (cargo-deny still installs with the default toolchain)\n' "$RUST_VERSION" >&2
   RUST_VERSION=""
   if [ "${1:-}" = --rust-version ]; then exit 1; fi
 elif [ -z "$RUST_VERSION" ]; then
   # Never fail here: a failing setup script blocks every session of the environment.
-  echo "setup-script: no rust-toolchain.toml with a channel in $PWD; skipping the Rust toolchain install (the cargo tools still install with the default toolchain), rustup installs the checkout's pinned toolchain on first cargo use" >&2
+  if [ -n "$HAS_RUST" ] || [ "${1:-}" = --rust-version ]; then
+    echo "setup-script: no rust-toolchain.toml with a channel in $PWD; skipping the Rust toolchain install (cargo-deny still installs with the default toolchain), rustup installs the checkout's pinned toolchain on first cargo use" >&2
+  fi
   if [ "${1:-}" = --rust-version ]; then exit 1; fi
 fi
 if [ "${1:-}" = --rust-version ]; then echo "$RUST_VERSION"; exit 0; fi
@@ -125,16 +176,22 @@ fi
 # pnpm is not integrity-pinned (npm installs it by version), so its warm skip stays a version check.
 # pnpm 12 ships a native binary; its install.js puts it in place.
 # From /: inside the checkout pnpm may follow package.json `packageManager` instead.
-if [ "$(cd / && pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
-  npm install -g "pnpm@${PNPM_VERSION}"
+if [ -z "$HAS_PNPM" ]; then
+  echo "setup-script: no pnpm-lock.yaml, pnpm-workspace.yaml or packageManager pnpm@ in $PWD; skipping pnpm" >&2
+elif [ "$(cd / && pnpm --version 2>/dev/null)" != "$PNPM_VERSION" ]; then
+  npm install -g "pnpm@${PNPM_VERSION}" ||
+    echo "setup-script: npm install of pnpm@${PNPM_VERSION} failed; continuing" >&2
   (cd "$(npm root -g)/pnpm" && node install.js) || true
 fi
 
-# Rust (the version read above) and the cargo tools the gates run.
+# Rust (the version read above), only in a checkout with Cargo.toml or a toolchain file.
 # Without a toolchain file in the checkout rustup's stable default serves the tools, and rustup
-# installs the checkout's pinned toolchain on first cargo use there.
-# A failed step warns and the script goes on: a failing setup script blocks every session.
-if [ -n "$RUST_VERSION" ]; then
+# installs the checkout's pinned toolchain on first cargo use there. cargo-deny installs below,
+# after install_tool. A failed step warns and the script goes on: a failing setup script blocks
+# every session.
+if [ -z "$HAS_RUST" ]; then
+  echo "setup-script: no Cargo.toml or rust-toolchain.toml in $PWD; skipping Rust" >&2
+elif [ -n "$RUST_VERSION" ]; then
   { rustup toolchain install "${RUST_VERSION}" --profile minimal --component rustfmt,clippy &&
     rustup default "${RUST_VERSION}"; } ||
     echo "setup-script: installing the Rust toolchain ${RUST_VERSION} failed; continuing" >&2
@@ -142,12 +199,6 @@ elif command -v rustup >/dev/null 2>&1 && ! rustup show active-toolchain >/dev/n
   { rustup toolchain install stable --profile minimal --component rustfmt,clippy &&
     rustup default stable; } ||
     echo "setup-script: installing the stable Rust toolchain failed; continuing" >&2
-fi
-if command -v cargo >/dev/null 2>&1; then
-  cargo install --locked cargo-nextest cargo-deny ||
-    echo "setup-script: cargo install of cargo-nextest and cargo-deny failed; continuing without them" >&2
-else
-  echo "setup-script: no cargo found; skipping cargo-nextest and cargo-deny" >&2
 fi
 
 # The keelstackhq tools, pinned, install only from npm tarballs that match the pinned sha512:
@@ -203,6 +254,61 @@ install_tool splice "$SPLICE_VERSION" "$SPLICE_SHA512" "$SPLICE_LINUX_X64_SHA512
 install_tool hoist "$HOIST_VERSION" "$HOIST_SHA512" "$HOIST_LINUX_X64_SHA512" "$HOIST_LINUX_ARM64_SHA512"
 install_tool berth "$BERTH_VERSION" "$BERTH_SHA512" "$BERTH_LINUX_X64_SHA512" "$BERTH_LINUX_ARM64_SHA512"
 install_tool bosun "$BOSUN_VERSION" "$BOSUN_SHA512" "$BOSUN_LINUX_X64_SHA512" "$BOSUN_LINUX_ARM64_SHA512"
+# cargo-deny for the deps gate: the pinned npm packages when their pin is set, else (or when that
+# install fails) built by cargo. The test gate's own tool (cargo-nextest) installs below. Only a verified install
+# (its recorded fingerprint) counts, not another cargo-deny on PATH.
+# cargo_tool <crate> <version> <url> <sha256>: the pinned prebuilt binary in $CARGO_HOME/bin, else
+# `cargo install --locked`. Warm: skipped only when the binary there has the sha256 recorded at
+# its verified install (a binary that merely prints the version is not trusted). Never fails.
+cargo_tool() {
+  crate="$1" ver="$2" url="$3" sum="$4"
+  dest="${CARGO_HOME:-${HOME:-/root}/.cargo}/bin"
+  rec="$SETUP_STATE_DIR/$crate@$ver.bin.sha256"
+  if [ -f "$rec" ] && [ -x "$dest/$crate" ] &&
+    [ "$(sha256sum "$dest/$crate" 2>/dev/null | cut -d' ' -f1)" = "$(cat "$rec")" ]; then return 0; fi
+  if d="$(mktemp -d)" &&
+    curl -fsSL --retry 2 --connect-timeout 15 -m 180 -o "$d/t.tgz" "$url" 2>/dev/null &&
+    [ "$(sha256sum "$d/t.tgz" 2>/dev/null | cut -d' ' -f1)" = "$sum" ] &&
+    tar -xzf "$d/t.tgz" -C "$d" && b="$(find "$d" -name "$crate" -type f | head -n1)" && [ -n "$b" ] &&
+    mkdir -p "$dest" && install -m 0755 "$b" "$dest/$crate"; then
+    rm -rf "$d"
+    mkdir -p "$SETUP_STATE_DIR" && sha256sum "$dest/$crate" | cut -d' ' -f1 >"$rec" ||
+      echo "setup-script: could not record the fingerprint of $crate; it installs again on the next run" >&2
+    return 0
+  fi
+  [ -z "${d:-}" ] || rm -rf "$d"
+  echo "setup-script: prebuilt $crate $ver unavailable or not matching its pinned sha256; building it with cargo (minutes)" >&2
+  if command -v cargo >/dev/null 2>&1; then
+    cargo install --locked "$crate" || echo "setup-script: cargo install of $crate failed; continuing without it" >&2
+  else
+    echo "setup-script: no cargo found; skipping $crate" >&2
+  fi
+}
+case "$(uname -m)" in
+  aarch64 | arm64) DENY_ARCH=aarch64 NEXTEST_SUM="$NEXTEST_LINUX_ARM64_SHA256" DENY_SUM="$CARGO_DENY_BIN_LINUX_ARM64_SHA256" ;;
+  *) DENY_ARCH=x86_64 NEXTEST_SUM="$NEXTEST_LINUX_X64_SHA256" DENY_SUM="$CARGO_DENY_BIN_LINUX_X64_SHA256" ;;
+esac
+if [ -n "$HAS_RUST" ]; then
+  if [ -n "$CARGO_DENY_VERSION" ]; then
+    install_tool cargo-deny "$CARGO_DENY_VERSION" "$CARGO_DENY_SHA512" "$CARGO_DENY_LINUX_X64_SHA512" "$CARGO_DENY_LINUX_ARM64_SHA512"
+  fi
+  if [ -n "$CARGO_DENY_VERSION" ] &&
+    tool_warm cargo-deny "$(tool_arch)" "$SETUP_STATE_DIR/cargo-deny@${CARGO_DENY_VERSION}.sha256"; then
+    : # installed from its pin
+  else
+    cargo_tool cargo-deny "$CARGO_DENY_BIN_VERSION" \
+      "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_BIN_VERSION}/cargo-deny-${CARGO_DENY_BIN_VERSION}-${DENY_ARCH}-unknown-linux-musl.tar.gz" \
+      "$DENY_SUM"
+  fi
+  # cargo-nextest only while the pinned bosun's test gate runs it (releases before 0.12.0, spec
+  # §7) or a repo profile names it: `cargo install` builds it from source (minutes).
+  if { [ "$(printf '%s\n0.12.0\n' "$BOSUN_VERSION" | sort -V | head -n1)" != 0.12.0 ] ||
+    grep -qs nextest .bosun/profiles/rust.toml; }; then
+    cargo_tool cargo-nextest "$NEXTEST_VERSION" \
+      "https://github.com/nextest-rs/nextest/releases/download/cargo-nextest-${NEXTEST_VERSION}/cargo-nextest-${NEXTEST_VERSION}-${DENY_ARCH}-unknown-linux-gnu.tar.gz" \
+      "$NEXTEST_SUM"
+  fi
+fi
 
 bosun --version || echo "setup-script: bosun is not installed" >&2
 
@@ -239,33 +345,19 @@ script cannot read the environment's variables or secrets.
 
 ## 3. Network access
 
-Choose **Limited** with **Allow package managers** ticked, and add these under **Allowed
-domains**, or choose **Full**:
+Choose **Limited** with **Allow package managers** ticked. Package registries (npm, crates.io) are
+then reachable without listing them. Under **Allowed domains** add only what the repo's own
+`docs/setup-script.sh` downloads from:
 
 ```text
 github.com
-api.github.com
-codeload.github.com
-raw.githubusercontent.com
-objects.githubusercontent.com
 release-assets.githubusercontent.com
-registry.npmjs.org
-crates.io
-index.crates.io
-static.crates.io
-static.rust-lang.org
-sh.rustup.rs
-deb.nodesource.com
-archive.ubuntu.com
-security.ubuntu.com
-keelstack.dev
-tuf-repo-cdn.sigstore.dev
 ```
 
-**Practice:** this is the list keelstackhq uses for the setup script (NodeSource, npm, rustup,
-crates.io), GitHub release downloads and these docs. A denied host shows up as a failed command;
-add the host and start a new session. `tuf-repo-cdn.sigstore.dev` is for the bootstrap's `@latest`
-fallback: it checks bosun's npm signatures with `npm audit signatures`, and without that host it
+A Rust repo needs both (prebuilt cargo tools); a repo that only uses npm needs none. Read the
+script before you add a host. A denied host shows up as a failed command; add the host and start a
+new session. Add `tuf-repo-cdn.sigstore.dev` only when a repo has no script of its own and the
+bootstrap falls back to `@latest`: it then checks bosun's npm signatures and, without that host,
 skips the install with a warning.
 
 ## 4. Secrets and keys

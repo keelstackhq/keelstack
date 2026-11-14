@@ -9,6 +9,11 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
+// Node 24 strips the types of these two dependency-free files.
+const { versions } = await import("../src/data/versions.ts");
+const { ADOPT_BOSUN_OWNER, ADOPT_HULL_NOTE, adoptBosunBlock, adoptHullBlock } =
+  await import("../src/data/scenarios.ts");
+
 const [ref, tag, flag] = process.argv.slice(2);
 if (!ref || !/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
   throw new Error("usage: node scripts/adopt.mjs <hull tag or commit> <vX.Y.Z> [--releasing]");
@@ -63,11 +68,11 @@ writeFileSync(
 writeFileSync(new URL(`assess/${tag}.mjs.txt`, data), assess);
 
 const pending = releasing
-  ? `\nUntil hull ${tag} and splice 0.4.0 are tagged, step 1 works but steps 3 and 4 do not yet:
+  ? `\nUntil hull ${tag} and splice ${versions.splice} are tagged, step 1 works but steps 3 and 4 do not yet:
 stop after step 2 and tell me.`
   : "";
 const note = releasing
-  ? ` hull ${tag} and splice 0.4.0 are releasing now; until they are tagged, this follows hull's main.`
+  ? ` hull ${tag} and splice ${versions.splice} are releasing now; until they are tagged, this follows hull's main.`
   : "";
 const page = `---
 layout: ../../layouts/Docs.astro
@@ -77,6 +82,24 @@ The guide below is hull's
 [\`docs/adopt.md\`](https://github.com/${repo}/blob/${commit}/${docPath}) at commit
 \`${commit.slice(0, 7)}\`, copied verbatim.${note} Its \`start-checklist.md\` is
 [Start a project](/docs/start-project/) on this site.
+
+## The short path
+
+With hull: assess first, then splice adopt as a dry run.
+
+\`\`\`bash
+${adoptHullBlock({ ...versions, hull: isCommit ? commit : tag }, url, sha256(assess))}
+\`\`\`
+
+${ADOPT_HULL_NOTE}
+
+With bosun alone (no hull, no splice):
+
+\`\`\`bash
+${adoptBosunBlock(versions)}
+\`\`\`
+
+${ADOPT_BOSUN_OWNER}
 
 ## Use Claude
 
@@ -100,7 +123,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
    without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
-   npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref ${isCommit ? commit : tag} --piece <id>:<name> ... --dry-run --json
+   npx @keelstackhq/splice@${versions.splice} adopt gh:keelstackhq/hull//<template> --ref ${isCommit ? commit : tag} --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.
 4. Only after I confirm: run the same command without --dry-run, resolve the conflicts, run the
    ready skill, and open a pull request with the change list and my choices. Never pass --force

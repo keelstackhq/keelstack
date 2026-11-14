@@ -1,4 +1,5 @@
 // Page copy for the tool cards. Names follow D-001 (org and npm scope `keelstackhq`).
+import { versions } from "./versions";
 
 export const org = {
   name: "keelstackhq",
@@ -20,7 +21,7 @@ export const tools: Tool[] = [
   {
     name: "hull",
     role: "01 · monorepo template",
-    status: "v0.8.0",
+    status: versions.hull,
     statusStyle: "filled",
     pitch:
       "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
@@ -32,7 +33,7 @@ export const tools: Tool[] = [
   {
     name: "splice",
     role: "02 · bootstrap + update",
-    status: "v0.4.0",
+    status: `v${versions.splice}`,
     statusStyle: "outline",
     pitch:
       "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
@@ -43,7 +44,7 @@ export const tools: Tool[] = [
   {
     name: "hoard",
     role: "03 · cached CI",
-    status: "v0.5.0",
+    status: versions.hoard,
     statusStyle: "dashed",
     pitch:
       "A Turborepo (and Vite+) remote cache for GitHub Actions and CircleCI. The cache never fails your build: an error is a miss.",
@@ -55,7 +56,7 @@ export const tools: Tool[] = [
   {
     name: "bosun",
     role: "04 · agent orchestration",
-    status: "v0.11.0",
+    status: `v${versions.bosun}`,
     statusStyle: "outline",
     pitch:
       "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",
@@ -66,7 +67,7 @@ export const tools: Tool[] = [
   {
     name: "hoist",
     role: "05 · provision + release",
-    status: "v0.4.1",
+    status: `v${versions.hoist}`,
     statusStyle: "outline",
     pitch:
       "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",
@@ -77,7 +78,7 @@ export const tools: Tool[] = [
   {
     name: "berth",
     role: "06 · agent workspaces",
-    status: "v0.1.0",
+    status: `v${versions.berth}`,
     statusStyle: "outline",
     pitch:
       "Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database.",

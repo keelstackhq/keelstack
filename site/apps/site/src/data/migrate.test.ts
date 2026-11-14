@@ -1,39 +1,38 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { footerLinks, nav } from "./content";
+import { SETUP_SHORT } from "./scenarios";
 import { APPENDIX_URL, migrate, RUNBOOK_URL } from "./migrate";
+import { bare, versions } from "./versions";
 import { buildLlmsTxt } from "../lib/llms";
 
 const page = readFileSync(new URL("../pages/migrate.astro", import.meta.url), "utf8");
 
-test("the knob table has the nine booster knobs with the runbook's values", () => {
-  expect(migrate.knobs.map((k) => k[0])).toEqual([
-    "[approvals] policy",
-    "push_gates",
-    "heal_pr",
-    "heal_main",
-    "approvals_batch",
-    "spawn_auto",
-    "budget_feature",
-    "brake",
-    "curator_loosen",
+test("the ladder has the four modes in order, flags, rollback line, and links the knob table", () => {
+  expect(migrate.ladder.map((r) => r[0])).toEqual([
+    "gatekeeper",
+    "steady",
+    "booster",
+    "autonomous",
   ]);
-  const by = Object.fromEntries(migrate.knobs.map((k) => [k[0], [k[1], k[2]]]));
-  expect(by.heal_pr).toEqual(["notify", "spawn"]);
-  expect(by.spawn_auto).toEqual(["off", "on"]);
-  expect(by.budget_feature).toEqual(["warn", "ask"]);
-  expect(by.curator_loosen).toEqual(["off", "propose"]);
+  for (const f of [
+    "--dry-run",
+    "--direct",
+    "bosun pr --pr <n> --ready",
+    "bosun migrate --finish",
+  ]) {
+    expect(migrate.flags).toContain(f);
+  }
+  expect(migrate.notes.join(" ")).toContain("Rollback");
+  expect(migrate.knobsUrl).toContain("bosun/blob/main/docs/quickstart.md");
+  expect(page).toContain("{migrate.ladder.map");
+  expect(page).not.toContain("migrate.knobs.map");
 });
 
 test("leads with the setup script from the guide, as is, then the 2-line prompt, then one PR", () => {
-  expect(migrate.quick.setup).toBe(
-    [
-      "for d in . ./*/; do",
-      '  [ -f "$d/.bosun/version" ] && [ -f "$d/docs/setup-script.sh" ] || continue',
-      '  (cd "$d" && timeout -k 10 1800 bash docs/setup-script.sh </dev/null) || echo "bosun: $d/docs/setup-script.sh failed" >&2',
-      "done; exit 0",
-    ].join("\n"),
-  );
+  expect(migrate.quick.setup).toBe(SETUP_SHORT);
+  expect(SETUP_SHORT.split("\n")[0]).toBe("for d in . ./*/; do");
+  expect(SETUP_SHORT).toContain("timeout -k 10 1800 bash docs/setup-script.sh");
   expect(migrate.quick.prompt).toBe(
     [
       "Run `bosun migrate --to booster --direct`; do what its `next` and `data.then` say; stop when it asks for the owner.",
@@ -58,8 +57,8 @@ test("network note: Limited with package managers, github.com and release-assets
 });
 
 test("requires bosun 0.15.0 and says it pairs with hull v0.10.0", () => {
-  expect(migrate.forWho).toContain("bosun 0.15.0");
-  expect(migrate.forWho).toContain("pairs with hull v0.10.0");
+  expect(migrate.forWho).toContain(`bosun ${bare(versions.bosun)}`);
+  expect(migrate.forWho).toContain(`pairs with hull ${versions.hull}`);
   expect(migrate.forWho).not.toMatch(/hull v0\.10\.0 or newer/);
   expect(JSON.stringify(migrate)).not.toContain("0.14.0");
 });

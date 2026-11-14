@@ -33,7 +33,7 @@ describe("docs data", () => {
     ]);
     expect(docs.map((d) => d.title)).toEqual([
       "Overview",
-      "Start in 5 minutes",
+      "Start: pick your scenario",
       "Start here",
       "Start a project",
       "Greenfield repo with bosun",
@@ -105,7 +105,9 @@ describe("cloud environment page", () => {
     expect(source.path).toBe("docs/setup-script.sh");
     expect(source.ref).toMatch(/^[0-9a-f]{40}$/);
     expect(createHash("sha256").update(copy).digest("hex")).toBe(source.sha256);
-    expect(page.split("```bash\n")[1]?.split("```")[0]).toBe(copy);
+    expect(page.split("```bash\n#!/usr/bin/env bash\n")[1]?.split("```")[0]).toBe(
+      copy.replace(/^#!\/usr\/bin\/env bash\n/, ""),
+    );
     expect(page).toContain(
       `https://github.com/keelstackhq/bosun/blob/${source.ref}/docs/setup-script.sh`,
     );
@@ -141,14 +143,14 @@ describe("sources after the 2026-10-28 refresh", () => {
 
 describe("Greenfield repo with bosun page", () => {
   const page = readFileSync(new URL("../pages/docs/greenfield-bosun.md", import.meta.url), "utf8");
-  it("shows the bosun 0.11.0 tree and a plan that plan check accepts without warnings", () => {
-    for (const f of [".bosun/intake.toml", ".bosun/session-rules.toml", ".npmrc"]) {
+  it("shows the bosun 0.15.0 tree and a plan that plan check accepts without warnings", () => {
+    for (const f of [".bosun/intake.toml", ".bosun/session-rules.toml", ".npmrc", "signer.yml"]) {
       expect(page).toContain(f);
     }
     expect(page).toContain("apps/api/tests/notes_create.test.ts");
     expect(page).toContain('"warnings": []');
-    expect(page).toContain("`bosun plan check` (0.11.0) accepts with no warnings");
-    // Steps checked against bosun 0.11.0's --help and docs.
+    expect(page).toContain("`bosun plan check` (0.15.0) accepts with no warnings");
+    // Steps checked against bosun 0.15.0 --help and docs.
     expect(page).toContain("`bosun pr <task> --ready`");
     expect(page).toContain("`bosun keygen --enroll`");
     expect(page).toContain("--keep-plan-tasks-open");

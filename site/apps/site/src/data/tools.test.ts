@@ -1,5 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { org, tools } from "./tools";
+import { versions } from "./versions";
 
 test("lists all six tools, the original three first", () => {
   expect(tools.map((t) => t.name)).toEqual(["hull", "splice", "hoard", "bosun", "hoist", "berth"]);
@@ -14,12 +15,12 @@ test("every tool links to its repo in the keelstackhq org (D-001)", () => {
 
 test("statuses and styles follow the design", () => {
   expect(tools.map((t) => t.status)).toEqual([
-    "v0.8.0",
-    "v0.4.0",
-    "v0.5.0",
-    "v0.11.0",
-    "v0.4.1",
-    "v0.1.0",
+    versions.hull,
+    `v${versions.splice}`,
+    versions.hoard,
+    `v${versions.bosun}`,
+    `v${versions.hoist}`,
+    `v${versions.berth}`,
   ]);
   expect(tools.map((t) => t.statusStyle)).toEqual([
     "filled",

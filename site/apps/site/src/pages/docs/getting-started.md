@@ -6,7 +6,7 @@ This page takes a GitHub repo of yours, new or existing, to the full setup: a te
 current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
 cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
 
-Latest releases as of 2026-11-09: hull v0.8.0, splice 0.4.0, bosun 0.11.0,
+Latest releases as of 2026-11-14: hull v0.10.0, splice 0.4.0, bosun 0.15.0,
 hoist 0.4.1, berth 0.1.0, hoard v0.5.0 (`@v0`). hull v0.4.0 and later need splice 0.3.0
 or later.
 
@@ -50,7 +50,7 @@ git add -A && git commit -m "chore: initial commit from hull"
 
 hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
 `circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
-`secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist 0.3.0's
+`secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist's
 `keelstackhq/hoist/secrets` action; see
 [Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
 `splice add circleci`, then `splice add circleci-only`.
@@ -123,7 +123,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.4.0 @keelstackhq/bosun@0.11.0
+npm install -g @keelstackhq/splice@0.4.0 @keelstackhq/bosun@0.15.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -151,7 +151,7 @@ Who: the owner, on their own machine, with a token that has admin on the repo, i
 the default branch after the setup pull request merged.
 
 ```bash
-npm install -g @keelstackhq/hoist@0.3.0
+npm install -g @keelstackhq/hoist@0.4.1
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 gh label create bosun:halt --color B60205
@@ -190,7 +190,7 @@ Then, still as the owner:
   toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
   and bosun.
 - Create the Routines: janitor (every hour, Haiku) and curator (daily, Sonnet), plus notify
-  (every hour, Haiku) only with a `[slack]` table; without it bosun 0.4.0 has no notify Routine
+  (every hour, Haiku) only with a `[slack]` table; without it bosun has no notify Routine
   and `bosun doctor` reports Slack as skipped. `bosun doctor` prints their prompts.
 
 `bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
