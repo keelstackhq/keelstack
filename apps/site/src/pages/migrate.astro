@@ -1,11 +1,11 @@
 ---
 import Footer from "../components/Footer.astro";
 import Nav from "../components/Nav.astro";
-import { migrate, QUICKSTART_URL, RUNBOOK_URL } from "../data/migrate";
+import { APPENDIX_URL, migrate, QUICKSTART_URL, RUNBOOK_URL } from "../data/migrate";
 import Base from "../layouts/Base.astro";
 import "../styles/docs.css";
 
-const { local, web, slack } = migrate;
+const { local, web, slack, quick, does } = migrate;
 ---
 
 <Base title={`${migrate.title} · keelstack`} description={migrate.summary}>
@@ -14,19 +14,42 @@ const { local, web, slack } = migrate;
     <h1>{migrate.title}</h1>
     <p>{migrate.forWho}</p>
     <p>{migrate.owner}</p>
-    <p>
-      Full runbook: <a href={RUNBOOK_URL}><code>docs/migrate-booster.md</code></a> in bosun. Setup and the
-      steps for steady: <a href={QUICKSTART_URL}><code>docs/quickstart.md</code></a>.
-    </p>
     <nav aria-label="On this page">
       <ul>
-        <li><a href="#changes">What booster changes</a></li>
-        <li><a href="#steps">The steps</a></li>
+        <li><a href="#quick">Quick start</a></li>
+        <li><a href="#does">What bosun migrate does</a></li>
         <li><a href="#local">{local.heading}</a></li>
         <li><a href="#web">{web.heading}</a></li>
         <li><a href="#slack">{slack.heading}</a></li>
+        <li><a href="#changes">What booster changes</a></li>
+        <li><a href="#manual">The manual path</a></li>
       </ul>
     </nav>
+
+    <h2 id="quick">Quick start</h2>
+    <p>{quick.setupLabel}</p>
+    <pre><code>{quick.setup}</code></pre>
+    <p>{quick.setupNote}</p>
+    <p>{quick.network}</p>
+    <p>{quick.promptLabel}</p>
+    <pre><code>{quick.prompt}</code></pre>
+    <p>{quick.promptNote}</p>
+    <p>{quick.approve}</p>
+
+    <h2 id="does">What bosun migrate does</h2>
+    <p>{does.intro}</p>
+    <pre><code>{does.commands}</code></pre>
+    <ul>{does.notes.map((n) => <li>{n}</li>)}</ul>
+
+    <h2 id="local">{local.heading}</h2>
+    <ol>{local.steps.map((n) => <li>{n}</li>)}</ol>
+
+    <h2 id="web">{web.heading}</h2>
+    <ol>{web.steps.map((n) => <li>{n}</li>)}</ol>
+    <p>The script is on <a href="/docs/cloud/">the Cloud environment page</a>.</p>
+
+    <h2 id="slack">{slack.heading}</h2>
+    <ol>{slack.steps.map((n) => <li>{n}</li>)}</ol>
 
     <h2 id="changes">What booster changes</h2>
     <table tabindex="0">
@@ -46,47 +69,12 @@ const { local, web, slack } = migrate;
     </table>
     <p>{migrate.fastLane}</p>
 
-    <h2 id="steps">The steps</h2>
-    <p>The same in every environment. One PR per step.</p>
-    <ol>
-      {migrate.steps.map(([name, text]) => <li><strong>{name}.</strong> {text}</li>)}
-    </ol>
-    <p>{migrate.stepsAfter}</p>
-
-    <h2 id="local">{local.heading}</h2>
-    <p>{local.intro}</p>
-    <pre><code>{local.setup}</code></pre>
-    <ul>{local.notes.map((n) => <li>{n}</li>)}</ul>
-    <p>{local.gatesLabel}</p>
-    <pre><code>{local.gates}</code></pre>
-    <h3>Prompt for Claude</h3>
-    <pre><code>{local.prompt}</code></pre>
-
-    <h2 id="web">{web.heading}</h2>
-    <p>{web.intro}</p>
-    <p>{web.setupLabel}</p>
-    <pre><code>{web.setup}</code></pre>
-    <p>{web.setupNote} The script is on <a href="/docs/cloud/">the Cloud environment page</a>.</p>
-    <p>{web.network}</p>
-    <ul>{web.hosts.map(([host, why]) => <li><code>{host}</code>: {why}</li>)}</ul>
-    <p>{web.hostsNote}</p>
-    <p>{web.env}</p>
-    <p>{web.cloud}</p>
-    <pre><code>{web.cloudToml}</code></pre>
-    <p>{web.cloudNote} {web.janitor}</p>
-    <p>What a cloud session cannot do:</p>
-    <ul>{web.cannot.map((n) => <li>{n}</li>)}</ul>
-    <h3>Prompt for Claude</h3>
-    <pre><code>{web.prompt}</code></pre>
-
-    <h2 id="slack">{slack.heading}</h2>
-    <p>{slack.intro}</p>
-    <pre><code>{slack.toml}</code></pre>
-    <p>{slack.tomlNote} {slack.session}</p>
-    <pre><code>{slack.commands}</code></pre>
-    <ul>{slack.notes.map((n) => <li>{n}</li>)}</ul>
-    <h3>Prompt for Claude</h3>
-    <pre><code>{slack.prompt}</code></pre>
+    <h2 id="manual">The manual path</h2>
+    <p>
+      For a release without <code>bosun migrate</code>, or when a step needs a hand, the long path is
+      <a href={APPENDIX_URL}>Appendix A of the guide</a>. Full guide: <a href={RUNBOOK_URL}><code>docs/migrate-booster.md</code></a>.
+      Setup: <a href={QUICKSTART_URL}><code>docs/quickstart.md</code></a>.
+    </p>
 
     <p class="docs-foot">
       Source: <a href={RUNBOOK_URL}>bosun <code>docs/migrate-booster.md</code></a> · <a href="/">keelstack</a>
