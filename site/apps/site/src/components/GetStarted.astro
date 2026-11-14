@@ -11,6 +11,7 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
   <div class="inner">
     <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
     <p class="intro">{before}<code>pnpm install</code>{after}</p>
+    <PiecePicker client:visible />
     {
       sections.start.links?.map((l) => (
         <p class="next">
@@ -18,7 +19,6 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
         </p>
       ))
     }
-    <PiecePicker client:visible />
   </div>
 </section>
 
@@ -31,6 +31,11 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
     max-width: 1240px;
     margin: 0 auto;
     padding: 96px 24px;
+  }
+  @media (max-width: 640px) {
+    .inner {
+      padding: 48px 24px 64px;
+    }
   }
   .intro {
     font-size: 17px;

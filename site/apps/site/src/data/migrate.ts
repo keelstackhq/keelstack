@@ -1,14 +1,7 @@
 // Move a repo to bosun booster: copy from bosun docs/migrate-booster.md (bosun main at 834c4c8),
 // Quick start at its top. Needs bosun 0.15.0 (pairs with hull v0.10.0, per the bosun changelog); versions come from versions.ts. Names no client org or repo.
 
-import {
-  MIGRATE_COMMANDS,
-  MIGRATE_NOTES,
-  MIGRATE_PROMPT,
-  MODE_LADDER,
-  NETWORK,
-  SETUP_SHORT,
-} from "./scenarios";
+import { MIGRATE_NOTES, MIGRATE_PROMPT, MODE_LADDER } from "./scenarios";
 import { bare, versions } from "./versions";
 
 export const RUNBOOK_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md";
@@ -24,11 +17,8 @@ export const migrate = {
     "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines (scheduled Claude Code sessions such as janitor and curator, set up at claude.ai/code; see /docs/getting-started/) stay human-only; the PR body lists them.",
   quick: {
     setupLabel:
-      "1. Web and Slack only (in the CLI, skip to the prompt). Cloud environment setup script: `bosun setup-snippet` prints it as data.short; paste it once as the environment's Setup script:",
-    setup: SETUP_SHORT,
-    setupNote:
-      "Each repo's own docs/setup-script.sh installs the pinned bosun (sha512 checked) and the rest. A repo without that script: paste data.script from `bosun setup-snippet` instead.",
-    network: NETWORK,
+      "1. Web and Slack only (in the CLI, skip to the prompt): set up the cloud environment once (setup script, Network access, no secrets) with Start block E:",
+    setupId: "e",
     promptLabel: "2. The prompt. The same in the CLI, on the web and to Claude Tag in Slack:",
     prompt: MIGRATE_PROMPT,
     promptNote:
@@ -38,14 +28,12 @@ export const migrate = {
   },
   ladder: MODE_LADDER,
   ladderHead: ["Mode", "What bosun does for you", "Owner touches"] as const,
-  flags: MIGRATE_COMMANDS,
   notes: MIGRATE_NOTES,
   knobsUrl:
     "https://github.com/keelstackhq/bosun/blob/main/docs/quickstart.md#0-set-the-mode-all-modes-all-environments",
   does: {
-    intro: "What bosun migrate does:",
-    commands:
-      "bosun migrate --to booster --dry-run   # survey and planned edits; writes nothing\nbosun migrate --to booster             # one governance PR (draft)\nbosun migrate --finish                 # after the merge: join, plan amend (idempotent)",
+    intro: "What bosun migrate does (the exact commands are in Start block C):",
+    startId: "c",
     notes: [
       "Survey: pinned version, current mode, registry issue, epics without a bosun:epic marker, hull lock, and a 30-day metrics baseline (best effort: a missing baseline never blocks).",
       "One PR with every file step: the .bosun/version pin (when the release is on npm), the .bosun/registry pin and [mode] name. An open PR for the same step is reused.",
@@ -69,7 +57,7 @@ export const migrate = {
   web: {
     heading: "Claude Code on the web",
     steps: [
-      "[computer] Environment (session title bar, Edit), once per repo: paste the setup script; Network access: Limited with Allow package managers; add the hosts your docs/setup-script.sh downloads from (a Rust repo needs github.com and release-assets.githubusercontent.com). No secrets, no PAT: GitHub comes from the Claude GitHub App.",
+      "[computer] Environment (session title bar, Edit), once per repo: set it up once with Start block E (setup script, Network access, no secrets, no PAT).",
       "Start a session on the repo in that environment. Paste the prompt.",
       "[phone] Approve the PR head when Claude asks.",
       "[computer] Do the Routine steps the PR body lists.",

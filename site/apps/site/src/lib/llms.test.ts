@@ -12,23 +12,16 @@ describe("buildLlmsTxt", () => {
   });
 
   it("lists each tool with status and repo", () => {
-    expect(out).toContain("## Tools");
-    for (const t of tools) {
-      expect(out).toContain(t.name);
-      expect(out).toContain(t.status);
-      expect(out).toContain(t.repo);
-    }
+    for (const t of tools) expect(out).toContain(`[${t.name}](${t.repo})`);
   });
 
   it("lists the ready docs pages between start here and tools", () => {
     expect(out).toContain("## Docs");
     for (const d of readyDocs()) {
-      expect(out).toContain(
-        `- [${d.title}](https://keelstack.dev${docMdPath(d.slug)}): ${d.summary}`,
-      );
+      expect(out).toContain(`- [${d.title}](https://keelstack.dev${docMdPath(d.slug)})`);
     }
     expect(out.indexOf("## Start here")).toBeLessThan(out.indexOf("## Docs"));
-    expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("## Tools"));
+    expect(out.indexOf("## Docs")).toBeLessThan(out.indexOf("Tools: "));
   });
 
   it("points agents at llms-full.txt", () => {
@@ -41,22 +34,21 @@ describe("buildLlmsTxt", () => {
   });
 
   it("lists all six tools with their versions", () => {
-    for (const t of tools) {
-      expect(out).toContain(`- [${t.name}](${t.repo}) (${t.status}): `);
-    }
+    expect(tools).toHaveLength(6);
+    for (const t of tools) expect(out).toContain(`[${t.name}](${t.repo})`);
   });
 
-  it("stays an index: under 6 KB and without a copied command block", () => {
-    expect(out.length).toBeLessThan(6000);
+  it("stays an index: under 3.5 KB and without a copied command block", () => {
+    expect(out.length).toBeLessThan(3500);
     expect(out).not.toContain("```");
   });
 });
 
 describe("buildLlmsTxt start here", () => {
   const out = buildLlmsTxt();
-  it("points at /docs/start.md and states the agent contract", () => {
+  it("points at one Markdown file per scenario and states the agent contract", () => {
     expect(out).toContain("## Start here");
-    expect(out).toContain("https://keelstack.dev/docs/start.md");
+    for (const id of "abcdef") expect(out).toContain(`https://keelstack.dev/docs/start/${id}.md`);
     expect(out).toContain("`ok`, `exit_code`, `data`, `error.fix`, `next`");
     expect(out).toContain("6 limit");
   });

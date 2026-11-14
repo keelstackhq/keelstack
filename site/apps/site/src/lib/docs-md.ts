@@ -1,6 +1,7 @@
 // The docs pages as plain Markdown, built from the same .md files as the HTML pages:
 // /docs/<page>.md for each page and /llms-full.txt for all of them.
 import { type DocPage, readyDocs, sourceUrl } from "../data/docs";
+import { verifiedLine } from "../data/versions";
 import { SITE_URL } from "./site";
 
 const sources = import.meta.glob("../pages/docs/*.md", {
@@ -20,7 +21,7 @@ function body(slug: string): string {
 }
 
 // Site-relative links such as `/docs/risk/#x` become absolute links to the Markdown page.
-function absoluteLinks(md: string): string {
+export function absoluteLinks(md: string): string {
   return md.replace(
     /\]\(\/docs\/([a-z-]*)\/?(#[^)]*)?\)/g,
     (_m, slug: string, frag?: string) => `](${SITE_URL}${docMdPath(slug)}${frag ?? ""})`,
@@ -38,6 +39,8 @@ export function docMarkdown(page: DocPage): string {
     "## Sources",
     "",
     ...page.sources.map((s) => `- ${sourceUrl(s)}`),
+    "",
+    verifiedLine(),
     "",
   ].join("\n");
 }

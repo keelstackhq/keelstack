@@ -78,4 +78,10 @@ const href = (h: string) => (h.startsWith("#") ? `/${h}` : h);
   .strong {
     font-weight: 700;
   }
+  /* On a phone the two-row sticky bar covers ~18% of the screen and the top of every anchor. */
+  @media (max-width: 640px) {
+    .nav {
+      position: static;
+    }
+  }
 </style>

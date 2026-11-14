@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { update } from "./content";
 import { buildLlmsTxt } from "../lib/llms";
+import { startScenarioMd } from "../lib/start-md";
 
 const page = readFileSync(new URL("../pages/docs/update.md", import.meta.url), "utf8");
 const llms = buildLlmsTxt();
@@ -55,8 +56,9 @@ test("the home page shows only a short line, linking the full page", () => {
   expect(update.href).toBe("/docs/update/");
 });
 
-test("llms.txt links the update page and names both one-line commands", () => {
+test("llms.txt links the update page; scenario D holds both one-line commands", () => {
   expect(llms).toContain("https://keelstack.dev/docs/update.md");
-  expect(llms).toContain("splice update --all");
-  expect(llms).toContain("bosun pin --latest --pr");
+  const d = startScenarioMd("d");
+  expect(d).toContain("splice@0.4.0 update --all");
+  expect(d).toContain("bosun pin --latest --pr");
 });

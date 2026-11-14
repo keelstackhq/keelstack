@@ -9,7 +9,6 @@ import {
   adoptHullBlock,
   installBlock,
   APPROVE_COMMENT,
-  APPROVE_HOW,
   cliBlock,
   CLOUD_TOML,
   MIGRATE_COMMANDS,
@@ -109,8 +108,6 @@ test("/docs/start carries the shared blocks", () => {
     SIGNED_PREREQ,
     NETWORK,
     NO_APPROVAL,
-    OWNER_APPROVES,
-    ...APPROVE_HOW,
   ]) {
     expect(start).toContain(t.replace(/`/g, ""));
   }
@@ -127,10 +124,10 @@ test("/docs/adopt leads with the same assess, splice adopt and bosun adopt block
   }
 });
 
-test("/docs/cloud has the short script first, the network note and [cloud] table", () => {
-  expect(cloud.indexOf(SETUP_SHORT)).toBeGreaterThan(0);
-  expect(cloud.indexOf(SETUP_SHORT)).toBeLessThan(cloud.indexOf("#!/usr/bin/env bash"));
-  expect(cloud).toContain(NETWORK);
+test("/docs/cloud links the setup script and network note (one copy, in /docs/start) and has the [cloud] table", () => {
+  expect(cloud).not.toContain(SETUP_SHORT);
+  expect(cloud).not.toContain(NETWORK);
+  expect(cloud).toContain("/docs/start/#e");
   expect(cloud).toContain(CLOUD_TOML);
 });
 

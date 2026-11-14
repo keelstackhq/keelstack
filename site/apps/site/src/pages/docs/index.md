@@ -10,7 +10,7 @@ decisions and approves high-risk pull requests. Every tool is public under
 your own.
 
 To put bosun on a repo you already have, the shortest path is
-[Start in 5 minutes](/docs/start/). Versions below are the released ones as of 2026-11-09. To set up a repo of your own, follow
+[Start in 5 minutes](/docs/start/). To set up a repo of your own, follow
 [Start here](/docs/start-here/) (the ordered path) or [Getting started](/docs/getting-started/)
 (the details). [Greenfield repo with bosun](/docs/greenfield-bosun/) walks a new bosun repo end to end,
 [Adopt an existing repo](/docs/adopt/) brings keelstack into a repo that already has code,

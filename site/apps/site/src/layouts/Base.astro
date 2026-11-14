@@ -1,5 +1,6 @@
 ---
 import { canonicalUrl } from "../lib/site";
+import Verified from "../components/Verified.astro";
 
 interface Props {
   title: string;
@@ -41,6 +42,7 @@ const url = canonical ? canonicalUrl(Astro.url.pathname) : undefined;
   <body>
     <a class="skip" href="#main">Skip to content</a>
     <slot />
+    <Verified />
     <script is:inline>
       // Scrollable code blocks must be reachable by keyboard, also after a resize.
       const fit = () =>

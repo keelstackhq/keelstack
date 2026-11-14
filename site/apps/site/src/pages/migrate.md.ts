@@ -1,6 +1,7 @@
 // /migrate.md: the same data as /migrate/, as Markdown for agents.
 import { migrate, RUNBOOK_URL } from "../data/migrate";
 import { docMdPath } from "../lib/docs-md";
+import { startMdPath } from "../lib/start-md";
 import { SITE_URL } from "../lib/site";
 
 const fence = (s: string) => `\`\`\`bash\n${s}\n\`\`\``;
@@ -20,13 +21,7 @@ export const GET = () => {
     "",
     "## Quick start",
     "",
-    quick.setupLabel,
-    "",
-    fence(quick.setup),
-    "",
-    quick.setupNote,
-    "",
-    quick.network,
+    `${quick.setupLabel} ${SITE_URL}${startMdPath(quick.setupId)}`,
     "",
     quick.promptLabel,
     "",
@@ -38,9 +33,7 @@ export const GET = () => {
     "",
     "## What bosun migrate does",
     "",
-    does.intro,
-    "",
-    fence(does.commands),
+    `${does.intro} ${SITE_URL}${startMdPath(does.startId)}`,
     "",
     list(does.notes),
     "",
@@ -48,8 +41,6 @@ export const GET = () => {
     "## The mode ladder",
     "",
     ...migrate.ladder.map((r) => `- ${r[0]}: ${r[1]} Owner touches: ${r[2]}.`),
-    "",
-    fence(migrate.flags),
     "",
     list(migrate.notes),
     "",
@@ -59,6 +50,9 @@ export const GET = () => {
     "",
   ]
     .join("\n")
-    .replace(/\/docs\/([a-z-]+)\//g, (_m, slug: string) => `${SITE_URL}${docMdPath(slug)}`);
+    .replace(
+      /(?<![\w:./])\/docs\/([a-z-]+)\//g,
+      (_m, slug: string) => `${SITE_URL}${docMdPath(slug)}`,
+    );
   return new Response(md, { headers: { "Content-Type": "text/markdown; charset=utf-8" } });
 };

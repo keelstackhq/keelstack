@@ -9,5 +9,9 @@ export const versions = {
   berth: "0.1.0",
 } as const;
 
+/** The one "last verified" line: shown once per page by components/Verified.astro and docs-md.ts. */
+export const verifiedLine = (): string =>
+  `Last verified against bosun ${bare(versions.bosun)}, hull ${versions.hull}, splice ${versions.splice}.`;
+
 /** `v0.10.0` -> `0.10.0` */
 export const bare = (v: string): string => v.replace(/^v/, "");

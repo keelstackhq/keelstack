@@ -27,18 +27,14 @@ const { local, web, slack, quick, does } = migrate;
     </nav>
 
     <h2 id="quick">Quick start</h2>
-    <p>{quick.setupLabel}</p>
-    <pre><code>{quick.setup}</code></pre>
-    <p>{quick.setupNote}</p>
-    <p>{quick.network}</p>
+    <p>{quick.setupLabel} <a href={`/docs/start/#${quick.setupId}`}>Start, block {quick.setupId.toUpperCase()}</a>.</p>
     <p>{quick.promptLabel}</p>
     <pre><code>{quick.prompt}</code></pre>
     <p>{quick.promptNote}</p>
     <p>{quick.approve}</p>
 
     <h2 id="does">What bosun migrate does</h2>
-    <p>{does.intro}</p>
-    <pre><code>{does.commands}</code></pre>
+    <p>{does.intro} <a href={`/docs/start/#${does.startId}`}>Start, block {does.startId.toUpperCase()}</a>.</p>
     <ul>{does.notes.map((n) => <li>{n}</li>)}</ul>
 
     <h2 id="local">{local.heading}</h2>
@@ -46,7 +42,7 @@ const { local, web, slack, quick, does } = migrate;
 
     <h2 id="web">{web.heading}</h2>
     <ol>{web.steps.map((n) => <li>{n}</li>)}</ol>
-    <p>The script is on <a href="/docs/cloud/">the Cloud environment page</a>.</p>
+    <p>The setup script and network rules: <a href="/docs/start/#e">Start, block E</a>; the long form: <a href="/docs/cloud/">Cloud environment</a>.</p>
 
     <h2 id="slack">{slack.heading}</h2>
     <ol>{slack.steps.map((n) => <li>{n}</li>)}</ol>
@@ -66,7 +62,6 @@ const { local, web, slack, quick, does } = migrate;
         ))}
       </tbody>
     </table>
-    <pre><code>{migrate.flags}</code></pre>
     <ul>{migrate.notes.map((n) => <li>{n}</li>)}</ul>
     <p>
       Every knob, per mode: <a href={migrate.knobsUrl}>the knob table in bosun's quickstart</a>.

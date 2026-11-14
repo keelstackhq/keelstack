@@ -298,6 +298,14 @@ freely, template updates never touch it.
   block, F has the signed-approval block and prerequisites, Slack IDs and stdin explained, bosun Slack spec
   at `834c4c8`); axe clean (focusable scrolling code blocks, no nested aside); unused exports removed.
   docspack 0.1.23.
+- 2026-11-14 Round 5 (simplify): `/docs/start/<a-f>.md` is Setup plus one scenario block, cut from
+  `docs/start.md` by `src/lib/start-md.ts`; `/llms.txt` links those (no docs summaries, no tool pitches,
+  under 3.5 KB) so an agent reads about 1.0 to 1.7k tokens per scenario instead of 5.2k (chars/4).
+  One canonical place: the setup script and network rule live in Start block E (migrate and cloud
+  link it), the approval rules in `/docs/risk/` (Start F links them), migrate commands in block C.
+  One footer line "Last verified against bosun / hull / splice" from `versions.ts` (`Verified.astro`
+  in `Base.astro`, and at the end of each docs Markdown page); per-page "as of" lines removed. Phone:
+  the nav is not sticky and Get started shows the command and Copy on the first screen. docspack 0.1.24.
 
 ## Blocked
 

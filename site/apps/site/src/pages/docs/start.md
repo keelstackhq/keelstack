@@ -163,10 +163,7 @@ bosun spawn --slack-thread <ts> --slack-user <U...> --request -
 
 A normal-risk PR (no rule in .bosun/risk.toml matches) merges on green CI and a clean review verdict. No approval.
 
-The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: .bosun/**, governance/**, .claude/**, .splice/**, docs/setup-script.sh, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane.
-
-- Chat form: the owner tells the signing session (repo, PR, head SHA; approve or hold) and it posts the signed approval below.
-- GitHub: a plain /bosun approve <40-character head SHA> comment counts only when posted with a plain user token (typed in the GitHub web or mobile app, or from the owner's own machine); comments posted by the Claude app or a cloud session never count. A new push needs a new comment. Agent PRs are opened under the owner's login and GitHub forbids self-review, so the owner uses a plain comment, a signed approval, or merges.
+A high-risk PR needs the owner to approve its exact head: governance paths (R-gov), a looser gate (R-weaken), a secret (R-secrets) and more. Every rule, exception and way to approve: [Risk and approvals](/docs/risk/#cheat-sheet-who-approves-what). Plain form: the owner comments `/bosun approve <40-character head SHA>` from a plain user token (GitHub web or mobile app, or their own machine); comments from the Claude app or a cloud session never count; a new push needs a new comment.
 
 Signed form (works from a cloud session): a bosun release with signed approvals (0.2.1 or later) in .bosun/version, the signer's key enrolled in .bosun/approvers.toml on the default branch (bosun keygen --enroll; the enrolling PR is R-gov, so the owner approves it with a GitHub review or a plain comment, since no signed approval counts on that PR), and the PEM held by the signing session.
 

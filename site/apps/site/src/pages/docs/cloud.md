@@ -9,25 +9,16 @@ settings is [Cloud environments](https://code.claude.com/docs/en/cloud-environme
 
 ## Short version
 
-1. **Setup script**, pasted once (`bosun setup-snippet` prints it as `data.short`; Environments > Setup script). It never changes: each repo's own `docs/setup-script.sh` pins the tools.
-
-```bash
-for d in . ./*/; do
-  [ -f "$d/.bosun/version" ] && [ -f "$d/docs/setup-script.sh" ] || continue
-  (cd "$d" && timeout -k 10 1800 bash docs/setup-script.sh </dev/null) || echo "bosun: $d/docs/setup-script.sh failed" >&2
-done; exit 0
-```
-
-2. Network access: Limited, with Allow package managers ticked. Add only the hosts your repo's docs/setup-script.sh downloads from: a Rust repo needs github.com and release-assets.githubusercontent.com (prebuilt cargo tools); a repo that only uses npm needs none. No secrets in environment variables and no PAT: GitHub comes from the Claude GitHub App.
-3. **Variables:** only non-secret settings. When `[session]` in `.bosun/bosun.toml` sets an auto-compact window, `bosun setup-snippet` prints `data.autocompact.cloud_env`: paste those under Environments > the environment > Environment variables.
-4. **Tell bosun the environment** (an R-gov PR the owner approves), so spawned children run in it:
+1. **Setup script** and **network access**: the exact script (pasted once, never changes), the network rule and "no secrets, no PAT" are in [Start, block E](/docs/start/#e). Each repo's own `docs/setup-script.sh` pins the tools.
+2. **Variables:** only non-secret settings. When `[session]` in `.bosun/bosun.toml` sets an auto-compact window, `bosun setup-snippet` prints `data.autocompact.cloud_env`: paste those under Environments > the environment > Environment variables.
+3. **Tell bosun the environment** (an R-gov PR the owner approves), so spawned children run in it:
 
 ```toml
 [cloud]
 environment_id = "env_..."   # the cloud environment the spawned children run in
 ```
 
-5. **Limits:** the script runs as root before each session and stops after 1800 seconds; a failed repo script only warns. It cannot read the environment's variables or secrets. A denied host shows up as a failed command: add the host and start a new session.
+4. **Limits:** the script runs as root before each session and stops after 1800 seconds; a failed repo script only warns. It cannot read the environment's variables or secrets. A denied host shows up as a failed command: add the host and start a new session.
 
 The rest of this page is the long form, for when something needs a hand.
 
