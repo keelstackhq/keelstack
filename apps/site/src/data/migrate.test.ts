@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { footerLinks, nav } from "./content";
-import { migrate, RUNBOOK_URL } from "./migrate";
+import { APPENDIX_URL, migrate, RUNBOOK_URL } from "./migrate";
 import { buildLlmsTxt } from "../lib/llms";
 
 const page = readFileSync(new URL("../pages/migrate.astro", import.meta.url), "utf8");
@@ -25,29 +25,55 @@ test("the knob table has the nine booster knobs with the runbook's values", () =
   expect(by.curator_loosen).toEqual(["off", "propose"]);
 });
 
-test("three environments each end with a prompt that reads the runbook and never merges", () => {
+test("leads with the setup script from the guide, as is, then the 2-line prompt, then one PR", () => {
+  expect(migrate.quick.setup).toBe(
+    [
+      "for d in . ./*/; do",
+      '  [ -f "$d/.bosun/version" ] && [ -f "$d/docs/setup-script.sh" ] || continue',
+      '  (cd "$d" && timeout -k 10 1800 bash docs/setup-script.sh </dev/null) || echo "bosun: $d/docs/setup-script.sh failed" >&2',
+      "done; exit 0",
+    ].join("\n"),
+  );
+  expect(migrate.quick.prompt).toBe(
+    [
+      "Run `bosun migrate --to booster --direct`; do what its `next` and `data.then` say; stop when it asks for the owner.",
+      "After the merge run `bosun migrate --finish`.",
+    ].join("\n"),
+  );
+  expect(migrate.quick.prompt.split("\n")).toHaveLength(2);
+  expect(migrate.quick.approve).toContain("one PR");
+  const order = ["{quick.setup}", "{quick.prompt}", "{quick.approve}", '<h2 id="local">'].map((k) =>
+    page.indexOf(k),
+  );
+  expect(order.every((n) => n > 0)).toBe(true);
+  expect(order).toEqual(order.toSorted((a, b) => a - b));
+});
+
+test("network note: Limited with package managers, github.com and release-assets for Rust", () => {
+  expect(migrate.quick.network).toContain("Limited");
+  expect(migrate.quick.network).toContain("Allow package managers");
+  expect(migrate.quick.network).toContain("github.com");
+  expect(migrate.quick.network).toContain("release-assets.githubusercontent.com");
+  expect(migrate.quick.network).toContain("Rust");
+});
+
+test("requires bosun 0.15.0 and hull v0.10.0, and says so", () => {
+  expect(migrate.forWho).toContain("bosun 0.15.0");
+  expect(migrate.forWho).toContain("hull v0.10.0");
+  expect(JSON.stringify(migrate)).not.toContain("0.14.0");
+});
+
+test("CLI, web and Slack sections are short, one prompt for all, long path links to the appendix", () => {
   for (const env of [migrate.local, migrate.web, migrate.slack]) {
-    expect(env.prompt).toContain("docs/migrate-booster.md");
-    expect(env.prompt).toMatch(/[Nn]ever merge, tag or force-push/);
+    expect(env.steps.length).toBeLessThanOrEqual(5);
   }
-  expect(migrate.web.prompt).toContain("no PAT");
-  expect(migrate.slack.prompt).toContain("never in Slack");
+  expect(migrate.slack.heading).toContain("Slack");
+  expect(APPENDIX_URL).toBe(`${RUNBOOK_URL}#appendix-a-the-manual-path`);
+  expect(page).toContain("href={APPENDIX_URL}");
+  expect(migrate.web.steps.join(" ")).toContain("No secrets, no PAT");
 });
 
-test("web section covers setup script, hosts, env vs secrets and [cloud] environment_id", () => {
-  expect(migrate.web.setup).toBe("bosun setup-snippet");
-  expect(migrate.web.hosts.map((h) => h[0])).toEqual([
-    "registry.npmjs.org",
-    "deb.nodesource.com",
-    "github.com",
-    "tuf-repo-cdn.sigstore.dev",
-  ]);
-  expect(migrate.web.cloudToml).toContain("[cloud]");
-  expect(migrate.web.cloudToml).toContain("environment_id");
-  expect(migrate.web.env).toContain("No GitHub PAT");
-});
-
-test("page: three headings, runbook link, no new island", () => {
+test("page: env headings, runbook link, no new island", () => {
   expect(page).toContain("href={RUNBOOK_URL}");
   expect(RUNBOOK_URL).toBe(
     "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md",
@@ -70,18 +96,4 @@ test("copy never names a client org or repo", () => {
   const orgs = [...src.matchAll(/github\.com\/([A-Za-z0-9_.-]+)/g)].map((m) => m[1]);
   expect(orgs.length).toBeGreaterThan(0);
   expect(new Set(orgs)).toEqual(new Set(["keelstackhq"]));
-});
-
-test("registry step follows bosun main: number comes from bosun join, not doctor", () => {
-  const step = migrate.steps.find((x) => x[0] === "Pin the registry");
-  expect(step?.[1]).toContain("bosun join");
-  expect(step?.[1]).toContain("data.registry_issue");
-  expect(step?.[1]).not.toMatch(/doctor names/);
-  expect(JSON.stringify(migrate)).not.toMatch(/doctor names/);
-});
-
-test("web intro: owner does steps 1 and 3 to 5, the agent can check step 2", () => {
-  expect(migrate.web.intro).toContain("steps 1 and 3 to 5");
-  expect(migrate.web.intro).toContain("step 2");
-  expect(migrate.web.intro).not.toContain("once per repo");
 });
