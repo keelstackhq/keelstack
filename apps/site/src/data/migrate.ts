@@ -1,5 +1,5 @@
 // Move a repo to bosun booster: copy from bosun docs/migrate-booster.md (bosun main at bb4d1ab),
-// Quick start at its top. Needs bosun 0.15.0 and hull v0.10.0. Names no client org or repo.
+// Quick start at its top. Needs bosun 0.15.0 (pairs with hull v0.10.0, per the bosun changelog). Names no client org or repo.
 
 export const RUNBOOK_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md";
 export const APPENDIX_URL = `${RUNBOOK_URL}#appendix-a-the-manual-path`;
@@ -10,7 +10,7 @@ export const migrate = {
   summary:
     "For a repo that already runs hull and bosun: one setup script, a two-line prompt, one PR to approve. Works in Claude Code locally, on the web, and in Slack.",
   forWho:
-    "For a repo that already runs hull and bosun. It needs bosun 0.15.0 or newer and hull v0.10.0 or newer. Booster is steady plus a fast lane.",
+    "For a repo that already runs hull and bosun. It needs bosun 0.15.0 or newer. bosun 0.15.0 pairs with hull v0.10.0. Booster is steady plus a fast lane.",
   owner:
     "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines stay human-only (claude.ai/code, Routines); the PR body lists them.",
   quick: {

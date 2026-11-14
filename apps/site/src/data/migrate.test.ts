@@ -57,9 +57,10 @@ test("network note: Limited with package managers, github.com and release-assets
   expect(migrate.quick.network).toContain("Rust");
 });
 
-test("requires bosun 0.15.0 and hull v0.10.0, and says so", () => {
+test("requires bosun 0.15.0 and says it pairs with hull v0.10.0", () => {
   expect(migrate.forWho).toContain("bosun 0.15.0");
-  expect(migrate.forWho).toContain("hull v0.10.0");
+  expect(migrate.forWho).toContain("pairs with hull v0.10.0");
+  expect(migrate.forWho).not.toMatch(/hull v0\.10\.0 or newer/);
   expect(JSON.stringify(migrate)).not.toContain("0.14.0");
 });
 
