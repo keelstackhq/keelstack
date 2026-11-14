@@ -81,7 +81,7 @@ layout: ../../layouts/Docs.astro
 The guide below is hull's
 [\`docs/adopt.md\`](https://github.com/${repo}/blob/${commit}/${docPath}) at commit
 \`${commit.slice(0, 7)}\`, copied verbatim.${note} Its \`start-checklist.md\` is
-[Start a project](/docs/start-project/) on this site.
+[Start a project](/docs/start-project/) on this site. \`TODO(owner)\` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
 
 ## The short path
 

@@ -48,6 +48,8 @@ repo was rendered from. The full path, with the details, is in
 [Greenfield repo with bosun](/docs/greenfield-bosun/). A repo that already has code follows
 [Adopt an existing repo](/docs/adopt/).
 
+\`TODO(owner)\` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
+
 ${copy.replace(/^# .*\n\n/, "")}`;
 writeFileSync(new URL("../src/pages/docs/start-project.md", import.meta.url), page);
 console.log(`start-checklist: ${repo}@${commit} sha256 ${sha256}`);

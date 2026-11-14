@@ -32,6 +32,10 @@ describe("Start a project page", () => {
     );
   });
 
+  it("says TODO(owner) is hull's marker, not a step", () => {
+    expect(page).toContain("`TODO(owner)` in the copy is hull's own marker");
+  });
+
   it("is a ready docs page right after Start here", () => {
     const slugs = docs.map((d) => d.slug);
     expect(slugs.indexOf("start-project")).toBe(slugs.indexOf("start-here") + 1);

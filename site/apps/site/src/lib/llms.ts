@@ -30,7 +30,7 @@ export function buildLlmsTxt(): string {
     "",
     `Agents: bosun prints one JSON object per command (${fields}). Do what \`error.fix\` says; make the calls in \`next\`; never work around a refusal. Exit codes: ${codes}.`,
     "",
-    `Upgrade: ${SITE_URL}${docMdPath("update")} (hull: \`splice update --all\`; bosun: \`bosun pin --latest --pr\`). Move a repo to bosun booster: ${SITE_URL}/migrate/ (${RUNBOOK_URL}).`,
+    `Upgrade: ${SITE_URL}${docMdPath("update")} (hull: \`splice update --all\`; bosun: \`bosun pin --latest --pr\`). Move a repo to bosun booster: ${SITE_URL}/migrate.md (${RUNBOOK_URL}).`,
     "",
     "## Docs",
     "",

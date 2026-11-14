@@ -9,6 +9,7 @@ export interface Versions {
   hull: string;
   splice: string;
   bosun: string;
+  hoist: string;
 }
 
 export interface Scenario {
@@ -88,7 +89,7 @@ export const MODE_LADDER: readonly (readonly [string, string, string])[] = [
 ];
 
 export const MIGRATE_NOTES = [
-  "One rung per PR unless the owner passes --direct; the PR body records that choice. Never move lighter after a red week.",
+  "One rung per PR unless the owner passes --direct; the PR body records that choice. Never move to a less strict mode after a red week.",
   "Before the next rung (bosun metrics --days 7): steady needs red-CI under 30 % and 5 owner touches a day or fewer for two weeks; booster under 20 % and 3; autonomous under 15 % and 1.",
   "Rollback: going tighter is the same command (bosun migrate --to steady): no R-weaken, still R-gov. Deleting the [mode] table returns to gatekeeper.",
 ];
@@ -142,12 +143,20 @@ export const newRepoBlock = (v: Versions): string =>
   [
     `pnpm dlx @keelstackhq/splice@${v.splice} new gh:keelstackhq/hull//template my-repo --ref ${v.hull} --piece preact-app:web --piece hono-worker:api`,
     "cd my-repo && pnpm install && pnpm run ci",
+    "gh repo create <owner>/my-repo --private --source . --push   # owner step, before bosun init",
     "bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR",
     "bosun doctor",
   ].join("\n");
 
 export const NEW_REPO_OWNER =
-  "Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then run hoist apply.";
+  "Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then, on your machine in a checkout of the default branch:";
+
+export const hoistBlock = (v: Versions): string =>
+  [
+    `npm install -g @keelstackhq/hoist@${v.hoist}`,
+    "hoist plan --area github          # what would change; writes nothing",
+    "hoist apply --area github --yes   # write it, then verify like `hoist check`",
+  ].join("\n");
 
 export const adoptHullBlock = (v: Versions, assessUrl: string, sha: string): string =>
   [

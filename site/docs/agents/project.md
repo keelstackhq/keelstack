@@ -287,6 +287,12 @@ freely, template updates never touch it.
   dead anchor and `adopt.md` relative-link redirect fixed; `_headers` caches `/_astro/*` immutable.
   Versions rechecked against tags and npm (hull v0.10.0, splice 0.4.0, bosun 0.15.0 = main
   `834c4c8`, hoist 0.4.1). docspack 0.1.19.
+- 2026-11-14 Round 3: `/docs/start` Setup lists prerequisites and the exit-5 rule, blocks A, C, D point
+  to it, the nine-step long form is folded into block B; Start a project and Adopt say hull's
+  `TODO(owner)` is hull's marker (scripts emit the line, tests pin it); Archivo latin preloaded.
+  The dry run's gaps are closed: `/migrate.md` (linked from llms.txt), `/migrate/` step 1 for web and
+  Slack only, bosun pinned from `versions.ts`, Routines and D-017 explained, block A with
+  `gh repo create` and hoist install/apply. docspack 0.1.22 (also "less strict" for "lighter mode" in risk, tasks, operating model; absolute links in `/migrate.md`).
 
 ## Blocked
 

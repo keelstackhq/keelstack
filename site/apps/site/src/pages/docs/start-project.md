@@ -11,6 +11,8 @@ repo was rendered from. The full path, with the details, is in
 [Greenfield repo with bosun](/docs/greenfield-bosun/). A repo that already has code follows
 [Adopt an existing repo](/docs/adopt/).
 
+`TODO(owner)` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
+
 Every human step before agents can work autonomously on a new repo rendered from hull (`template/`
 or `template-rust/`; both ship `ready`), in order:
 computer steps first, then phone steps (D-009), each with how an agent verifies it. In a rendered

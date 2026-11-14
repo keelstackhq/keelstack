@@ -21,20 +21,20 @@ export const migrate = {
     "For a repo that already runs hull and bosun: one setup script, a two-line prompt, one PR to approve. Works in Claude Code locally, on the web, and in Slack.",
   forWho: `For a repo that already runs hull and bosun. It needs bosun ${bare(versions.bosun)} or newer. bosun ${bare(versions.bosun)} pairs with hull ${versions.hull}. Booster is steady plus a fast lane.`,
   owner:
-    "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines stay human-only (claude.ai/code, Routines); the PR body lists them.",
+    "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines (scheduled Claude Code sessions such as janitor and curator, set up at claude.ai/code; see /docs/getting-started/) stay human-only; the PR body lists them.",
   quick: {
     setupLabel:
-      "1. Cloud environment setup script. bosun setup-snippet prints it as data.short; paste it once as the environment's Setup script:",
+      "1. Web and Slack only (in the CLI, skip to the prompt). Cloud environment setup script: `bosun setup-snippet` prints it as data.short; paste it once as the environment's Setup script:",
     setup: SETUP_SHORT,
     setupNote:
-      "Each repo's own docs/setup-script.sh installs the pinned bosun (sha512 checked) and the rest. A repo without that script needs the long form, data.script.",
+      "Each repo's own docs/setup-script.sh installs the pinned bosun (sha512 checked) and the rest. A repo without that script: paste data.script from `bosun setup-snippet` instead.",
     network: NETWORK,
     promptLabel: "2. The prompt. The same in the CLI, on the web and to Claude Tag in Slack:",
     prompt: MIGRATE_PROMPT,
     promptNote:
       "This prompt goes straight to booster: --direct is the owner's choice, and the PR body records it. Drop --direct to move one step (gatekeeper to steady).",
     approve:
-      "3. You approve one PR: the exact head. Auto-merge follows. risk-check still waits for the owner (R-gov always, R-weaken for a lighter mode).",
+      "3. You approve one PR: the exact head. Auto-merge follows. risk-check still waits for the owner (R-gov always, R-weaken for a less strict mode).",
   },
   ladder: MODE_LADDER,
   ladderHead: ["Mode", "What bosun does for you", "Owner touches"] as const,
@@ -53,12 +53,12 @@ export const migrate = {
     ],
   },
   fastLane:
-    "Fast lane: the orchestrator approves a PR whose paths are on the D-017 allowlist and not on its deny list. Every verdict on the exact head must be clean, one verdict must come from an independent reviewer session, and the PR must close an open task its author leases. An explicit [approvals] policy in the file wins. Targets: red-CI rate under 20 %, at most 3 owner touches a day.",
+    "Fast lane: the orchestrator approves a PR whose paths are on the autonomous policy's allowlist (D-017, an org decision; see /docs/operating-model/) and not on its deny list. Every verdict on the exact head must be clean, one verdict must come from an independent reviewer session, and the PR must close an open task its author leases. An explicit [approvals] policy in the file wins. Targets: red-CI rate under 20 %, at most 3 owner touches a day.",
 
   local: {
     heading: "Claude Code on your machine (CLI)",
     steps: [
-      "[computer] npm i -g @keelstackhq/bosun (a release where bosun migrate --help works), and gh auth login once.",
+      `[computer] npm i -g @keelstackhq/bosun@${bare(versions.bosun)}, and gh auth login once.`,
       "Set GITHUB_TOKEN to gh auth token in your shell. Never in a file.",
       "Open Claude Code in the repo, on the default branch, clean tree. Paste the prompt.",
       "[phone] Approve the PR head when Claude asks.",

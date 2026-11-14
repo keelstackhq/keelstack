@@ -86,7 +86,7 @@ push, red-PR notices, revert PRs on a red `main` and the daily digest; `booster`
 approval (the `autonomous` policy), auto spawn, fixer sessions and curator proposals;
 `autonomous` also readies exact-inverse reverts with auto-merge. A mode never moves the boundary
 files or the owner floor (R-weaken, R-gov, R-secrets, R-prod-write, workflows, releases and tags
-stay with the owner), and moving to a lighter mode is itself an owner-approved R-weaken change.
+stay with the owner), and moving to a less strict mode is itself an owner-approved R-weaken change.
 A brake (a red `main` twice, two reverts, or a red-CI rate over the mode's target) turns the spawn
 and heal helpers down by itself. Status today: partial, since the budget bindings and the
 automatic narrowing after an incident are still open. See [Tasks and sessions](/docs/tasks/) and

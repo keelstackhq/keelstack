@@ -5,7 +5,7 @@ layout: ../../layouts/Docs.astro
 The guide below is hull's
 [`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/adopt.md) at commit
 `f2b6a68`, copied verbatim. Its `start-checklist.md` is
-[Start a project](/docs/start-project/) on this site.
+[Start a project](/docs/start-project/) on this site. `TODO(owner)` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
 
 ## The short path
 

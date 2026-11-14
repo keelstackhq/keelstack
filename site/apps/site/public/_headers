@@ -1,5 +1,7 @@
 /docs/*.md
   Content-Type: text/markdown; charset=utf-8
+/migrate.md
+  Content-Type: text/markdown; charset=utf-8
 /assess/*
   Content-Type: text/javascript; charset=utf-8
 /_astro/*

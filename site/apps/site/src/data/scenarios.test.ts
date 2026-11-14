@@ -14,6 +14,7 @@ import {
   MIGRATE_COMMANDS,
   newRepoBlock,
   NETWORK,
+  hoistBlock,
   NEW_REPO_OWNER,
   NO_APPROVAL,
   OWNER_APPROVES,
@@ -84,6 +85,7 @@ test("each /docs/start block sits in its own scenario section, whole and in orde
 test("/docs/start carries the shared blocks", () => {
   const blocks = [
     newRepoBlock(versions),
+    hoistBlock(versions),
     adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256),
     adoptBosunBlock,
     cliBlock,

@@ -17,6 +17,8 @@ npm i -g @keelstackhq/bosun@0.15.0
 export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 ```
 
+Needs git, Node, and `gh auth login` done once (token scopes: repo, workflow). Run in a clean checkout of the default branch. `bosun` exit 5 means stop and tell the owner; never work around it.
+
 1. [New repo](#a): hull and bosun.
 2. [Adopt a repo](#b): hull assess and splice adopt, or bosun alone.
 3. [Change mode](#c): gatekeeper, steady, booster, autonomous.
@@ -28,15 +30,27 @@ export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 
 ## A. New repo from hull and bosun
 
+Needs [Setup](#setup).
+
+After `splice new`, write `plans/<name>.md` in the new repo from the owner's brief (`bosun plan check` it): `bosun init` needs it. Use `//template-rust` and `--stack rust` for a Rust repo; piece ids and `my-repo` are your choices.
+
 ```bash
 pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo --ref v0.10.0 --piece preact-app:web --piece hono-worker:api
 cd my-repo && pnpm install && pnpm run ci
+gh repo create <owner>/my-repo --private --source . --push   # owner step, before bosun init
 bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR
 bosun doctor
 ```
 
-Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then run hoist apply.
-Full path: [Start here](/docs/start-here/), [Start a project](/docs/start-project/), [Greenfield repo with bosun](/docs/greenfield-bosun/).
+Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then, on your machine in a checkout of the default branch:
+
+```bash
+npm install -g @keelstackhq/hoist@0.4.1
+hoist plan --area github          # what would change; writes nothing
+hoist apply --area github --yes   # write it, then verify like `hoist check`
+```
+
+Agents in the cloud: [E](#e). Full path: [Start here](/docs/start-here/), [Start a project](/docs/start-project/), [Greenfield repo with bosun](/docs/greenfield-bosun/).
 
 <a id="b"></a>
 
@@ -62,26 +76,31 @@ bosun doctor
 ```
 
 Owner: run bosun keygen --enroll first (in the orchestrator's container) and commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
-Full guides: [Adopt an existing repo](/docs/adopt/), [the nine steps](#long-form) below.
+Then, in the setup PR's repo settings: install the [Claude GitHub App](https://github.com/apps/claude), protect the default branch with the required checks `ci-ok` (`bosun-ok` if a `ci-ok` job exists; adopt prints which), `risk-check`, `review-verdict` and `main-open`, and turn on Allow auto-merge. Run `bosun doctor` until only `plan` is left, then write `plans/<project>.md` and run `bosun plan check`. Cloud setup script: [E](#e). adopt never overwrites existing files; merge the setup PR yourself, since bosun's checks cannot run on it before its workflows are on the default branch; `plugins` may stay missing on a computer in doctor.
+Full guide: [Adopt an existing repo](/docs/adopt/).
 
 <a id="c"></a>
 
 ## C. Change the bosun mode
+
+Needs [Setup](#setup).
 
 Modes run gatekeeper, steady, booster, autonomous. One PR per move.
 
 ```bash
 bosun migrate --to <mode> --dry-run   # survey and planned edits; writes nothing
 bosun migrate --to <mode> [--direct]  # one governance PR (draft); --direct skips the rungs between
-bosun pr --pr <n> --ready             # after the local gates: ready + auto-merge
+bosun pr --pr <n> --ready             # n = data.pr from migrate's JSON; after the local gates: ready + auto-merge
 bosun migrate --finish                # after the merge: join, plan amend (idempotent)
 ```
 
-Owner: approve the one PR head (R-gov, and R-weaken for a lighter mode). Ladder, knobs and the two-line prompt for Claude: [Move a repo to bosun booster](https://keelstack.dev/migrate/).
+Needs a repo that already runs bosun 0.15.0 or later. Use `--direct` only when the owner says so; otherwise one rung per PR, `--finish` after each merge. Owner: approve the one PR head as in [F](#f) (R-gov, and R-weaken for a less strict mode). Ladder, knobs and the two-line prompt for Claude: [Move a repo to bosun booster](https://keelstack.dev/migrate/).
 
 <a id="d"></a>
 
 ## D. Upgrade
+
+Needs [Setup](#setup).
 
 ```bash
 bosun pin --latest --check            # list only, writes nothing
@@ -143,39 +162,6 @@ The owner approves the exact head of a high-risk PR. That is any PR that touches
 - GitHub: comment /bosun approve <40-character head SHA> from the owner account; a new push needs a new comment.
 
 Opt-in CI signer (keyless fast lane) and Slack digest: [Risk and approvals](/docs/risk/#opt-in-ci-signer-and-slack-digest).
-
-<a id="long-form"></a>
-
-## Long form: bosun on an existing repo, nine steps
-
-1. **Install bosun.** As in [Setup](#setup) (or `cargo install keel-bosun`).
-2. **Give it a token.** `export GITHUB_TOKEN=$(gh auth token)`, with the repo and workflow scopes.
-3. **Adopt.** `bosun adopt --owner <you>` writes bosun's files into your worktree, makes the
-   labels and the registry issue, and commits nothing. Its JSON lists the exact git commands in
-   `data.commands` and only the owner steps still left in `data.owner_steps`. Try
-   `bosun adopt --dry-run` first to see what would change; existing files are never overwritten.
-4. **Approval key.** `bosun keygen --enroll` makes an ed25519 key, writes the private half to
-   `~/.bosun/approver.pem` (mode 0600; it refuses a path inside any git worktree) and adds the
-   public half to `.bosun/approvers.toml`. Run it only on the machine that signs approvals. If an
-   orchestrator session signs for you, that session runs it in its own container instead and opens
-   a PR with `.bosun/approvers.toml`, which you approve.
-5. **Setup PR.** Run the commands adopt printed (branch `bosun-setup`, `git add`, commit, push),
-   open the pull request and merge it yourself: until bosun's workflows are on the default branch,
-   its checks cannot run on that PR.
-6. **GitHub settings.** Install the [Claude GitHub App](https://github.com/apps/claude) on the
-   repo. Set branch protection on the default branch with the link adopt prints, with the
-   required checks `ci-ok` (`bosun-ok` if your repo already has a `ci-ok` job; adopt's printed step names the right one), `risk-check`, `review-verdict` and `main-open`. Turn on **Allow
-   auto-merge** (Settings, General).
-7. **Cloud environment.** Paste the output of `bosun setup-snippet` once as the cloud
-   environment's setup script. You never paste it again: it runs each checkout's own
-   `docs/setup-script.sh`, which pins the tool versions and moves them by reviewed PRs. Details:
-   [Cloud environment](/docs/cloud/).
-8. **Doctor.** `bosun doctor` lists each step as ok, warn, skipped or missing, with the exact fix;
-   `data.next_step` names the first one missing. It also runs without a token (the GitHub checks
-   are then skipped). Do each fix and run it again until only `plan` is left. On a computer
-   `plugins` may stay missing too: cloud sessions install them.
-9. **First plan.** Write `plans/<project>.md` in bosun's plan format, then `bosun plan check` it.
-   Agents take it from there: [Tasks and sessions](/docs/tasks/).
 
 ## For agents
 

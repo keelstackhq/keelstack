@@ -96,6 +96,10 @@ describe("Adopt an existing repo", () => {
     expect(prompt).toContain("keeping an owned base file (for example ci.yml) blocks adopt");
   });
 
+  it("says TODO(owner) is hull's marker, not a step", () => {
+    expect(page).toContain("`TODO(owner)` in the copy is hull's own marker");
+  });
+
   it("is a ready docs page after Greenfield repo with bosun", () => {
     const slugs = docs.map((d) => d.slug);
     expect(slugs.indexOf("adopt")).toBe(slugs.indexOf("greenfield-bosun") + 1);

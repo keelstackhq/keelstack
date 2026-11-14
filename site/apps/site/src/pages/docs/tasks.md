@@ -291,7 +291,7 @@ or `autonomous`) sets how much bosun does for you: gates before push (`push_gate
 (`bosun heal`: a notice or a fixer session for a red PR, a revert PR for a red `main`), a daily
 digest (`bosun digest`), auto spawn (`bosun wave tick`) and a brake that turns the helpers down
 after a red `main`, reverts or a high red-CI rate. `bosun mode` prints the knobs in force and
-`bosun metrics` the numbers. A lighter mode is an owner-approved R-weaken change; budgets and
+`bosun metrics` the numbers. A less strict mode is an owner-approved R-weaken change; budgets and
 limits are never part of a mode. `bosun migrate --to <mode>` opens the one PR for a move, and
 `--finish` after the merge. Details: [modes spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md) and bosun's
 [quickstart](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/quickstart.md).

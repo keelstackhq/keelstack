@@ -44,7 +44,7 @@ export const docs: DocPage[] = [
     slug: "start",
     title: "Start: pick your scenario",
     summary:
-      "One exact block each: new repo, adopt a repo, change bosun mode, upgrade, where agents run, approvals; then the nine steps for bosun on an existing repo.",
+      "One exact block each: new repo, adopt a repo, change bosun mode, upgrade, where agents run, approvals.",
     sources: [
       "bosun/docs/quickstart.md",
       "bosun/docs/migrate-booster.md",

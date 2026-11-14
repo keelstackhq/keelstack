@@ -86,7 +86,7 @@ test("linked from the nav, the footer, the home Get started links and llms.txt",
   expect(nav.some((l) => l.href === "/migrate/")).toBe(true);
   expect(footerLinks.some((l) => l.href === "/migrate/")).toBe(true);
   const out = buildLlmsTxt();
-  expect(out).toContain("/migrate/");
+  expect(out).toContain("/migrate.md");
   expect(out).toContain(RUNBOOK_URL);
 });
 
