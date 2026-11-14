@@ -37,6 +37,7 @@ After `splice new`, write `plans/<name>.md` in the new repo from the owner's bri
 ```bash
 pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo --ref v0.10.0 --piece preact-app:web --piece hono-worker:api
 cd my-repo && pnpm install && pnpm run ci
+git add -A && git commit -m "chore: render from hull"   # splice new only runs git init
 gh repo create <owner>/my-repo --private --source . --push   # owner step, before bosun init
 bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR
 bosun doctor
@@ -56,7 +57,7 @@ Agents in the cloud: [E](#e). Full path: [Start here](/docs/start-here/), [Start
 
 ## B. Adopt an existing repo
 
-With hull: assess first, then splice adopt as a dry run.
+With hull: from the repo root on a new branch with a clean tree, assess first, then splice adopt as a dry run. Take `<template>` (`template` or `template-rust`) and each `<id>:<name>` from the assess JSON (`next`, `pieces`); with no template it is channels-only: use the channel step of the guide.
 
 ```bash
 curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
@@ -65,7 +66,7 @@ node /tmp/assess.mjs --assess --json
 npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.0 --piece <id>:<name> ... --dry-run --json
 ```
 
-Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.
+Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A (hoist apply sets the ci-ok ruleset).
 
 With bosun alone (no hull, no splice), after [Setup](#setup):
 
@@ -75,7 +76,7 @@ bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor
 ```
 
-Owner: run bosun keygen --enroll first (in the orchestrator's container) and commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
+Owner: before the setup PR, the session that will sign approvals runs bosun keygen --enroll (in its own container or machine: the private key never leaves it) and you commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
 Then, in the setup PR's repo settings: install the [Claude GitHub App](https://github.com/apps/claude), protect the default branch with the required checks `ci-ok` (`bosun-ok` if a `ci-ok` job exists; adopt prints which), `risk-check`, `review-verdict` and `main-open`, and turn on Allow auto-merge. Run `bosun doctor` until only `plan` is left, then write `plans/<project>.md` and run `bosun plan check`. Cloud setup script: [E](#e). adopt never overwrites existing files; merge the setup PR yourself, since bosun's checks cannot run on it before its workflows are on the default branch; `plugins` may stay missing on a computer in doctor.
 Full guide: [Adopt an existing repo](/docs/adopt/).
 
@@ -103,18 +104,24 @@ Needs a repo that already runs bosun 0.15.0 or later. Use `--direct` only when t
 Needs [Setup](#setup).
 
 ```bash
-bosun pin --latest --check            # list only, writes nothing
+bosun pin --latest --check            # lists tools behind, downloads and writes nothing; run on the default branch
 bosun pin --latest --pr               # verifies npm sha512, opens a draft PR; the owner approves
-npm i -g @keelstackhq/bosun@<new> && bosun --version   # your machine, after the merge
-git switch -c chore/splice-update && splice update --all
-splice check && pnpm install && pnpm run ci
+# after it merges, on your machine (<new> = the version pin --check printed):
+npm i -g @keelstackhq/bosun@<new> && bosun --version
+# then hull, on its own branch:
+git switch <default-branch> && git pull && git switch -c chore/splice-update
+pnpm dlx @keelstackhq/splice@0.4.0 update --all
+pnpm dlx @keelstackhq/splice@0.4.0 check && pnpm install && pnpm run ci
+git add -A && git commit -m "chore: splice update to hull vX.Y.Z" && git push -u origin HEAD
 ```
 
-Cloud sessions need nothing: they run the repo's own setup script. Merge only when `ci-ok` is green. Both paths in full: [Update](/docs/update/).
+Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo with .splice/channels/bosun.toml cannot run bosun pin (it refuses): use splice update --channel bosun. Cloud sessions need nothing: they run the repo's own setup script. Merge only when ci-ok is green. Both paths in full: [Update](/docs/update/).
 
 <a id="e"></a>
 
 ## E. Where agents run
+
+Assumes a repo set up by [A](#a) or [B](#b), with the setup PR merged: the setup script below runs only repos that have `.bosun/version` and `docs/setup-script.sh`, and silently skips the rest.
 
 **Claude Code CLI.** After [Setup](#setup), in the repo on a clean default branch, then paste the prompt.
 
@@ -122,7 +129,7 @@ Cloud sessions need nothing: they run the repo's own setup script. Merge only wh
 bosun doctor   # each missing step with its fix
 ```
 
-**Claude Code on the web.** Once per repo, in the environment's Setup script (`bosun setup-snippet` prints it as `data.short`):
+**Claude Code on the web.** Once per repo: install the [Claude GitHub App](https://github.com/apps/claude) on it, create an environment for it (session title bar, Edit), and paste this verbatim as its Setup script (no need to run anything first; `bosun setup-snippet` prints the same as `data.short`):
 
 ```bash
 for d in . ./*/; do
@@ -131,9 +138,9 @@ for d in . ./*/; do
 done; exit 0
 ```
 
-Network access: Limited, with Allow package managers ticked. Add only the hosts your repo's docs/setup-script.sh downloads from: a Rust repo needs github.com and release-assets.githubusercontent.com (prebuilt cargo tools); a repo that only uses npm needs none. No secrets in environment variables and no PAT: GitHub comes from the Claude GitHub App. Details: [Cloud environment](/docs/cloud/).
+Network access: Limited, with Allow package managers ticked. Add only the hosts your repo's docs/setup-script.sh downloads from: a Rust repo needs github.com and release-assets.githubusercontent.com (prebuilt cargo tools); a repo that only uses npm needs none. No secrets in environment variables and no PAT: GitHub comes from the Claude GitHub App. A failed repo script only warns in the session's setup log: if a tool is missing, read the log and add the host. Children inherit the caller's environment; an R-gov PR can set `[cloud] environment_id = "env_..."` in `.bosun/bosun.toml` for spawns by relay or wave (the id is on the environment's settings). Owner: also create the Routines `bosun doctor` lists; doctor cannot see them. Details: [Cloud environment](/docs/cloud/).
 
-**Claude Tag in Slack.** Once, an R-gov PR: a private channel, your Slack ID in `governance/owners.toml`, then in `.bosun/bosun.toml` this and the `[cloud]` table from the web setup. No orchestrator session is needed.
+**Claude Tag in Slack.** Needs Claude Tag installed in your Slack workspace and invited to a private channel with no guests that is not shared. Claude Tag runs each thread on the environment chosen for that channel in Claude Tag settings: use the one from the web setup above. Once, an R-gov PR (a CLI or web session opens it; the owner approves it as in [F](#f)): your Slack member ID in `governance/owners.toml` (the `slack` field of your owner entry, see the spec), and in `.bosun/bosun.toml` this `[slack]` table, plus the `[cloud]` table from the web setup if relay or wave spawns should use that environment. `channel` is the channel ID (channel details, at the bottom); `spawners = "owners"` lets only owners with a Slack ID start work; `may_spawn = true` allows `bosun spawn` from a thread, under the same checks and budget as any spawn. The owner also creates the hourly notify Routine. Fields, stdin and the notify and ack flow: [bosun's Slack spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/10-slack.md).
 
 ```toml
 [slack]
@@ -142,7 +149,7 @@ spawners = "owners"
 may_spawn = true
 ```
 
-In the channel the Claude Tag session labels itself and spawns work:
+In the channel the Claude Tag session labels itself and spawns work. `<ts>` and `<U...>` are the thread's timestamp and the poster's Slack user ID; `--channel-info -` (on `bosun notify`) reads the channel's JSON from stdin; `--request -` (on `bosun spawn`) reads the owner's message. `bosun notify` lists due posts in `next` as `slack_post`; the session posts them and then runs `bosun notify --ack <key>`. Slack never approves: approve on GitHub as in [F](#f).
 
 ```bash
 bosun join --origin slack --slack-channel C0123456789 [--slack-thread <ts>]
@@ -158,8 +165,18 @@ A normal-risk PR (no rule in .bosun/risk.toml matches) merges on green CI and a 
 
 The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: .bosun/**, governance/**, .claude/**, .splice/**, docs/setup-script.sh, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane.
 
-- Chat form: Claude asks in the Claude Code chat (repo, PR, head SHA; approve or hold) and posts the signed approval.
-- GitHub: comment /bosun approve <40-character head SHA> from the owner account; a new push needs a new comment.
+- Chat form: the owner tells the signing session (repo, PR, head SHA; approve or hold) and it posts the signed approval below.
+- GitHub: a plain /bosun approve <40-character head SHA> comment counts only when posted with a plain user token (typed in the GitHub web or mobile app, or from the owner's own machine); comments posted by the Claude app or a cloud session never count. A new push needs a new comment. Agent PRs are opened under the owner's login and GitHub forbids self-review, so the owner uses a plain comment, a signed approval, or merges.
+
+Signed form (works from a cloud session): a bosun release with signed approvals (0.2.1 or later) in .bosun/version, the signer's key enrolled in .bosun/approvers.toml on the default branch (bosun keygen --enroll; the enrolling PR is R-gov, so the owner approves it with a GitHub review or a plain comment, since no signed approval counts on that PR), and the PEM held by the signing session.
+
+```bash
+bosun approve --list                                          # ready PRs and heads; writes nothing
+bosun approve <pr>@<40-character head SHA> --sign-key <pem> --print   # shows the signed comment
+bosun approve <pr>@<40-character head SHA> --sign-key <pem>           # posts it
+```
+
+A review that requests changes (or was dismissed) withdraws comment, signed and delegate approvals; a later approving review ends that state. After it is settled, comment `/bosun recheck` or re-run the `risk` workflow. Slack never approves.
 
 Opt-in CI signer (keyless fast lane) and Slack digest: [Risk and approvals](/docs/risk/#opt-in-ci-signer-and-slack-digest).
 

@@ -4,6 +4,7 @@ import { buildLlmsTxt } from "../lib/llms";
 import { pickPath } from "./content";
 import {
   ADOPT_BOSUN_OWNER,
+  ADOPT_HULL_NOTE,
   adoptBosunBlock,
   adoptHullBlock,
   installBlock,
@@ -15,6 +16,10 @@ import {
   newRepoBlock,
   NETWORK,
   hoistBlock,
+  upgradeBlock,
+  UPGRADE_NOTE,
+  approveBlock,
+  SIGNED_PREREQ,
   NEW_REPO_OWNER,
   NO_APPROVAL,
   OWNER_APPROVES,
@@ -92,12 +97,16 @@ test("/docs/start carries the shared blocks", () => {
     SETUP_SHORT,
     SLACK_TOML,
     SLACK_COMMANDS,
+    upgradeBlock(versions),
+    approveBlock,
   ];
   for (const b of blocks) for (const l of lines(b)) expect(start).toContain(l);
   for (const l of lines(MIGRATE_COMMANDS)) expect(start).toContain(l.split("   #")[0]);
   for (const t of [
     NEW_REPO_OWNER,
     ADOPT_BOSUN_OWNER,
+    UPGRADE_NOTE,
+    SIGNED_PREREQ,
     NETWORK,
     NO_APPROVAL,
     OWNER_APPROVES,
@@ -179,4 +188,17 @@ test("the bosun install line is on /docs/start once, in the setup block", () => 
   expect(start).toContain(installBlock(versions));
   expect(start.split(`npm i -g @keelstackhq/bosun@${bare(versions.bosun)}`)).toHaveLength(2);
   expect(start.split("export GITHUB_TOKEN=$(gh auth token)").length).toBeLessThanOrEqual(3);
+});
+
+test("/docs/adopt carries the same B notes as /docs/start", () => {
+  const adoptPage = read("docs/adopt.md");
+  expect(adoptPage).toContain(ADOPT_HULL_NOTE);
+  expect(adoptPage).toContain(ADOPT_BOSUN_OWNER);
+});
+
+test("block A commits the render before it pushes (splice new only runs git init)", () => {
+  const b = newRepoBlock(versions);
+  const commit = b.indexOf('git add -A && git commit -m "chore: render from hull"');
+  expect(commit).toBeGreaterThan(-1);
+  expect(commit).toBeLessThan(b.indexOf("gh repo create"));
 });

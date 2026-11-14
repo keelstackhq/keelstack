@@ -19,7 +19,8 @@ test("the hull update path is on the page", () => {
   ]);
   expect(update.hull.notes).toEqual([
     "Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.",
-    "Needs splice 0.3.0 or later (`pnpm dlx @keelstackhq/splice` works without installing it).",
+    "Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.4.0` in place of `splice`.",
+    "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
     "Merge only when `ci-ok` is green.",
   ]);
 });

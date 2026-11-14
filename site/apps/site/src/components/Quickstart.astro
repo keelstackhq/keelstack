@@ -18,7 +18,7 @@ import SectionHead from "./SectionHead.astro";
           ))
         }
       </ol>
-      <aside class="agents" aria-labelledby="qs-agents-h">
+      <div class="agents" role="group" aria-labelledby="qs-agents-h">
         <h3 id="qs-agents-h">{q.agents.heading}</h3>
         <p>{q.agents.body}</p>
         <p class="fields">
@@ -34,7 +34,7 @@ import SectionHead from "./SectionHead.astro";
             ))
           }
         </dl>
-      </aside>
+      </div>
     </div>
     <p class="more"><a href={q.more.href}>{q.more.label} →</a></p>
   </div>

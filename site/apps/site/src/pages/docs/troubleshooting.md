@@ -49,7 +49,7 @@ Check, in order:
   40-character SHA is required.
 - **Edited?** An edited comment does not count; post a new one.
 - **Not an owner?** The login must be in `governance/owners.toml` on the default branch.
-- **Changes requested?** Your newer review requesting changes on the head withdraws the comment.
+- **Changes requested?** A newer review requesting changes on the head (or a dismissed one) withdraws comment, signed and delegate approvals; a later approving review ends that state. Then comment `/bosun recheck` or re-run the `risk` workflow.
 
 ### Every weekly splice update pull request needs the owner
 

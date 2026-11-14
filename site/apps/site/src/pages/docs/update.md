@@ -19,20 +19,21 @@ Work on a branch, so the update is one reviewable change:
 8. `git add -A && git commit -m "chore: splice update to hull vX.Y.Z"`
 
 - Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.
-- Needs splice 0.3.0 or later (`pnpm dlx @keelstackhq/splice` works without installing it).
+- Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.4.0` in place of `splice`.
+- Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.
 - Merge only when `ci-ok` is green.
 - Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/updating.md) at tag `v0.10.0` (`f2b6a68`).
 
 ## Update bosun
 
 1. `bosun doctor` # step 17 "update" gives the fix; warns, never fails
-2. `bosun pin --latest --check` # list only, writes nothing
+2. `bosun pin --latest --check` # lists tools behind, downloads and writes nothing; run on the default branch
 3. `bosun pin --latest --pr` # verifies npm sha512, branch bosun/pin, draft PR (default branch, clean tree)
 4. The owner approves; auto-merge lands it on green.
-5. `npm i -g @keelstackhq/bosun@<new> && bosun --version` # your machine, after the merge
+5. `npm i -g @keelstackhq/bosun@<new> && bosun --version` # your machine, after the merge; <new> is the version pin --check printed
 
 - Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.
-- Channel repos: `splice update --channel bosun`.
+- A repo with `.splice/channels/bosun.toml`: `bosun pin` refuses; use `splice update --channel bosun`.
 - Full guide: [bosun's `docs/update.md`](https://github.com/keelstackhq/bosun/blob/main/docs/update.md).
 
 Machine-readable: this page is https://keelstack.dev/docs/update.md.

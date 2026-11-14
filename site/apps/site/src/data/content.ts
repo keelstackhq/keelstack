@@ -145,7 +145,8 @@ export const update: {
     ],
     notes: [
       "Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.",
-      "Needs splice 0.3.0 or later (`pnpm dlx @keelstackhq/splice` works without installing it).",
+      `Needs splice 0.3.0 or later. Without a global install write \`pnpm dlx @keelstackhq/splice@${SPLICE_VERSION}\` in place of \`splice\`.`,
+      "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
       "Merge only when `ci-ok` is green.",
     ],
     guide:
@@ -155,7 +156,10 @@ export const update: {
     heading: "Update bosun",
     steps: [
       { cmd: "bosun doctor", note: 'step 17 "update" gives the fix; warns, never fails' },
-      { cmd: "bosun pin --latest --check", note: "list only, writes nothing" },
+      {
+        cmd: "bosun pin --latest --check",
+        note: "lists tools behind, downloads and writes nothing; run on the default branch",
+      },
       {
         cmd: "bosun pin --latest --pr",
         note: "verifies npm sha512, branch bosun/pin, draft PR (default branch, clean tree)",
@@ -163,12 +167,12 @@ export const update: {
       { text: "The owner approves; auto-merge lands it on green." },
       {
         cmd: "npm i -g @keelstackhq/bosun@<new> && bosun --version",
-        note: "your machine, after the merge",
+        note: "your machine, after the merge; <new> is the version pin --check printed",
       },
     ],
     notes: [
       "Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.",
-      "Channel repos: `splice update --channel bosun`.",
+      "A repo with `.splice/channels/bosun.toml`: `bosun pin` refuses; use `splice update --channel bosun`.",
     ],
     guide: "https://github.com/keelstackhq/bosun/blob/main/docs/update.md",
   },

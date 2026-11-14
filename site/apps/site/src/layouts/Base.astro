@@ -41,5 +41,14 @@ const url = canonical ? canonicalUrl(Astro.url.pathname) : undefined;
   <body>
     <a class="skip" href="#main">Skip to content</a>
     <slot />
+    <script is:inline>
+      // Scrollable code blocks must be reachable by keyboard, also after a resize.
+      const fit = () =>
+        document.querySelectorAll("pre").forEach((p) => {
+          p.tabIndex = p.scrollWidth > p.clientWidth ? 0 : -1;
+        });
+      fit();
+      addEventListener("resize", fit);
+    </script>
   </body>
 </html>

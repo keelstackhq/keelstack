@@ -79,9 +79,9 @@ export const migrate = {
   slack: {
     heading: "Claude Tag in Slack",
     steps: [
-      "[computer] Once: a private channel, your Slack ID in governance/owners.toml, [slack] channel, may_spawn = true and [cloud] environment_id in .bosun/bosun.toml (an R-gov PR). The environment is the one from the web steps.",
+      "[computer] Once: a private channel, your Slack ID in governance/owners.toml, [slack] channel and may_spawn = true in .bosun/bosun.toml (an R-gov PR). Claude Tag runs each thread on the environment set for the channel in its settings; use the one from the web steps. [cloud] environment_id applies only to relay or wave spawns; otherwise children inherit the caller's environment.",
       "In the channel, start a thread and post the prompt to Claude. Slack is the only entry here.",
-      "[phone] Approve the PR head when bosun asks.",
+      "[phone] Approve the PR head on GitHub (web or mobile app); Slack never approves, it only links the PR.",
       "[computer] Do the Routine steps the PR body lists.",
     ],
   },

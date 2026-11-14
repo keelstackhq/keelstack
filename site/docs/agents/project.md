@@ -293,6 +293,11 @@ freely, template updates never touch it.
   The dry run's gaps are closed: `/migrate.md` (linked from llms.txt), `/migrate/` step 1 for web and
   Slack only, bosun pinned from `versions.ts`, Routines and D-017 explained, block A with
   `gh repo create` and hoist install/apply. docspack 0.1.22 (also "less strict" for "lighter mode" in risk, tasks, operating model; absolute links in `/migrate.md`).
+- 2026-11-14 Round 4: block A commits the render before `gh repo create` (splice `new` only runs `git init`);
+  dry runs of B, D, E (web, Slack) and F fixed in `/docs/start`, adopt, risk, update (D is one runnable
+  block, F has the signed-approval block and prerequisites, Slack IDs and stdin explained, bosun Slack spec
+  at `834c4c8`); axe clean (focusable scrolling code blocks, no nested aside); unused exports removed.
+  docspack 0.1.23.
 
 ## Blocked
 

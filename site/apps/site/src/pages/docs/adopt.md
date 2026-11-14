@@ -18,7 +18,7 @@ node /tmp/assess.mjs --assess --json
 npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.0 --piece <id>:<name> ... --dry-run --json
 ```
 
-Read the change list, then run the same splice command without --dry-run on a new branch with a clean tree. Never pass --force unless the owner names the files it may replace.
+Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A (hoist apply sets the ci-ok ruleset).
 
 With bosun alone (no hull, no splice), after the install in [Setup](/docs/start/#setup):
 
@@ -28,7 +28,7 @@ bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor
 ```
 
-Owner: run bosun keygen --enroll first (in the orchestrator's container) and commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
+Owner: before the setup PR, the session that will sign approvals runs bosun keygen --enroll (in its own container or machine: the private key never leaves it) and you commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.
 
 ## Use Claude
 

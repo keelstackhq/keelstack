@@ -9,7 +9,5 @@ export const versions = {
   berth: "0.1.0",
 } as const;
 
-export type ToolVersion = keyof typeof versions;
-
 /** `v0.10.0` -> `0.10.0` */
 export const bare = (v: string): string => v.replace(/^v/, "");
