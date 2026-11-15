@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 How keelstackhq works with coding agents, in eight principles, and which part of each one bosun
-checks today. This page follows bosun 0.15.0 (2026-11-14). The mapping follows bosun's
-[operating model](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/operating-model.md); a principle that bosun does not check yet says so.
+checks today. This page follows bosun 0.17.0 (2026-11-15). The mapping follows bosun's
+[operating model](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/operating-model.md); a principle that bosun does not check yet says so.
 
 ## Words used here
 
@@ -90,7 +90,7 @@ stay with the owner), and moving to a less strict mode is itself an owner-approv
 A brake (a red `main` twice, two reverts, or a red-CI rate over the mode's target) turns the spawn
 and heal helpers down by itself. Status today: partial, since the budget bindings and the
 automatic narrowing after an incident are still open. See [Tasks and sessions](/docs/tasks/) and
-bosun's [modes spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md).
+bosun's [modes spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/18-modes.md).
 
 ## How keelstackhq runs today
 

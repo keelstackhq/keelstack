@@ -8,20 +8,20 @@ set -euo pipefail
 # Pinned tool versions.
 NODE_MAJOR=24
 PNPM_VERSION=12.15.0
-SPLICE_VERSION=0.4.0
+SPLICE_VERSION=0.5.1
 # npm's dist.integrity (sha512) of each tool's launcher and linux binary packages, from
 # `npm view @keelstackhq/<package>@<version> dist.integrity`; move them with the version.
-SPLICE_SHA512=8/6VRlKzHY3nHFdZnKqGhgyxkj6SLyPeXtqzDgQjTEPlY1m6ZCzGkaXyzuHAj9PYDi1pDOYovlPClyUXRj7dMA==
-SPLICE_LINUX_X64_SHA512=0ZtX3mxakLqYUGKFPUZ1xQ8Vd+zkk+YRttlwxZHVSncBBGhe+i4cWCTTbEVjnfNX9qBV0HPfqwQNn2aGV3/suQ==
-SPLICE_LINUX_ARM64_SHA512=2UH1s2IWCD9lISISwwFmEhoCgujWmeVdrU1bK5SEPOWq8HPAdUgvSDkoTbHpKd3VrZUjYDTgJ/fsYKu06chNpg==
-HOIST_VERSION=0.4.1
-HOIST_SHA512=vZrurRfS8IzUf22HtHJnWrU+m+vZclJ06ivYi288Urf5TG6tII24kdY51waoYNuMi50SJ5QIv7k6q0kUKarv8A==
-HOIST_LINUX_X64_SHA512=eBWtbwxVHJ1DeshsnSa1ZpmkNiamyfkPgQr0/7mez8dOVQYBWTVOAAHtEE76RvXLV5gFQd41TyimX9LOwJx52Q==
-HOIST_LINUX_ARM64_SHA512=CCCPHyAVbnbheK9M/NN9xXCWw6ko7m7wwsHMexWPuyW+EZU4aLbiKSXsm5/OT37rfnTsoexD+BQlxasV9UdfSA==
-BERTH_VERSION=0.1.0
-BERTH_SHA512=4V71F1YqcduupUm/yqc3HaK5/VMH6bD1PZa6xskA+84UiSs1UZRnkX7W+zoLPNizoT2CM1bVGmEtk2cjjYg3Eg==
-BERTH_LINUX_X64_SHA512=3eaIWInNsevz8vPlkSN+QsPnf82ULEZJz2X4KFOsP3aQR9EanDBDxmm2+J+jEvUBHKxS3xfQMT7HqCO35TUysw==
-BERTH_LINUX_ARM64_SHA512=sG6PA8qfOmThoXxL/3P+DSTnr8OL+5MieaTWBv9QfjzcC/ocITUHqi5xptPh2u+71ZY8SqpEcgE6dPmvmi5YXw==
+SPLICE_SHA512=n+brZ5DeqjVndqbMTC+g4Zj0rlwut/d7fV/OxQEcUIWNNTRcOVhtUanqkHo5JJj3a5pcvgXJNl40laR4FXM+WQ==
+SPLICE_LINUX_X64_SHA512=u/6RPIjnkGFmPJ7gReZK7T7jGn+55MB8AnLO7J3QQNu/Fr2N5DoG+I5vgKyCPGAQNcTCpqH28jdAeOuB4OC5iA==
+SPLICE_LINUX_ARM64_SHA512=/mY51UqISB/81tGO9ss1iUMWd8L+GjM/V93/gbaA6deJH4jQ3SCWo6uMTYYGei/8QGyHvGGrfR98vzKHE41wtA==
+HOIST_VERSION=0.5.1
+HOIST_SHA512=vTS2qXva2OCDTuYbkAntSaN6Rf2w70f3inxOzYCHZkrvqp9bgdGAN4OX8ZMQbcg9VabUiPR3aeXbAjFqKMgmcg==
+HOIST_LINUX_X64_SHA512=4bTuPUbSWvLVvMU4DgMZcKfAhqNhQN5Iy3I0W0eaUtpk9UWKPNvLCbdKp5LWxpeoMFqYArgkVq3/hKJhZj+QzQ==
+HOIST_LINUX_ARM64_SHA512=11eq9L45RUw1kqgSGqMzloesUtr/ISc+/7HqRrTfpjNt9dPUlJkZMiTccgLaq3GnPt3kHhEOwvS98o2iV1uB6g==
+BERTH_VERSION=0.2.1
+BERTH_SHA512=8PeL8d6meSYVuF+MNmK6CyAfZn+pmDIkLxwAcZIgNzhRoGWoBBKA8pTvG/NAYTHRhF8Ym+3OtCD+N/96N+u3JA==
+BERTH_LINUX_X64_SHA512=vwYKi7HGKAs4NIAWf5V228ci6aaqa+1nPvk/FqomCj61on2ouzGJzSFVZPtSv88U3/LW+I3Kmo5gAtuIIRAF7Q==
+BERTH_LINUX_ARM64_SHA512=Y8nO2tpk7f9Pujvsxq42vaO9GjGF0n7jFv4MKN7F8kP8ofACPX7obGESfv+qNYik17X3WXwHgXS15WKorOlAdQ==
 # cargo-deny's prebuilt binary as npm packages (@keelstackhq/cargo-deny, its launcher, and
 # cargo-deny-linux-<arch>), pinned like the tools above. Empty until their first publish: then the
 # Rust step builds it with `cargo install --locked cargo-deny` (minutes) instead.
@@ -47,10 +47,10 @@ KEELSTACK_MARKETPLACE_REF=main
 SUPERPOWERS_SHA=22f0b463e7a5e579904dd6211a520321035526f7
 CAVEMAN_SHA=a9cc1f7b82598852e8c6b8e599dde6ac2491b26e
 # The bosun release this repo pins in .bosun/version.
-BOSUN_VERSION=0.15.0
-BOSUN_SHA512=C3ZV006QyHgVTsfJu1BqHOOV8PeWEDJ5acQ+jAP+Aufe3aYGEjG8FWWqU0Sw86NzGy6u+wu+BJeX0LlXou71tQ==
-BOSUN_LINUX_X64_SHA512=a521uLd2ZM47QxTOelYfCxUhFh8PhvX3RkZcYc9jes9SXlCPGVFAk4g/SCxNzK8FRUmpecuPompEvoW34bnM/g==
-BOSUN_LINUX_ARM64_SHA512=rFZxI5scPYMZc6vJlJz/tyCCrTtVhSvhYFsNqZZP8ZVMP+jAU4UeOZPirBzF6RjqdsWrURg+vnw9uiSP2YL4Wg==
+BOSUN_VERSION=0.17.0
+BOSUN_SHA512=mQGLlSHqlWDDJDpCvp0jyUrDJJtHjzffkmVWKCc38cJYiAOM2qFPTeOXX2QhnUV3rfzYdUWxqDjUun7cM2nD8A==
+BOSUN_LINUX_X64_SHA512=SdO3QX1+VTO4qjNrwuSWRc3pJMbOLGZD6u/pUf+LlZSnSGPVskbNkzANB81b3lb/hPP4xMvyc6OPYlol0pJhWw==
+BOSUN_LINUX_ARM64_SHA512=IM9S7zJOEQzfj/CGQvlEZgUqEq9unTsV9eTzt/qj4H4MZGyQgbwIxTbYaD8gu2/KQcvcBbSeoxFRMIz7/KOYCQ==
 
 # Stacks of this checkout: Rust steps run only with a Cargo.toml or a toolchain file, pnpm only
 # with a pnpm-lock.yaml, a pnpm-workspace.yaml or a package.json `packageManager` of pnpm.
@@ -251,6 +251,22 @@ if [ -n "$HAS_RUST" ]; then
 fi
 
 bosun --version || echo "setup-script: bosun is not installed" >&2
+# The installed bosun must be the pinned one: an older bosun earlier on PATH shadows the install.
+# Mismatch: put the npm-global bin first on PATH for this script and warn loudly. Never fails.
+got="$(bosun --version 2>/dev/null | awk '{print $NF}')"
+if [ "$got" != "$BOSUN_VERSION" ]; then
+  gbin="$(npm prefix -g 2>/dev/null)/bin"
+  if [ -x "$gbin/bosun" ]; then
+    PATH="$gbin:$PATH"
+    export PATH
+    got="$(bosun --version 2>/dev/null | awk '{print $NF}')"
+  fi
+  if [ "$got" != "$BOSUN_VERSION" ]; then
+    echo "setup-script: WARNING: bosun on PATH is '${got:-none}', not the pinned $BOSUN_VERSION; add $gbin to the front of PATH" >&2
+  else
+    echo "setup-script: WARNING: an older bosun shadowed the pinned $BOSUN_VERSION; put $gbin first on PATH in your shell" >&2
+  fi
+fi
 
 # Prewarm the Claude Code plugins (user scope) so the first session does not clone them. Every
 # failure, an outage or a pin mismatch, only warns (owner decision): `bosun doctor` shows it red.

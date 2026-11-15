@@ -124,7 +124,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.5.1 @keelstackhq/bosun@0.15.0
+npm install -g @keelstackhq/splice@0.5.1 @keelstackhq/bosun@0.17.0
 bosun init --stack rust --owner <your-github-login>
 ```
 

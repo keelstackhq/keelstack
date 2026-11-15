@@ -4,10 +4,10 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. This page follows bosun 0.15.0 (2026-11-14). Long details are in
-bosun's specs: [lifecycle](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/04-lifecycle.md),
-[spawning and waves](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/05-spawn.md) and
-[cost and main-health](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/09-main-health.md).
+each other, and what stops work. This page follows bosun 0.17.0 (2026-11-15). Long details are in
+bosun's specs: [lifecycle](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/04-lifecycle.md),
+[spawning and waves](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/05-spawn.md) and
+[cost and main-health](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/09-main-health.md).
 
 ## Every command speaks JSON
 
@@ -72,7 +72,7 @@ amendment's pull request in one step. It is for amendments only: the first plan 
 `bosun init --plan`.
 
 Item and task fields are in bosun's
-[plan format](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/plan-format.md):
+[plan format](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/plan-format.md):
 an item takes `area:`, `depends:`, `shape:` (`single`, `split` or `auto`) and `budget_usd:`; a task
 takes `touch:`, `depends:`, `size:`, `kind:`, `risk:`, `allow:` and `done-by: #N` (a task whose PR
 already merged). A PR over twice the planned `size:` of its tasks gets a drift note in the review
@@ -119,6 +119,14 @@ item bundles its ready tasks into one PR: `bosun wave plan` lists the `bundle`, 
 is never bundled. `bosun pr` also exits 3 when the PR changes files outside the session's lease
 touch.
 
+Work nobody planned (a Slack request, a quick fix) goes through
+`bosun pr --one-off --title <T> --touch <GLOB>... [--ready]`: bosun opens a ready task of item
+`oneoff`, claims it for the session and opens the PR. Each touch glob must lie inside the
+autonomous allowlist and must not reach a gated path (exit 3). A one-off PR changes at most 300
+lines: `--ready` refuses over that, and risk-check adds the owner-class `R-oneoff-size` match. It
+never reuses a task: a re-run opens another. Ticking task checkboxes in a plan file under
+`plans/` or `docs/superpowers/plans/` (`- [ ]` to `- [x]`, nothing else changed) needs no lease.
+
 Only bosun commands change a state label. The PreToolUse hook (label-lock) guards against
 accidents and is not a sandbox. Read-only commands and heredoc prose that mention a state label
 pass; any other command naming one is refused (in 0.2.0 even read-only ones were). Since 0.2.1 a
@@ -141,8 +149,9 @@ task that a person merged by hand moves to merged too (`bosun pr`, `bosun reap` 
 
 - The lease lasts 30 minutes. `bosun heartbeat` extends it; run it at least every 20 minutes.
 - `bosun release <issue>` ends a lease when you stop before the task is done.
-- `bosun reap` (run by the optional janitor Routine, hourly) ends expired leases and sets the
-  task back to ready. A dead session blocks a task for at most about 90 minutes.
+- `bosun reap` ends expired leases and sets the task back to ready. The janitor Routine is opt-in
+  (`[routines] janitor = true`): with it hourly, a dead session blocks a task for at most about
+  90 minutes; without it, until a session runs `bosun reap`.
 - After a container restart, `bosun resume` renews the session's leases and lists, per held task,
   the state, the open pull request, its branch and the next action.
 - `bosun claim <issue> --touch <glob>` on a task you hold widens the lease after the same overlap
@@ -293,5 +302,5 @@ digest (`bosun digest`), auto spawn (`bosun wave tick`) and a brake that turns t
 after a red `main`, reverts or a high red-CI rate. `bosun mode` prints the knobs in force and
 `bosun metrics` the numbers. A less strict mode is an owner-approved R-weaken change; budgets and
 limits are never part of a mode. `bosun migrate --to <mode>` opens the one PR for a move, and
-`--finish` after the merge. Details: [modes spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md) and bosun's
-[quickstart](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/quickstart.md).
+`--finish` after the merge. Details: [modes spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/18-modes.md) and bosun's
+[quickstart](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/quickstart.md).

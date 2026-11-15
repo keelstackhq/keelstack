@@ -4,9 +4,9 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.15.0 (2026-11-14).
+turns `risk-check` green only when the rules are met. This page follows bosun 0.17.0 (2026-11-15).
 Long details live in bosun's
-[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md).
+[risk spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/08-risk.md).
 
 ## Cheat sheet: who approves what
 
@@ -27,36 +27,37 @@ channel updates do not change it; add rules for the paths
 of your project that need an owner, such as auth, payments or migrations). A pull request that
 matches any rule is high risk.
 
-| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                                                                                                    |
-| ------------------- | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `.claude/**`, `.claude-plugin/**`, `.splice/**`, every `hoist.toml`, `docs/setup-script.sh`, `REVIEW.md`, `docs/agents/**`, `**/plans/**`, and every `AGENTS.md` and `CLAUDE.md` (any case)                                            |
-| R-ci                | CI decides what is verified.                        | `.github/workflows/**`, `.github/actions/**`, every `action.yml`, `.circleci/**`, and the config of GitLab, Buildkite, Jenkins, Azure Pipelines, Bitbucket Pipelines, Travis and Drone; rust stacks add `deny.toml` (also `deny.local.toml`, `scripts/deny.mjs`) and `rust-toolchain.toml` |
-| R-secrets           | A secret in the repo is a leak.                     | sops files (`secrets.toml`, `access.toml`, `*.sops.*`), and added lines matching `(?i)(api[_-]?key\|secret\|token)\s*=`, an age secret key or `SOPS_AGE_KEY`                                                                                                                               |
-| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency, a new root pin or catalog entry, or a source change in a manifest; any change to `.cargo/config.toml`, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`, `.yarn/plugins/**` or `.yarn/releases/**` in any directory                                    |
-| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                                                                                                    |
-| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a changed file without a patch                                                                                                                                                                                                                   |
-| R-weaken (built in) | A loosened gate weakens every later check.          | a base-to-head compare finds a raised cap, a lowered lint or deny level, a lower coverage floor, removed CI steps, fewer tests or more skips, a growing `*_ALLOWED` list, or a move to a less strict mode; the findings are the evidence                                                   |
-| R-plan (built in)   | The PR is never rated below its task.               | a linked task is `risk: high` in the plan                                                                                                                                                                                                                                                  |
-| R-bundle (built in) | Gated work needs its own PR.                        | one PR closes several tasks and changes a gated path                                                                                                                                                                                                                                       |
-| R-revert (built in) | A revert must undo exactly what it names.           | a `bosun revert` PR that is not the exact inverse of the PR it names, or whose original needed the owner                                                                                                                                                                                   |
+| Rule                | Why                                                 | Matches (consumer repo)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| R-gov               | Governance files decide who approves what.          | `.bosun/**`, `governance/**`, `.github/CODEOWNERS`, `CODEOWNERS`, `docs/CODEOWNERS` (and a `CODEOWNERS` file in any directory, any case), `.claude/**`, `.claude-plugin/**`, `.splice/**`, every `hoist.toml`, `docs/setup-script.sh`, `REVIEW.md`, `docs/agents/**`, `**/plans/**`, and every `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` (any case)                                                                                                                                                          |
+| R-ci                | CI decides what is verified.                        | `.github/workflows/**`, `.github/actions/**`, every `action.yml` and `action.yaml`, `.circleci/**`, `.gitlab-ci.yml`, `.gitlab/ci/**`, `.buildkite/**`, and the config of Jenkins, Azure Pipelines, Bitbucket Pipelines, Travis and Drone, `.github/dependabot.yml`, every file under `scripts/`, `Makefile`, `justfile`, `Dockerfile` and `.husky/**`; the rust stack adds every `deny.toml`, `.deny.toml`, `deny.exceptions.toml`, `.deny.exceptions.toml` and `rust-toolchain.toml`, and ts-pnpm adds `.npmrc` |
+| R-secrets           | A secret in the repo is a leak.                     | sops files (`secrets.toml`, `access.toml`, `*.sops.*`), and added lines where a name (`api_key`, `secret`, `token`, `password`, `private_key` and close variants) is followed by `=` or `:` and a value, `user:pw@` in a URL, an age secret key or `SOPS_AGE_KEY`                                                                                                                                                                                                                                                 |
+| R-deps              | A new dependency adds code that nobody reviewed.    | a new dependency, a new root pin or catalog entry, or a source change in a manifest; a lockfile line (`source =` or `resolved`) that fetches from a host other than crates.io, npm or yarn; any change to `.cargo/config.toml`, `.npmrc`, `.yarnrc`, `.yarnrc.yml`, `.pnpmfile.cjs`, `bunfig.toml`, `.yarn/plugins/**` or `.yarn/releases/**` in any directory                                                                                                                                                    |
+| R-prod-write        | A write to production cannot be undone by a revert. | a task with the capability `prod-write`                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| R-unseen (built in) | bosun could not see the whole diff.                 | GitHub lists fewer files than changed, or a file (other than a removed one or a pure rename) without a patch                                                                                                                                                                                                                                                                                                                                                                                                      |
+| R-weaken (built in) | A loosened gate weakens every later check.          | a base-to-head compare finds a raised cap, a lowered lint or deny level, a lower coverage floor, removed CI steps, fewer tests or more skips, a growing `*_ALLOWED` list, or a move to a less strict mode; the findings are the evidence                                                                                                                                                                                                                                                                          |
+| R-plan (built in)   | The PR is never rated below its task.               | a linked task is `risk: high` in the plan                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| R-bundle (built in) | Gated work needs its own PR.                        | one PR closes several tasks and changes a gated path                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| R-revert (built in) | A revert must undo exactly what it names.           | a `bosun revert` PR that is not the exact inverse of the PR it names, or whose original needed the owner                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 Each rule's exact paths and the built-in judgments are in the
-[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md).
+[risk spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/08-risk.md).
 `risk.toml` is a seed, so a repo set up before a rule change adds new paths by hand. bosun's own
 repo also has R-gate (the gate code itself) and R-ci-review (below).
 
 - **Only the owner approves R-weaken.** No orchestrator, bootstrap, policy, autonomous or delegate
   signature counts on it, nor on a PR with the `weaken` capability. Agents may propose
   loosening a gate, never apply it. A less strict mode in `[mode]` is itself an R-weaken change
-  ([modes](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md)).
+  ([modes](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/18-modes.md)).
 - **R-deps** counts new root pins, new catalog entries and source changes (git, `package =`
   renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases), and the registry and
   install-hook files above: they redirect where every package comes from. It does not count
   `x.workspace = true` edges, in-repo `path` dependencies or pnpm `catalog:`/`workspace:`
   references.
-- **R-secrets** does not flag code bindings without a literal (`let x = v`), test files and
-  fixtures (never env or config files), or a line with a trailing `bosun:allow-secret <reason>`
-  comment. Strong formats (age, PEM and PGP private keys, GitHub, `sk-`, Stripe live, AWS and
+- **R-secrets** does not flag code bindings without a literal (`let x = v`) or files under a
+  `tests`, `fixtures` or similar directory (never env or config files; a file name such as
+  `*.spec.*` exempts nothing). No comment marker exempts a line: `bosun:allow-secret` is gone.
+  Strong formats (age, PEM and PGP private keys, GitHub, `sk-`, Stripe live, AWS and
   Slack tokens) are never exempt and match on any added line.
 - **The root `hoist.toml` is on the critical floor** (below): it lists the ruleset's required checks,
   so only the owner approves it, never a delegate.
@@ -159,7 +160,7 @@ withdraws it (and every signed or delegated approval with it). No review event r
 workflow, so a withdrawal counts on the next run: comment `/bosun recheck` or re-run the workflow.
 A dismissed request for changes still withdraws; a fresh plain-token comment from that owner, or a
 signed `v2` approval that names the dismissed review, clears it (details in the
-[risk spec](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/08-risk.md)).
+[risk spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/08-risk.md)).
 
 ### Unsigned approvals from Claude cloud sessions do not count
 
@@ -266,7 +267,7 @@ hold:
 - the owner checks of signed approvals above.
 
 **The critical floor** is hard-coded, whatever a rule says: R-secrets, R-prod-write, R-unseen, and
-any change to `.bosun/**`, `governance/**`, a `CODEOWNERS` file, the root `hoist.toml`,
+any change to `.bosun/**`, `governance/**`, `CODEOWNERS` (root, `.github/` or `docs/`), the root `hoist.toml`,
 `.github/workflows/**`, `.github/actions/**`, any `action.yml`, `.circleci/**` or another CI
 provider's config. In bosun's own repo all of its code and manifests are critical too. Those
 always go to the owner.
@@ -289,9 +290,9 @@ it). A workflow or CI file change, R-weaken, R-secrets and R-prod-write always n
 Bootstrap mode (`bootstrap_until`, capped at 2026-11-30 in bosun's code) lets the orchestrator
 sign gated approvals until that day, after green checks and an independent clean verdict; see
 [Operating model](/docs/operating-model/). Under `autonomous` it may approve only paths under
-`src/`, `tests/`, `docs/`, `changelog.d/` or `.changeset/*.md`, with a clean verdict from a
-session that holds no lease on the task. The boosters that use it are in
-[modes](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/18-modes.md).
+`src/`, `tests/`, `docs/`, `changelog.d/` or `.changeset/*.md` (or the globs of `[approvals] autonomous_allow` in `.bosun/bosun.toml`, which only the owner's PR may set; the deny list still wins), with a clean verdict from a
+session that holds no lease on the task. A one-off task over 300 changed lines (R-oneoff-size) always needs the owner. The boosters that use it are in
+[modes](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/18-modes.md).
 Set a value only after `.bosun/version` pins a release that reads it.
 
 ## Asking the owner

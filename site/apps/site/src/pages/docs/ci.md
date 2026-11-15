@@ -4,9 +4,9 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun 0.15.0 (2026-11-14). Long details are in bosun's specs:
-[gates](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/07-gates.md), [main-health](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/09-main-health.md) and
-[gate App checks](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/15-app-checks.md).
+checks decide whether GitHub may merge. This page follows bosun 0.17.0 (2026-11-15). Long details are in bosun's specs:
+[gates](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/07-gates.md), [main-health](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/09-main-health.md) and
+[gate App checks](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/15-app-checks.md).
 
 ## Required checks
 
@@ -38,7 +38,7 @@ workflow can forge it. A `[checks]` change is R-weaken. The channel's gate jobs 
 `verdict`, `main-open`, `main-health`) run in the environment `bosun-app` and mint the App token
 from the variable `BOSUN_APP_CLIENT_ID` (set it there before taking the channel update that
 reads it; `BOSUN_APP_ID` is no longer read). Setup and limits: see
-[App checks](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/spec/15-app-checks.md).
+[App checks](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/15-app-checks.md).
 
 ## The gate contract
 

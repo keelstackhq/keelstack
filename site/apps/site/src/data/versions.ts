@@ -3,7 +3,7 @@
 export const versions = {
   hull: "v0.12.0",
   splice: "0.5.1",
-  bosun: "0.15.0",
+  bosun: "0.17.0",
   hoist: "0.5.1",
   hoard: "v0.6.0",
   berth: "0.2.1",
@@ -13,7 +13,7 @@ export const versions = {
 export const tagCommits = {
   hull: "5a72442649f6958e91a50283a91e985f45e10a09",
   splice: "8dcdf9a9faf35cd5b504c326c9107f8da689264e",
-  bosun: "bb4d1ab1b31903f47154a03e2197aa5fde630e0c",
+  bosun: "0d2bcd700251773b0191af8a31062f6401c1edb1",
   hoist: "5f21d0d0732651999d3e33912c1a287c385ecb9b",
   hoard: "aa00c826f05dff5230caa7c5f0e2ac0615ebf788",
   berth: "cab67fa16a1107df8219a26581c7300a19a71f76",
