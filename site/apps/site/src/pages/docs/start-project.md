@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/start-checklist.md) at `v0.10.0`,
-copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/ca705480f0e381d7d8b36bc940a695eecd652140/docs/start-checklist.md) at commit `ca70548`,
+copied verbatim. A repo rendered from hull v0.5.0 (not tagged yet) or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
 [Getting started](/docs/getting-started/); for a repo that bosun runs, see
@@ -17,17 +17,27 @@ Every human step before agents can work autonomously on a new repo rendered from
 or `template-rust/`; both ship `ready`), in order:
 computer steps first, then phone steps (D-009), each with how an agent verifies it. In a rendered
 repo, the `ready` skill (`node scripts/ready.mjs`) runs the automatable checks and links each line
-here, at the hull tag the repo was rendered from. Agents start autonomous work only when it exits
-0 and the owner has confirmed every `manual` item. `TODO(owner)` marks facts not yet written down.
+here, at the hull tag the repo was rendered from. `ready` is advisory and never blocks work: agents
+start at once, print every `manual` item once as one checklist (D-009) and keep going. `TODO(owner)` marks facts not yet written down.
+
+Agent rail (no human step): the guard hook denies publish, force and tag pushes, secret reads and edits
+to `.claude/hooks`, `.claude/settings*.json`, release workflows and `.bosun/`. Agents use paths from the
+repo root; `cd`, `-C`, `--chdir`, `--work-tree` or a glob into those dirs is denied, and a patch is
+applied from a file in the repo (or one `git diff -- <paths> > f` just wrote in the same command).
 
 An existing repo? Start with [Adopt an existing repo](adopt.md): it ends with `ready` and the
 items below.
 
 ## Onboarding questions
 
-`ready` first asks these as Claude Code forms (at most 4 per form; the first option is the
-recommended default) and records the answers in `docs/agents/onboarding.toml` (seed). An item is
-`ask` until its questions are answered, and `skipped (chosen: …)` when an answer turns it off.
+`ready` does not ask these up front: an unanswered question takes its default (`update_bot` =
+`session`, `secrets` = `none` (`hoist` when `secrets.toml` exists), `bosun` = `yes` when `.bosun/`
+exists else `no`, `approvals` = `bootstrap` until 2026-11-30 then `owner`, `ci` = `github`,
+`release` = `no`); `pieces` and `apps` have none and show as one `manual` line. The agent asks the
+owner (a Claude Code form, at most 4 per form) only when secrets or a release are about to be used
+and the answer is not recorded; answers go in `docs/agents/onboarding.toml` (seed). An item is
+`skipped (chosen: …)` when an answer turns it off, and `ask` only for an invalid answer or a repo
+that is not adopted yet. A missing plan is a `warn`.
 
 | Question     | Asks                                               | Options (first = recommended)                        | Decides items  | Templates       |
 | ------------ | -------------------------------------------------- | ---------------------------------------------------- | -------------- | --------------- |
@@ -67,7 +77,7 @@ Configure each App → add the new repo:
 - Claude.
 - Renovate: add the repo to the Renovate App. `renovate.json` extends
   `github>keelstackhq/hull//renovate/default`. TODO(owner): which Renovate App installation.
-- Update bot (splice), pick one (the generated `README.md`, "Update bot: pick a token mode"):
+- Update bot (splice), pick one (the generated `README.md`, section "Update bot"; template-rust: "pick a token mode"):
   an App with Contents, Pull requests and Workflows write, with variable `SPLICE_APP_CLIENT_ID`
   and secret `SPLICE_APP_KEY` in environment `splice-bot`; or a PAT `SPLICE_BOT_TOKEN` in that
   environment; or session mode, repository variable `SPLICE_BOT=off`.
@@ -178,7 +188,10 @@ https://keelstack.dev/docs/greenfield-bosun/. In order:
    `risk-check`, `review-verdict`, `main-open`; then environment `splice-bot` (main only) with
    secret `SPLICE_BOT_TOKEN`, and `gh label create bosun:halt --color B60205`.
 4. Paste bosun's `docs/setup-script.sh` into the Claude Code environment (item 3) and create the
-   Routines (janitor, curator, notify), each hourly: the cloud minimum.
+   Routines: curator and, with Slack, notify, each hourly: the cloud minimum. The janitor is
+   optional: enable `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it,
+   then create it after confirming with the owner. Without it, `bosun reap` and
+   `bosun budget check` run only when a session runs them.
 
 Optional: `.bosun/approvers.toml` with the orchestrator's public key (role owner), enrolled by an
 R-gov PR the owner approves on GitHub; after that, approvals go through the Claude Code form.

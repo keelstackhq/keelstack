@@ -187,9 +187,9 @@ Then, still as the owner:
   It runs the checkout's own `docs/setup-script.sh` as root before each session, which installs Node 24, pnpm (ts-pnpm stacks), the Rust
   toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
   and bosun.
-- Create the Routines: janitor (every hour, Haiku) and curator (daily, Sonnet), plus notify
+- Create the Routines: curator (daily, Sonnet), plus notify
   (every hour, Haiku) only with a `[slack]` table; without it bosun has no notify Routine
-  and `bosun doctor` reports Slack as skipped. `bosun doctor` prints their prompts.
+  and `bosun doctor` reports Slack as skipped. `bosun doctor` prints their prompts. The janitor is optional: set `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it, then create it after confirming with the owner.
 
 `bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
 `hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. Since bosun 0.3.0, `--remote` also checks the environment of every workflow job

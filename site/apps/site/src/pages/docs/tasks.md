@@ -141,7 +141,7 @@ task that a person merged by hand moves to merged too (`bosun pr`, `bosun reap` 
 
 - The lease lasts 30 minutes. `bosun heartbeat` extends it; run it at least every 20 minutes.
 - `bosun release <issue>` ends a lease when you stop before the task is done.
-- `bosun reap` (run by the janitor Routine, hourly since 0.4.0) ends expired leases and sets the
+- `bosun reap` (run by the optional janitor Routine, hourly) ends expired leases and sets the
   task back to ready. A dead session blocks a task for at most about 90 minutes.
 - After a container restart, `bosun resume` renews the session's leases and lists, per held task,
   the state, the open pull request, its branch and the next action.
@@ -261,7 +261,7 @@ these rules. Each stop also opens or hits a lesson.
 ## Money
 
 - At 80 % of `daily_usd`, spawn and claim refuse new work (exit 6); mainfix is exempt.
-- At 100 %, the janitor runs `bosun budget check` and interrupts the live sessions.
+- At 100 %, `bosun budget check` (run by the janitor, if enabled) interrupts the live sessions.
 - With a mode whose `budget_feature` knob is on, an epic also has a feature budget (`budget_usd:`
   on the plan item, else its tasks times `per_task_usd`): claim and spawn warn at 80 %, and under
   `ask` exit 5 at 100 % until the owner raises it in a plan PR or with a signed digest reply

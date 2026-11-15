@@ -153,7 +153,7 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
    - `gh label create bosun:halt --color B60205 --repo <owner>/<repo>` (the kill switch; `bosun doctor`
      prints this exact command while it is missing);
    - paste the output of `bosun setup-snippet` once into the cloud environment ([Cloud environment](/docs/cloud/));
-   - create the Routines janitor (hourly) and curator (daily), and with `[slack]` notify (hourly):
+   - create the Routines: curator and, with `[slack]`, notify. The janitor is optional: set `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it, then create it after confirming with the owner.
      `bosun doctor` prints their prompts in `data.routines`; then set `BOSUN_ROUTINES_OK=1`.
 5. **Optional, owner:** enroll an approval key: `bosun keygen --enroll` makes it and adds its public
    half to `.bosun/approvers.toml` (run it only on the machine that signs; if the orchestrator signs
