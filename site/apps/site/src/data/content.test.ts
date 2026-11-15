@@ -33,7 +33,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     `gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\`,
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.11.0, splice 0.5.0), in output order.
+  // Lines copied from `splice new` output (hull v0.12.0, splice 0.5.1), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",

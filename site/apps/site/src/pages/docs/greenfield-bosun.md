@@ -2,10 +2,10 @@
 layout: ../../layouts/Docs.astro
 ---
 
-A new repo, rendered from hull v0.11.0, that bosun runs from the first task. This page shows the
+A new repo, rendered from hull v0.12.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
 plan turns into work. It follows bosun 0.15.0 (2026-11-14): the file tree and the example plan come from running
-`bosun init --no-pr` and `bosun plan check` 0.15.0 on a repo rendered from hull v0.11.0, and every
+`bosun init --no-pr` and `bosun plan check` 0.15.0 on a repo rendered from hull v0.12.0, and every
 command and flag below was checked against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -134,8 +134,8 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 ## The order
 
 1. **Owner:** create the repo and install the [Claude GitHub App](https://github.com/apps/claude).
-2. **Agent:** render hull v0.11.0
-   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.11.0 --piece …`,
+2. **Agent:** render hull v0.12.0
+   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.12.0 --piece …`,
    or `//template-rust`; both ship `ready`),
    then run the `ready` skill (advisory since hull v0.11.0: it never blocks and takes defaults for unanswered onboarding questions; `.bosun/` does not exist yet, so answer `bosun` with `yes` in `docs/agents/onboarding.toml`).
 3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in

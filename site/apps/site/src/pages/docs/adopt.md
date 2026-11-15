@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/2e678a203c607779a50271fabcb9534ddc94ce06/docs/adopt.md) at commit
-`2e678a2`, copied verbatim. Its `start-checklist.md` is
+[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/5a72442649f6958e91a50283a91e985f45e10a09/docs/adopt.md) at commit
+`5a72442`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site. `TODO(owner)` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
 
 ## The short path
@@ -12,10 +12,10 @@ The guide below is hull's
 With hull: assess first, then splice adopt as a dry run.
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.11.0.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev/assess/v0.12.0.mjs -o /tmp/assess.mjs
 echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
-npx @keelstackhq/splice@0.5.0 adopt gh:keelstackhq/hull//<template> --ref v0.11.0 --piece <id>:<name> ... --dry-run --json
+npx @keelstackhq/splice@0.5.1 adopt gh:keelstackhq/hull//<template> --ref v0.12.0 --piece <id>:<name> ... --dry-run --json
 ```
 
 Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A, but on an existing repo run `hoist plan --area github --adopt`, then `hoist apply --area github --adopt --yes` (`--adopt` keeps stricter live settings and never loosens them; hoist apply sets the ci-ok ruleset).
@@ -39,7 +39,7 @@ first (hosted, sha256-pinned in the prompt) and asks you before anything that wr
 Adopt this repo into keelstack. Work step by step, and ask me before anything that writes.
 
 1. Assess (read-only). Stop if the checksum does not match (it is pinned here, not fetched):
-   curl -fsSL https://keelstack.dev/assess/v0.11.0.mjs -o /tmp/assess.mjs
+   curl -fsSL https://keelstack.dev/assess/v0.12.0.mjs -o /tmp/assess.mjs
    echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
    node /tmp/assess.mjs --assess --json
    Its JSON has "schema": "hull.assess/1"; stop if it does not.
@@ -50,7 +50,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
    without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
-   npx @keelstackhq/splice@0.5.0 adopt gh:keelstackhq/hull//<template> --ref v0.11.0 --piece <id>:<name> ... --dry-run --json
+   npx @keelstackhq/splice@0.5.1 adopt gh:keelstackhq/hull//<template> --ref v0.12.0 --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.
 4. Only after I confirm: run the same command without --dry-run, resolve the conflicts, run the
    ready skill, and open a pull request with the change list and my choices. Never pass --force
@@ -82,12 +82,12 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.11.0.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev/assess/v0.12.0.mjs -o /tmp/assess.mjs
 echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull v0.11.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull v0.12.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 
@@ -187,6 +187,23 @@ Every other file the template writes is new (`create`). Pieces add more files un
     set the `release-tags` ruleset (item 5) or the `release` reviewer (item 6): those stay manual.
 
 Channels-only repos skip steps 4-9 and start at step 10.
+
+## After `splice adopt`: what trips an existing repo
+
+Rehearsed with splice 0.5.0 on a repo with a root `package.json` and `src/`:
+
+- **Root `package.json` keeps your `name` and `scripts.test`** (the dry-run lists them as `conflict`,
+  and `adopt` exits non-zero). `pnpm test` then stays yours, not `turbo run test`: edit those keys to the template's values
+  if you want Turborepo's. Move root code into `apps/<name>` or
+  `packages/<name>` (each with a `package.json`) so Turborepo runs it: code outside a workspace
+  package passes `pnpm run ci` without being checked at all.
+- **Existing `README.md` is skipped** (seed): nothing to do. `AGENTS.md` is created; copy your old
+  notes into `docs/agents/project.md`.
+- **npm or yarn lockfiles stay**: run `pnpm import` if you want to keep versions, then delete
+  `package-lock.json` or `yarn.lock` and commit `pnpm-lock.yaml`.
+- **Your CI workflow** (`.github/workflows/ci.yml`) is an owned clash: take the template's, or keep
+  yours and rename the job `ci-ok`.
+- `splice adopt` from a local checkout needs `--ref <rev>` when the clone has no version tags.
 
 ## What stays the owner's
 

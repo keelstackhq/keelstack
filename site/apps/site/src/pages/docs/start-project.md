@@ -3,7 +3,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/2e678a203c607779a50271fabcb9534ddc94ce06/docs/start-checklist.md) at `v0.11.0`,
+[`docs/start-checklist.md`](https://github.com/keelstackhq/hull/blob/5a72442649f6958e91a50283a91e985f45e10a09/docs/start-checklist.md) at `v0.12.0`,
 copied verbatim. A repo rendered from hull v0.5.0 or later carries the same list: its `ready` skill
 (`node scripts/ready.mjs`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in
@@ -188,7 +188,10 @@ https://keelstack.dev/docs/greenfield-bosun/. In order:
    `risk-check`, `review-verdict`, `main-open`; then environment `splice-bot` (main only) with
    secret `SPLICE_BOT_TOKEN`, and `gh label create bosun:halt --color B60205`.
 4. Paste bosun's `docs/setup-script.sh` into the Claude Code environment (item 3) and create the
-   Routines (janitor, curator, notify), each hourly: the cloud minimum.
+   Routines: curator and, with Slack, notify, each hourly: the cloud minimum. The janitor is
+   optional: enable `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it,
+   then create it after confirming with the owner. Without it, `bosun reap` and
+   `bosun budget check` run only when a session runs them.
 
 Optional: `.bosun/approvers.toml` with the orchestrator's public key (role owner), enrolled by an
 R-gov PR the owner approves on GitHub; after that, approvals go through the Claude Code form.
@@ -239,7 +242,6 @@ Check: the owner's answer to `approvals`; `bootstrap` fails after 2026-11-30 UTC
 
 ---
 
-Note on this copy (not part of hull's file): it is pinned to hull v0.11.0. Its janitor routine is
-optional on bosun `main` after 0.15.0 and on hull `main`: set `[routines] janitor = true` only if you want it. Where
-it names a bosun version (such as "bosun 0.4.0"), use the bosun version in the versions table
+Note on this copy (not part of hull's file): it is pinned to `v0.12.0`. Where it names a bosun
+version (such as "bosun 0.4.0"), use the bosun version in the versions table
 (`apps/site/src/data/versions.ts`, the footer's verified line) instead.

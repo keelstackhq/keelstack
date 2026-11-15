@@ -21,12 +21,12 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.11.0.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev/assess/v0.12.0.mjs -o /tmp/assess.mjs
 echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull v0.11.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull v0.12.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 
@@ -126,6 +126,23 @@ Every other file the template writes is new (`create`). Pieces add more files un
     set the `release-tags` ruleset (item 5) or the `release` reviewer (item 6): those stay manual.
 
 Channels-only repos skip steps 4-9 and start at step 10.
+
+## After `splice adopt`: what trips an existing repo
+
+Rehearsed with splice 0.5.0 on a repo with a root `package.json` and `src/`:
+
+- **Root `package.json` keeps your `name` and `scripts.test`** (the dry-run lists them as `conflict`,
+  and `adopt` exits non-zero). `pnpm test` then stays yours, not `turbo run test`: edit those keys to the template's values
+  if you want Turborepo's. Move root code into `apps/<name>` or
+  `packages/<name>` (each with a `package.json`) so Turborepo runs it: code outside a workspace
+  package passes `pnpm run ci` without being checked at all.
+- **Existing `README.md` is skipped** (seed): nothing to do. `AGENTS.md` is created; copy your old
+  notes into `docs/agents/project.md`.
+- **npm or yarn lockfiles stay**: run `pnpm import` if you want to keep versions, then delete
+  `package-lock.json` or `yarn.lock` and commit `pnpm-lock.yaml`.
+- **Your CI workflow** (`.github/workflows/ci.yml`) is an owned clash: take the template's, or keep
+  yours and rename the job `ci-ok`.
+- `splice adopt` from a local checkout needs `--ref <rev>` when the clone has no version tags.
 
 ## What stays the owner's
 

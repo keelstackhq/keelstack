@@ -19,7 +19,7 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.5.0, hull v0.11.0, the default pieces). `output` is an excerpt of
+// Real `splice new` run (splice 0.5.1, hull v0.12.0, the default pieces). `output` is an excerpt of
 // its 67 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
@@ -150,7 +150,7 @@ export const update: {
       "Merge only when `ci-ok` is green.",
     ],
     guide:
-      "https://github.com/keelstackhq/hull/blob/2e678a203c607779a50271fabcb9534ddc94ce06/docs/updating.md",
+      "https://github.com/keelstackhq/hull/blob/5a72442649f6958e91a50283a91e985f45e10a09/docs/updating.md",
   },
   bosun: {
     heading: "Update bosun",

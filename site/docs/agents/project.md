@@ -34,7 +34,7 @@ freely, template updates never touch it.
     diverges from the template on purpose; keep that change when `splice update` ships.
   - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
     `2026-10-16-landing-page-design.md`).
-  - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f # v0.5.0`, `scope: all`,
+  - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@8dcdf9a9faf35cd5b504c326c9107f8da689264e # v0.5.1`, `scope: all`,
     Mondays 06:17 UTC and by hand) runs `splice update --all`. With no main `.splice/lock.toml`
     that covers only the decisions channel (D-004); hull updates need a main lock first.
 
@@ -313,6 +313,13 @@ freely, template updates never touch it.
   subagents), `ready` is advisory, `bosun pin` refuses in repos with the bosun channel (use `splice update`),
   `hoist --adopt` for existing repos. bosun's setup script still pins splice 0.4.0, hoist 0.4.1, berth 0.1.0.
   docspack 0.1.25.
+- 2026-11-15 R7 versions: hull v0.12.0 (`5a72442`), splice 0.5.1 (`8dcdf9a`, action pinned), hoist 0.5.1
+  (`5f21d0d`), berth 0.2.1 (`cab67fa`); hoard v0.6.0, bosun 0.15.0 unchanged (SHAs from `git ls-remote
+  --tags`, peeled). `/assess/v0.12.0.mjs` (sha256 `ff1bceb1…`, same bytes as v0.11.0; v0.11.0 stays
+  served); start checklist and adopt re-copied at v0.12.0 (janitor now optional upstream, site note
+  dropped). Hero re-run with splice 0.5.0 (0.5.1 not on npm yet): 67 files, 41/8/18, lines unchanged.
+  docspack 0.1.26.
+- 2026-11-15 Docs index: the tools table's Released column was left on hull v0.11.0, splice 0.5.0, hoist 0.5.0, berth 0.2.0; now v0.12.0, 0.5.1, 0.5.1, 0.2.1, and `tools.test.ts` pins every cell to `versions.ts` so it cannot drift.
 
 ## Blocked
 

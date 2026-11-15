@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { org, tools } from "./tools";
 import { versions } from "./versions";
@@ -44,4 +45,18 @@ test("no copy uses the old keelstack org or npm scope", () => {
   expect(text).not.toMatch(/@keelstack\//);
   expect(text).not.toMatch(/github\.com\/keelstack\//);
   expect(text).not.toMatch(/gh:keelstack\//);
+});
+
+test("docs index tools table Released column equals versions.ts", () => {
+  const page = readFileSync(new URL("../pages/docs/index.md", import.meta.url), "utf8");
+  const cell = (name: string): string => {
+    const row = page.split("\n").find((l) => l.startsWith(`| [${name}](`));
+    return (row?.split("|")[3] ?? "").trim();
+  };
+  expect(cell("hull")).toBe(versions.hull);
+  expect(cell("splice")).toBe(versions.splice);
+  expect(cell("bosun")).toBe(versions.bosun);
+  expect(cell("hoist")).toBe(versions.hoist);
+  expect(cell("hoard")).toBe(`${versions.hoard} (pin \`@v0\`)`);
+  expect(cell("berth")).toBe(versions.berth);
 });
