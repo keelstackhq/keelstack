@@ -109,7 +109,8 @@ test("/docs/start carries the shared blocks", () => {
     NETWORK,
     NO_APPROVAL,
   ]) {
-    expect(start).toContain(t.replace(/`/g, ""));
+    // Inline code marks may differ between the constant and the page; the words may not.
+    expect(start.replace(/`/g, "")).toContain(t.replace(/`/g, ""));
   }
   expect(start).toContain(APPROVE_COMMENT.replace("<40-character head SHA>", ""));
 });

@@ -51,6 +51,8 @@ const url = canonical ? canonicalUrl(Astro.url.pathname) : undefined;
         });
       fit();
       addEventListener("resize", fit);
+      addEventListener("load", fit);
+      document.fonts?.ready.then(fit);
     </script>
   </body>
 </html>

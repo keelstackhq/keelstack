@@ -120,7 +120,7 @@ export const NO_APPROVAL =
   "A normal-risk PR (no rule in .bosun/risk.toml matches) merges on green CI and a clean review verdict. No approval.";
 
 export const OWNER_APPROVES =
-  "The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: .bosun/**, governance/**, .claude/**, .splice/**, docs/setup-script.sh, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane.";
+  "The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: `.bosun/**`, `governance/**`, `.claude/**`, `.splice/**`, `docs/setup-script.sh`, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane.";
 
 export const APPROVE_HOW = [
   "Chat form: the owner tells the signing session (repo, PR, head SHA; approve or hold) and it posts the signed approval below.",
@@ -190,7 +190,7 @@ export const upgradeBlock = (v: Versions): string =>
   ].join("\n");
 
 export const UPGRADE_NOTE =
-  "Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.17.0's script pins splice 0.5.1, hoist 0.5.1 and berth 0.2.1, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
+  "Do bosun first, then hull; each is its own PR and each is R-gov (`.bosun/**`, `.claude/**`, `.splice/**`), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.17.0's script pins splice 0.5.1, hoist 0.5.1 and berth 0.2.1, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
 
 export const approveBlock: string = [
   "bosun approve --list                                          # ready PRs and heads; writes nothing",

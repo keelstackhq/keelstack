@@ -9,6 +9,13 @@ import Base from "../layouts/Base.astro";
   <main id="main" class="missing">
     <h1>Page not found</h1>
     <p>There is nothing at this address. <a href="/">Go to the keelstack home page</a>.</p>
+    <nav class="ways" aria-label="Popular pages">
+      <ul>
+        <li><a href="/docs/start/"><span>Start: pick your scenario</span><small>/docs/start/</small></a></li>
+        <li><a href="/docs/"><span>Docs overview</span><small>/docs/</small></a></li>
+        <li><a href="/docs/troubleshooting/"><span>Troubleshooting</span><small>/docs/troubleshooting/</small></a></li>
+      </ul>
+    </nav>
   </main>
   <Footer />
 </Base>
@@ -18,7 +25,37 @@ import Base from "../layouts/Base.astro";
     max-width: 1240px;
     margin: 0 auto;
     padding: 96px 24px;
-    min-height: 50vh;
+  }
+  .ways ul {
+    list-style: none;
+    margin: 40px 0 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+    gap: 16px;
+    max-width: 900px;
+  }
+  .ways a {
+    display: grid;
+    gap: 4px;
+    height: 100%;
+    box-sizing: border-box;
+    padding: 16px 0 0;
+    border-top: 3px solid var(--ink);
+    color: var(--ink);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 18px;
+  }
+  .ways a:hover span,
+  .ways a:focus-visible span {
+    text-decoration: underline;
+  }
+  .ways small {
+    font-family: var(--font-mono);
+    font-weight: 400;
+    font-size: 13px;
+    color: var(--muted);
   }
   h1 {
     margin: 0;

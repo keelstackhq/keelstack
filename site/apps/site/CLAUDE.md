@@ -7,7 +7,9 @@ in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 - `astro.config.mjs` is template-owned but diverges on purpose (adds `@astrojs/react`); keep it.
 - One island only: `PiecePicker` in Get started, `client:visible`. Everything else is static HTML.
 - Docs pages are `.md` files in `src/pages/docs/` using `src/layouts/Docs.astro`; page data lives in
-  `src/data/docs.ts`. `astro.config.mjs` also sets `markdown.syntaxHighlight: false` on purpose (plain `<pre><code>`).
+  `src/data/docs.ts`. `astro.config.mjs` also sets `markdown.syntaxHighlight: false` on purpose (plain `<pre><code>`)
+  and `markdown.processor: satteri(markdownOptions)` from `src/lib/markdown.ts` (dashes off, so `--flag` in
+  prose stays two hyphens; `src/lib/markdown-render.test.ts`); keep both when `splice update` ships.
 - Fonts are self-hosted via Fontsource (Archivo, JetBrains Mono). Light theme only.
 - `/llms.txt` is built from the same data files by `src/lib/llms.ts` (`src/pages/llms.txt.ts`).
 - Machine-readable docs come from the same `.md` sources (`src/lib/docs-md.ts`): each page as

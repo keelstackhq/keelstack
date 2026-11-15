@@ -99,6 +99,13 @@ import SectionHead from "./SectionHead.astro";
     border-radius: 16px;
     padding: 28px 24px;
   }
+  /* Two columns start at 928px (2 × 420px + gap + padding); stick only then. */
+  @media (min-width: 928px) {
+    .agents {
+      position: sticky;
+      top: 88px;
+    }
+  }
   .agents h3 {
     color: #fff;
     margin: 0 0 12px;

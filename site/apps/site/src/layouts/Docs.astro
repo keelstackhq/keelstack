@@ -10,6 +10,10 @@ const page = docs.find((d) => docHref(d.slug) === path);
 if (!page) throw new Error(`Docs layout: no entry in src/data/docs.ts for ${Astro.url.pathname}`);
 
 const ready = readyDocs();
+// Markdown pages pass their headings; the h2s make the "On this page" list.
+const { headings = [] } = Astro.props as { headings?: { depth: number; slug: string; text: string }[] };
+const onPage = headings.filter((h) => h.depth === 2);
+const showOnPage = onPage.length >= 3;
 // Wide tables scroll inside their own box; tabindex lets keyboard users scroll them.
 const body = (await Astro.slots.render("default")).replaceAll("<table>", '<table tabindex="0">');
 const i = ready.findIndex((d) => d.slug === page.slug);
@@ -19,7 +23,7 @@ const next = i >= 0 ? ready[i + 1] : undefined;
 
 <Base title={`${page.title} · keelstack docs`} description={page.summary}>
   <Nav />
-  <div class="docs">
+  <div class:list={["docs", { "has-onpage": showOnPage }]}>
     <details class="toc-mobile">
       <summary>Docs pages</summary>
       <ul>
@@ -41,6 +45,16 @@ const next = i >= 0 ? ready[i + 1] : undefined;
     </nav>
     <main id="main" class="prose">
       <h1>{page.title}</h1>
+      {showOnPage && (
+        <details class="onpage-mobile">
+          <summary>On this page</summary>
+          <ul>
+            {onPage.map((h) => (
+              <li><a href={`#${h.slug}`}>{h.text}</a></li>
+            ))}
+          </ul>
+        </details>
+      )}
       <Fragment set:html={body} />
       {page.sources.length > 0 && (
         <section class="sources">
@@ -58,5 +72,15 @@ const next = i >= 0 ? ready[i + 1] : undefined;
       </div>
       <p class="docs-foot"><a href="/">keelstack</a> · <a href={org.url}>GitHub</a></p>
     </main>
+    {showOnPage && (
+      <nav class="onpage" aria-label="On this page">
+        <p class="onpage-h">On this page</p>
+        <ul>
+          {onPage.map((h) => (
+            <li><a href={`#${h.slug}`}>{h.text}</a></li>
+          ))}
+        </ul>
+      </nav>
+    )}
   </div>
 </Base>

@@ -2,11 +2,15 @@
 import { verifiedLine } from "../data/versions";
 ---
 
-<p class="verified">{verifiedLine()}</p>
+<aside class="verified" aria-label="Verification">
+  <p>{verifiedLine()}</p>
+</aside>
 
 <style>
-  .verified {
+  .verified p {
     margin: 0;
+  }
+  .verified {
     padding: 12px 24px;
     text-align: center;
     font-size: 13px;

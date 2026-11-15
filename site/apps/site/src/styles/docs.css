@@ -56,6 +56,65 @@
   }
 }
 
+/* "On this page": a right rail on wide screens, a disclosure under the title below that. */
+.onpage {
+  display: none;
+}
+.onpage-mobile {
+  margin: 0 0 32px;
+  border-left: 3px solid var(--ink);
+  padding: 2px 0 2px 14px;
+  font-size: 15px;
+}
+.onpage-mobile summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.onpage ul,
+.onpage-mobile ul {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.onpage a,
+.onpage-mobile a {
+  text-decoration: none;
+  color: var(--ink-2);
+  line-height: 1.35;
+}
+.onpage a:hover,
+.onpage-mobile a:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
+.onpage-h {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+@media (min-width: 1200px) {
+  .docs.has-onpage {
+    grid-template-columns: 220px minmax(0, 1fr) 190px;
+    gap: 40px;
+  }
+  .onpage-mobile {
+    display: none;
+  }
+  .onpage {
+    display: block;
+    position: sticky;
+    top: 88px;
+    align-self: start;
+    max-height: calc(100vh - 112px);
+    overflow-y: auto;
+    font-size: 14px;
+  }
+}
+
 .prose {
   min-width: 0;
   max-width: 72ch;
@@ -173,4 +232,51 @@
 /* Long paths (sources, inline code) wrap instead of widening the grid column. */
 .prose :not(pre) > code {
   overflow-wrap: anywhere;
+}
+
+/* Start page: the six-scenario list (links to #a to #f) reads as a lettered picker. */
+.prose ol:has(> li > a[href="#a"]) {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 24px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 10px;
+  counter-reset: scenario;
+}
+@media (min-width: 640px) {
+  .prose ol:has(> li > a[href="#a"]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+.prose ol:has(> li > a[href="#a"]) > li {
+  position: relative;
+  counter-increment: scenario;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px 12px 52px;
+  font-size: 15px;
+  line-height: 1.45;
+  color: var(--ink-2);
+}
+.prose ol:has(> li > a[href="#a"]) > li::before {
+  content: counter(scenario, upper-alpha);
+  position: absolute;
+  left: 14px;
+  top: 11px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-weight: 600;
+  font-size: 13px;
+}
+.prose ol:has(> li > a[href="#a"]) > li > a:first-child {
+  color: var(--ink);
+  font-weight: 700;
 }
