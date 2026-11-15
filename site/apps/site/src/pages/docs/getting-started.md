@@ -25,7 +25,7 @@ hoard's `@v0` tag follows its 0.x releases. hull v0.4.0 and later need splice 0.
 Skip to step 2 if your repo already has code and you do not want hull.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice@0.5.0 new gh:keelstackhq/hull//template my-repo \
   --data scope=my-scope --piece preact-app:web --piece hono-worker:api
 cd my-repo
 git add -A && git commit -m "chore: initial commit from hull"
@@ -57,7 +57,7 @@ For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolch
 released since hull v0.3.0:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template-rust my-repo \
+pnpm dlx @keelstackhq/splice@0.5.0 new gh:keelstackhq/hull//template-rust my-repo \
   --piece rust-cli:cli
 ```
 
@@ -85,16 +85,19 @@ For a new repo that bosun runs from the first task (files, plan, step order, fir
 Run these in the repo root, on a clean tree:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.4.0 channel add gh:keelstackhq/hull//rigging --piece claude
-pnpm dlx @keelstackhq/splice@0.4.0 channel add gh:keelstackhq/decisions//channel \
+pnpm dlx @keelstackhq/splice@0.5.0 channel add gh:keelstackhq/decisions//channel \
   --track main --piece import-project
 node scripts/agents-index.mjs     # hull repos: refresh the agents index
-git add -A && git commit -m "chore: add rigging and decisions channels"
+git add -A && git commit -m "chore: add decisions channel"
 ```
 
-- **rigging** adds the subagents (`.claude/agents/`) to a hull repo. A repo not rendered from
-  hull also adds `--piece core` (harness-neutral working rules as a section in `AGENTS.md`); a
-  hull repo never does, since its `AGENTS.md` already carries them.
+- **rigging** is not needed for a repo rendered from hull v0.11.0 or later: `base` ships the four
+  subagents (`.claude/agents/`). A repo rendered from hull v0.2.0 to v0.10.x that added
+  `rigging --piece claude` runs `splice update --channel rigging` first, then `splice update` for
+  the template. A repo not rendered from hull adds
+  `splice channel add gh:keelstackhq/hull//rigging --piece claude --piece core` (`core` is the
+  harness-neutral working rules as a section in `AGENTS.md`; a hull repo never adds it, since its
+  `AGENTS.md` already carries them).
 - **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
   `--piece import-project` when the repo has `docs/agents/project.md` (hull repos do), else
   `--piece import-claude`; `--piece import-agents` adds a pointer to `AGENTS.md`.
@@ -121,7 +124,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.4.0 @keelstackhq/bosun@0.15.0
+npm install -g @keelstackhq/splice@0.5.0 @keelstackhq/bosun@0.15.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -149,7 +152,7 @@ Who: the owner, on their own machine, with a token that has admin on the repo, i
 the default branch after the setup pull request merged.
 
 ```bash
-npm install -g @keelstackhq/hoist@0.4.1
+npm install -g @keelstackhq/hoist@0.5.0
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 gh label create bosun:halt --color B60205
@@ -219,7 +222,7 @@ CircleCI caches are not branch-scoped, so a PR could save a cache that `main` re
 berth gives each agent or task its own worktree, ports, env files and database.
 
 ```bash
-npm i -g @keelstackhq/berth@0.1.0
+npm i -g @keelstackhq/berth@0.2.0
 berth up fix-login          # worktree ../<repo>.berth/fix-login on branch berth/fix-login
 eval "$(berth env fix-login)"   # PORT, <NAME>_PORT, DATABASE_URL, …
 berth down fix-login        # after the work merged; or `berth gc` for all merged tasks

@@ -12,7 +12,7 @@ export const migrate = {
   title: "Move a repo to bosun booster",
   summary:
     "For a repo that already runs hull and bosun: one setup script, a two-line prompt, one PR to approve. Works in Claude Code locally, on the web, and in Slack.",
-  forWho: `For a repo that already runs hull and bosun. It needs bosun ${bare(versions.bosun)} or newer. bosun ${bare(versions.bosun)} pairs with hull ${versions.hull}. Booster is steady plus a fast lane.`,
+  forWho: `For a repo that already runs hull and bosun. It needs bosun ${bare(versions.bosun)} or newer. bosun ${bare(versions.bosun)} pairs with hull v0.10.0 (the pairing the bosun changelog states; hull ${versions.hull} is current). Booster is steady plus a fast lane.`,
   owner:
     "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines (scheduled Claude Code sessions such as curator, set up at claude.ai/code; see /docs/getting-started/) stay human-only; the PR body lists them.",
   quick: {

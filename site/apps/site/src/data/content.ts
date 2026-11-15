@@ -19,8 +19,8 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.4.0, hull v0.10.0, the default pieces). `output` is an excerpt of
-// its 62 create lines, in output order; `summary` is our `#` note counting them, not splice output.
+// Real `splice new` run (splice 0.5.0, hull v0.11.0, the default pieces). `output` is an excerpt of
+// its 67 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
   title: `~ · splice ${SPLICE_VERSION}`,
@@ -34,7 +34,7 @@ export const terminal = {
     { path: "apps/api/src/index.ts", cls: "seed" },
     { path: "apps/web/src/app.tsx", cls: "seed" },
   ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 62 files: 37 owned, 8 shared, 17 seed; then pnpm install",
+  summary: "# … 67 files: 41 owned, 8 shared, 18 seed; then pnpm install",
   turn: "→ your turn: write the app",
 };
 
@@ -67,7 +67,7 @@ export const split = {
 export const agentRows: { key: string; text: string; href?: string }[] = [
   {
     key: "CLAUDE.md",
-    text: "Lean by default. Skills and a /loop default ship with the template; subagents come from hull’s rigging channel.",
+    text: "Lean by default. Skills and a /loop default ship with the template; hull ships the subagents too.",
   },
   {
     key: "ready",
@@ -150,7 +150,7 @@ export const update: {
       "Merge only when `ci-ok` is green.",
     ],
     guide:
-      "https://github.com/keelstackhq/hull/blob/f2b6a688c1b07e46ac92a9ddab2595d48262c3df/docs/updating.md",
+      "https://github.com/keelstackhq/hull/blob/2e678a203c607779a50271fabcb9534ddc94ce06/docs/updating.md",
   },
   bosun: {
     heading: "Update bosun",
@@ -172,7 +172,7 @@ export const update: {
     ],
     notes: [
       "Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.",
-      "A repo with `.splice/channels/bosun.toml`: `bosun pin` refuses; use `splice update --channel bosun`.",
+      "A repo set up with `bosun init` or hull has `.splice/channels/bosun.toml`: `bosun pin` refuses there; use `splice update --channel bosun` (the update bot opens that PR). The steps above are for a repo set up with `bosun adopt`.",
     ],
     guide: "https://github.com/keelstackhq/bosun/blob/main/docs/update.md",
   },

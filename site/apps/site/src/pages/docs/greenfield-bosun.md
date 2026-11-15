@@ -2,10 +2,10 @@
 layout: ../../layouts/Docs.astro
 ---
 
-A new repo, rendered from hull v0.10.0, that bosun runs from the first task. This page shows the
+A new repo, rendered from hull v0.11.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
 plan turns into work. It follows bosun 0.15.0 (2026-11-14): the file tree and the example plan come from running
-`bosun init --no-pr` and `bosun plan check` 0.15.0 on a repo rendered from hull v0.10.0, and every
+`bosun init --no-pr` and `bosun plan check` 0.15.0 on a repo rendered from hull v0.11.0, and every
 command and flag below was checked against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -134,10 +134,10 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 ## The order
 
 1. **Owner:** create the repo and install the [Claude GitHub App](https://github.com/apps/claude).
-2. **Agent:** render hull v0.10.0
-   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.10.0 --piece …`,
+2. **Agent:** render hull v0.11.0
+   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref v0.11.0 --piece …`,
    or `//template-rust`; both ship `ready`),
-   then run the `ready` skill: it asks the onboarding questions as forms; answer `bosun` with `yes`.
+   then run the `ready` skill (advisory since hull v0.11.0: it never blocks and takes defaults for unanswered onboarding questions; `.bosun/` does not exist yet, so answer `bosun` with `yes` in `docs/agents/onboarding.toml`).
 3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in
    `docs/superpowers/specs/`). This first plan goes in through `bosun init`:
    `bosun init --stack rust|ts-pnpm --plan <file> --owner <login>` (bosun 0.15.0; `--stack` is
@@ -153,8 +153,8 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
    - `gh label create bosun:halt --color B60205 --repo <owner>/<repo>` (the kill switch; `bosun doctor`
      prints this exact command while it is missing);
    - paste the output of `bosun setup-snippet` once into the cloud environment ([Cloud environment](/docs/cloud/));
-   - create the Routines: curator and, with `[slack]`, notify. The janitor is optional: set `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it, then create it after confirming with the owner.
-     `bosun doctor` prints their prompts in `data.routines`; then set `BOSUN_ROUTINES_OK=1`.
+   - create the Routines: curator and, with `[slack]`, notify.
+     `bosun doctor` prints their prompts in `data.routines`; then set `BOSUN_ROUTINES_OK=1`. The janitor is optional: set `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it, then create it after confirming with the owner.
 5. **Optional, owner:** enroll an approval key: `bosun keygen --enroll` makes it and adds its public
    half to `.bosun/approvers.toml` (run it only on the machine that signs; if the orchestrator signs
    for you, its session runs it and opens a pull request with the file). The owner approves that

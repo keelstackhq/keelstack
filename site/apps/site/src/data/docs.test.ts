@@ -178,3 +178,18 @@ describe("Greenfield repo with bosun page", () => {
       expect(page).toContain(s);
   });
 });
+
+it("no page uses the stale splice/action@v1 tag", () => {
+  for (const f of readdirSync(dir).filter((n) => n.endsWith(".md"))) {
+    expect(readFileSync(new URL(f, dir), "utf8"), f).not.toContain("splice/action@v1");
+  }
+});
+
+it("the update bot's workflow and notes pin splice/action by SHA, not @v1", () => {
+  const root = new URL("../../../../", import.meta.url);
+  for (const f of [".github/workflows/splice.yml", "docs/agents/project.md"]) {
+    const text = readFileSync(new URL(f, root), "utf8");
+    expect(text, f).not.toContain("splice/action@v1");
+    expect(text, f).toMatch(/splice\/action@[0-9a-f]{40} # v\d/);
+  }
+});

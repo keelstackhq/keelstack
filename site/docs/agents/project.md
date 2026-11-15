@@ -34,7 +34,7 @@ freely, template updates never touch it.
     diverges from the template on purpose; keep that change when `splice update` ships.
   - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
     `2026-10-16-landing-page-design.md`).
-  - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@v1`, `scope: all`,
+  - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f # v0.5.0`, `scope: all`,
     Mondays 06:17 UTC and by hand) runs `splice update --all`. With no main `.splice/lock.toml`
     that covers only the decisions channel (D-004); hull updates need a main lock first.
 
@@ -306,6 +306,13 @@ freely, template updates never touch it.
   One footer line "Last verified against bosun / hull / splice" from `versions.ts` (`Verified.astro`
   in `Base.astro`, and at the end of each docs Markdown page); per-page "as of" lines removed. Phone:
   the nav is not sticky and Get started shows the command and Copy on the first screen. docspack 0.1.24.
+- 2026-11-15 R6 migration-ready: hull v0.11.0 (`2e678a2`), splice 0.5.0, hoist 0.5.0, hoard v0.6.0,
+  berth 0.2.0, bosun 0.15.0 (tag commits and the verified date in `versions.ts`); `/assess/v0.11.0.mjs`
+  (sha256 `ff1bceb1…`, hull's `ready.mjs` at the tag; older tags stay served). Hero re-run: 67 files,
+  41 owned, 8 shared, 18 seed (lines unchanged). Fixed: rigging no longer needed (hull v0.11.0 ships the
+  subagents), `ready` is advisory, `bosun pin` refuses in repos with the bosun channel (use `splice update`),
+  `hoist --adopt` for existing repos. bosun's setup script still pins splice 0.4.0, hoist 0.4.1, berth 0.1.0.
+  docspack 0.1.25.
 
 ## Blocked
 

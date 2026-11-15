@@ -46,7 +46,7 @@ versions and their sha512 checksums and moves them only by reviewed pull request
 
 The script below is bosun's own,
 [`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/834c4c83762a5b42fff05d7964092a43b1729ac3/docs/setup-script.sh)
-at commit `834c4c8` (bosun 0.15.0 pinned), copied verbatim.
+at commit `834c4c8`, copied verbatim. It comes from bosun `main` after the v0.15.0 tag. It still installs splice 0.4.0, hoist 0.4.1 and berth 0.1.0 until the next bosun release.
 
 ```bash
 #!/usr/bin/env bash

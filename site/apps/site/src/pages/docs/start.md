@@ -3,7 +3,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 Pick your scenario and paste its block. Each block is exact: commands are copied from the hull, splice
-and bosun docs, and versions are the current ones (hull v0.10.0, splice 0.4.0, bosun 0.15.0).
+and bosun docs, and versions are the current ones (hull v0.11.0, splice 0.5.0, bosun 0.15.0).
 Steps for the owner start with "Owner". Everything else an agent does.
 
 Machine-readable: this page is https://keelstack.dev/docs/start.md.
@@ -35,7 +35,7 @@ Needs [Setup](#setup).
 After `splice new`, write `plans/<name>.md` in the new repo from the owner's brief (`bosun plan check` it): `bosun init` needs it. Use `//template-rust` and `--stack rust` for a Rust repo; piece ids and `my-repo` are your choices.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.4.0 new gh:keelstackhq/hull//template my-repo --ref v0.10.0 --piece preact-app:web --piece hono-worker:api
+pnpm dlx @keelstackhq/splice@0.5.0 new gh:keelstackhq/hull//template my-repo --ref v0.11.0 --piece preact-app:web --piece hono-worker:api
 cd my-repo && pnpm install && pnpm run ci
 git add -A && git commit -m "chore: render from hull"   # splice new only runs git init
 gh repo create <owner>/my-repo --private --source . --push   # owner step, before bosun init
@@ -46,7 +46,7 @@ bosun doctor
 Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then, on your machine in a checkout of the default branch:
 
 ```bash
-npm install -g @keelstackhq/hoist@0.4.1
+npm install -g @keelstackhq/hoist@0.5.0
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 ```
@@ -60,13 +60,13 @@ Agents in the cloud: [E](#e). Full path: [Start here](/docs/start-here/), [Start
 With hull: from the repo root on a new branch with a clean tree, assess first, then splice adopt as a dry run. Take `<template>` (`template` or `template-rust`) and each `<id>:<name>` from the assess JSON (`next`, `pieces`); with no template it is channels-only: use the channel step of the guide.
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.10.0.mjs -o /tmp/assess.mjs
-echo "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91  /tmp/assess.mjs" | sha256sum -c
+curl -fsSL https://keelstack.dev/assess/v0.11.0.mjs -o /tmp/assess.mjs
+echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
-npx @keelstackhq/splice@0.4.0 adopt gh:keelstackhq/hull//<template> --ref v0.10.0 --piece <id>:<name> ... --dry-run --json
+npx @keelstackhq/splice@0.5.0 adopt gh:keelstackhq/hull//<template> --ref v0.11.0 --piece <id>:<name> ... --dry-run --json
 ```
 
-Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A (hoist apply sets the ci-ok ruleset).
+Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A, but on an existing repo run `hoist plan --area github --adopt`, then `hoist apply --area github --adopt --yes` (`--adopt` keeps stricter live settings and never loosens them; hoist apply sets the ci-ok ruleset).
 
 With bosun alone (no hull, no splice), after [Setup](#setup):
 
@@ -110,12 +110,12 @@ bosun pin --latest --pr               # verifies npm sha512, opens a draft PR; t
 npm i -g @keelstackhq/bosun@<new> && bosun --version
 # then hull, on its own branch:
 git switch <default-branch> && git pull && git switch -c chore/splice-update
-pnpm dlx @keelstackhq/splice@0.4.0 update --all
-pnpm dlx @keelstackhq/splice@0.4.0 check && pnpm install && pnpm run ci
+pnpm dlx @keelstackhq/splice@0.5.0 update --all
+pnpm dlx @keelstackhq/splice@0.5.0 check && pnpm install && pnpm run ci
 git add -A && git commit -m "chore: splice update to hull vX.Y.Z" && git push -u origin HEAD
 ```
 
-Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo with .splice/channels/bosun.toml cannot run bosun pin (it refuses): use splice update --channel bosun. Cloud sessions need nothing: they run the repo's own setup script. Merge only when ci-ok is green. Both paths in full: [Update](/docs/update/).
+Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there splice update --all below also updates the bosun channel (or splice update --channel bosun alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.15.0's script pins splice 0.4.0, hoist 0.4.1 and berth 0.1.0, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green. Both paths in full: [Update](/docs/update/).
 
 <a id="e"></a>
 

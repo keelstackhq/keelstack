@@ -26,7 +26,8 @@ describe("Start a project page", () => {
 
   it("is the copy without its H1, after a note naming the pinned ref", () => {
     const body = copy.replace(/^# .*\n\n/, "");
-    expect(page.endsWith(body)).toBe(true);
+    expect(page).toContain(body);
+    expect(page.slice(page.indexOf(body) + body.length)).toMatch(/^\n---\n\nNote on this copy/);
     expect(page).toContain(
       `https://github.com/keelstackhq/hull/blob/${source.ref}/docs/start-checklist.md`,
     );

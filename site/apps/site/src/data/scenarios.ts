@@ -165,7 +165,7 @@ export const adoptHullBlock = (v: Versions, assessUrl: string, sha: string): str
   ].join("\n");
 
 export const ADOPT_HULL_NOTE =
-  "Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A (hoist apply sets the ci-ok ruleset).";
+  "Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A, but on an existing repo run `hoist plan --area github --adopt`, then `hoist apply --area github --adopt --yes` (`--adopt` keeps stricter live settings and never loosens them; hoist apply sets the ci-ok ruleset).";
 
 export const adoptBosunBlock: string = [
   "bosun adopt --dry-run                    # writes nothing",
@@ -190,7 +190,7 @@ export const upgradeBlock = (v: Versions): string =>
   ].join("\n");
 
 export const UPGRADE_NOTE =
-  "Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo with .splice/channels/bosun.toml cannot run bosun pin (it refuses): use splice update --channel bosun. Cloud sessions need nothing: they run the repo's own setup script. Merge only when ci-ok is green.";
+  "Do bosun first, then hull; each is its own PR and each is R-gov (.bosun/**, .claude/**, .splice/**), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.15.0's script pins splice 0.4.0, hoist 0.4.1 and berth 0.1.0, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
 
 export const approveBlock: string = [
   "bosun approve --list                                          # ready PRs and heads; writes nothing",

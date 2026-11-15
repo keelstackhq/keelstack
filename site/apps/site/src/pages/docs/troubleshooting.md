@@ -145,7 +145,8 @@ instead.
 **Why.** The repo still has base's copies of the subagents.
 
 **Fix.** Run `splice update` first (it removes the unedited copies), move or delete any edited copy
-it reports, then add the channel.
+it reports, then add the channel. From hull v0.11.0 on the channel is not needed: `base` ships the
+subagents and rigging's `claude` piece is empty.
 
 ## bosun
 

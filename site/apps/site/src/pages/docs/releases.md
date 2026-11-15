@@ -114,7 +114,7 @@ environment's bootstrap runs the checkout's own `docs/setup-script.sh`, which in
 ## Template and channel updates
 
 The splice update bot is a workflow (`.github/workflows/splice.yml`, which the bosun channel
-seeds) using `keelstackhq/splice/action@v1`, weekly and on demand. It runs `splice update --all`
+seeds) using `keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f # v0.5.0`, weekly and on demand. It runs `splice update --all`
 when the repo has channels and opens or refreshes one pull request on branch `splice/update`:
 
 | Result      | The bot                                                    |

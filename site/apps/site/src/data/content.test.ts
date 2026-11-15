@@ -33,7 +33,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     `gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\`,
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (hull v0.10.0, splice 0.4.0), in output order.
+  // Lines copied from `splice new` output (hull v0.11.0, splice 0.5.0), in output order.
   expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
     "create  .github/workflows/ci.yml  owned",
     "create  AGENTS.md  seed",
@@ -41,7 +41,7 @@ test("terminal shows the default command, real create lines and file counts", ()
     "create  apps/api/src/index.ts  seed",
     "create  apps/web/src/app.tsx  seed",
   ]);
-  expect(terminal.summary).toBe("# … 62 files: 37 owned, 8 shared, 17 seed; then pnpm install");
+  expect(terminal.summary).toBe("# … 67 files: 41 owned, 8 shared, 18 seed; then pnpm install");
 });
 
 test("stats shapes", () => {
@@ -67,9 +67,10 @@ test("agent rows and current cards", () => {
   expect(current.map((c) => !!c.accent)).toEqual([false, false, true]);
 });
 
-test("CLAUDE.md row: subagents come from the rigging channel since hull v0.2.0", () => {
+test("CLAUDE.md row: hull ships the subagents, no rigging step since hull v0.11.0", () => {
   const row = agentRows.find((r) => r.key === "CLAUDE.md");
-  expect(row?.text).toContain("rigging channel");
+  expect(row?.text).toContain("hull ships the subagents");
+  expect(row?.text).not.toContain("rigging");
   expect(row?.text).not.toMatch(/Subagents, skills/);
 });
 

@@ -23,8 +23,8 @@ const page = read("../pages/docs/adopt.md");
 describe("Adopt an existing repo", () => {
   it("pins hull's adopt.md and ready.mjs to one commit", () => {
     expect(source.repo).toBe("keelstackhq/hull");
-    // hull v0.10.0 release (tag v0.10.0 -> f2b6a68).
-    expect(source.ref).toBe("f2b6a688c1b07e46ac92a9ddab2595d48262c3df");
+    // hull v0.11.0 release (tag v0.11.0 -> 2e678a2).
+    expect(source.ref).toBe("2e678a203c607779a50271fabcb9534ddc94ce06");
     expect(source.doc.path).toBe("docs/adopt.md");
     expect(sha(copy)).toBe(source.doc.sha256);
     expect(source.assess.path).toBe("template/pieces/base/files/scripts/ready.mjs");
@@ -33,7 +33,7 @@ describe("Adopt an existing repo", () => {
   it("hosts the assessment at a versioned URL with the expected sha256", () => {
     expect(source.assess.url).toBe(`/assess/${versions.hull}.mjs`);
     expect(sha(hosted(versions.hull))).toBe(
-      "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91",
+      "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878",
     );
     expect(source.assess.sha256).toBe(sha(hosted(versions.hull)));
   });
@@ -41,6 +41,7 @@ describe("Adopt an existing repo", () => {
   it("keeps every earlier assessment served byte for byte", () => {
     expect(Object.keys(source.hosted).toSorted()).toEqual([
       "v0.10.0",
+      "v0.11.0",
       "v0.6.0",
       "v0.6.1",
       "v0.6.2",
@@ -76,6 +77,10 @@ describe("Adopt an existing repo", () => {
     expect(source.hosted["v0.10.0"]).toEqual({
       ref: "f2b6a688c1b07e46ac92a9ddab2595d48262c3df",
       sha256: "2fb956cbc06698ea8672db813a9961a91e19a11fd232a08d61b2a8e3bfb1cf91",
+    });
+    expect(source.hosted["v0.11.0"]).toEqual({
+      ref: "2e678a203c607779a50271fabcb9534ddc94ce06",
+      sha256: "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878",
     });
     for (const [tag, { sha256 }] of Object.entries(source.hosted)) {
       expect(sha(hosted(tag))).toBe(sha256);
