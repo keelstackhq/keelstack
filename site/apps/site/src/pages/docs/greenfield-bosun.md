@@ -36,9 +36,9 @@ docs/setup-script.sh       the cloud environment's setup script
 plans/<name>.md            the plan: the only input bosun reads (`--plan` copies yours here)
 ```
 
-Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/01770b8/docs/adopt-existing-repo.md)
+Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/adopt-existing-repo.md)
 (section 3, "What lands in the repo") and its
-[layout spec](https://github.com/keelstackhq/bosun/blob/01770b8/docs/spec/03-layout.md). For
+[layout spec](https://github.com/keelstackhq/bosun/blob/0d2bcd700251773b0191af8a31062f6401c1edb1/docs/spec/03-layout.md). For
 `session-rules.toml` see the bosun docs; the intake schema is in the layout spec. A seed is
 written once and then belongs to you; an owned file is replaced by each channel update.
 

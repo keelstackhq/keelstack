@@ -89,6 +89,11 @@
   color: var(--ink);
   text-decoration: underline;
 }
+.onpage a[aria-current="location"],
+.onpage-mobile a[aria-current="location"] {
+  color: var(--ink);
+  font-weight: 700;
+}
 .onpage-h {
   font-family: var(--font-mono);
   font-size: 12px;

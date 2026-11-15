@@ -29,7 +29,7 @@ freely, template updates never touch it.
     cascivo component renders to static HTML. Fonts are self-hosted Archivo + JetBrains Mono via
     Fontsource (woff2 for latin, latin-ext and vietnamese ship in `dist`, but browsers fetch only the latin
     file via `unicode-range`; no third-party requests). Light only, no dark variant. Budget: HTML +
-    CSS + fonts for `/` under ~150 KB transferred; the island JS is counted separately.
+    CSS + fonts for `/` under 150 KiB (153,600 B) transferred; the island JS is counted separately.
   - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
     diverges from the template on purpose; keep that change when `splice update` ships.
   - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes

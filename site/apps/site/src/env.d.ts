@@ -4,6 +4,13 @@ declare module "*.css";
 declare module "node:fs" {
   export function readdirSync(dir: URL): string[];
   export function readFileSync(file: URL, encoding: "utf8"): string;
+  export function readFileSync(file: URL): Uint8Array;
+  export function existsSync(file: URL): boolean;
+}
+
+// Minimal typing for the budget test's gzip size.
+declare module "node:zlib" {
+  export function gzipSync(data: Uint8Array, options?: { level?: number }): Uint8Array;
 }
 
 // Minimal typing for the start-checklist test's sha256.

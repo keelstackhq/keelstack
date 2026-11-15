@@ -83,4 +83,39 @@ const next = i >= 0 ? ready[i + 1] : undefined;
       </nav>
     )}
   </div>
+  {showOnPage && (
+    <script is:inline>
+      // Scroll-spy: mark the "On this page" link of the section being read.
+      (() => {
+        const links = [...document.querySelectorAll(".onpage a, .onpage-mobile a")];
+        const heads = [...new Set(links.map((a) => a.getAttribute("href").slice(1)))]
+          .map((id) => document.getElementById(id))
+          .filter(Boolean);
+        let shown = null;
+        const spy = () => {
+          let cur = "";
+          for (const h of heads) if (h.getBoundingClientRect().top <= 120) cur = h.id;
+          const atBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
+          if (atBottom && heads.length) cur = heads[heads.length - 1].id;
+          if (cur === shown) return;
+          shown = cur;
+          for (const a of links) {
+            if (a.getAttribute("href") === "#" + cur) a.setAttribute("aria-current", "location");
+            else a.removeAttribute("aria-current");
+          }
+        };
+        let queued = false;
+        const onScroll = () => {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(() => {
+            queued = false;
+            spy();
+          });
+        };
+        spy();
+        addEventListener("scroll", onScroll, { passive: true });
+      })();
+    </script>
+  )}
 </Base>
