@@ -23,6 +23,10 @@
       "ref": "5a72442649f6958e91a50283a91e985f45e10a09",
       "sha256": "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878"
     },
+    "v0.12.1": {
+      "ref": "f59ed2bb7c30acdffc8fb14ba39273578bdb915a",
+      "sha256": "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878"
+    },
     "v0.6.0": {
       "ref": "9b4a0e44e10470d5aa80cc07052440cfa92a7496",
       "sha256": "c425300387529849b84c04bcb3fb6a38aba4de920c84fdf7fe792e7e2fb4691d"

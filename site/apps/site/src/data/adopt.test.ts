@@ -43,6 +43,7 @@ describe("Adopt an existing repo", () => {
       "v0.10.0",
       "v0.11.0",
       "v0.12.0",
+      "v0.12.1",
       "v0.6.0",
       "v0.6.1",
       "v0.6.2",
@@ -85,6 +86,11 @@ describe("Adopt an existing repo", () => {
     });
     expect(source.hosted["v0.12.0"]).toEqual({
       ref: "5a72442649f6958e91a50283a91e985f45e10a09",
+      sha256: "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878",
+    });
+    // hull v0.12.1 hosts the same bytes as v0.12.0 (tag v0.12.1 -> f59ed2b).
+    expect(source.hosted["v0.12.1"]).toEqual({
+      ref: "f59ed2bb7c30acdffc8fb14ba39273578bdb915a",
       sha256: "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878",
     });
     for (const [tag, { sha256 }] of Object.entries(source.hosted)) {
