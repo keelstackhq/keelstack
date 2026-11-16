@@ -210,7 +210,8 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 ```
 
 Run the workflow on `push` to `main` as well, so pull requests start from a warm cache. For a
-cargo-only repo hoard does nothing; use `Swatinem/rust-cache@v2`.
+cargo-only repo hoard does nothing; use `Swatinem/rust-cache@v2`. Since hoard v0.6.1 the action
+prints a notice when `TURBO_API`, `TURBO_TOKEN` or `TURBO_TEAM` are already set.
 
 On CircleCI (since hoard 0.4.0), `circleci/hoard.yml` installs a checksum-verified release and runs
 it with `hoard serve --detach` and `hoard stop`
