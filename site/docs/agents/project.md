@@ -328,6 +328,9 @@ freely, template updates never touch it.
   disclosure, the Start scenario list shows as lettered A to F cards, the 404 lists popular pages; the
   verified line is an `aside` landmark; `--flag` no longer renders as an en dash (satteri processor,
   dashes off) and R-gov globs no longer render bold. docspack 0.1.28.
+- 2026-11-16 Docs rail scroll-spy: `pickCurrent` in `apps/site/src/lib/scroll-spy.ts` (tested) picks the
+  heading nearest the top; the first on a page that cannot scroll or before any heading passes the offset,
+  the last only at the bottom when it is on screen (short pages no longer highlight the last heading).
 
 ## Blocked
 

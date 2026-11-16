@@ -84,19 +84,21 @@ const next = i >= 0 ? ready[i + 1] : undefined;
     )}
   </div>
   {showOnPage && (
-    <script is:inline>
+    <script>
       // Scroll-spy: mark the "On this page" link of the section being read.
-      (() => {
-        const links = [...document.querySelectorAll(".onpage a, .onpage-mobile a")];
-        const heads = [...new Set(links.map((a) => a.getAttribute("href").slice(1)))]
+      import { pickCurrent } from "../lib/scroll-spy";
+      {
+        const links = [...document.querySelectorAll<HTMLAnchorElement>(".onpage a, .onpage-mobile a")];
+        const heads = [...new Set(links.map((a) => a.getAttribute("href")!.slice(1)))]
           .map((id) => document.getElementById(id))
-          .filter(Boolean);
-        let shown = null;
+          .filter((h): h is HTMLElement => h !== null);
+        let shown: string | null = null;
         const spy = () => {
-          let cur = "";
-          for (const h of heads) if (h.getBoundingClientRect().top <= 120) cur = h.id;
-          const atBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
-          if (atBottom && heads.length) cur = heads[heads.length - 1].id;
+          const i = pickCurrent(
+            heads.map((h) => h.getBoundingClientRect().top),
+            { offset: 120, viewport: innerHeight, scrollY, scrollHeight: document.documentElement.scrollHeight },
+          );
+          const cur = i < 0 ? "" : heads[i]!.id;
           if (cur === shown) return;
           shown = cur;
           for (const a of links) {
@@ -115,7 +117,8 @@ const next = i >= 0 ? ready[i + 1] : undefined;
         };
         spy();
         addEventListener("scroll", onScroll, { passive: true });
-      })();
+        addEventListener("resize", onScroll, { passive: true });
+      }
     </script>
   )}
 </Base>
