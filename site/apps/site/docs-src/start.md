@@ -29,7 +29,7 @@ Needs git, Node, and `gh auth login` done once (token scopes: repo, workflow). R
 
 Needs [Setup](#setup), and pnpm.
 
-The owner's brief gives the repo name, `<owner>`, the pieces (`<id>:<name>`; `//template` ids such as `preact-app`, `astro-site`, `hono-worker`) and the plan. After `splice new`, write `plans/<name>.md` in the new repo from that brief (`bosun plan check` it): `bosun init --plan` copies it to `plans/`. For a Rust repo use `//template-rust`, `--stack rust` and the piece `rust-cli` (library crates need none); it has no package.json, so skip `pnpm install && pnpm run ci` (TODO(copy): its check command). For signed approvals pause before `bosun init` for step 2.
+The owner's brief gives the repo name, `<owner>`, the pieces (`<id>:<name>`; `//template` ids such as `preact-app`, `astro-site`, `hono-worker`) and the plan. After `splice new`, write `plans/<name>.md` in the new repo from that brief (`bosun plan check` it): `bosun init --plan` copies it to `plans/`. For a Rust repo use `//template-rust`, `--stack rust` and the piece `rust-cli` (library crates need none); it has no package.json, so skip `pnpm install && pnpm run ci` and run what its `.claude/skills/verify/SKILL.md` lists (hull {{ks.hull}}: `node scripts/agents-index.mjs --check` (if it fails, run it without `--check` and commit `docs/agents/index.md`), `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `node scripts/deny.mjs --locked check bans licenses sources`, `cargo nextest run --workspace --locked --profile ci`, `cargo test --workspace --doc --locked`). For signed approvals pause before `bosun init` for step 2.
 
 {{ks.block.newRepoBlock}}
 

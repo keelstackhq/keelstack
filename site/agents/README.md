@@ -2,7 +2,7 @@
 
 # keelstack: agent guide
 
-You are an AI agent in the TARGET repo (to set up, adopt, upgrade or move to a new mode), not in keelstack. Read this file in full and follow it. Never invent commands; at `TODO(copy)` ask the owner.
+You are an AI agent in the TARGET repo (set up, adopt, upgrade, change mode), not in keelstack. Follow this file in full. Never invent commands; at `TODO(copy)` ask.
 
 ## Use
 
@@ -45,9 +45,9 @@ npm i -g @keelstackhq/bosun@0.18.0
 export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 ```
 
-Needs git, Node, `gh auth login` (A also pnpm). Work on a branch, clean checkout. Blocks are exact; `<placeholders>` come from the owner or the JSON above. Each path ends with Verify.
+Needs git, Node, `gh auth login`; pnpm unless C or B bosun alone. Use a clean branch. Blocks are exact. Fill `<placeholders>` from the owner or the JSON. Each path ends in Verify.
 
-A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (library crates need none); skip `pnpm install && pnpm run ci` (TODO(copy): its check command). For signed approvals pause before `bosun init` for step 2.
+A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (libraries need none); skip `pnpm install && pnpm run ci`; run its `.claude/skills/verify/SKILL.md` steps. For signed approvals pause before `bosun init` for step 2.
 
 ```bash
 pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template my-repo --ref v0.12.1 --piece <id>:<name> ...
@@ -95,13 +95,15 @@ B. Adopt, channels only (no hull template). Bosun for rust or ts-pnpm: then `bos
 pnpm dlx @keelstackhq/splice@0.6.0 channel add gh:keelstackhq/decisions//channel --track main --piece import-project
 ```
 
-B. Adopt, with bosun alone (other stacks, or no splice). Bosun alone: step 4 first creates hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, then `hoist apply --area github --adopt --yes`. Then write `plans/<name>.md` from the owner's brief:
+B. Adopt, with bosun alone (other stacks, or no splice). Write `plans/<name>.md` from the owner's brief:
 
 ```bash
 bosun adopt --dry-run                    # writes nothing
 bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor                             # verify
 ```
+
+Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, run `npm i -g @keelstackhq/hoist@0.5.1`, then `hoist apply --area github --adopt --yes`.
 
 C. Change mode. Needs bosun 0.15.0 or later in the repo. No `bosun init` or new plan: `--finish` amends open epics' plans (`--plan <file>` adds one). One rung per PR unless the owner says `--direct`; the owner approves the PR head.
 
@@ -138,7 +140,7 @@ bosun approve <pr>@<40-character head SHA> --sign-key <pem>   # posts it
 
 ## Verify
 
-A red `pnpm run ci` is yours to fix. `splice check` also exits 1 when an update is available (not your change's failure).
+A red `pnpm run ci` is yours to fix. `splice check` also exits 1 on an available update (not your failure).
 
 ```bash
 pnpm run ci   # where the repo has it
@@ -149,7 +151,7 @@ hoist check --area github   # after owner step 4 (--adopt on an adopted repo)
 
 ## Rollback
 
-Nothing is merged until the owner merges it. `--dry-run` writes nothing.
+Nothing merges until the owner merges. `--dry-run` writes nothing.
 
 ```bash
 git switch <default-branch> && git branch -D <branch>   # unpushed: drop the branch

@@ -190,8 +190,8 @@ export const HUMAN_STEPS_NOTE =
   "The owner merges; agents never merge. Step 4 also sets branch protection and auto-merge; an existing repo takes `--adopt`. Setup script: Start E, https://keelstack.dev/docs/start/#e.";
 
 /** Bosun alone has no hoist.toml: bosun adopt's own owner step for branch protection. */
-export const BOSUN_ALONE_HOIST =
-  "Bosun alone: step 4 first creates hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, then `hoist apply --area github --adopt --yes`.";
+export const bosunAloneHoist = (v: Versions): string =>
+  `Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with \`ci-ok\`, \`risk-check\`, \`review-verdict\`, \`main-open\` in \`[github] required_checks\`, run \`npm i -g @keelstackhq/hoist@${v.hoist}\`, then \`hoist apply --area github --adopt --yes\`.`;
 
 export const humanStepsTable = (steps: readonly HumanStep[] = HUMAN_STEPS): string =>
   [

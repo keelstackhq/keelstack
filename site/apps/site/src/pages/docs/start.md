@@ -34,7 +34,7 @@ Needs git, Node, and `gh auth login` done once (token scopes: repo, workflow). R
 
 Needs [Setup](#setup), and pnpm.
 
-The owner's brief gives the repo name, `<owner>`, the pieces (`<id>:<name>`; `//template` ids such as `preact-app`, `astro-site`, `hono-worker`) and the plan. After `splice new`, write `plans/<name>.md` in the new repo from that brief (`bosun plan check` it): `bosun init --plan` copies it to `plans/`. For a Rust repo use `//template-rust`, `--stack rust` and the piece `rust-cli` (library crates need none); it has no package.json, so skip `pnpm install && pnpm run ci` (TODO(copy): its check command). For signed approvals pause before `bosun init` for step 2.
+The owner's brief gives the repo name, `<owner>`, the pieces (`<id>:<name>`; `//template` ids such as `preact-app`, `astro-site`, `hono-worker`) and the plan. After `splice new`, write `plans/<name>.md` in the new repo from that brief (`bosun plan check` it): `bosun init --plan` copies it to `plans/`. For a Rust repo use `//template-rust`, `--stack rust` and the piece `rust-cli` (library crates need none); it has no package.json, so skip `pnpm install && pnpm run ci` and run what its `.claude/skills/verify/SKILL.md` lists (hull v0.12.1: `node scripts/agents-index.mjs --check` (if it fails, run it without `--check` and commit `docs/agents/index.md`), `cargo fmt --all --check`, `cargo clippy --workspace --all-targets --locked -- -D warnings`, `node scripts/deny.mjs --locked check bans licenses sources`, `cargo nextest run --workspace --locked --profile ci`, `cargo test --workspace --doc --locked`). For signed approvals pause before `bosun init` for step 2.
 
 ```bash
 pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template my-repo --ref v0.12.1 --piece <id>:<name> ...
@@ -94,7 +94,7 @@ Run the git commands in data.commands (branch bosun-setup) and open the setup PR
 4. After that merge: `hoist apply --area github` (admin rights). Agent check: `hoist check --area github`.
 5. After that merge: Paste the setup script into the cloud environment. Agent check: `bosun doctor` step 6; else ask.
 
-Bosun alone: step 4 first creates hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, then `hoist apply --area github --adopt --yes`.
+Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, run `npm i -g @keelstackhq/hoist@0.5.1`, then `hoist apply --area github --adopt --yes`.
 
 Then: install the [Claude GitHub App](https://github.com/apps/claude) (step 1); branch protection and auto-merge come from step 4 (the required check is `ci-ok`, or `bosun-ok` if a `ci-ok` job exists; adopt prints which). Run `bosun doctor` until only `plan` is left, then write `plans/<project>.md` and run `bosun plan check`. Cloud setup script: [E](#e). adopt never overwrites existing files; the owner merges the setup PR, since bosun's checks cannot run on it before its workflows are on the default branch; `plugins` may stay missing on a computer in doctor.
 Full guide: [Adopt an existing repo](/docs/adopt/).

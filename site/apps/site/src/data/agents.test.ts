@@ -23,7 +23,7 @@
 //     (adopt.md step 10; flags in `splice channel add --help`); `hoist plan|apply|check --adopt`
 //     exist at versions.hoist.
 //  9. Unverified, so TODO(copy): a machine check that the cloud environment's setup script was pasted.
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vite-plus/test";
@@ -155,8 +155,10 @@ test("/llms.txt links /agents.md and stays under 3.5 KB", () => {
   expect(out.length).toBeLessThan(3500);
 });
 
-test("the built dist/agents.md is the committed file", () => {
-  const built = new URL("../../dist/agents.md", import.meta.url);
-  expect(existsSync(built), "apps/site/dist is missing: build the site first").toBe(true);
-  expect(readFileSync(built, "utf8")).toBe(doc);
+// Calls the route the build serves, so it needs no dist and passes in any order.
+test("the /agents.md route serves the committed file byte for byte", async () => {
+  const { GET } = await import("../pages/agents.md.ts");
+  const res = GET();
+  expect(res.headers.get("Content-Type")).toContain("text/markdown");
+  expect(await res.text()).toBe(doc);
 });

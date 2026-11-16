@@ -348,6 +348,11 @@ freely, template updates never touch it.
   berth 0.2.1). The splice action pin is `docRefs.spliceAction` (what bosun's channel seeds, v0.5.1),
   not the splice tag. "follows bosun 0.17.0" page lines not re-checked against 0.18.0. docspack 0.1.31.
 
+- 2026-11-16 Agent docs follow-ups: pnpm stated per path in `/agents.md`; the bosun-alone hoist step
+  follows `bosun adopt` and installs hoist from `versions.ts`; the `/agents.md` test calls the route
+  (no `dist` needed); path A's Rust check command is the steps of template-rust's `verify` skill at
+  hull v0.12.1 (TODO(copy) resolved). docspack 0.1.32.
+
 ## Blocked
 
 Each item needs a human:

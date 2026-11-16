@@ -1,6 +1,6 @@
 # keelstack: agent guide
 
-You are an AI agent in the TARGET repo (to set up, adopt, upgrade or move to a new mode), not in keelstack. Read this file in full and follow it. Never invent commands; at `TODO(copy)` ask the owner.
+You are an AI agent in the TARGET repo (set up, adopt, upgrade, change mode), not in keelstack. Follow this file in full. Never invent commands; at `TODO(copy)` ask.
 
 ## Use
 
@@ -34,9 +34,9 @@ Install bosun first (every path assumes it):
 
 {{ks.block.installBlock}}
 
-Needs git, Node, `gh auth login` (A also pnpm). Work on a branch, clean checkout. Blocks are exact; `<placeholders>` come from the owner or the JSON above. Each path ends with Verify.
+Needs git, Node, `gh auth login`; pnpm unless C or B bosun alone. Use a clean branch. Blocks are exact. Fill `<placeholders>` from the owner or the JSON. Each path ends in Verify.
 
-A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (library crates need none); skip `pnpm install && pnpm run ci` (TODO(copy): its check command). For signed approvals pause before `bosun init` for step 2.
+A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (libraries need none); skip `pnpm install && pnpm run ci`; run its `.claude/skills/verify/SKILL.md` steps. For signed approvals pause before `bosun init` for step 2.
 
 {{ks.block.newRepoBlock}}
 
@@ -60,9 +60,11 @@ B. Adopt, channels only (no hull template). Bosun for rust or ts-pnpm: then `bos
 
 {{ks.block.channelsBlock}}
 
-B. Adopt, with bosun alone (other stacks, or no splice). {{ks.humanSteps.alone}} Then write `plans/<name>.md` from the owner's brief:
+B. Adopt, with bosun alone (other stacks, or no splice). Write `plans/<name>.md` from the owner's brief:
 
 {{ks.block.adoptBosunBlock}}
+
+{{ks.humanSteps.alone}}
 
 C. Change mode. Needs bosun 0.15.0 or later in the repo. No `bosun init` or new plan: `--finish` amends open epics' plans (`--plan <file>` adds one). One rung per PR unless the owner says `--direct`; the owner approves the PR head.
 
@@ -78,13 +80,13 @@ Approvals (owner-class PRs): the owner approves the exact head SHA.
 
 ## Verify
 
-A red `pnpm run ci` is yours to fix. `splice check` also exits 1 when an update is available (not your change's failure).
+A red `pnpm run ci` is yours to fix. `splice check` also exits 1 on an available update (not your failure).
 
 {{ks.block.verifyBlock}}
 
 ## Rollback
 
-Nothing is merged until the owner merges it. `--dry-run` writes nothing.
+Nothing merges until the owner merges. `--dry-run` writes nothing.
 
 {{ks.block.rollbackBlock}}
 

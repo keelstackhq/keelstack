@@ -38,7 +38,7 @@ Run the git commands in data.commands (branch bosun-setup) and open the setup PR
 4. After that merge: `hoist apply --area github` (admin rights). Agent check: `hoist check --area github`.
 5. After that merge: Paste the setup script into the cloud environment. Agent check: `bosun doctor` step 6; else ask.
 
-Bosun alone: step 4 first creates hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, then `hoist apply --area github --adopt --yes`.
+Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, run `npm i -g @keelstackhq/hoist@0.5.1`, then `hoist apply --area github --adopt --yes`.
 
 ## Use Claude
 

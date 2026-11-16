@@ -31,7 +31,7 @@ export function buildCtx(
   ctx.verified = verifiedLine(v, verified);
   ctx["humanSteps.table"] = sc.humanStepsTable();
   ctx["humanSteps.list"] = sc.humanStepsList();
-  ctx["humanSteps.alone"] = sc.BOSUN_ALONE_HOIST;
+  ctx["humanSteps.alone"] = sc.bosunAloneHoist(v);
   ctx["humanSteps.note"] = sc.HUMAN_STEPS_NOTE;
   // One line per builder; add new ones here.
   const blocks: Record<string, string> = {
