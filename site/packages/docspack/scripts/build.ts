@@ -20,6 +20,12 @@ if (pages.length === 0) throw new Error(`docspack: no Markdown pages in ${site}`
 rmSync(pagesDir, { recursive: true, force: true });
 mkdirSync(pagesDir, { recursive: true });
 for (const page of pages) copyFileSync(join(site, page), join(pagesDir, page));
+// The agent doc is not under /docs/, but it is part of the docs: pack it too.
+const agentDoc = join(site, "../agents.md");
+if (!existsSync(agentDoc))
+  throw new Error(`docspack: ${agentDoc} is missing; build the site first`);
+copyFileSync(agentDoc, join(pagesDir, "agents.md"));
+pages.push("agents.md");
 
 // Name, version and `from` come from package.json.
 execFileSync("docspack", ["build", "-q"], { cwd: root, stdio: "inherit" });

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "astro dev",
+    "gen": "node scripts/gen-docs.ts",
     "build": "astro build",
     "lint": "vp lint",
     "format:check": "vp fmt --check",

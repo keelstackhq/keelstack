@@ -21,6 +21,13 @@ describe("docs as Markdown", () => {
     }
   });
 
+  it("strips the generated header", () => {
+    for (const d of readyDocs()) expect(docMarkdown(d)).not.toContain("<!-- generated");
+    expect(docMarkdown(readyDocs().find((d) => d.slug === "start")!)).not.toContain(
+      "<!-- generated",
+    );
+  });
+
   it("puts every ready page into llms-full.txt, in order", () => {
     const full = buildLlmsFull();
     let at = 0;

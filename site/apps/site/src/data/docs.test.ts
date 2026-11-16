@@ -3,6 +3,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
 import { tools } from "./tools";
+import { bare, versions } from "./versions";
 
 const bosunVersion = tools.find((t) => t.name === "bosun")?.status.replace(/^v/, "");
 
@@ -143,14 +144,18 @@ describe("sources after the 2026-10-28 refresh", () => {
 
 describe("Greenfield repo with bosun page", () => {
   const page = readFileSync(new URL("../pages/docs/greenfield-bosun.md", import.meta.url), "utf8");
-  it("shows the bosun 0.17.0 tree and a plan that plan check accepts without warnings", () => {
-    for (const f of [".bosun/intake.toml", ".bosun/session-rules.toml", ".npmrc", "signer.yml"]) {
+  it("shows the current bosun tree and a plan that plan check accepts without warnings", () => {
+    for (const f of [".npmrc", "signer.yml"]) {
       expect(page).toContain(f);
     }
+    // bosun init writes neither (re-run on 0.18.0): they are not in the tree.
+    expect(page).not.toMatch(/^\.bosun\/(intake|session-rules)\.toml /m);
     expect(page).toContain("apps/api/tests/notes_create.test.ts");
     expect(page).toContain('"warnings": []');
-    expect(page).toContain("`bosun plan check` (0.17.0) accepts with no warnings");
-    // Steps checked against bosun 0.17.0 --help and docs.
+    expect(page).toContain(
+      `\`bosun plan check\` (${bare(versions.bosun)}) accepts with no warnings`,
+    );
+    // Steps checked against the current bosun --help and docs.
     expect(page).toContain("`bosun pr <task> --ready`");
     expect(page).toContain("`bosun keygen --enroll`");
     expect(page).toContain("--keep-plan-tasks-open");

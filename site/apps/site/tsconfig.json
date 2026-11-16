@@ -1,5 +1,5 @@
 {
   "extends": "../../tsconfig.base.json",
-  "compilerOptions": { "jsxImportSource": "react" },
+  "compilerOptions": { "jsxImportSource": "react", "allowImportingTsExtensions": true },
   "include": ["src", "astro.config.mjs"]
 }

@@ -194,7 +194,7 @@ test("/docs/adopt carries the same B notes as /docs/start", () => {
   expect(adoptPage).toContain(ADOPT_BOSUN_OWNER);
 });
 
-test("block A commits the render before it pushes (splice new only runs git init)", () => {
+test("block A commits the render before it pushes (the lockfile is in it)", () => {
   const b = newRepoBlock(versions);
   const commit = b.indexOf('git add -A && git commit -m "chore: render from hull"');
   expect(commit).toBeGreaterThan(-1);

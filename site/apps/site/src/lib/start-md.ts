@@ -1,14 +1,14 @@
 // /docs/start/<id>.md: Setup plus one scenario block, cut from docs/start.md so an agent reads
 // only what it needs. The full page stays at /docs/start.md.
 import { scenarios } from "../data/scenarios";
-import { absoluteLinks } from "./docs-md";
+import { absoluteLinks, FRONTMATTER } from "./docs-md";
 import { SITE_URL } from "./site";
 
 const raw = Object.values(
   import.meta.glob("../pages/docs/start.md", { query: "?raw", import: "default", eager: true }),
 )[0] as string;
 
-const src = raw.replace(/^---\n[\s\S]*?\n---\n/, "");
+const src = raw.replace(FRONTMATTER, "");
 const section = (re: RegExp): string => (src.match(re)?.[0] ?? "").trim();
 
 export const startMdPath = (id: string): string => `/docs/start/${id}.md`;

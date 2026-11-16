@@ -61,9 +61,11 @@ export const MIGRATE_PROMPT = [
 
 export const MIGRATE_COMMANDS = [
   "bosun migrate --to <mode> --dry-run   # survey and planned edits; writes nothing",
-  "bosun migrate --to <mode> [--direct]  # one governance PR (draft); --direct skips the rungs between",
-  "bosun pr --pr <n> --ready             # after the local gates: ready + auto-merge",
-  "bosun migrate --finish                # after the merge: join, plan amend (idempotent)",
+  "bosun migrate --to <mode> [--direct]  # one PR, local gates, ready + auto-merge; --direct skips rungs",
+  "bosun migrate --to <mode> --no-ready  # instead: the draft PR only",
+  "bosun pr --pr <n> --ready             # only after --no-ready; n = data.pr; after the gates",
+  "bosun migrate --finish                # after the merge: join, plan amend",
+  "bosun doctor                          # verify",
 ].join("\n");
 
 export const MODE_LADDER: readonly (readonly [string, string, string])[] = [
@@ -138,16 +140,68 @@ export const installBlock = (v: Versions): string =>
 
 export const newRepoBlock = (v: Versions): string =>
   [
-    `pnpm dlx @keelstackhq/splice@${v.splice} new gh:keelstackhq/hull//template my-repo --ref ${v.hull} --piece preact-app:web --piece hono-worker:api`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} new gh:keelstackhq/hull//template my-repo --ref ${v.hull} --piece <id>:<name> ...`,
     "cd my-repo && pnpm install && pnpm run ci",
-    'git add -A && git commit -m "chore: render from hull"   # splice new only runs git init',
-    "gh repo create <owner>/my-repo --private --source . --push   # owner step, before bosun init",
+    'git add -A && git commit -m "chore: render from hull"   # commit the render and its lockfile (`splice new --commit` skips the lockfile)',
+    "gh repo create <owner>/my-repo --private --source . --push   # before bosun init; <owner> from the brief",
     "bosun init --stack ts-pnpm --plan plans/<name>.md --owner <login>   # opens the setup PR",
     "bosun doctor",
   ].join("\n");
 
 export const NEW_REPO_OWNER =
-  "Owner: create and push the GitHub repo before bosun init (Start a project, item 1); approve the setup PR's head and merge it; then, on your machine in a checkout of the default branch:";
+  "The agent runs every command above, gh repo create included (as the owner's gh login). Owner steps, in order, each with the check an agent runs; the hoist commands are step 4, run on the owner's machine in a checkout of the default branch:";
+
+export interface HumanStep {
+  when: string;
+  what: string;
+  check: string;
+}
+
+/** The owner's steps for a bosun repo, in the order they happen: one truth for agents/README.md and /docs/start. */
+export const HUMAN_STEPS: readonly HumanStep[] = [
+  {
+    when: "Before setup PR",
+    what: "Install the Claude GitHub App on the repo",
+    check: "`bosun doctor` step 2, once the app has acted",
+  },
+  {
+    when: "Before setup PR",
+    what: "Signing key (optional): `bosun keygen --enroll`",
+    check: "`gh pr diff <n> --name-only`: approvers.toml",
+  },
+  {
+    when: "Setup PR open",
+    what: "Approve the setup PR's head and merge it",
+    check: "`gh pr view <n> --json state`",
+  },
+  {
+    when: "After that merge",
+    what: "`hoist apply --area github` (admin rights)",
+    check: "`hoist check --area github`",
+  },
+  {
+    when: "After that merge",
+    what: "Paste the setup script into the cloud environment",
+    check: "`bosun doctor` step 6; else ask",
+  },
+];
+
+export const HUMAN_STEPS_NOTE =
+  "The owner merges; agents never merge. Step 4 also sets branch protection and auto-merge; an existing repo takes `--adopt`. Setup script: Start E, https://keelstack.dev/docs/start/#e.";
+
+/** Bosun alone has no hoist.toml: bosun adopt's own owner step for branch protection. */
+export const BOSUN_ALONE_HOIST =
+  "Bosun alone: step 4 first creates hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, then `hoist apply --area github --adopt --yes`.";
+
+export const humanStepsTable = (steps: readonly HumanStep[] = HUMAN_STEPS): string =>
+  [
+    "| When | Owner step | Agent check |",
+    "| --- | --- | --- |",
+    ...steps.map((s) => `| ${s.when} | ${s.what} | ${s.check} |`),
+  ].join("\n");
+
+export const humanStepsList = (steps: readonly HumanStep[] = HUMAN_STEPS): string =>
+  steps.map((s, i) => `${i + 1}. ${s.when}: ${s.what}. Agent check: ${s.check}.`).join("\n");
 
 export const hoistBlock = (v: Versions): string =>
   [
@@ -161,25 +215,32 @@ export const adoptHullBlock = (v: Versions, assessUrl: string, sha: string): str
     `curl -fsSL https://keelstack.dev${assessUrl} -o /tmp/assess.mjs`,
     `echo "${sha}  /tmp/assess.mjs" | sha256sum -c`,
     "node /tmp/assess.mjs --assess --json",
-    `npx @keelstackhq/splice@${v.splice} adopt gh:keelstackhq/hull//<template> --ref ${v.hull} --piece <id>:<name> ... --dry-run --json`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} adopt gh:keelstackhq/hull//<template> --ref ${v.hull} --piece <id>:<name> ... --dry-run --json`,
+  ].join("\n");
+
+/** After the owner confirmed the dry run: the same command for real, then the check. */
+export const adoptHullRunBlock = (v: Versions): string =>
+  [
+    `pnpm dlx @keelstackhq/splice@${v.splice} adopt gh:keelstackhq/hull//<template> --ref ${v.hull} --piece <id>:<name> ...   # the dry-run command without --dry-run`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} check --offline   # conflict markers fail it`,
   ].join("\n");
 
 export const ADOPT_HULL_NOTE =
-  "Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (plan as in A; bosun adopt below is for repos without hull) and the hoist steps of A, but on an existing repo run `hoist plan --area github --adopt`, then `hoist apply --area github --adopt --yes` (`--adopt` keeps stricter live settings and never loosens them; hoist apply sets the ci-ok ruleset).";
+  "Read the change list, then run the same splice command without --dry-run. Never pass --force unless the owner names the files it may replace. Open the PR; the owner merges it. After the merge, for a Rust or ts-pnpm stack run bosun init --stack rust|ts-pnpm --plan plans/<name>.md --owner <login> (the plan comes from the owner's brief, as in A; bosun adopt below is for repos without hull) and the hoist steps of A, but on an existing repo run `hoist plan --area github --adopt`, then `hoist apply --area github --adopt --yes` (`--adopt` keeps stricter live settings and never loosens them; hoist apply sets the ci-ok ruleset).";
 
 export const adoptBosunBlock: string = [
   "bosun adopt --dry-run                    # writes nothing",
   "bosun adopt --owner <login>              # writes bosun's files; commits nothing",
-  "bosun doctor",
+  "bosun doctor                             # verify",
 ].join("\n");
 
 export const ADOPT_BOSUN_OWNER =
-  "Owner: before the setup PR, the session that will sign approvals runs bosun keygen --enroll (in its own container or machine: the private key never leaves it) and you commit .bosun/approvers.toml in the setup PR; run the git commands in data.commands (branch bosun-setup), open the setup PR and merge it yourself.";
+  "Run the git commands in data.commands (branch bosun-setup) and open the setup PR. Owner steps, in order, each with the check an agent runs (the owner merges the setup PR; agents never merge):";
 
 export const upgradeBlock = (v: Versions): string =>
   [
-    "bosun pin --latest --check            # lists tools behind, downloads and writes nothing; run on the default branch",
-    "bosun pin --latest --pr               # verifies npm sha512, opens a draft PR; the owner approves",
+    "bosun pin --latest --check            # tools behind; writes nothing; run on the default branch",
+    "bosun pin --latest --pr               # checks npm sha512, opens a draft PR; the owner approves",
     "# after it merges, on your machine (<new> = the version pin --check printed):",
     "npm i -g @keelstackhq/bosun@<new> && bosun --version",
     "# then hull, on its own branch:",
@@ -190,15 +251,41 @@ export const upgradeBlock = (v: Versions): string =>
   ].join("\n");
 
 export const UPGRADE_NOTE =
-  "Do bosun first, then hull; each is its own PR and each is R-gov (`.bosun/**`, `.claude/**`, `.splice/**`), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.17.0's script pins splice 0.5.1, hoist 0.5.1 and berth 0.2.1, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
+  "Do bosun first, then hull; each is its own PR and each is R-gov (`.bosun/**`, `.claude/**`, `.splice/**`), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.18.0's script pins splice 0.6.0, hoist 0.5.1 and berth 0.2.1, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
 
 export const approveBlock: string = [
-  "bosun approve --list                                          # ready PRs and heads; writes nothing",
+  "bosun approve --list   # ready PRs and heads",
   "bosun approve <pr>@<40-character head SHA> --sign-key <pem> --print   # shows the signed comment",
-  "bosun approve <pr>@<40-character head SHA> --sign-key <pem>           # posts it",
+  "bosun approve <pr>@<40-character head SHA> --sign-key <pem>   # posts it",
 ].join("\n");
 
 export const SIGNED_PREREQ =
   "Signed form (works from a cloud session): a bosun release with signed approvals (0.2.1 or later) in .bosun/version, the signer's key enrolled in .bosun/approvers.toml on the default branch (bosun keygen --enroll; the enrolling PR is R-gov, so the owner approves it with a GitHub review or a plain comment, since no signed approval counts on that PR), and the PEM held by the signing session.";
 
 export const cliBlock = "bosun doctor   # each missing step with its fix";
+
+/** Channels only (no hull template): the decisions channel (hull docs/adopt.md, step 10). */
+export const channelsBlock = (v: Versions): string =>
+  `pnpm dlx @keelstackhq/splice@${v.splice} channel add gh:keelstackhq/decisions//channel --track main --piece import-project`;
+
+/** hoist on an existing repo: only adds, never loosens a stricter live setting. */
+export const hoistAdoptBlock: string = [
+  "hoist plan --area github --adopt          # what would change; writes nothing",
+  "hoist apply --area github --adopt --yes   # write it, then verify",
+].join("\n");
+
+/** Checks by timing; none is a failure of an agent step unless its note says so. */
+export const verifyBlock = (v: Versions): string =>
+  [
+    "pnpm run ci   # where the repo has it",
+    "bosun doctor   # exit 5: owner steps pending",
+    `pnpm dlx @keelstackhq/splice@${v.splice} check --offline   # needs .splice/lock.toml`,
+    "hoist check --area github   # after owner step 4 (--adopt on an adopted repo)",
+  ].join("\n");
+
+/** Undo, from the least to the most: nothing is merged until the owner merges it. */
+export const rollbackBlock: string = [
+  "git switch <default-branch> && git branch -D <branch>   # unpushed: drop the branch",
+  "gh pr close <n> --delete-branch                         # open PR: close it",
+  "bosun migrate --to <tighter-mode>                       # mode too loose: one PR tighter",
+].join("\n");

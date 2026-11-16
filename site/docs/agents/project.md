@@ -32,6 +32,9 @@ freely, template updates never touch it.
     CSS + fonts for `/` under 150 KiB (153,600 B) transferred; the island JS is counted separately.
   - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
     diverges from the template on purpose; keep that change when `splice update` ships.
+  - `apps/site/tsconfig.json` (`allowImportingTsExtensions`, for the Node-run docs generator) and
+    `apps/site/turbo.json` (`build`/`test` inputs add `$TURBO_ROOT$/agents/**` and `docs-src/**`)
+    diverge from the template on purpose; keep both when `splice update` ships.
   - Design spec: `docs/superpowers/specs/2026-10-16-landing-redesign-design.md` (supersedes
     `2026-10-16-landing-page-design.md`).
   - Update bot: `.github/workflows/splice.yml` (`keelstackhq/splice/action@8dcdf9a9faf35cd5b504c326c9107f8da689264e # v0.5.1`, `scope: all`,
@@ -331,6 +334,19 @@ freely, template updates never touch it.
 - 2026-11-16 Docs rail scroll-spy: `pickCurrent` in `apps/site/src/lib/scroll-spy.ts` (tested) picks the
   heading nearest the top; the first on a page that cannot scroll or before any heading passes the offset,
   the last only at the bottom when it is on screen (short pages no longer highlight the last heading).
+- 2026-11-16 Agent docs and one version source: pages with pins are templates in `apps/site/docs-src/`
+  (`{{ks.*}}` tokens from `src/lib/render.ts`: `versions.ts`, `docRefs`, `scenarios.ts` blocks);
+  `node apps/site/scripts/gen-docs.ts` writes the committed `src/pages/docs/*.md` (header "generated
+  ... edit that") and root `agents/README.md` + `agents/versions.json`; edit `docs-src/`, never the
+  output; `generated.test.ts` (`gen-docs.ts --check`) fails on drift, and on literal current pins in
+  `docs-src/` outside `.literal-allow` (history and "verified against" lines stay literal).
+  `/agents.md` (from `/llms.txt`) is the one doc an agent in a target repo reads: decide A-F, human-only
+  checklist with agent checks, steps, verify, rollback (≤ 10 KB, every command block a builder).
+  hull v0.12.1 (`f59ed2b`; adopt and start checklist re-copied; hero re-run: 67 files, 41/8/18, lines
+  unchanged), splice 0.6.0 (`feea849`), bosun 0.18.0 (`659e827`; no `--help` change since 0.17.0);
+  Cloud setup script re-copied from bosun `aa6c4c6` (installs bosun 0.18.0, splice 0.6.0, hoist 0.5.1,
+  berth 0.2.1). The splice action pin is `docRefs.spliceAction` (what bosun's channel seeds, v0.5.1),
+  not the splice tag. "follows bosun 0.17.0" page lines not re-checked against 0.18.0. docspack 0.1.31.
 
 ## Blocked
 

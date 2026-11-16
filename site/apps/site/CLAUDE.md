@@ -10,6 +10,7 @@ in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
   `src/data/docs.ts`. `astro.config.mjs` also sets `markdown.syntaxHighlight: false` on purpose (plain `<pre><code>`)
   and `markdown.processor: satteri(markdownOptions)` from `src/lib/markdown.ts` (dashes off, so `--flag` in
   prose stays two hyphens; `src/lib/markdown-render.test.ts`); keep both when `splice update` ships.
+- Docs pages that carry version pins or command blocks are edited in `docs-src/`, then `pnpm --filter @keelstackhq/site gen` renders them into `src/pages/docs/` (`scripts/gen-docs.ts`, `src/lib/render.ts`; `{{ks.NAME}}` tokens come from `src/data/versions.ts`). The generated `.md` carries a `<!-- generated ... -->` header; never edit it by hand (`src/data/generated.test.ts` fails on drift).
 - Fonts are self-hosted via Fontsource (Archivo, JetBrains Mono). Light theme only.
 - `/llms.txt` is built from the same data files by `src/lib/llms.ts` (`src/pages/llms.txt.ts`).
 - Machine-readable docs come from the same `.md` sources (`src/lib/docs-md.ts`): each page as

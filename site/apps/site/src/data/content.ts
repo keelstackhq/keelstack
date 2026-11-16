@@ -2,6 +2,7 @@
 import { buildCommand, DEFAULT_ON, SPLICE_VERSION } from "../lib/command";
 import { scenarios } from "./scenarios";
 import { org } from "./tools";
+import { tagCommits } from "./versions";
 
 export interface HeroVariant {
   lead: string;
@@ -19,7 +20,7 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run (splice 0.5.1, hull v0.12.0, the default pieces). `output` is an excerpt of
+// Real `splice new` run (splice 0.6.0, hull v0.12.1, the default pieces). `output` is an excerpt of
 // its 67 create lines, in output order; `summary` is our `#` note counting them, not splice output.
 // The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
 export const terminal = {
@@ -149,8 +150,7 @@ export const update: {
       "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
       "Merge only when `ci-ok` is green.",
     ],
-    guide:
-      "https://github.com/keelstackhq/hull/blob/5a72442649f6958e91a50283a91e985f45e10a09/docs/updating.md",
+    guide: `https://github.com/keelstackhq/hull/blob/${tagCommits.hull}/docs/updating.md`,
   },
   bosun: {
     heading: "Update bosun",

@@ -20,6 +20,8 @@ export function buildLlmsTxt(): string {
     "",
     "## Start here",
     "",
+    `If you are an agent in a repo to set up, adopt or upgrade: read ${SITE_URL}/agents.md in full first (one file: decide, human-only steps, exact steps, verify, rollback).`,
+    "",
     `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}. Each scenario file below is Setup plus one exact copy-paste block: read only yours.`,
     "",
     ...scenarios.map(

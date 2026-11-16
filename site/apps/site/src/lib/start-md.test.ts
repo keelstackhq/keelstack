@@ -5,6 +5,7 @@ import { startScenarioMd } from "./start-md";
 test("each scenario file holds Setup plus its own block only", () => {
   for (const s of scenarios) {
     const md = startScenarioMd(s.id);
+    expect(md).not.toContain("<!-- generated");
     expect(md).toContain("npm i -g @keelstackhq/bosun@");
     expect(md).toContain(`# Start ${s.id.toUpperCase()}. `);
     for (const o of scenarios.filter((x) => x.id !== s.id)) {
