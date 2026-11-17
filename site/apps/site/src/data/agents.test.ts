@@ -2,9 +2,9 @@
 // TARGET repo. Step 0, the facts it relies on, each with its source at the pinned tag (checked 2026-11-16):
 //  1. bosun prints one JSON object {version, command, ok, exit_code, data, error, next}; error has
 //     {kind, message, fix}; exit codes 0 ok, 1 error, 2 usage, 3 conflict, 4 halted, 5 needs-human,
-//     6 limit. Source: `bosun --help`, bosun at versions.bosun (also checked at 0.18.0).
+//     6 limit. Source: `bosun --help`, bosun at versions.bosun.
 //  2. `bosun prereqs <plan files>` lists the human steps a plan needs and its approvals (--post opens
-//     the checklist issue). Source: `bosun prereqs --help` at versions.bosun (0.18.0; same text at 0.17.0).
+//     the checklist issue). Source: `bosun prereqs --help` at versions.bosun.
 //  3. `bosun doctor` reports each checklist step ok or missing; `bosun keygen --enroll` adds a key to
 //     .bosun/approvers.toml; `bosun migrate --to <mode> [--dry-run|--direct]`, `--finish` after the
 //     merge. Source: `bosun doctor|keygen|migrate --help` at versions.bosun.

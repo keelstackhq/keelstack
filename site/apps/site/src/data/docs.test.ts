@@ -148,7 +148,7 @@ describe("Greenfield repo with bosun page", () => {
     for (const f of [".npmrc", "signer.yml"]) {
       expect(page).toContain(f);
     }
-    // bosun init writes neither (re-run on 0.18.0): they are not in the tree.
+    // bosun init writes neither (checked by re-running it at versions.bosun): they are not in the tree.
     expect(page).not.toMatch(/^\.bosun\/(intake|session-rules)\.toml /m);
     expect(page).toContain("apps/api/tests/notes_create.test.ts");
     expect(page).toContain('"warnings": []');
