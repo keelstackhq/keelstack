@@ -47,8 +47,8 @@ versions and their sha512 checksums and moves them only by reviewed pull request
 (R-gov).
 
 The script below is bosun's own,
-[`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/aa6c4c6fb8ec0282a13c9e1d1f1349aad0d4f1f1/docs/setup-script.sh)
-at bosun `main` commit `aa6c4c6` (the post-`v0.18.0` pin), copied verbatim. It installs bosun 0.18.0, splice 0.6.0, hoist 0.5.1 and berth 0.2.1; a repo's script pins the bosun release that repo uses.
+[`docs/setup-script.sh`](https://github.com/keelstackhq/bosun/blob/43ecc36522c4db49a4e9a220d2daa7fa963b5180/docs/setup-script.sh)
+at bosun `main` commit `43ecc36` (the post-`v0.19.0` pin), copied verbatim. It installs bosun 0.19.0, splice 0.6.0, hoist 0.5.1 and berth 0.2.1; a repo's script pins the bosun release that repo uses.
 
 ```bash
 #!/usr/bin/env bash
@@ -100,10 +100,10 @@ KEELSTACK_MARKETPLACE_REF=main
 SUPERPOWERS_SHA=22f0b463e7a5e579904dd6211a520321035526f7
 CAVEMAN_SHA=a9cc1f7b82598852e8c6b8e599dde6ac2491b26e
 # The bosun release this repo pins in .bosun/version.
-BOSUN_VERSION=0.18.0
-BOSUN_SHA512=ZmP0stws90KO3AVktbXe1LFGa+jCNkwf99IN6BNSvfiMGk6XfJsXHdP34EXTcQohkDLxEy/HyFN8bc3X8gcCFA==
-BOSUN_LINUX_X64_SHA512=PRaVcujrOVB8Sgg8JeXRQ7SQP0wclp/jCVnHCrbvn6BtC9LDjHtos4oJdpFMEZhXSFtSyKqth9ja+y1DSKrtgQ==
-BOSUN_LINUX_ARM64_SHA512=XhZyLjNgybwHpSdP5gm/4eLWpVZOrtVT7TFnwitnNKFySnrqlftABJvbNZVBF3X1vRP/Rwx/OxzYwU75YBPZkQ==
+BOSUN_VERSION=0.19.0
+BOSUN_SHA512=NC5PAdHp1TuUsRgHuJNlLBdNa9jx6bBTo+iCMq0YNtFKbM36ufgnpsOXaRVgbTLG1iv6qi5X5QXtU7RBK/P2nw==
+BOSUN_LINUX_X64_SHA512=hfBRnTj7uOSq6oQVe9aWI6+qRGrKm6RbcYQXWmIWI/cBoIMKbFRGzFwFkb8YEZDplt5XzCZ6G4eVdIaQJTYHVg==
+BOSUN_LINUX_ARM64_SHA512=B3H+CW/xrScJ+uZsK02H+/ftaA6QWfILduBjL8Udh1d4tvK9vVKv1e3B2Vq/GM+vk4iuYr5gQdKrx2yX6UF3HA==
 
 # Stacks of this checkout: Rust steps run only with a Cargo.toml or a toolchain file, pnpm only
 # with a pnpm-lock.yaml, a pnpm-workspace.yaml or a package.json `packageManager` of pnpm.

@@ -6,7 +6,7 @@ You are an AI agent in the TARGET repo (set up, adopt, upgrade, change mode), no
 
 ## Use
 
-Versions: hull v0.12.1, splice 0.6.0, bosun 0.18.0, hoist 0.5.1, hoard v0.6.1, berth 0.2.1. JSON: https://keelstack.dev/agents/versions.json. Last verified 2026-11-16 against bosun 0.18.0, hull v0.12.1, splice 0.6.0.
+Versions: hull v0.13.0, splice 0.6.0, bosun 0.19.0, hoist 0.5.1, hoard v0.6.1, berth 0.2.1. JSON: https://keelstack.dev/agents/versions.json. Last verified 2026-11-16 against bosun 0.19.0, hull v0.13.0, splice 0.6.0.
 
 bosun prints exactly one JSON object on stdout: `{version, command, ok, exit_code, data, error, next}`; `error` is `{kind, message, fix}`. Do what `error.fix` says; make the calls in `next`; never work around a refusal. Exit codes: 0 ok, 1 error, 2 usage, 3 conflict, 4 halted, 5 needs-human, 6 limit. On exit 5 stop and tell the owner.
 
@@ -41,7 +41,7 @@ The owner merges; agents never merge. Step 4 also sets branch protection and aut
 Install bosun first (every path assumes it):
 
 ```bash
-npm i -g @keelstackhq/bosun@0.18.0
+npm i -g @keelstackhq/bosun@0.19.0
 export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 ```
 
@@ -50,7 +50,7 @@ Needs git, Node, `gh auth login`; pnpm unless C or B bosun alone. Use a clean br
 A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (libraries need none); skip `pnpm install && pnpm run ci`; run its `.claude/skills/verify/SKILL.md` steps. For signed approvals pause before `bosun init` for step 2.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template my-repo --ref v0.12.1 --piece <id>:<name> ...
+pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template my-repo --ref v0.13.0 --piece <id>:<name> ...
 cd my-repo && pnpm install && pnpm run ci
 git add -A && git commit -m "chore: render from hull"   # commit the render and its lockfile (`splice new --commit` skips the lockfile)
 gh repo create <owner>/my-repo --private --source . --push   # before bosun init; <owner> from the brief
@@ -69,16 +69,16 @@ hoist apply --area github --yes   # write it, then verify like `hoist check`
 B. Adopt, with hull. Take `<template>` and each `<id>:<name>` from the assess JSON (`next`, `pieces`). The owner confirms them and the change list.
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.12.1.mjs -o /tmp/assess.mjs
-echo "ff1bceb19e4a6688be7d8bd5c1e8a7cf1e2633fc35a3441b17938715d3aeb878  /tmp/assess.mjs" | sha256sum -c
+curl -fsSL https://keelstack.dev/assess/v0.13.0.mjs -o /tmp/assess.mjs
+echo "189a681d40ad3cdd243e4183bda9d9774ebada31a2563f0968211827d9acb16e  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
-pnpm dlx @keelstackhq/splice@0.6.0 adopt gh:keelstackhq/hull//<template> --ref v0.12.1 --piece <id>:<name> ... --dry-run --json
+pnpm dlx @keelstackhq/splice@0.6.0 adopt gh:keelstackhq/hull//<template> --ref v0.13.0 --piece <id>:<name> ... --dry-run --json
 ```
 
 Then run it for real and check. Never `--force` unless the owner names the files to replace. Their `ci.yml` is an owned clash (refused): the owner takes the template's or keeps theirs with its job renamed `ci-ok`; a kept owned workflow stays refused, so adopt later or channels only.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.6.0 adopt gh:keelstackhq/hull//<template> --ref v0.12.1 --piece <id>:<name> ...   # the dry-run command without --dry-run
+pnpm dlx @keelstackhq/splice@0.6.0 adopt gh:keelstackhq/hull//<template> --ref v0.13.0 --piece <id>:<name> ...   # the dry-run command without --dry-run
 pnpm dlx @keelstackhq/splice@0.6.0 check --offline   # conflict markers fail it
 ```
 
@@ -163,4 +163,4 @@ bosun migrate --to <tighter-mode>                       # mode too loose: one PR
 
 - This file: https://keelstack.dev/agents.md
 - One scenario each: https://keelstack.dev/docs/start/a.md to f.md
-- hull adopt guide at the tag: https://raw.githubusercontent.com/keelstackhq/hull/v0.12.1/docs/adopt.md
+- hull adopt guide at the tag: https://raw.githubusercontent.com/keelstackhq/hull/v0.13.0/docs/adopt.md

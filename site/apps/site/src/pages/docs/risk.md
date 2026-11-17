@@ -6,9 +6,9 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page follows bosun 0.18.0 (2026-11-16).
+turns `risk-check` green only when the rules are met. This page follows bosun 0.19.0 (2026-11-16).
 Long details live in bosun's
-[risk spec](https://github.com/keelstackhq/bosun/blob/659e827efae2b242990cb82637a343638bbc6493/docs/spec/08-risk.md).
+[risk spec](https://github.com/keelstackhq/bosun/blob/26fe7863254146b8c621a5b7e6d823fb2605bf1c/docs/spec/08-risk.md).
 
 ## Cheat sheet: who approves what
 
@@ -43,14 +43,14 @@ matches any rule is high risk.
 | R-revert (built in) | A revert must undo exactly what it names.           | a `bosun revert` PR that is not the exact inverse of the PR it names, or whose original needed the owner                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 Each rule's exact paths and the built-in judgments are in the
-[risk spec](https://github.com/keelstackhq/bosun/blob/659e827efae2b242990cb82637a343638bbc6493/docs/spec/08-risk.md).
+[risk spec](https://github.com/keelstackhq/bosun/blob/26fe7863254146b8c621a5b7e6d823fb2605bf1c/docs/spec/08-risk.md).
 `risk.toml` is a seed, so a repo set up before a rule change adds new paths by hand. bosun's own
 repo also has R-gate (the gate code itself) and R-ci-review (below).
 
 - **Only the owner approves R-weaken.** No orchestrator, bootstrap, policy, autonomous or delegate
   signature counts on it, nor on a PR with the `weaken` capability. Agents may propose
   loosening a gate, never apply it. A less strict mode in `[mode]` is itself an R-weaken change
-  ([modes](https://github.com/keelstackhq/bosun/blob/659e827efae2b242990cb82637a343638bbc6493/docs/spec/18-modes.md)).
+  ([modes](https://github.com/keelstackhq/bosun/blob/26fe7863254146b8c621a5b7e6d823fb2605bf1c/docs/spec/18-modes.md)).
 - **R-deps** counts new root pins, new catalog entries and source changes (git, `package =`
   renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases), and the registry and
   install-hook files above: they redirect where every package comes from. It does not count
@@ -167,7 +167,7 @@ withdraws it (and every signed or delegated approval with it). No review event r
 workflow, so a withdrawal counts on the next run: comment `/bosun recheck` or re-run the workflow.
 A dismissed request for changes still withdraws; a fresh plain-token comment from that owner, or a
 signed `v2` approval that names the dismissed review, clears it (details in the
-[risk spec](https://github.com/keelstackhq/bosun/blob/659e827efae2b242990cb82637a343638bbc6493/docs/spec/08-risk.md)).
+[risk spec](https://github.com/keelstackhq/bosun/blob/26fe7863254146b8c621a5b7e6d823fb2605bf1c/docs/spec/08-risk.md)).
 
 ### Unsigned approvals from Claude cloud sessions do not count
 
@@ -299,7 +299,7 @@ sign gated approvals until that day, after green checks and an independent clean
 [Operating model](/docs/operating-model/). Under `autonomous` it may approve only paths under
 `src/`, `tests/`, `docs/`, `changelog.d/` or `.changeset/*.md` (or the globs of `[approvals] autonomous_allow` in `.bosun/bosun.toml`, which only the owner's PR may set; the deny list still wins), with a clean verdict from a
 session that holds no lease on the task. A one-off task over 300 changed lines (R-oneoff-size) always needs the owner. The boosters that use it are in
-[modes](https://github.com/keelstackhq/bosun/blob/659e827efae2b242990cb82637a343638bbc6493/docs/spec/18-modes.md).
+[modes](https://github.com/keelstackhq/bosun/blob/26fe7863254146b8c621a5b7e6d823fb2605bf1c/docs/spec/18-modes.md).
 Set a value only after `.bosun/version` pins a release that reads it.
 
 ## Asking the owner

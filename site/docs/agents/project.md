@@ -352,6 +352,10 @@ freely, template updates never touch it.
   follows `bosun adopt` and installs hoist from `versions.ts`; the `/agents.md` test calls the route
   (no `dist` needed); path A's Rust check command is the steps of template-rust's `verify` skill at
   hull v0.12.1 (TODO(copy) resolved). docspack 0.1.32.
+- 2026-11-17 hull v0.13.0 (`3f4a65f`): `/assess/v0.13.0.mjs` (sha256 `189a681d…`, new `ready.mjs`) is current,
+  earlier tags stay served; adopt and start checklist re-copied at the tag, docs regenerated. The hero
+  command output was not re-run (hero still shows the v0.12.1 run's lines). docspack 0.1.33.
+- 2026-11-17 bosun 0.19.0 (`26fe786`): `versions.ts`; Cloud setup script re-copied from bosun `43ecc36` (installs 0.19.0, same splice, hoist, berth pins); docs regenerated. No page describes the guard's fetch/pull forms.
 
 ## Blocked
 

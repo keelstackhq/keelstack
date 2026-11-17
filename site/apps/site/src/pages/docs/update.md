@@ -24,7 +24,7 @@ Work on a branch, so the update is one reviewable change:
 - Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.6.0` in place of `splice`.
 - Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.
 - Merge only when `ci-ok` is green.
-- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/f59ed2bb7c30acdffc8fb14ba39273578bdb915a/docs/updating.md) at tag `v0.12.1` (`f59ed2b`).
+- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/3f4a65fda568cdd20c76168ed156d25a28ba5630/docs/updating.md) at tag `v0.13.0` (`3f4a65f`).
 
 ## Update bosun
 
