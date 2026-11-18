@@ -356,6 +356,7 @@ freely, template updates never touch it.
   earlier tags stay served; adopt and start checklist re-copied at the tag, docs regenerated. The hero
   command output was not re-run (hero still shows the v0.12.1 run's lines). docspack 0.1.33.
 - 2026-11-17 bosun 0.19.0 (`26fe786`): `versions.ts`; Cloud setup script re-copied from bosun `43ecc36` (installs 0.19.0, same splice, hoist, berth pins); docs regenerated. No page describes the guard's fetch/pull forms.
+- 2026-11-18 bosun adopted (0.20.0, `[mode] name = "autonomous"`, `ts-pnpm`; D-016, D-017): `.bosun/**`, `governance/owners.toml`, five bosun workflows next to `ci.yml` (`ci-ok` stays), channel-owned and unchanged except SHA pins (checkout and pnpm as in `ci.yml`, setup-node v4.4.0 as bosun's `@v4`, hoard `570e6c5`). The site docs and `versions.ts` still say bosun 0.19.0.
 
 ## Blocked
 
