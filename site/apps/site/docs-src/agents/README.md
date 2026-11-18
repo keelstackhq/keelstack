@@ -66,7 +66,7 @@ B. Adopt, with bosun alone (other stacks, or no splice). Write `plans/<name>.md`
 
 {{ks.humanSteps.alone}}
 
-C. Change mode. Needs bosun 0.15.0 or later in the repo. No `bosun init` or new plan: `--finish` amends open epics' plans (`--plan <file>` adds one). One rung per PR unless the owner says `--direct`; the owner approves the PR head.
+C. Change mode. Needs bosun {{ks.min.bosunMigrate}} or later in the repo. No `bosun init` or new plan: `--finish` amends open epics' plans (`--plan <file>` adds one). One rung per PR unless the owner says `--direct`; the owner approves the PR head.
 
 {{ks.block.migrateBlock}}
 

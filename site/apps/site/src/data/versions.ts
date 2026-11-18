@@ -29,6 +29,9 @@ export const docRefs = {
   spliceActionVersion: "0.5.1",
 } as const;
 
+/** Oldest bosun with `bosun migrate --to <mode>` and `--finish` (first shipped in 0.15.0, bosun CHANGELOG "## 0.15.0"). */
+export const MIN_BOSUN_MIGRATE = "0.15.0";
+
 /** The date the versions above were last checked against their tags and docs. */
 export const verifiedOn = "2026-11-16";
 

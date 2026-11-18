@@ -1,8 +1,8 @@
 // Move a repo to bosun booster: copy from bosun docs/migrate-booster.md (bosun main at bd1f650),
-// Quick start at its top. Needs bosun 0.17.0 (pairs with hull v0.10.0, per the bosun changelog); versions come from versions.ts. Names no client org or repo.
+// Quick start at its top. Min bosun comes from MIN_BOSUN_MIGRATE (versions.ts); other versions come from versions.ts. Names no client org or repo.
 
 import { MIGRATE_NOTES, MIGRATE_PROMPT, MODE_LADDER } from "./scenarios";
-import { bare, versions } from "./versions";
+import { bare, MIN_BOSUN_MIGRATE, versions } from "./versions";
 
 export const RUNBOOK_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md";
 export const APPENDIX_URL = `${RUNBOOK_URL}#appendix-a-the-manual-path`;
@@ -12,7 +12,7 @@ export const migrate = {
   title: "Move a repo to bosun booster",
   summary:
     "For a repo that already runs hull and bosun: one setup script, a two-line prompt, one PR to approve. Works in Claude Code locally, on the web, and in Slack.",
-  forWho: `For a repo that already runs hull and bosun. It needs bosun ${bare(versions.bosun)} or newer. bosun ${bare(versions.bosun)} pairs with hull v0.10.0 (the pairing the bosun changelog states; hull ${versions.hull} is current). Booster is steady plus a fast lane.`,
+  forWho: `For a repo that already runs hull and bosun. It needs bosun ${MIN_BOSUN_MIGRATE} or newer (bosun ${bare(versions.bosun)} and hull ${versions.hull} are current). Booster is steady plus a fast lane.`,
   owner:
     "The owner approves one PR: the exact head (repo, PR, head SHA), in the way bosun asks. Agents never merge, tag or force-push; they turn on auto-merge. Routines (scheduled Claude Code sessions such as curator, set up at claude.ai/code; see /docs/getting-started/) stay human-only; the PR body lists them.",
   quick: {

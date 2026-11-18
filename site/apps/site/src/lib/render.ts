@@ -2,7 +2,15 @@
 // Imports only versions.ts, scenarios.ts and setup-script.ts (with .ts extensions) so Node can run it directly.
 import { readSetupScript } from "./setup-script.ts";
 import * as sc from "../data/scenarios.ts";
-import { bare, docRefs, tagCommits, verifiedLine, verifiedOn, versions } from "../data/versions.ts";
+import {
+  bare,
+  docRefs,
+  MIN_BOSUN_MIGRATE,
+  tagCommits,
+  verifiedLine,
+  verifiedOn,
+  versions,
+} from "../data/versions.ts";
 
 export type Ctx = Record<string, string>;
 
@@ -23,6 +31,7 @@ export function buildCtx(
     ctx[`commit.${t}`] = commits[t];
     ctx[`short.${t}`] = commits[t].slice(0, 7);
   }
+  ctx["min.bosunMigrate"] = MIN_BOSUN_MIGRATE;
   ctx["ref.bosunSpec"] = refs.bosunSpec;
   ctx["ref.spliceAction"] = refs.spliceAction;
   ctx["ref.spliceActionVersion"] = refs.spliceActionVersion;

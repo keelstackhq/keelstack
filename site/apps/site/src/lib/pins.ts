@@ -13,7 +13,7 @@ export function hasLiteralPin(
     `--ref ${versions.hull}`,
   ];
   if (literals.some((l) => new RegExp(`${escape(l)}(?![\\w.])`).test(line))) return true;
-  // Bare prose: `bosun 0.18.0`, `hoard v0.6.1`, `@keelstackhq/splice 0.6.0` at the tool's current version.
+  // Bare prose: `<tool> X.Y.Z` or `<tool> vX.Y.Z` at the tool's current version.
   return Object.entries(versions).some(([tool, v]) =>
     new RegExp(`\\b${tool}\\s+v?${escape(v.replace(/^v/, ""))}(?!\\w|\\.\\d)`, "i").test(line),
   );

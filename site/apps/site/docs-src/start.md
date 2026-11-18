@@ -76,7 +76,7 @@ Modes run gatekeeper, steady, booster, autonomous. One PR per move.
 
 {{ks.block.migrateBlock}}
 
-Needs a repo that already runs bosun 0.15.0 or later (`.bosun/version`; else set bosun up first, B). No `bosun init` and no plan to write: `--finish` amends the plans of open epics (`--plan <file>` adds one). Use `--direct` only when the owner says so; otherwise one rung per PR, `--finish` after each merge. Owner: approve the one PR head as in [F](#f) (R-gov, and R-weaken for a less strict mode). Ladder, knobs and the two-line prompt for Claude: [Move a repo to bosun booster](https://keelstack.dev/migrate/).
+Needs a repo that already runs bosun {{ks.min.bosunMigrate}} or later (`.bosun/version`; else set bosun up first, B). No `bosun init` and no plan to write: `--finish` amends the plans of open epics (`--plan <file>` adds one). Use `--direct` only when the owner says so; otherwise one rung per PR, `--finish` after each merge. Owner: approve the one PR head as in [F](#f) (R-gov, and R-weaken for a less strict mode). Ladder, knobs and the two-line prompt for Claude: [Move a repo to bosun booster](https://keelstack.dev/migrate/).
 
 <a id="d"></a>
 

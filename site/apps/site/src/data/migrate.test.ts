@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { footerLinks, nav } from "./content";
 import { APPENDIX_URL, migrate, RUNBOOK_URL } from "./migrate";
-import { bare, versions } from "./versions";
+import { MIN_BOSUN_MIGRATE } from "./versions";
 import { buildLlmsTxt } from "../lib/llms";
 
 const page = readFileSync(new URL("../pages/migrate.astro", import.meta.url), "utf8");
@@ -40,10 +40,9 @@ test("leads with a pointer to the one setup script, then the 2-line prompt, then
   expect(order).toEqual(order.toSorted((a, b) => a - b));
 });
 
-test("requires bosun 0.17.0 and says it pairs with hull v0.10.0", () => {
-  expect(migrate.forWho).toContain(`bosun ${bare(versions.bosun)}`);
-  expect(migrate.forWho).toContain("pairs with hull v0.10.0");
-  expect(migrate.forWho).not.toMatch(/hull v0\.10\.0 or newer/);
+test("states the minimum bosun from MIN_BOSUN_MIGRATE and does not claim a hull pairing", () => {
+  expect(migrate.forWho).toContain(`bosun ${MIN_BOSUN_MIGRATE} or newer`);
+  expect(migrate.forWho).not.toContain("pairs with");
   expect(JSON.stringify(migrate)).not.toContain("0.14.0");
 });
 
