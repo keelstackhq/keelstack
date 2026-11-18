@@ -1,23 +1,30 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { gzipSync } from "node:zlib";
-import { expect, it } from "vite-plus/test";
+import { beforeAll, expect, it } from "vite-plus/test";
 
 // Budget from docs/agents/project.md: HTML + CSS + latin fonts for `/` stay at or under 150 KiB (153,600 B).
-// Measured on the build output. Skipped locally when `dist` is not built; in CI a missing
-// `dist` fails (turbo builds the site before its tests, see apps/site/turbo.json).
-const dist = new URL("../../dist/", import.meta.url);
-const built = existsSync(new URL("index.html", dist));
+// Measured on the build output. When `dist` is missing (a plain `pnpm run test`, as bosun's test
+// gate runs it), the test builds the site first with the site's own build script; turbo builds it
+// before the tests in ci.yml (apps/site/turbo.json), so there `dist` already exists.
+const root = new URL("../../", import.meta.url);
+const dist = new URL("dist/", root);
 const BUDGET = 150 * 1024;
-const inCI = Boolean(
-  (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env.CI,
-);
+
+beforeAll(() => {
+  if (existsSync(new URL("index.html", dist))) return;
+  execFileSync("pnpm", ["run", "build"], { cwd: fileURLToPath(root) });
+}, 180_000);
 
 const read = (path: string): Uint8Array => readFileSync(new URL(path.replace(/^\//, ""), dist));
 const text = (b: Uint8Array) => new TextDecoder().decode(b);
 const gz = (b: Uint8Array) => gzipSync(b, { level: 9 }).length;
 
-it.skipIf(!built && !inCI)("keeps / (HTML + CSS gzipped + latin fonts) at or under 150 KiB", () => {
-  expect(built, "apps/site/dist is missing: build the site first").toBe(true);
+it("keeps / (HTML + CSS gzipped + latin fonts) at or under 150 KiB", () => {
+  expect(existsSync(new URL("index.html", dist)), "the site build produced no index.html").toBe(
+    true,
+  );
   const html = read("/index.html");
   const css = [...text(html).matchAll(/<link[^>]+href="(\/[^"]+\.css)"/g)].map((m) => m[1]!);
   expect(css.length).toBeGreaterThan(0);
