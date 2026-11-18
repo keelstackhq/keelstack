@@ -37,6 +37,12 @@ catalog:
   vite-plus: 1.1.0
   wrangler: 4.151.0
 
+# picomatch has no patched release (<=4.0.7 is the newest and is affected): ignore only this GHSA,
+# owner-approved 2026-11-18. Remove once a patched picomatch ships.
+auditConfig:
+  ignoreGhsas:
+    - GHSA-fc5q-39xc-vjpf
+
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
   # GHSA undici advisories (>=8.0.0 <8.12.2): astro > unifont pulls undici 8.11.2; 8.12.4 is the newest 8.x.
