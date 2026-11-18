@@ -24,7 +24,7 @@ test("does not flag tokens, longer versions or other text", () => {
 const all = {
   hull: "v0.13.0",
   splice: "0.6.0",
-  bosun: "0.19.0",
+  bosun: "0.20.0",
   hoist: "0.5.1",
   hoard: "v0.6.1",
   berth: "0.2.1",
@@ -32,8 +32,8 @@ const all = {
 
 test("flags bare prose '<tool> X.Y.Z' and '<tool> vX.Y.Z' at the tool's current version", () => {
   for (const line of [
-    "This follows bosun 0.19.0.",
-    "needs Bosun v0.19.0 or later",
+    "This follows bosun 0.20.0.",
+    "needs Bosun v0.20.0 or later",
     "splice 0.6.0 adds it",
     "hoard v0.6.1 ships it",
     "hoard 0.6.1 ships it",

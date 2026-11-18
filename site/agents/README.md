@@ -6,7 +6,7 @@ You are an AI agent in the TARGET repo (set up, adopt, upgrade, change mode), no
 
 ## Use
 
-Versions: hull v0.13.0, splice 0.6.0, bosun 0.19.0, hoist 0.5.1, hoard v0.6.1, berth 0.2.1. JSON: https://keelstack.dev/agents/versions.json. Last verified 2026-11-16 against bosun 0.19.0, hull v0.13.0, splice 0.6.0.
+Versions: hull v0.13.0, splice 0.6.0, bosun 0.20.0, hoist 0.5.1, hoard v0.6.1, berth 0.2.1. JSON: https://keelstack.dev/agents/versions.json. Last verified 2026-11-18 against bosun 0.20.0, hull v0.13.0, splice 0.6.0.
 
 bosun prints exactly one JSON object on stdout: `{version, command, ok, exit_code, data, error, next}`; `error` is `{kind, message, fix}`. Do what `error.fix` says; make the calls in `next`; never work around a refusal. Exit codes: 0 ok, 1 error, 2 usage, 3 conflict, 4 halted, 5 needs-human, 6 limit. On exit 5 stop and tell the owner.
 
@@ -41,7 +41,7 @@ The owner merges; agents never merge. Step 4 also sets branch protection and aut
 Install bosun first (every path assumes it):
 
 ```bash
-npm i -g @keelstackhq/bosun@0.19.0
+npm i -g @keelstackhq/bosun@0.20.0
 export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 ```
 

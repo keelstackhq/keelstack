@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 CI decides what is verified. In a bosun repo, every gate is a `bosun gate <name>` call, the
 workflows run a pinned bosun release instead of the code under review, and a handful of required
-checks decide whether GitHub may merge. This page follows bosun {{ks.bare.bosun}} ({{ks.verifiedOn}}). Long details are in bosun's specs:
+checks decide whether GitHub may merge. This page was last checked line by line against bosun 0.19.0; its links point at bosun {{ks.bare.bosun}}. Long details are in bosun's specs:
 [gates](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/spec/07-gates.md), [main-health](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/spec/09-main-health.md) and
 [gate App checks](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/spec/15-app-checks.md).
 

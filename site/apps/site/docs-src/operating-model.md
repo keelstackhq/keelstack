@@ -3,7 +3,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 How keelstackhq works with coding agents, in eight principles, and which part of each one bosun
-checks today. This page follows bosun {{ks.bare.bosun}} ({{ks.verifiedOn}}). The mapping follows bosun's
+checks today. This page was last checked line by line against bosun 0.19.0; its links point at bosun {{ks.bare.bosun}}. The mapping follows bosun's
 [operating model](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/operating-model.md); a principle that bosun does not check yet says so.
 
 ## Words used here

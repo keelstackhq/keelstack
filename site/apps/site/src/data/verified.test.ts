@@ -6,7 +6,7 @@ import { tagCommits, verifiedLine, versions } from "./versions";
 
 test("the verified line comes from versions.ts and ends every docs Markdown page", () => {
   expect(verifiedLine()).toBe(
-    "Last verified 2026-11-16 against bosun 0.19.0, hull v0.13.0, splice 0.6.0.",
+    "Last verified 2026-11-18 against bosun 0.20.0, hull v0.13.0, splice 0.6.0.",
   );
   for (const d of docs.filter((x) => x.ready)) {
     expect(docMarkdown(d).trimEnd().endsWith(verifiedLine())).toBe(true);
