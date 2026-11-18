@@ -2,6 +2,7 @@ name: ci
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
   merge_group:
   push:
     branches: [main]
@@ -21,6 +22,13 @@ jobs:
       TURBO_SCM_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
       TURBO_SCM_HEAD: ${{ github.sha }}
     steps:
+      # D-007: a draft fails fast (no install, no tasks); `ready_for_review` runs the real job.
+      # No job-level `if`: a skipped required check counts as passed.
+      - name: Fail fast on a draft
+        if: github.event_name == 'pull_request' && github.event.pull_request.draft
+        run: |
+          echo "::error::draft PR: mark it ready for review to run ci"
+          exit 1
       - name: Start timer
         run: echo "CI_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@v5

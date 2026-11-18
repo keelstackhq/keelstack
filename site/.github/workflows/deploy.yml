@@ -11,6 +11,7 @@ on:
   workflow_dispatch:
 
 concurrency:
+  # ci-minutes: allow concurrency a deploy to production is queued, never cancelled half-way
   group: deploy-site
   cancel-in-progress: false
 

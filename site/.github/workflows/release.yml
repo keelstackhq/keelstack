@@ -16,6 +16,7 @@ on:
         type: string
 
 concurrency:
+  # ci-minutes: allow concurrency a release must never be cancelled mid-publish
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
