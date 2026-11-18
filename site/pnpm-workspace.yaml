@@ -39,6 +39,8 @@ catalog:
 
 overrides:
   vite: npm:@voidzero-dev/vite-plus-core@1.1.0
+  # GHSA undici advisories (>=8.0.0 <8.12.2): astro > unifont pulls undici 8.11.2; 8.12.4 is the newest 8.x.
+  undici@8: 8.12.4
 
 peerDependencyRules:
   allowedVersions:
