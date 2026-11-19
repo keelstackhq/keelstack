@@ -2,7 +2,7 @@
 
 - Date: 2026-11-05
 - Scope: all
-- Status: accepted
+- Status: superseded by D-021
 - Supersedes: D-013
 
 ## Context
