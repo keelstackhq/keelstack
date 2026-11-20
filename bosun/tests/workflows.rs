@@ -1700,3 +1700,229 @@ fn the_signer_key_is_in_the_sign_job_only() {
     }
     assert_eq!(seen, 2, "signer.yml and its jinja");
 }
+
+/// The `run:` script of the step that has `id: <id>`, dedented (its `run: |` block).
+fn script_of_step_id(yaml: &str, id: &str) -> String {
+    let at = yaml
+        .find(&format!("        id: {id}\n"))
+        .unwrap_or_else(|| panic!("no step with id: {id}"));
+    let body = &yaml[at..];
+    let body = &body[body.find("        run: |\n").unwrap() + "        run: |\n".len()..];
+    let mut out = String::new();
+    for line in body.lines() {
+        if !line.is_empty() && !line.starts_with("          ") {
+            break;
+        }
+        out.push_str(line.get(10..).unwrap_or(""));
+        out.push('\n');
+    }
+    out
+}
+
+/// The run script of root ci.yml's `ci-ok` under bash, with `needs` as GitHub gives it: every
+/// needed job must have succeeded or been skipped, and `detect` must have succeeded. Returns
+/// whether it passed and its stdout.
+fn run_ci_ok(needs: &str, draft: bool) -> (bool, String) {
+    let yaml = ci_yaml();
+    let ci_ok = &yaml[yaml.find("\n  ci-ok:\n").unwrap()..];
+    let script: String = run_scripts(ci_ok)
+        .remove(0)
+        .lines()
+        .skip(1)
+        .map(|l| format!("{}\n", l.get(10..).unwrap_or("")))
+        .collect();
+    let out = std::process::Command::new("bash")
+        .args(["-e", "-c", &script])
+        .env("NEEDS", needs)
+        .env("DRAFT", if draft { "true" } else { "false" })
+        .output()
+        .unwrap();
+    (
+        out.status.success(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+/// The old per-job `test "${{ needs.<id>.result }}" = "success"` checks, as one jq check of all
+/// of `needs` in the monorepo's ci-ok: run it on each kind of result.
+#[test]
+fn ci_ok_checks_the_result_of_every_needed_job() {
+    if std::process::Command::new("jq")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("jq is missing: skipped");
+        return;
+    }
+    let yaml = ci_yaml();
+    let ids: Vec<String> = job_ids(&yaml)
+        .into_iter()
+        .filter(|id| id != "ci-ok")
+        .collect();
+    let needs = |set: &[(&str, &str)]| {
+        let fields: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                let r = set
+                    .iter()
+                    .find(|(j, _)| j == id)
+                    .map_or("success", |(_, r)| r);
+                format!("\"{id}\": {{\"result\": \"{r}\", \"outputs\": {{}}}}")
+            })
+            .collect();
+        format!("{{{}}}", fields.join(", "))
+    };
+    assert!(run_ci_ok(&needs(&[]), false).0, "all green passes");
+    assert!(
+        run_ci_ok(&needs(&[("ci-hull", "skipped")]), false).0,
+        "a skipped folder job passes"
+    );
+    for id in ids.iter().filter(|id| *id != "detect") {
+        for result in ["failure", "cancelled"] {
+            let (ok, out) = run_ci_ok(&needs(&[(id.as_str(), result)]), false);
+            assert!(!ok, "ci-ok passes with {id} {result}");
+            assert!(
+                out.contains(&format!("::error::failed or cancelled: {id}")),
+                "{out}"
+            );
+        }
+    }
+    let (ok, out) = run_ci_ok(&needs(&[("detect", "skipped")]), false);
+    assert!(!ok, "a skipped detect must fail ci-ok");
+    assert!(out.contains("::error::detect did not succeed"), "{out}");
+    let (ok, out) = run_ci_ok(&needs(&[]), true);
+    assert!(!ok, "a draft fails ci-ok");
+    assert!(out.contains("::error::draft"), "{out}");
+}
+
+fn channel_workflow(name: &str) -> String {
+    fs::read_to_string(format!(
+        "{}/channel/pieces/core/files/.github/workflows/{name}",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap()
+}
+
+/// The pinned-release install of the channel's main-open and main-health (the repos bosun sets
+/// up still run a released bosun; the monorepo's own gate workflows build it instead): the
+/// pinned version only, a failed install still reaches the shell fallback, which exits 0.
+fn assert_pinned_install_with_fallback(yaml: &str) {
+    assert!(yaml.contains("@keelstackhq/bosun@${VERSION}"), "{yaml}");
+    assert!(yaml.contains("npm install -g --ignore-scripts"));
+    assert!(yaml.contains("grep -Eqx '[0-9]+\\.[0-9]+\\.[0-9]+'"));
+    assert!(yaml.contains("test \"$got\" = \"bosun ${VERSION}\""));
+    assert!(yaml.contains("steps.has.outputs.supported != 'true'"));
+    assert!(!yaml.contains("cargo build"), "no build from main");
+    // A failed install must still reach the fallback.
+    assert!(yaml.contains("id: install\n        continue-on-error: true"));
+    assert!(yaml.contains("INSTALL: ${{ steps.install.outcome }}"));
+    assert!(yaml.contains("[ \"$INSTALL\" = success ] && [ -x target/release/bosun ]"));
+    assert!(
+        !yaml.contains("exit 4"),
+        "the fallback exits 0; the status carries the verdict"
+    );
+    for line in yaml.lines().filter(|l| l.contains("::warning::")) {
+        assert!(!line.contains('`'), "backtick in a shell string: {line}");
+    }
+}
+
+#[test]
+fn channel_main_open_and_main_health_run_the_pinned_release_with_a_fallback() {
+    let open = channel_workflow("main-open.yml.jinja");
+    assert_pinned_install_with_fallback(&open);
+    // The head sha appears once, read through the API, and is used only as the status target.
+    let heads: Vec<&str> = open
+        .lines()
+        .filter(|l| l.contains("head.sha") && !l.trim_start().starts_with('#'))
+        .collect();
+    assert_eq!(heads.len(), 1, "{heads:?}");
+    assert!(heads[0].contains("sha=$(gh api \"repos/$GITHUB_REPOSITORY/pulls/$PR\""));
+    let uses: Vec<&str> = open.lines().filter(|l| l.contains("$sha")).collect();
+    assert_eq!(uses.len(), 1, "{uses:?}");
+    assert!(
+        uses[0].contains("repos/$GITHUB_REPOSITORY/statuses/$sha"),
+        "{uses:?}"
+    );
+    assert!(
+        run_scripts(&open)
+            .iter()
+            .any(|s| s.contains("context=main-open")),
+        "the fallback must post the main-open status"
+    );
+    let health = channel_workflow("main-health.yml.jinja");
+    let report = &health[health.find("\n  report:\n").unwrap()..];
+    assert_pinned_install_with_fallback(report);
+    assert!(
+        run_scripts(report)
+            .iter()
+            .any(|s| s.contains("gh issue create"))
+    );
+    assert_eq!(
+        script_of_step_id(&open, "pin"),
+        script_of_step_id(&health, "pin"),
+        "main-open's pin step differs from main-health's"
+    );
+}
+
+/// Run each channel pin script under bash with a fake `.bosun/version`: main-open and
+/// main-health accept `unreleased` (their shell fallback runs) or an exact x.y.z; bosun.yml's
+/// gates need an exact x.y.z.
+#[test]
+fn pin_step_accepts_exact_versions_only() {
+    if std::process::Command::new("bash")
+        .arg("--version")
+        .output()
+        .is_err()
+    {
+        eprintln!("bash is missing: skipped");
+        return;
+    }
+    let mut cases = Vec::new();
+    for f in ["main-open.yml.jinja", "main-health.yml.jinja"] {
+        cases.push((
+            script_of_step_id(&channel_workflow(f), "pin"),
+            vec![
+                ("1.2.3\n", Some("version=1.2.3")),
+                ("unreleased\n", Some("version=")),
+                ("1.2\n", None),
+                ("latest\n", None),
+            ],
+        ));
+    }
+    cases.push((
+        script_of_step_id(&channel_workflow("bosun.yml.jinja"), "pin"),
+        vec![
+            ("1.2.3\n", Some("version=1.2.3")),
+            ("unreleased\n", None),
+            ("1.2\n", None),
+            ("latest\n", None),
+        ],
+    ));
+    for (script, versions) in &cases {
+        for (version, want) in versions {
+            let dir = tempfile::tempdir().unwrap();
+            fs::create_dir(dir.path().join(".bosun")).unwrap();
+            fs::write(dir.path().join(".bosun/version"), version).unwrap();
+            let out_file = dir.path().join("out");
+            let status = std::process::Command::new("bash")
+                .arg("-c")
+                .arg(script)
+                .current_dir(dir.path())
+                .env("GITHUB_OUTPUT", &out_file)
+                .env("BASE", "")
+                .env("EVENT", "push")
+                .output()
+                .unwrap();
+            assert_eq!(
+                status.status.success(),
+                want.is_some(),
+                "{version:?}: {status:?}"
+            );
+            if let Some(want) = want {
+                let out = fs::read_to_string(&out_file).unwrap();
+                assert_eq!(out.trim(), *want, "{version:?}");
+            }
+        }
+    }
+}

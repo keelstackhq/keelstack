@@ -353,3 +353,33 @@ fn release_job_builds_the_bosun_binary_and_ci_runs_the_launcher_tests() {
         "ci.yml runs the launcher tests"
     );
 }
+
+/// Decision 3 (tools from npm at an exact version): every global npm install in the release
+/// workflow names `<package>@X.Y.Z`, never a range, a dist-tag or no version at all.
+#[test]
+fn release_installs_npm_tools_at_exact_versions() {
+    let text = workflow("release.yml");
+    let installs: Vec<&str> = text
+        .lines()
+        .filter(|l| !l.trim_start().starts_with('#') && l.contains("npm install -g"))
+        .collect();
+    assert!(!installs.is_empty(), "release.yml installs no npm tool");
+    for line in installs {
+        let spec = line
+            .split("npm install -g")
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .find(|w| !w.starts_with('-'))
+            .unwrap_or_else(|| panic!("no package: {line}"));
+        let version = spec.rsplit_once('@').map_or("", |(_, v)| v);
+        let parts: Vec<&str> = version.split('.').collect();
+        assert!(
+            parts.len() == 3
+                && parts
+                    .iter()
+                    .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit())),
+            "not an exact version: {line}"
+        );
+    }
+}

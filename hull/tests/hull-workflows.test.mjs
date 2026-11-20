@@ -65,8 +65,32 @@ test("root ci.yml ci-hull builds the workspace splice before Test and sets SPLIC
   assert.match(steps[i].run, /SPLICE_BIN=.*>> "\$GITHUB_ENV"/);
 });
 
-// The old hull repo's splice update bot (hull/.github/workflows/splice.yml) is not ported to the
-// monorepo: no live workflow runs it, so there is nothing live to test (MIGRATION.md follow-up).
+// The old hull repo's own splice update bot (hull/.github/workflows/splice.yml) does not run in
+// the monorepo; the bot lives on in the splice.yml every rendered repo gets from the templates.
+test("the templates' splice.yml runs the splice update bot on all sources", async () => {
+  for (const t of ["template", "template-rust"]) {
+    const file = fileURLToPath(
+      new URL(`../${t}/pieces/base/files/.github/workflows/splice.yml`, import.meta.url),
+    );
+    const wf = YAML.parse(await readFile(file, "utf8"));
+    assert.ok(wf.on.schedule?.length, `${t}: scheduled`);
+    assert.ok("workflow_dispatch" in wf.on, t);
+    assert.deepEqual(wf.permissions, { contents: "write", "pull-requests": "write" }, t);
+    const steps = wf.jobs.update.steps;
+    const checkout = steps[0];
+    const bot = steps.find((s) => String(s.uses).startsWith("keelstackhq/splice/action@"));
+    assert.match(checkout.uses, /^actions\/checkout@/, t);
+    assert.equal(checkout.with["persist-credentials"], false, t);
+    // it receives a token with workflows: write, so it is pinned by commit SHA
+    assert.equal(bot.uses, "keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f", t);
+    assert.equal(bot.with.scope, "all", t);
+    assert.equal(
+      bot.with.token,
+      "${{ steps.app.outputs.token || secrets.SPLICE_BOT_TOKEN || github.token }}",
+      t,
+    );
+  }
+});
 
 test("root ci.yml ci-hull uses the in-repo hoard action for the turbo cache before dogfood, without --cache-dir", async () => {
   const steps = await hullCi();
@@ -91,7 +115,10 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   const text = await readFile(ROOT_DIR + "release.yml", "utf8");
   const wf = YAML.parse(text);
   assert.equal(wf.name, "release");
-  assert.deepEqual(wf.on.pull_request, { types: ["closed"], branches: ["main"] });
+  assert.deepEqual(wf.on.pull_request, {
+    types: ["closed"],
+    branches: ["main"],
+  });
   assert.ok("workflow_dispatch" in wf.on);
   assert.deepEqual(wf.permissions, {});
   assert.equal(wf.concurrency["cancel-in-progress"], false);

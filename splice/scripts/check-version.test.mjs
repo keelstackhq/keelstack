@@ -58,7 +58,20 @@ test("consistent launcher passes", () => {
 });
 
 // The monorepo's one release workflow (D-023) builds splice; it starts on the merge of a
-// version-bump PR, not on a tag push, so there is no tag filter to test here.
+// version-bump PR or a manual run, never on a tag push, so moving the Action's major tag (v0, v1)
+// never starts a release, and the tag it creates is always v<exact X.Y.Z>.
+test("the root release.yml never runs on a tag push and tags only an exact X.Y.Z", () => {
+  const yml = readFileSync(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
+  const on = yml.slice(yml.indexOf("\non:\n"), yml.indexOf("\npermissions:"));
+  assert.doesNotMatch(on, /\n  push:|tags:/);
+  assert.match(yml, /echo "tag=v\$version"/);
+  const re = new RegExp(yml.match(/re='([^']+)'/)[1]);
+  assert.ok(re.test("0.2.0"));
+  assert.ok(!re.test("1"));
+  assert.ok(!re.test("1.0"));
+  assert.ok(!re.test("v0.2.0"));
+});
+
 test("the root release.yml build matrix covers exactly the platforms.json targets", () => {
   const yml = readFileSync(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
   const targets = [...yml.matchAll(/^\s+- target: ([a-z0-9_-]+)\s*$/gm)].map((m) => m[1]).sort();
