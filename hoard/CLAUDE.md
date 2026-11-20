@@ -35,16 +35,16 @@ scripts/           release and benchmark helpers
 ## Commands
 
 ```bash
-docker compose up -d minio                       # S3/R2 tests need it
+docker compose -f hoard/docker-compose.yml up -d minio                 # S3/R2 tests need it
 export HOARD_TEST_S3_ENDPOINT=http://127.0.0.1:9000
 cargo fmt --all --check && cargo clippy -p keel-hoard --all-targets --locked -- -D warnings
 cargo test -p keel-hoard --locked                # unit + integration
 cargo test -p keel-hoard --locked -- --ignored   # large-artifact streaming test
-tests/e2e/turbo.sh                               # real turbo, fs storage
-PACK=on tests/e2e/turbo.sh                       # real turbo, fs storage, packing
-STORAGE=r2 tests/e2e/turbo.sh                    # real turbo, MinIO as R2
-pnpm --dir action install && pnpm --dir action lint && pnpm --dir action test
-pnpm --dir action build                          # must keep action/dist ≤ 204800 bytes
+hoard/tests/e2e/turbo.sh                         # real turbo, fs storage
+PACK=on hoard/tests/e2e/turbo.sh                 # real turbo, fs storage, packing
+STORAGE=r2 hoard/tests/e2e/turbo.sh              # real turbo, MinIO as R2
+pnpm --dir hoard/action install && pnpm --dir hoard/action lint && pnpm --dir hoard/action test
+pnpm --dir hoard/action build                          # must keep action/dist ≤ 204800 bytes
 ```
 
 Run the fast checks (fmt, clippy, the tests of the crate or package you changed) before every

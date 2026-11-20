@@ -15,7 +15,7 @@ the keelstack monorepo; run all commands from the repo root.
 - Never append to CHANGELOG.md or `docs/progress-done.md` in a PR: add one-line fragments
   `changelog.d/<name>.md` and `docs/progress.d/<name>.md`, name = the branch with `/` as `-`
   (two PRs never edit the same file, so merging main never conflicts). Before a release, a docs
-  PR to main runs `bash scripts/fold-fragments.sh`.
+  PR to main runs `bash bosun/scripts/fold-fragments.sh`.
 
 ## Layout
 

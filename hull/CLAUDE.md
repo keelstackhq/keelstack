@@ -28,7 +28,7 @@ scripts/combos/                 one JSON fragment per combo hull CI renders (+ _
 scripts/gen-ci.mjs              generates template/ ci.yml from the CI plan (scripts/lib/ci-tasks.mjs)
 scripts/dogfood.mjs             render combos, run their CI command
 scripts/affected-combos.mjs     which combos a diff touches
-scripts/release-tag.mjs         hull's own release: version = top dated CHANGELOG.md heading (§10.5)
+scripts/release-tag.mjs         legacy per-hull release (lockstep now: root AGENTS.md)   (§10.5)
 renovate/default.json           Renovate preset generated repos extend
 tests/                          node:test: renderer units + template invariants + module tests of
                                 guard.mjs, agents-index.mjs, release-plan.mjs, release-tag.mjs
