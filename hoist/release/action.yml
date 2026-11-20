@@ -1,5 +1,5 @@
-# keelstackhq/hoist/release: run `hoist release detect|prepare|publish` in one step (design spec §12.4).
-# Pin it by full commit SHA of a hoist release tag: `uses: keelstackhq/hoist/release@<sha> # vX.Y.Z`.
+# keelstackhq/keelstack/hoist/release: run `hoist release detect|prepare|publish` in one step (design spec §12.4).
+# Pin it by full commit SHA of a release tag of keelstackhq/keelstack: `uses: keelstackhq/keelstack/hoist/release@<sha> # vX.Y.Z`.
 # It installs the hoist release named by the version in this commit's Cargo.toml from its GitHub
 # Release asset, checked against the release's SHA256SUMS (and `sha256`, when you pin it). It
 # needs no npm, Node or Rust; Linux x64 and arm64 runners only.
@@ -63,17 +63,20 @@ runs:
           *) echo "::error::hoist release runs on Linux x64 or arm64 runners only"; exit 1 ;;
         esac
         version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/../Cargo.toml" | head -n 1)
+        if [ -z "$version" ]; then # monorepo: hoist/Cargo.toml inherits the lockstep version from the root
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/../../Cargo.toml" | head -n 1)
+        fi
         if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           echo "::error::cannot read hoist's version from the action's Cargo.toml"; exit 1
         fi
         # github.action_repository can be empty in a composite action: take it from the path
-        # (.../_actions/<owner>/<repo>/<ref>/release), else the default home of hoist.
+        # (.../_actions/<owner>/<repo>/<ref>/release), else the default home of hoist (the monorepo).
         HOIST_REPO="$ACTION_REPO"
         if [ -z "$HOIST_REPO" ]; then
           rest=${ACTION_PATH#*/_actions/}
           if [ "$rest" != "$ACTION_PATH" ]; then HOIST_REPO=$(cut -d/ -f1,2 <<< "$rest"); fi
         fi
-        HOIST_REPO=${HOIST_REPO:-keelstackhq/hoist}
+        HOIST_REPO=${HOIST_REPO:-keelstackhq/keelstack}
         dir="$RUNNER_TEMP/hoist-release" && mkdir -p "$dir" && cd "$dir"
         gh release download "v$version" --repo "$HOIST_REPO" --pattern "hoist-$target" --pattern SHA256SUMS
         want=$(awk -v f="hoist-$target" '$2 == f { print $1 }' SHA256SUMS)

@@ -113,7 +113,7 @@ fn repo_init_without_a_check_says_to_add_one_and_prints_the_template() {
     assert_eq!(out.status.code(), Some(2), "{stdout}{err}");
     assert!(stdout.contains("required check"), "{stdout}");
     assert!(
-        err.contains("splice new gh:keelstackhq/hull//template-secrets"),
+        err.contains("splice new gh:keelstackhq/keelstack//hull/template-secrets"),
         "{err}"
     );
     let ruleset = body(&api, ADD);

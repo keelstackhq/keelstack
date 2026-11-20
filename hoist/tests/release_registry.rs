@@ -13,7 +13,7 @@ use std::path::PathBuf;
 const CRATES_UA: &str = concat!(
     "hoist/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/keelstackhq/hoist)"
+    " (+https://github.com/keelstackhq/keelstack)"
 );
 
 fn pkg(name: &str, kind: PkgKind) -> Package {

@@ -7,4 +7,4 @@ as an optional dependency; do not depend on it directly.
 npm install -g @keelstackhq/keel
 ```
 
-Source: https://github.com/keelstackhq/keel. License: MIT.
+Source: https://github.com/keelstackhq/keelstack. License: MIT.

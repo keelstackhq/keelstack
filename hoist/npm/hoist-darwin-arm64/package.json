@@ -5,8 +5,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keelstackhq/hoist.git",
-    "directory": "npm/hoist-darwin-arm64"
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "hoist/npm/hoist-darwin-arm64"
   },
   "os": [
     "darwin"

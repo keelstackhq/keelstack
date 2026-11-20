@@ -63,13 +63,20 @@ steps:
               if [ -n "$sha" ] && [ "${#sha}" != 64 ]; then
                 echo "hoard: sha256 must be 64 lowercase hex characters" >&2; exit 1
               fi
+              # Releases up to 0.21.0 live in keelstackhq/hoard; later ones in the keelstackhq/keelstack monorepo.
+              core="${v%%-*}"; oifs="$IFS"; IFS=.; set -- $core; IFS="$oifs"
+              if [ "$1" -gt 0 ] || [ "$2" -gt 21 ] || { [ "$2" -eq 21 ] && [ "$3" -gt 0 ]; }; then
+                repo=keelstackhq/keelstack; sub=hoard/
+              else
+                repo=keelstackhq/hoard; sub=
+              fi
               get() { curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 "$@"; }
               pinned() { # never runs code fetched from the tag the pin distrusts
                 case "$(uname -sm)" in "Linux x86_64") a=x86_64 ;; "Linux aarch64") a=aarch64 ;;
                   *) echo "hoard: no linux release for $(uname -sm)" >&2; return 1 ;; esac
                 t="$(mktemp -d)" || return 1
                 {
-                  get -o "$t/h.tgz" "https://github.com/keelstackhq/hoard/releases/download/v$v/hoard-$a-unknown-linux-musl.tar.gz" &&
+                  get -o "$t/h.tgz" "https://github.com/$repo/releases/download/v$v/hoard-$a-unknown-linux-musl.tar.gz" &&
                     { echo "$sha  $t/h.tgz" | sha256sum -c --quiet - ||
                       { echo "hoard: the archive for $a-unknown-linux-musl does not match sha256 (the pin is per architecture; this runner is $(uname -m))" >&2; false; }; } &&
                     tar -xzf "$t/h.tgz" -C "$t" hoard &&
@@ -79,7 +86,7 @@ steps:
                 rm -rf "$t"
                 return "$rc"
               }
-              unpinned() { get "https://raw.githubusercontent.com/keelstackhq/hoard/v$v/scripts/install.sh" | HOARD_VERSION="$v" sh; }
+              unpinned() { get "https://raw.githubusercontent.com/$repo/v$v/${sub}scripts/install.sh" | HOARD_VERSION="$v" sh; }
               # A download problem must not fail the build: turbo then runs without the remote cache.
               inst=unpinned; if [ -n "$sha" ]; then inst=pinned; fi
               if ! "$inst"; then

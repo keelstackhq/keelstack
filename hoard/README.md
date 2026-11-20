@@ -29,7 +29,7 @@ jobs:
       - uses: actions/setup-node@v5
         with: { node-version: 24, cache: pnpm }
       - run: pnpm install --frozen-lockfile
-      - uses: keelstackhq/hoard@v0        # starts the cache, exports TURBO_API/TURBO_TOKEN/TURBO_TEAM
+      - uses: keelstackhq/keelstack/hoard@vX        # starts the cache, exports TURBO_API/TURBO_TOKEN/TURBO_TEAM
       - run: pnpm turbo run build test lint
 ```
 
@@ -55,7 +55,7 @@ What the step does:
 The cache never fails your build. If storage is down or slow, a read is a miss and an upload is
 skipped (with a warning, so a broken cache does not look like a cold one).
 
-Pin a release tag (`@v0` or `@v0.6.1`), not `@main` or a commit: each action release can only
+Pin a release tag (`@vX.Y.Z`, or a floating major tag such as `@v0` if the repo publishes one), not `@main` or a commit: each action release can only
 run the hoard binary of that same release.
 
 ## Add it to an existing repository
@@ -118,7 +118,7 @@ quick start, so pull requests start warm.
 ### 3. Use them in the workflow
 
 ```yaml
-- uses: keelstackhq/hoard@v0
+- uses: keelstackhq/keelstack/hoard@vX
   with:
     storage: r2
     r2-account-id: ${{ secrets.R2_ACCOUNT_ID }}
@@ -167,7 +167,7 @@ for that run and shows a warning in the log and the job summary. It does not fai
 
 Use a read-only R2 token (Object Read) and `--mode read`, so the laptop never writes artifacts or
 the lifecycle rule. Download `hoard` from the
-[releases page](https://github.com/keelstackhq/hoard/releases), then:
+[releases page](https://github.com/keelstackhq/keelstack/releases), then:
 
 ```bash
 export HOARD_R2_ACCOUNT_ID=... HOARD_R2_ACCESS_KEY_ID=... HOARD_R2_SECRET_ACCESS_KEY=...
@@ -192,7 +192,7 @@ drop the restored cache.
 - uses: actions/setup-node@v5
   with: { node-version: 24, cache: pnpm }
 - run: pnpm install --frozen-lockfile
-- uses: keelstackhq/hoard@v0     # after the install: restores node_modules/.vite/task-cache
+- uses: keelstackhq/keelstack/hoard@vX     # after the install: restores node_modules/.vite/task-cache
 - run: pnpm exec vp run build  # post step saves the task cache
 ```
 

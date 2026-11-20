@@ -1,6 +1,6 @@
 ---
 name: hoard
-description: Use when adding or fixing a CI cache for a Turborepo or Vite+ monorepo with the keelstackhq/hoard GitHub Action (or hoard on CircleCI/laptop), or when a hoard step warns, misses or fails.
+description: Use when adding or fixing a CI cache for a Turborepo or Vite+ monorepo with the keelstackhq/keelstack/hoard GitHub Action (or hoard on CircleCI/laptop), or when a hoard step warns, misses or fails.
 ---
 
 # hoard
@@ -13,7 +13,7 @@ remote-cache API and stores artifacts in the GitHub Actions cache, Cloudflare R2
 Put the step **after** dependency install, **before** the turbo/vp command. No inputs needed:
 
 ```yaml
-- uses: keelstackhq/hoard@v0   # floating major tag of the latest 0.x release; never @main
+- uses: keelstackhq/keelstack/hoard@vX   # a release tag (vX.Y.Z; a floating major tag only if one is published); never @main
 - run: pnpm turbo run build test lint
 ```
 
@@ -66,7 +66,7 @@ run should say `>>> FULL TURBO`. A re-run of the same commit counts as a second 
 ## Other CI, local
 
 CircleCI has no GitHub cache: use `fs` or `r2`. Copy the command from
-`https://raw.githubusercontent.com/keelstackhq/hoard/v0.6.1/circleci/hoard.yml` under `commands:
+`https://raw.githubusercontent.com/keelstackhq/keelstack/vX.Y.Z/hoard/circleci/hoard.yml` under `commands:
 hoard:` in `.circleci/config.yml`, then call `hoard: {step: start, version: 0.6.1}` before turbo and
 `hoard: {step: stop, version: 0.6.1}` after (the token is generated; no env to set). On `cimg/node` run `sudo corepack enable` before `pnpm install`. Run `main` in a
 separate job with `start` given `restore: false` (cache poisoning; CircleCI only). Full config: `docs/circleci.md` beside that file. Elsewhere: `HOARD_VERSION=0.6.1 sh scripts/install.sh`,

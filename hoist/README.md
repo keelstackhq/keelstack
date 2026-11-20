@@ -402,7 +402,7 @@ repository is public.
 
 `hoist init` writes the three-job `release.yml` that uses it (detect, publish, prepare), pinned to the
 release commit of this binary; a file you edited is kept unless `--force`. Not for npm launchers.
-One step per job instead of building hoist yourself: `uses: keelstackhq/hoist/release@<full sha> # vX.Y.Z`
+One step per job instead of building hoist yourself: `uses: keelstackhq/keelstack/hoist/release@<full sha> # vX.Y.Z`
 with `command: detect | prepare | publish` (`assets:` for publish; `token:` is hoist's `GH_TOKEN`;
 `detect` sets output `pending`). It installs the hoist release of that commit from its GitHub
 Release asset, checked against `SHA256SUMS`; no npm, Node or Rust. `SHA256SUMS` comes from the same

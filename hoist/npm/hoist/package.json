@@ -5,8 +5,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keelstackhq/hoist.git",
-    "directory": "npm/hoist"
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "hoist/npm/hoist"
   },
   "bin": {
     "hoist": "bin/hoist.js"

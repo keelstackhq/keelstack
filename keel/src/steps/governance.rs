@@ -197,7 +197,12 @@ mod tests {
     fn full_rust_source_gets_stack_rust() {
         let d = tempfile::tempdir().unwrap();
         let r = fake();
-        let _ = apply(&r, d.path(), "gh:keelstackhq/hull//template-rust", None);
+        let _ = apply(
+            &r,
+            d.path(),
+            "gh:keelstackhq/keelstack//hull/template-rust",
+            None,
+        );
         assert!(
             lines(&r)
                 .iter()

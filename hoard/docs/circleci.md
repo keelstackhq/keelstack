@@ -6,7 +6,7 @@ own pinned download), `serve --detach` and `stop`. It is not an orb: copy its co
 `.circleci/config.yml` as the `hoard` command (the token is random per job; set nothing else):
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/keelstackhq/hoard/v0.6.1/circleci/hoard.yml
+curl -fsSL https://raw.githubusercontent.com/keelstackhq/keelstack/vX.Y.Z/hoard/circleci/hoard.yml
 ```
 
 ```yaml

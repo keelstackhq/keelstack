@@ -45,7 +45,7 @@ environment. Root (`sudo` on GitHub-hosted runners) can still read hoist's memor
   `cmd`'s; hoist's own runtime errors start with `hoist: ` (exit 2 refused, 3 error; a usage
   error in the arguments is clap's own `error:`, exit 3).
 
-On GitHub, use the action `keelstackhq/hoist/secrets`, pinned by the full SHA of a hoist release
+On GitHub, use the action `keelstackhq/keelstack/hoist/secrets`, pinned by the full SHA of a hoist release
 tag (Linux runners). It installs sops and that release of hoist (from npm, which it trusts; the
 sha512 check guards the download) and runs `hoist secrets exec`; inputs `env`, `keys`, `run`,
 `app-id`, `app-key`, `age-key`, and `workflow-run-path` in a `workflow_run` job (spec §15.8).

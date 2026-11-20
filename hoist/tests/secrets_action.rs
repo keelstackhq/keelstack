@@ -1,4 +1,4 @@
-//! The GitHub action `keelstackhq/hoist/secrets` (`secrets/action.yml`, spec §15.8): the inputs
+//! The GitHub action `keelstackhq/keelstack/hoist/secrets` (`secrets/action.yml`, spec §15.8): the inputs
 //! hull's workflows pass, no `${{ }}` inside a script, sops pinned like CI, and the arguments the
 //! exec step gives `hoist secrets exec` (run against a stub `hoist`, nothing downloaded).
 

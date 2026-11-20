@@ -19,6 +19,13 @@ case "$(uname -m)" in
   aarch64 | arm64) target=aarch64-unknown-linux-musl ;;
   *) echo "unsupported architecture: $(uname -m)" >&2; exit 1 ;;
 esac
+# Releases up to 0.21.0 live in keelstackhq/hoard; later ones in the keelstackhq/keelstack monorepo.
+core="${V%%-*}"; oifs="$IFS"; IFS=.; set -- $core; IFS="$oifs"
+if [ "$1" -gt 0 ] || [ "$2" -gt 21 ] || { [ "$2" -eq 21 ] && [ "$3" -gt 0 ]; }; then
+  repo=keelstackhq/keelstack; sub=hoard/
+else
+  repo=keelstackhq/hoard; sub=
+fi
 dir="${HOARD_INSTALL_DIR:-${HOME:?set HOME or HOARD_INSTALL_DIR}/.local/bin}"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -26,14 +33,14 @@ if [ -n "$pin" ]; then
   want="$pin"
 else
   curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 -o "$tmp/sums.ts" \
-    "https://raw.githubusercontent.com/keelstackhq/hoard/v$V/action/src/checksums.generated.ts"
+    "https://raw.githubusercontent.com/$repo/v$V/${sub}action/src/checksums.generated.ts"
   grep -Fxq "export const VERSION = \"$V\";" "$tmp/sums.ts" ||
     { echo "checksums file at v$V is for another version" >&2; exit 1; }
   want="$(sed -n "s/.*\"$target\": *\"\([0-9a-f]\{64\}\)\".*/\1/p" "$tmp/sums.ts")"
   [ -n "$want" ] || { echo "no checksum for $target in hoard v$V" >&2; exit 1; }
 fi
 curl --proto '=https' --proto-redir '=https' -fsSL --retry 3 -o "$tmp/hoard.tar.gz" \
-  "https://github.com/keelstackhq/hoard/releases/download/v$V/hoard-$target.tar.gz"
+  "https://github.com/$repo/releases/download/v$V/hoard-$target.tar.gz"
 got="$( (sha256sum "$tmp/hoard.tar.gz" 2>/dev/null || shasum -a 256 "$tmp/hoard.tar.gz") | cut -d' ' -f1)"
 [ "$got" = "$want" ] || { echo "checksum mismatch for hoard-$target.tar.gz" >&2; exit 1; }
 tar -xzf "$tmp/hoard.tar.gz" -C "$tmp" hoard

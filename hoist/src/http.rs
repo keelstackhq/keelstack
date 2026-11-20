@@ -27,7 +27,7 @@ pub enum Service {
 pub const CRATES_USER_AGENT: &str = concat!(
     "hoist/",
     env!("CARGO_PKG_VERSION"),
-    " (+https://github.com/keelstackhq/hoist)"
+    " (+https://github.com/keelstackhq/keelstack)"
 );
 
 impl Service {
