@@ -13,8 +13,8 @@ set -euo pipefail
 
 FOLDERS=(bosun splice hull hoist hoard berth keel decisions)
 RUST=(bosun splice hoist hoard berth keel)
-# <folder>:<folder it depends on> (hull renders with splice).
-DEPENDS_ON=("hull:splice")
+# <folder>:<folder it depends on> (hull renders with splice; its dogfood step runs ./hoard).
+DEPENDS_ON=("hull:splice" "hull:hoard")
 
 out="${GITHUB_OUTPUT:-/dev/stdout}"
 all=false

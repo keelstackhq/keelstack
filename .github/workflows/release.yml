@@ -657,7 +657,7 @@ jobs:
               visit(n)
           print("\n".join(out))
           ')
-          echo "publish order: $(echo $order)"
+          echo "publish order: $(echo "$order" | tr '\n' ' ')"
           todo=()
           for c in $order; do
             code=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c/$VERSION")

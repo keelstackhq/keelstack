@@ -201,6 +201,7 @@ jobs:
         working-directory: hull
     steps:
       - name: Start timer
+        working-directory: ${{ github.workspace }}
         run: echo "CI_START=$(date +%s)" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -262,7 +263,7 @@ jobs:
           ALL: ${{ needs.detect.outputs.all }}
         run: |
           set -e
-          if [ -z "$BASE" ] || [ "$ALL" = true ] || git diff --name-only "$BASE...HEAD" -- . ':(exclude)hull' | grep -q .; then
+          if [ -z "$BASE" ] || [ "$ALL" = true ] || git -C "$GITHUB_WORKSPACE" diff --name-only "$BASE...HEAD" -- ':!hull' | grep -q .; then
             list=$(node scripts/affected-combos.mjs --all)
           else
             list=$(node scripts/affected-combos.mjs --base "$BASE")
@@ -295,8 +296,9 @@ jobs:
         if: steps.combos.outputs.args != ''
         env:
           ARGS: ${{ steps.combos.outputs.args }}
-        # shellcheck disable=SC2086
-        run: node scripts/dogfood.mjs $ARGS --root "$RUNNER_TEMP/combos"
+        run: |
+          read -ra args <<<"$ARGS"
+          node scripts/dogfood.mjs "${args[@]}" --root "$RUNNER_TEMP/combos"
       - name: Job duration
         if: always()
         continue-on-error: true
