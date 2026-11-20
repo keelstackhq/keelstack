@@ -1,0 +1,48 @@
+# Governance and CI need an owner review (spec §8, R-gov and R-ci). Code outside these paths
+# merges through auto-merge after the gates (spec D13). One file for the monorepo: bosun's rules
+# from bosun/.github/CODEOWNERS, with every path prefixed by its folder.
+
+# Repo root: CI, governance config, toolchain and workspace manifests.
+/.github/                @urbanisierung
+/.bosun/                 @urbanisierung
+/.claude/                @urbanisierung
+/.splice/                @urbanisierung
+/.cargo/                 @urbanisierung
+/deny.toml               @urbanisierung
+/rust-toolchain.toml     @urbanisierung
+/Cargo.toml              @urbanisierung
+/Cargo.lock              @urbanisierung
+
+# Org decisions are governance (the decisions folder was its own repo).
+/decisions/decisions/    @urbanisierung
+
+# Per folder: the same governance paths bosun's own CODEOWNERS named.
+/bosun/.bosun/           @urbanisierung
+/bosun/governance/       @urbanisierung
+/bosun/.claude/          @urbanisierung
+/bosun/.splice/          @urbanisierung
+/bosun/.github/          @urbanisierung
+/splice/.bosun/          @urbanisierung
+/splice/governance/      @urbanisierung
+/splice/.claude/         @urbanisierung
+/splice/.splice/         @urbanisierung
+/splice/.github/         @urbanisierung
+/hull/.bosun/            @urbanisierung
+/hull/governance/        @urbanisierung
+/hull/.claude/           @urbanisierung
+/hull/.splice/           @urbanisierung
+/hull/.github/           @urbanisierung
+/hoist/.bosun/           @urbanisierung
+/hoist/governance/       @urbanisierung
+/hoist/.claude/          @urbanisierung
+/hoist/.github/          @urbanisierung
+/hoard/.bosun/           @urbanisierung
+/hoard/governance/       @urbanisierung
+/hoard/.claude/          @urbanisierung
+/hoard/.splice/          @urbanisierung
+/hoard/.github/          @urbanisierung
+/berth/.claude/          @urbanisierung
+/berth/.splice/          @urbanisierung
+/berth/.github/          @urbanisierung
+/keel/.github/           @urbanisierung
+/decisions/.github/      @urbanisierung

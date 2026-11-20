@@ -1,0 +1,102 @@
+name: main-health
+
+# Keeps one bosun:main-red issue open while main fails (spec §9): it opens one when `ci` fails on
+# main or the weekly run fails, and closes it when main is green again. The report job builds
+# bosun from the workspace at the default branch head; it never checks out PR code.
+#
+# Monorepo: `ci` is `.github/workflows/ci.yml` (jobs ci-<folder> and the aggregate ci-ok); ONE
+# main-red issue covers the whole repo. A red `ci` run on main is red whichever folder broke it.
+# Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`); there
+# is no env var or flag to point it elsewhere. Until a root `.bosun/` exists (the monorepo's
+# governance config, moved from bosun/.bosun), bosun runs on built-in defaults here.
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+    branches: [main]
+  # Weekly, not nightly: every push to main already runs the gates on all of main (D-007).
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+  statuses: write
+
+jobs:
+  # TODO(ci.yml owner): if ci.yml gains `on: workflow_call`, replace this job with
+  # `uses: ./.github/workflows/ci.yml` so the weekly run covers every folder, not only the
+  # Rust workspace.
+  nightly:
+    if: github.event_name != 'workflow_run'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # It runs the repo's tests and build scripts: read only, and no token left in .git/config,
+    # so that code cannot post a status or write an issue (spec §8, delegated decisions).
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-nextest,cargo-deny
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo nextest run --workspace --locked --no-fail-fast
+      - run: cargo deny check
+
+  report:
+    needs: nightly
+    # A fork PR from a branch named main also fires workflow_run: only pushes of this repo count.
+    if: >-
+      always() && (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: bosun-app
+      deployment: false
+    steps:
+      # github.sha is the head of the default branch for workflow_run and schedule events.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # bosun is built from this workspace (never downloaded): the checkout above is the base
+      # commit or the default branch, so the binary comes from reviewed code, never from the PR head.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bosun
+      - name: build bosun
+        run: cargo build --release --locked -p keel-bosun --bin bosun
+      # The App token (spec §15): the key goes to this step only, the token only to bosun.
+      - name: App token
+        id: app
+        # A missing or broken key never stops the gate: bosun falls back per [checks] mode.
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOSUN_APP_KEY }}
+          permission-checks: write
+      - name: bosun main-health
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          RESULT: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion || needs.nightly.result }}
+          RUN_URL: ${{ github.event.workflow_run.html_url || format('{0}/{1}/actions/runs/{2}', github.server_url, github.repository, github.run_id) }}
+        run: ./target/release/bosun main-health --result "$RESULT" --run-url "$RUN_URL"

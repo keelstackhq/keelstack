@@ -1,0 +1,98 @@
+name: verdict
+
+# Posts the required `review-verdict` status from a verdict comment (spec §7). Cloud sessions
+# cannot write commit statuses, so the reviewer runs `bosun verdict comment` and this workflow
+# runs `bosun verdict apply`, which checks the comment (unedited, by a member, on its PR, for the
+# current head) before it posts the status. A bot listed in `[approvals] verdict_bots` needs no
+# marker: a Bot comment with "head_sha" and a ```json fence runs it too, and `apply` refuses others neutrally.
+#
+# issue_comment runs this file from the default branch. The job never checks out or runs PR
+# code: it builds bosun from the workspace at the default branch head and reads the PR through the
+# API. Event data reaches `run:` lines through `env:` only, never as `${{ }}` in a script.
+# This comment is the workflow's purpose, so it is the one event it listens to; the job-level
+# `if:` starts no runner for any other comment (D-007).
+#
+# Monorepo: ONE copy judges every PR of the whole repo.
+# Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`); there
+# is no env var or flag to point it elsewhere. Until a root `.bosun/` exists (the monorepo's
+# governance config, moved from bosun/.bosun), bosun runs on built-in defaults here.
+on:
+  issue_comment:
+    types: [created]
+
+# Verdict comments on one PR apply one at a time, in order; `apply` also refuses a comment that
+# a newer one for the same head replaces. Other comments get a group of their own: a new run
+# replaces the pending one in a group, and a skipped run must never replace a verdict.
+concurrency:
+  group: >-
+    verdict-${{ github.event.issue.number }}-${{
+    !(contains(github.event.comment.body, '<!-- bosun:verdict -->') ||
+    (github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '"head_sha"') && contains(github.event.comment.body, '```json'))) && github.run_id || 'apply' }}
+  cancel-in-progress: false
+
+# Least privilege: statuses for the verdict; pull-requests: write for the verdict record comment
+# (a workflow token needs it to comment on a PR; issues: write is not enough); issues: write for
+# the linked task's state labels.
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  verdict:
+    if: >-
+      github.event.issue.pull_request && (contains(github.event.comment.body, '<!-- bosun:verdict -->') ||
+      (github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '"head_sha"') && contains(github.event.comment.body, '```json')))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: bosun-app
+      deployment: false
+    steps:
+      # A comment event runs on the default branch: github.sha is its head, never a PR's.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      # bosun is built from this workspace (never downloaded): the checkout above is the base
+      # commit or the default branch, so the binary comes from reviewed code, never from the PR head.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bosun
+      - name: build bosun
+        run: cargo build --release --locked -p keel-bosun --bin bosun
+      # The App token (spec §15): the key goes to this step only, the token only to bosun.
+      - name: App token
+        id: app
+        # A missing or broken key never stops the gate: bosun falls back per [checks] mode.
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOSUN_APP_KEY }}
+          permission-checks: write
+      - name: bosun verdict apply
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          BOSUN_SESSION: verdict-workflow
+          COMMENT: ${{ github.event.comment.id }}
+        run: ./target/release/bosun verdict apply "$COMMENT"
+      # A verdict record written with GITHUB_TOKEN starts no other workflow, so judge the PR
+      # again here: two verdicts can turn `risk-check` green (spec §8). Exit 5 (needs-human) is
+      # the verdict, carried by the status; other non-zero exits fail the job.
+      - name: bosun risk-check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          rc=0
+          ./target/release/bosun risk-check "$PR" || rc=$?
+          [ "$rc" = 0 ] || [ "$rc" = 5 ]

@@ -495,9 +495,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - run: cargo fmt -p keel --check
-      - run: cargo clippy -p keel --all-targets --locked -- -D warnings
-      - run: cargo test -p keel --locked
+      - run: cargo fmt -p keel-cli --check
+      - run: cargo clippy -p keel-cli --all-targets --locked -- -D warnings
+      - run: cargo test -p keel-cli --locked
       - name: Launcher tests
         working-directory: keel
         run: |

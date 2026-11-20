@@ -1,0 +1,85 @@
+name: main-open
+
+# Judges the required `main-open` status (spec §9): while an issue labelled bosun:main-red is open,
+# only PRs labelled bosun:kind/mainfix may pass. `bosun gate main-open` posts the status itself.
+#
+# pull_request_target runs this file from the base branch, so a PR cannot rewrite the job that
+# judges it. The job never checks out or runs PR-head code: it builds bosun from the workspace at
+# the PR's base commit and reads the PR through the API only. Event data reaches `run:` lines
+# through `env:` only, never as `${{ }}` in a script. The job is named `judge`, not `main-open`,
+# so it does not clash with the commit status of that name.
+#
+# The gate reads the main-red issue and the mainfix label only; it reads no check names, so the
+# per-folder `ci-<folder>` jobs and `ci-ok` need no wiring here (D-007: ONE copy for the repo).
+# Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`); there
+# is no env var or flag to point it elsewhere. Until a root `.bosun/` exists (the monorepo's
+# governance config, moved from bosun/.bosun), bosun runs on built-in defaults here.
+on:
+  pull_request_target:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled, ready_for_review]
+
+# A label event or a title/body edit that the job skips gets a group of its own: it must never
+# cancel or replace the run that judges a new head.
+concurrency:
+  group: >-
+    main-open-${{ github.event.pull_request.number }}${{
+    (((github.event.action == 'labeled' || github.event.action == 'unlabeled') &&
+    github.event.label.name != 'bosun:kind/mainfix') ||
+    (github.event.action == 'edited' && !github.event.changes.base)) && format('-skip-{0}', github.run_id) || '' }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+  statuses: write
+
+jobs:
+  judge:
+    # Not for a draft (no runner starts; `ready_for_review` judges it), except a mainfix label
+    # change, which judges a draft too so an old verdict never outlives the label. Other label
+    # events and edits skip before a runner starts; an edit counts only when it retargets the PR.
+    if: >-
+      (github.event.pull_request.draft == false &&
+      github.event.action != 'labeled' && github.event.action != 'unlabeled' &&
+      (github.event.action != 'edited' || github.event.changes.base)) ||
+      github.event.label.name == 'bosun:kind/mainfix'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: bosun-app
+      deployment: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+      # bosun is built from this workspace (never downloaded): the checkout above is the base
+      # commit or the default branch, so the binary comes from reviewed code, never from the PR head.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: bosun
+      - name: build bosun
+        run: cargo build --release --locked -p keel-bosun --bin bosun
+      # The App token (spec §15): the key goes to this step only, the token only to bosun.
+      - name: App token
+        id: app
+        # A missing or broken key never stops the gate: bosun falls back per [checks] mode.
+        continue-on-error: true
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
+          private-key: ${{ secrets.BOSUN_APP_KEY }}
+          permission-checks: write
+      - name: bosun gate main-open
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        # Exit 4 (halted) is the verdict, carried by the status; only errors fail the job.
+        run: ./target/release/bosun gate main-open --pr "$PR" || test $? -eq 4
