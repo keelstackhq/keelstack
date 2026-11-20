@@ -46,14 +46,6 @@ fn with_post(tpl: &TempDir, run: &str) {
     amend_tip(tpl.path(), "v1.0.0");
 }
 
-/// Snapshot stdout with its real key order (a plain `serde_json::Value` would sort keys).
-macro_rules! snap_json {
-    ($out:expr) => {{
-        let v: splice::merge::value::Value = serde_json::from_slice($out).unwrap();
-        insta::assert_json_snapshot!(v);
-    }};
-}
-
 fn new_ok(tpl: &TempDir, dest: &Path, extra: &[&str]) -> serde_json::Value {
     json(new_out(tpl, dest, extra))
 }
@@ -86,7 +78,10 @@ fn new_renders_fixture_and_writes_lock() {
     // The instance name feeds the `target` path.
     assert!(dest.path().join("apps/web/package.json").exists());
     insta::assert_snapshot!(redact(&tree_snapshot(dest.path())));
-    snap_json!(&raw);
+    // Parsed with its real key order (a plain `serde_json::Value` would sort keys).
+    insta::assert_json_snapshot!(
+        serde_json::from_slice::<splice::merge::value::Value>(&raw).unwrap()
+    );
 }
 
 #[test]

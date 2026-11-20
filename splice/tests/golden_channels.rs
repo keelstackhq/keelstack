@@ -58,14 +58,6 @@ fn read(r: &Path, rel: &str) -> String {
     std::fs::read_to_string(r.join(rel)).unwrap()
 }
 
-/// Snapshot stdout with its real key order (a plain `serde_json::Value` would sort keys).
-macro_rules! snap_json {
-    ($out:expr) => {{
-        let v: splice::merge::value::Value = serde_json::from_slice($out).unwrap();
-        insta::assert_json_snapshot!(v);
-    }};
-}
-
 fn all_json(repo: &TempDir, extra: &[&str], code: i32) -> serde_json::Value {
     serde_json::from_slice(&all_out(repo, extra, code)).unwrap()
 }
@@ -97,7 +89,10 @@ fn golden_main_and_channel_v1_to_v2() {
     });
     commit_all(r);
     let raw = all_out(&repo, &[], 1); // the main ci.yml conflict
-    snap_json!(&raw);
+    // Parsed with its real key order (a plain `serde_json::Value` would sort keys).
+    insta::assert_json_snapshot!(
+        serde_json::from_slice::<splice::merge::value::Value>(&raw).unwrap()
+    );
     insta::assert_snapshot!(redact(&tree_snapshot(r)));
     let agents = read(r, "AGENTS.md");
     assert!(agents.starts_with("# My rules\n") && agents.contains("My footer."));
@@ -143,7 +138,10 @@ fn golden_forced_section_variant() {
     assert_eq!(tree_snapshot(r), before, "drift writes nothing");
 
     let raw = all_out(&repo, &["--force"], 1);
-    snap_json!(&raw);
+    // Parsed with its real key order (a plain `serde_json::Value` would sort keys).
+    insta::assert_json_snapshot!(
+        serde_json::from_slice::<splice::merge::value::Value>(&raw).unwrap()
+    );
     insta::assert_snapshot!(redact(&tree_snapshot(r)));
     assert!(
         read(r, "CLAUDE.md").contains("mine."),
