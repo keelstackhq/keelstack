@@ -1,0 +1,38 @@
+[package]
+name = "keel-cli"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Bootstrap a repo with the keelstackhq tools: one manifest, one command, one human step at a time"
+license = "MIT"
+repository = "https://github.com/keelstackhq/keel"
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md"]
+
+[lib]
+name = "keel"
+path = "src/lib.rs"
+
+[[bin]]
+name = "keel"
+path = "src/main.rs"
+
+[dependencies]
+base64 = "=0.23.1"
+clap = { version = "=4.6.7", features = ["derive"] }
+rpassword = "=7.5.4"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+sha2 = "=0.11.1"
+thiserror = "=2.0.21"
+toml = "=1.1.8"
+zeroize = "=1.9.1"
+
+[dev-dependencies]
+assert_cmd = "=2.2.2"
+predicates = "=3.1.4"
+tempfile = "=3.27.0"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1

@@ -1,0 +1,39 @@
+# Pinned tool versions and their npm integrity values (sha512, base64) for keel's installs.
+# [pins] is the same table as a generated repo's root pins.toml (hull); [sha512.<tool>] records
+# the dist.integrity of the launcher and platform packages for that tool's `version`.
+# Values come from the channel setup-script pin blocks (splice/hoist/berth: hoist's, bosun: bosun's).
+[pins]
+splice = "0.6.0"
+bosun = "0.21.0"
+hoist = "0.5.1"
+berth = "0.2.1"
+# hull template tag (= commit 3f4a65fda568cdd20c76168ed156d25a28ba5630): keel renders `rust`/`ts` at it.
+hull = "v0.13.0"
+
+[refs.hull]
+tag = "v0.13.0"
+sha = "3f4a65fda568cdd20c76168ed156d25a28ba5630"
+
+[sha512.splice]
+version = "0.6.0"
+launcher = "dMLEVxDdl6qCCLZhCIb0qV+f5BZ1r5rRTglMtYf9cc4uRW81eWSSz1n5fuB1RlotWgMGbBbzSvyX1O7PxDHHSA=="
+linux_x64 = "YmeezoD9hiz3TSvCk2k1VokW7JlQmvqGuSaBBfQGgOJ2DESdWufEv2jQ94xGZUYzTWpBb2TM9euoOTi51bMCvg=="
+linux_arm64 = "1tScSJRc6HhnKqFoDWpz0nMewjR1j3akWw3sthqFHvnzaXAL7W+BMVDmyJ2c9lPa4QF/HBEwFfbe1JmtJx/Frw=="
+
+[sha512.bosun]
+version = "0.21.0"
+launcher = "Kk4l+o3BVptL7fXBIapBnxtQwHI+u2nD1YSGkASQuS7sEYJlR5eJoENGzq2J7g7mRvgU7RQQpean7DbYg3L7mg=="
+linux_x64 = "2CwZv/kUxuY+e2HiARpgntW4RmefsPry5Cyj5P55GeM8YAMGkeWTEThA2rlPL3u4W1XAOAcFRJfcI+FzHOr9Tw=="
+linux_arm64 = "XPezhlupNqjlfOXOAbgOjGuSuubtrgGWhe+WSZADWWqA3VopZuMb7pz9VCLuzwho5y1ab0fzCRwE71JnBa45tQ=="
+
+[sha512.hoist]
+version = "0.5.1"
+launcher = "vTS2qXva2OCDTuYbkAntSaN6Rf2w70f3inxOzYCHZkrvqp9bgdGAN4OX8ZMQbcg9VabUiPR3aeXbAjFqKMgmcg=="
+linux_x64 = "4bTuPUbSWvLVvMU4DgMZcKfAhqNhQN5Iy3I0W0eaUtpk9UWKPNvLCbdKp5LWxpeoMFqYArgkVq3/hKJhZj+QzQ=="
+linux_arm64 = "11eq9L45RUw1kqgSGqMzloesUtr/ISc+/7HqRrTfpjNt9dPUlJkZMiTccgLaq3GnPt3kHhEOwvS98o2iV1uB6g=="
+
+[sha512.berth]
+version = "0.2.1"
+launcher = "8PeL8d6meSYVuF+MNmK6CyAfZn+pmDIkLxwAcZIgNzhRoGWoBBKA8pTvG/NAYTHRhF8Ym+3OtCD+N/96N+u3JA=="
+linux_x64 = "vwYKi7HGKAs4NIAWf5V228ci6aaqa+1nPvk/FqomCj61on2ouzGJzSFVZPtSv88U3/LW+I3Kmo5gAtuIIRAF7Q=="
+linux_arm64 = "Y8nO2tpk7f9Pujvsxq42vaO9GjGF0n7jFv4MKN7F8kP8ofACPX7obGESfv+qNYik17X3WXwHgXS15WKorOlAdQ=="
