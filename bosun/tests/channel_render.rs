@@ -2342,11 +2342,8 @@ fn setup_scripts_install_cargo_nextest_only_for_old_pins_or_an_override() {
 fn nextest_skip_threshold_waits_for_the_cargo_test_default_gate() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let ver = |s: &str| -> Vec<u64> { s.split('.').map(|n| n.parse().unwrap()).collect() };
-    let cargo: toml::Table = fs::read_to_string(root.join("Cargo.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
-    let pkg = ver(cargo["package"]["version"].as_str().unwrap());
+    // `version.workspace = true`: the compiled-in package version is the workspace's.
+    let pkg = ver(env!("CARGO_PKG_VERSION"));
     let next_minor = vec![pkg[0], pkg[1] + 1, 0];
     let profile: toml::Table = fs::read_to_string(root.join("profiles/rust.toml"))
         .unwrap()

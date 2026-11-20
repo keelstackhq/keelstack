@@ -108,7 +108,9 @@ fn findings_fail_the_gate_with_file_job_rule_and_fix() {
 
 #[test]
 fn bosuns_own_workflows_pass_the_gate() {
-    let (code, v) = gate(Path::new(env!("CARGO_MANIFEST_DIR")));
+    // bosun/ is a folder of the monorepo: gate a standalone copy of its tracked files.
+    let copy = common::self_copy();
+    let (code, v) = gate(copy.path());
     assert_eq!(code, 0, "{v}");
     assert!(v["data"]["files"].as_array().unwrap().len() >= 5, "{v}");
 }

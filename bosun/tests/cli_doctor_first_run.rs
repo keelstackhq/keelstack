@@ -125,7 +125,9 @@ fn the_setup_item_points_at_setup_snippet_instead_of_embedding_the_script() {
 /// This repo with every local step passing: the plugin install is faked from the setup script's
 /// pins and the Routines are declared done.
 fn local_pass(token: bool, remote: bool) -> (i32, Value) {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    // bosun/ is a folder of the monorepo: doctor runs on a standalone copy of its tracked files.
+    let copy = common::self_copy();
+    let root = copy.path();
     let script = std::fs::read_to_string(root.join("docs/setup-script.sh")).unwrap();
     let pin = |k: &str| {
         let l = script

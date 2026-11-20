@@ -392,7 +392,7 @@ fn policy_known(version: &str, value: &str) -> Option<bool> {
 /// `path` as committed at HEAD: CI swaps the base branch's `.bosun/` into the checkout.
 fn committed(path: &str) -> String {
     let out = std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{path}")])
+        .args(["show", &format!("HEAD:./{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("git show");

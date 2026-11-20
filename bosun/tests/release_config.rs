@@ -32,10 +32,8 @@ fn read_json(path: &Path) -> serde_json::Value {
 }
 
 fn cargo_version() -> String {
-    read_toml(&root().join("Cargo.toml"))["package"]["version"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    // `version.workspace = true`: the compiled-in package version is the workspace's.
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 fn npm_dir(name: &str) -> PathBuf {

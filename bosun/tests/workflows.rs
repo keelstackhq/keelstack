@@ -736,8 +736,11 @@ fn ci_is_one_work_job_with_the_channels_edit_rule() {
         assert!(yaml.contains(k), "{k}");
     }
     // rustup's toolchain is pinned over the PR's rust-toolchain.toml, to the same channel.
-    let file =
-        fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/rust-toolchain.toml")).unwrap();
+    let file = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../rust-toolchain.toml"
+    ))
+    .unwrap();
     let channel: toml::Table = file.parse().unwrap();
     let channel = channel["toolchain"]["channel"].as_str().unwrap();
     assert!(

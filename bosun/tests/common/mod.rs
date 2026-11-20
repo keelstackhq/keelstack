@@ -126,3 +126,52 @@ pub fn git_tempdir() -> tempfile::TempDir {
     assert!(st.success());
     t
 }
+
+/// bosun's tracked files copied into a fresh git repo on `main` with one commit: bosun/ is a
+/// folder of the monorepo, not a git toplevel, so tests that run bosun on "its own repo" (it
+/// needs .github/, .bosun/, governance/ at the repo root) run on this copy instead.
+#[allow(dead_code)]
+pub fn self_copy() -> tempfile::TempDir {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let listed = std::process::Command::new("git")
+        .args(["ls-files", "-z", "--cached"])
+        .current_dir(root)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("git ls-files");
+    assert!(listed.status.success(), "git ls-files failed");
+    let dir = tempfile::tempdir().expect("tempdir");
+    for rel in listed.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()) {
+        let rel = std::str::from_utf8(rel).expect("utf-8 path");
+        let from = root.join(rel);
+        if !from.is_file() {
+            continue; // deleted in the work tree but still in the index
+        }
+        let to = dir.path().join(rel);
+        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
+        std::fs::copy(&from, &to).unwrap();
+    }
+    let d = dir.path();
+    let git = |args: &[&str]| {
+        let st = std::process::Command::new("git")
+            .args(args)
+            .current_dir(d)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .status()
+            .expect("git");
+        assert!(st.success(), "git {args:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["add", "-A"]);
+    git(&[
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "-m",
+        "chore: init",
+    ]);
+    dir
+}
