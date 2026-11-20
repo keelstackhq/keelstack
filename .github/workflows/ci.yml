@@ -400,8 +400,7 @@ jobs:
             list=$(node scripts/affected-combos.mjs --base "$BASE")
           fi
           echo "list=$list" >> "$GITHUB_OUTPUT"
-          # shellcheck disable=SC2016 # a JavaScript template literal, not a shell expansion
-          args=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map((c) => `--combo ${c}`).join(" "))' "$list")
+          args=$(jq -r 'map("--combo " + .) | join(" ")' <<<"$list")
           echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Rust needed?
         id: rust
