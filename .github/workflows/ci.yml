@@ -400,6 +400,7 @@ jobs:
             list=$(node scripts/affected-combos.mjs --base "$BASE")
           fi
           echo "list=$list" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2016 # a JavaScript template literal, not a shell expansion
           args=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map((c) => `--combo ${c}`).join(" "))' "$list")
           echo "args=$args" >> "$GITHUB_OUTPUT"
       - name: Rust needed?
@@ -479,7 +480,7 @@ jobs:
           dir="$RUNNER_TEMP/secrets-tools" && mkdir -p "$dir/bin" && cd "$dir"
           curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
           echo "$SOPS_SHA256  sops" | sha256sum -c -
-          age=age-v1.3.2-linux-amd64.tar.gz
+          age="age-v1.3.2-linux-amd64.tar.gz"
           curl -fsSLO "https://github.com/FiloSottile/age/releases/download/v1.3.2/$age"
           curl -fsSLO "https://github.com/FiloSottile/age/releases/download/v1.3.2/$age.proof"
           echo "$AGE_SHA256  $age" | sha256sum -c -
