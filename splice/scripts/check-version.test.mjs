@@ -78,11 +78,17 @@ test("release.yml build matrix covers exactly the platforms.json targets", () =>
   assert.deepEqual(targets, platforms.map((p) => p.target).sort());
 });
 
-test("the real npm/splice/package.json matches Cargo.toml", () => {
-  const cargoToml = readFileSync(new URL("../Cargo.toml", import.meta.url), "utf8");
+test("the real npm/splice/package.json matches the workspace Cargo.toml", () => {
+  const cargoToml = readFileSync(new URL("../../Cargo.toml", import.meta.url), "utf8");
   const launcherPkg = JSON.parse(readFileSync(new URL("../npm/splice/package.json", import.meta.url), "utf8"));
-  const actionYml = readFileSync(new URL("../action/action.yml", import.meta.url), "utf8");
-  assert.equal(checkVersion({ tag: null, cargoToml, launcherPkg, actionYml }), launcherPkg.version);
+  // action/action.yml keeps pinning the last published splice until scripts/bump-version.sh moves
+  // it with the lockstep version (the bump test checks that).
+  assert.equal(checkVersion({ tag: null, cargoToml, launcherPkg }), launcherPkg.version);
+});
+
+test("the version comes from [workspace.package] when there is no [package]", () => {
+  const ws = '[workspace]\nmembers = ["splice"]\n\n[workspace.package]\nversion = "1.4.2"\n\n[workspace.dependencies]\nx = "=1.0.0"\n';
+  assert.equal(checkVersion({ tag: "v1.4.2", cargoToml: ws, actionYml: action("1.4.2") }), "1.4.2");
 });
 
 const action = (d) =>

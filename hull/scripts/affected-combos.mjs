@@ -63,10 +63,15 @@ if (isMain(import.meta.url)) {
   let list = everything;
   if (!values.all) {
     try {
-      const out = execFileSync("git", ["diff", "--name-only", `${values.base}...HEAD`], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "pipe"],
-      });
+      // --relative: paths under hull/ as hull-relative (hull is a folder of the monorepo).
+      const out = execFileSync(
+        "git",
+        ["diff", "--relative", "--name-only", `${values.base}...HEAD`],
+        {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+        },
+      );
       list = affectedCombos(out.split("\n").filter(Boolean), combos);
     } catch (e) {
       process.stderr.write(

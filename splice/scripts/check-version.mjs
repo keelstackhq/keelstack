@@ -4,11 +4,15 @@ import { fileURLToPath } from "node:url";
 
 const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 
+// The monorepo's root Cargo.toml holds the lockstep version in [workspace.package]; a crate's own
+// Cargo.toml holds it in [package].
 function cargoVersion(cargoToml) {
-  const section = cargoToml.match(/^\[package\]\s*$([\s\S]*?)(?=^\[|(?![\s\S]))/m);
-  const m = section && section[1].match(/^version\s*=\s*"([^"]+)"/m);
-  if (!m) throw new Error("Cargo.toml has no [package] version");
-  return m[1];
+  for (const name of ["package", "workspace\\.package"]) {
+    const section = cargoToml.match(new RegExp(`^\\[${name}\\]\\s*$([\\s\\S]*?)(?=^\\[|(?![\\s\\S]))`, "m"));
+    const m = section && section[1].match(/^version\s*=\s*"([^"]+)"/m);
+    if (m) return m[1];
+  }
+  throw new Error("Cargo.toml has no [package] or [workspace.package] version");
 }
 
 function actionPin(actionYml) {
