@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 /// `path` as committed at HEAD (as tests/governance.rs reads it), else the working tree.
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{path}")])
+        .args(["show", &format!("HEAD:./{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()

@@ -64,22 +64,22 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 debug = false
 
-# Release binaries: small and single-unit. panic must stay "unwind": bosun hooks wrap their work
-# in catch_unwind, and a panicking hoard request task must not kill the server (tokio and axum
-# rely on unwinding).
+# Release binaries: single-unit, fat LTO. panic must stay "unwind": bosun hooks wrap their work in
+# catch_unwind, and a panicking hoard request task must not kill the server (tokio and axum rely on
+# unwinding). opt-level 3 for every dependency (hoard's zstd and crypto C code are hot); the CLIs
+# that were size-optimized before keep opt-level "s" for their own code.
 [profile.release]
 panic = "unwind"
-opt-level = "s"
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
 
-# These crates used the default opt-level before the merge.
-[profile.release.package.keel-hoard]
-opt-level = 3
+[profile.release.package.keel-bosun]
+opt-level = "s"
 
-[profile.release.package.keel-hoist]
-opt-level = 3
+[profile.release.package.keel-splice]
+opt-level = "s"
 
-[profile.release.package.keel-cli]
-opt-level = 3
+[profile.release.package.keel-berth]
+opt-level = "s"

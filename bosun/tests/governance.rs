@@ -19,7 +19,7 @@ fn read(path: &str) -> String {
 /// `.bosun/risk.toml` together is judged on what it commits.
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{path}")])
+        .args(["show", &format!("HEAD:./{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()

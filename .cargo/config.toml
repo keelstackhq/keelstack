@@ -4,10 +4,5 @@
 # bosun tests need a writable TMPDIR outside the repo (inside it, bosun finds the repo's own
 # .bosun config).
 TMPDIR = { value = "/tmp", force = true }
-# Hermetic git (berth tests): no ~/.gitconfig, fixed identity.
-GIT_CONFIG_GLOBAL = { value = "/dev/null", force = true }
-GIT_CONFIG_NOSYSTEM = { value = "1", force = true }
-GIT_AUTHOR_NAME = { value = "berth-test", force = true }
-GIT_AUTHOR_EMAIL = { value = "berth-test@example.invalid", force = true }
-GIT_COMMITTER_NAME = { value = "berth-test", force = true }
-GIT_COMMITTER_EMAIL = { value = "berth-test@example.invalid", force = true }
+# Hermetic git env is set per command by each crate's tests (berth: tests/common), not here:
+# a global [env] would also apply to `cargo run` and drop the user's git config.

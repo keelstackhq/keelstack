@@ -12,7 +12,7 @@ fn read(path: &str) -> String {
 /// over the checkout before the gates (as in tests/governance.rs).
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{path}")])
+        .args(["show", &format!("HEAD:./{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()

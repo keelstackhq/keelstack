@@ -26,7 +26,7 @@ const CONFIGS: [&str; 12] = [
 fn committed(rel: &str) -> String {
     let root = env!("CARGO_MANIFEST_DIR");
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:{rel}")])
+        .args(["show", &format!("HEAD:./{rel}")])
         .current_dir(root)
         .output()
         .ok()
