@@ -124,7 +124,7 @@ test("rust steps in the plain ci.yml are skipped when rust-affected.mjs is absen
 
 test("renovate.json extends the hull preset", async () => {
   const r = JSON.parse(await read(dir, "renovate.json"));
-  assert.deepEqual(r.extends, ["github>keelstackhq/hull//renovate/default"]);
+  assert.deepEqual(r.extends, ["github>keelstackhq/keelstack//hull/renovate/default"]);
 });
 
 test("renovate preset groups vite-plus with vite-plus-core", async () => {

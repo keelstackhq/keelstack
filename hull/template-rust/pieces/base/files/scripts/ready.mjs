@@ -196,7 +196,7 @@ function lockedTemplate(root) {
       /^source\s*=\s*"([^"]*)"/m.exec(readFileSync(join(root, ".splice/lock.toml"), "utf8"))?.[1] ??
       "";
   } catch {}
-  if (source) return source.endsWith("//template-rust") ? "template-rust" : "template";
+  if (source) return /\/template-rust$/.test(source) ? "template-rust" : "template";
   return undefined;
 }
 
@@ -253,7 +253,7 @@ export function checklistUrl(root) {
     const v = /^\[template\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(lock);
     if (v) ref = `v${v[1]}`;
   } catch {}
-  return `https://github.com/keelstackhq/hull/blob/${ref}/docs/start-checklist.md`;
+  return `https://github.com/keelstackhq/keelstack/blob/${ref}/hull/docs/start-checklist.md`;
 }
 
 /** Environment names the workflows use, sorted. */
@@ -283,7 +283,12 @@ const ASK_FIX = "Run the `ready` skill: it asks via `node scripts/ready.mjs --qu
  */
 const shq = (s) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replaceAll("'", "'\\''")}'`);
 const adoptCommand = (template, pieces = []) =>
-  ["splice", "adopt", `gh:keelstackhq/hull//${template}`, ...pieces.flatMap((p) => ["--piece", p])]
+  [
+    "splice",
+    "adopt",
+    `gh:keelstackhq/keelstack//hull/${template}`,
+    ...pieces.flatMap((p) => ["--piece", p]),
+  ]
     .concat("--dry-run", "--json")
     .map(shq)
     .join(" ");

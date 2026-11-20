@@ -5,7 +5,7 @@ alternative in one static binary: no Python, no Rust toolchain. Part of
 [keelstackhq](https://github.com/keelstackhq).
 
 ```bash
-pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-app --piece app:web
+pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template my-app --piece app:web
 cd my-app
 pnpm dlx @keelstackhq/splice update   # 3-way merge to the latest template version
 pnpm dlx @keelstackhq/splice check    # exit 1 on drift, conflicts or an available update
@@ -27,7 +27,7 @@ pnpm dlx @keelstackhq/splice check    # exit 1 on drift, conflicts or an availab
 - [Reference](docs/reference.md): install, commands, file classes, channels, the update bot,
   releasing.
 - [Agent skill](skills/splice/SKILL.md): the contract for coding agents.
-- [Template format](docs/template-format.md): the contract shared with hull.
+- [Template format](docs/template-format.md): the one contract for splice and hull.
 - [Design spec](docs/superpowers/specs/2026-10-14-splice-design.md).
 
 MIT, see [`LICENSE`](LICENSE).

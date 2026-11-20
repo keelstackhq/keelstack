@@ -1,12 +1,12 @@
-// Contract conformance corpus, copied byte-for-byte from keelstackhq/splice
-// `tests/fixtures/subset/` (splice renders the same triples with MiniJinja in
+// Contract conformance corpus: read directly from splice's `tests/fixtures/subset/` (one copy in
+// this monorepo; splice renders the same triples with MiniJinja in
 // `tests/conformance.rs`). Any difference between the two renderers is a contract bug.
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { test } from "node:test";
 import { renderString } from "../scripts/lib/render-file.mjs";
 
-const DIR = new URL("./fixtures/conformance/", import.meta.url);
+const DIR = new URL("../../splice/tests/fixtures/subset/", import.meta.url);
 const CASES = [
   "var",
   "filters",

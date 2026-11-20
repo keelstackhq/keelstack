@@ -567,7 +567,7 @@ mod tests {
 
     fn sample_lock() -> Lock {
         let t = ResolvedTemplate {
-            source: TemplateSource::parse("gh:keelstackhq/hull//template").unwrap(),
+            source: TemplateSource::parse("gh:keelstackhq/keelstack//hull/template").unwrap(),
             version: semver::Version::new(1, 2, 0),
             commit: SHA.into(),
             root: "/unused".into(),

@@ -342,7 +342,7 @@ test("README names the rigging and decisions channel adds (D-004); no bosun path
   assert.doesNotMatch(readme, /--piece claude/, "the subagents ship in base");
   assert.match(
     readme,
-    /splice channel add gh:keelstackhq\/decisions\/\/channel --track main --piece import-project/,
+    /splice channel add gh:keelstackhq\/keelstack\/\/decisions\/channel --track main --piece import-project/,
   );
   for (const piece of t.pieces.values()) {
     for (const src of await walk(piece.filesDir)) {

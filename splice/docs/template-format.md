@@ -1,7 +1,7 @@
 # keelstack template format v1 (shared contract: splice ⇄ hull)
 
-This file is identical in `keelstackhq/splice` and `keelstackhq/hull` (`docs/template-format.md`).
-Change it only in both repos, in the same week. Bump `format` only when a change makes a valid
+This file is the single contract for splice and hull in the `keelstackhq/keelstack` monorepo
+(hull reads it at `../splice/docs/template-format.md`). Bump `format` only when a change makes a valid
 template invalid or renders it differently; syntax a template opts into is gated by `min_splice`.
 
 ## 1. Template repository layout

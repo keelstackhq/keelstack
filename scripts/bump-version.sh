@@ -33,5 +33,8 @@ for (const t of tools) {
 }
 console.log(`bump-version: ${n} package.json files at ${v}`);
 JS
+# splice's GitHub Action pins the splice npm version it installs (splice/scripts/check-version.mjs).
+sed -i.bak -E '/^  version:/,/^  [a-z]/ s/^(    default: )[0-9]+\.[0-9]+\.[0-9]+$/\1'"$v"'/' splice/action/action.yml
+rm -f splice/action/action.yml.bak
 cargo update --workspace --offline >/dev/null
 echo "bump-version: Cargo.toml and Cargo.lock at $v"
