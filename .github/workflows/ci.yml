@@ -4,7 +4,8 @@ name: ci
 # touches; each folder has one job `ci-<folder>` (bosun's main-open reads these names) that runs
 # that folder's old checks and is skipped when the folder is not affected (a skipped job counts as
 # passed). `ci-repo` runs the repo-wide checks (cargo-deny once, actionlint, pinned actions, the
-# version-bump test). `ci-ok` is the one required check: it fails if any job failed or was
+# version-bump test); `ci-gates` runs bosun's repo-wide gates (test-integrity, ci-minutes) with the
+# base's bosun. `ci-ok` is the one required check: it fails if any job failed or was
 # cancelled, or on a draft PR.
 #
 # CI minutes (D-007, decisions/decisions/007-ci-minutes.md): Linux only (Windows and macOS run
@@ -34,8 +35,8 @@ jobs:
     # A draft PR runs nothing; ci-ok fails it at once (never skipped: a skipped required check
     # counts as passed).
     if: >-
-      github.event_name != 'pull_request' ||
-      (github.event.pull_request.draft == false &&
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'pull_request' ||
        contains(fromJSON('["opened","synchronize","reopened","ready_for_review"]'), github.event.action))
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -67,7 +68,7 @@ jobs:
   # Repo-wide checks: run on every non-draft event (cheap), cargo-deny only when Rust is affected.
   ci-repo:
     needs: detect
-    if: needs.detect.result == 'success'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -110,12 +111,124 @@ jobs:
         with:
           tool: cargo-deny
       - name: cargo deny (once for the workspace)
-        if: needs.detect.outputs.rust == 'true'
+        if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
         run: cargo deny check
+
+  # bosun's repo-wide gates (test-integrity, ci-minutes), run by bosun built from the BASE commit
+  # with the base's copies of the files that decide what runs, never by the change under test, so
+  # a change to bosun or its config cannot pass its own gates (bosun spec §11). Runs no PR code.
+  ci-gates:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # checks/issues/pull-requests: read let `task allow list` read the PR body and its linked task.
+    permissions:
+      contents: read
+      checks: read
+      issues: read
+      pull-requests: read
+    env:
+      # rustup takes RUSTUP_TOOLCHAIN over any toolchain file, and cargo these RUSTC* settings over
+      # its config, so the PR's toolchain file or .cargo cannot run a compiler of its own.
+      RUSTUP_TOOLCHAIN: "1.97"
+      RUSTC: rustc
+      RUSTC_WRAPPER: ""
+      RUSTC_WORKSPACE_WRAPPER: ""
+      CARGO_BUILD_RUSTC_WRAPPER: ""
+      CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      # The base is a worktree outside the checkout; with no base (first push) the head is used.
+      - name: bosun of the base
+        id: base
+        env:
+          BASE: ${{ needs.detect.outputs.base }}
+        run: |
+          sha="${BASE:-$GITHUB_SHA}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          git worktree add --detach "$RUNNER_TEMP/base" "$sha"
+      # Before anything runs rustc or cargo: the gates use the base commit's .bosun/, every .cargo
+      # directory, every rust-toolchain(.toml), .npmrc, .pnpmfile and deny.toml. Files the base
+      # lacks are deleted. A PR's changes to them take effect after it merges (R-gov or R-ci).
+      - name: the base's config for the gates
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          pat='(^|/)\.cargo(/|$)|(^|/)rust-toolchain(\.toml)?$|(^|/)\.npmrc$|(^|/)\.pnpmfile\.[cm]?js$|(^|/)\.?deny(\.exceptions)?\.toml$|^\.bosun(/|$)'
+          if ! git cat-file -e "$BASE:.bosun/bosun.toml" 2>/dev/null; then
+            echo "::warning::the base has no root .bosun yet (setup PR): this change's .bosun is used"
+            pat='(^|/)\.cargo(/|$)|(^|/)rust-toolchain(\.toml)?$|(^|/)\.npmrc$|(^|/)\.pnpmfile\.[cm]?js$|(^|/)\.?deny(\.exceptions)?\.toml$'
+          fi
+          changed="$(git diff --name-only -z "$BASE" HEAD | { grep -zE "$pat" || true; } | tr '\0' ' ')"
+          if [ -n "$changed" ]; then
+            echo "::notice::this change edits ${changed}; its gates run with the base's copies (they apply after merge)"
+          fi
+          git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            rm -rf -- "$p"
+          done
+          git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            mkdir -p -- "$(dirname -- "$p")"
+            git show "$BASE:$p" > "$p"
+          done
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      # Only main saves this cache, so a PR run cannot leave a build behind for the next base.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: bosun-base
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: ${{ runner.temp }}/base -> target
+      - name: build bosun (base, workspace)
+        working-directory: ${{ runner.temp }}/base
+        run: cargo build --release --locked -p keel-bosun --bin bosun
+      - id: binhash
+        run: echo "sha256=$(sha256sum "$RUNNER_TEMP/base/target/release/bosun" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The kinds test-integrity may allow come from the PR's linked task (the plan's `allow:`).
+      # Only known kinds pass; any failure allows nothing.
+      - if: github.event_name == 'pull_request'
+        id: allow
+        name: task allow list
+        env:
+          BOSUN: ${{ runner.temp }}/base/target/release/bosun
+          BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          echo "$BOSUN_SHA256  $BOSUN" | sha256sum -c --quiet || { echo "::error::$BOSUN changed"; exit 1; }
+          kinds="$("$BOSUN" test-integrity --pr "$PR" 2>/dev/null \
+            | jq -r '[.data.allow // [] | .[] | select(IN("delete-test","skip","only","fewer-asserts"))] | join(",")' 2>/dev/null)" || kinds=""
+          echo "test-integrity allows: ${kinds:-nothing}"
+          echo "kinds=$kinds" >> "$GITHUB_OUTPUT"
+      - name: bosun gates (test-integrity, ci-minutes)
+        env:
+          BOSUN: ${{ runner.temp }}/base/target/release/bosun
+          BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}
+          BOSUN_INTEGRITY_ALLOW: ${{ steps.allow.outputs.kinds }}
+          # test-integrity reads the snapshot-change line from the PR body.
+          BOSUN_PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ steps.base.outputs.sha }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # A PR runs each gate on what it changed; main and the queue run it on everything.
+          if [ "$EVENT" = pull_request ]; then scope=(--base "$BASE"); else scope=(--all); fi
+          for g in test-integrity ci-minutes; do
+            echo "::group::bosun gate $g"
+            echo "$BOSUN_SHA256  $BOSUN" | sha256sum -c --quiet || { echo "::error::$BOSUN changed"; exit 1; }
+            "$BOSUN" gate "$g" "${scope[@]}" || { echo "::error::gate $g failed"; exit 1; }
+            echo "::endgroup::"
+          done
 
   ci-bosun:
     needs: detect
-    if: needs.detect.outputs.bosun == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.bosun == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -154,7 +267,7 @@ jobs:
 
   ci-splice:
     needs: detect
-    if: needs.detect.outputs.splice == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.splice == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -193,7 +306,7 @@ jobs:
 
   ci-hull:
     needs: detect
-    if: needs.detect.outputs.hull == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hull == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     defaults:
@@ -307,7 +420,7 @@ jobs:
 
   ci-hoist:
     needs: detect
-    if: needs.detect.outputs.hoist == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hoist == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -375,7 +488,7 @@ jobs:
 
   ci-hoard:
     needs: detect
-    if: needs.detect.outputs.hoard == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hoard == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -448,7 +561,7 @@ jobs:
 
   ci-berth:
     needs: detect
-    if: needs.detect.outputs.berth == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.berth == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -478,7 +591,7 @@ jobs:
 
   ci-keel:
     needs: detect
-    if: needs.detect.outputs.keel == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.keel == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -507,7 +620,7 @@ jobs:
 
   ci-decisions:
     needs: detect
-    if: needs.detect.outputs.decisions == 'true'
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.decisions == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -520,7 +633,7 @@ jobs:
 
   # The one required check. Skipped folder jobs are fine; failed or cancelled ones are not.
   ci-ok:
-    needs: [detect, ci-repo, ci-bosun, ci-splice, ci-hull, ci-hoist, ci-hoard, ci-berth, ci-keel, ci-decisions]
+    needs: [detect, ci-repo, ci-gates, ci-bosun, ci-splice, ci-hull, ci-hoist, ci-hoard, ci-berth, ci-keel, ci-decisions]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

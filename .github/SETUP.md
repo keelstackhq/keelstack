@@ -6,7 +6,7 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 
 - Required checks: `ci-ok`, `risk-check`, `review-verdict`, `main-open`.
   The per-folder jobs `ci-bosun`, `ci-splice`, `ci-hull`, `ci-hoist`, `ci-hoard`, `ci-berth`,
-  `ci-keel`, `ci-decisions` and `ci-repo` are aggregated by `ci-ok`; do not require them one by one
+  `ci-keel`, `ci-decisions`, `ci-repo` and `ci-gates` are aggregated by `ci-ok`; do not require them one by one
   (a skipped job is fine inside `ci-ok`).
 - Merge queue: on (ci.yml listens to `merge_group`).
 - Merge method for version-bump PRs: merge or squash (release.yml compares the first parent).
@@ -50,8 +50,6 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 
 ## Follow-ups (not done here)
 
-- bosun reads its config only from `<repo root>/.bosun/`; the monorepo has `bosun/.bosun/` only, so
-  governance runs on defaults until a root `.bosun/` exists (paths in risk.toml re-prefixed).
 - Download URLs that still point at the old repos: `hoard/scripts/install.sh`,
   `hoard/circleci/hoard.yml`, `hoard/action/src/binary.ts` (`DEFAULT_REPO`), the hull template's
   `hoard.yml`, `splice/src/source.rs`, `keel/src/tools/splice.rs`, `repository.url` in each

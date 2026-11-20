@@ -64,6 +64,7 @@ on:
 
 permissions: {}
 
+# ci-minutes: allow concurrency a release never cancels itself
 concurrency:
   # A run is never cancelled. Releases of different commits do not wait for each other; a re-run
   # of one commit waits for the first. Plan runs of different PRs never share a group (a pending
