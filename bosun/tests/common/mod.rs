@@ -1,0 +1,128 @@
+//! Shared test helpers. Every bosun child runs hermetic: no real token, no real GitHub.
+#![allow(dead_code)]
+
+use assert_cmd::Command;
+use fake::FakeGithub;
+use serde_json::Value;
+
+/// The RFC 8032 test 1 key as PKCS#8 PEM, what `openssl pkey` writes for that seed. Its public
+/// key is `11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=`. A test key, never enrolled anywhere.
+pub const TEST_ED25519_PEM: &str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIJ1hsZ3v/VpguoRK9JLsLMREScVpezJpGXA7rAMcrn9g\n-----END PRIVATE KEY-----\n";
+
+/// A token canary: tests assert it never reaches stdout or stderr.
+pub const TOKEN_CANARY: &str = "fake-token-canary";
+
+/// The `bosun` binary with a scrubbed environment.
+pub fn bosun() -> Command {
+    let mut cmd = Command::cargo_bin("bosun").expect("bosun binary");
+    // An empty directory, so no test reads this repo's own .bosun/ files.
+    cmd.current_dir(empty_dir());
+    cmd.env_remove("GH_TOKEN")
+        .env_remove("BOSUN_APP_TOKEN")
+        .env("GITHUB_TOKEN", TOKEN_CANARY)
+        .env("BOSUN_GITHUB_API", "http://127.0.0.1:9")
+        .env("BOSUN_REPO", "acme/widget")
+        .env("BOSUN_PIN_CHECK", "0")
+        .env("BOSUN_NO_NEXTEST", "1")
+        .env("BOSUN_SESSION", "session_test")
+        .env("BOSUN_NOW", "2026-10-22T10:00:00Z")
+        .env_remove("ANTHROPIC_API_KEY")
+        .env("BOSUN_ANTHROPIC_API", "http://127.0.0.1:9")
+        .env_remove("GITHUB_ACTIONS")
+        .env_remove("GITHUB_EVENT_NAME")
+        .env_remove("CIRCLECI")
+        .env_remove("CI")
+        .env_remove("CLAUDECODE")
+        .env_remove("CIRCLE_BRANCH")
+        .env_remove("BOSUN_HALT")
+        // CI's task-allow step exports these to the gates step; a test sets its own.
+        .env_remove("BOSUN_INTEGRITY_ALLOW")
+        .env_remove("BOSUN_PR_BODY")
+        .env_remove("BOSUN_MERGE_IDENTITY_OK")
+        .env_remove("BOSUN_METRICS_TIMEOUT_SECS")
+        .env_remove("BOSUN_ROUTINES_OK")
+        .env_remove("BOSUN_MODEL")
+        .env_remove("ANTHROPIC_MODEL")
+        .env_remove("BOSUN_ORIGIN")
+        .env_remove("CCR_AGENT_PROXY_ENABLED")
+        .env_remove("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE")
+        .env_remove("CLAUDE_CODE_CHILD_SESSION")
+        .env_remove("CLAUDE_CODE_REMOTE_SESSION_ID");
+    cmd
+}
+
+/// Parse stdout as exactly one JSON object. An envelope must match `bosun schema` (strict: every
+/// `data` key of an ok result is in the schema), so the schema cannot drift from the code.
+pub fn one_object(stdout: &[u8]) -> Value {
+    let text = std::str::from_utf8(stdout).expect("utf-8 stdout");
+    let mut stream = serde_json::Deserializer::from_str(text).into_iter::<Value>();
+    let first = stream.next().expect("one JSON value").expect("valid JSON");
+    assert!(stream.next().is_none(), "more than one JSON value: {text}");
+    assert!(first.is_object(), "not an object: {text}");
+    let envelope = first.get("version").is_some() && first.get("exit_code").is_some();
+    if envelope && let Err(e) = schema_check::check_envelope(&first) {
+        panic!("the envelope does not match `bosun schema`: {e}\n{text}");
+    }
+    first
+}
+
+/// Run `bosun <args>` as `session` at `now` against the fake; returns (exit code, envelope).
+/// Asserts the token never leaks and every error has a fix.
+pub fn run(fake: &FakeGithub, session: &str, now: &str, args: &[&str]) -> (i32, Value) {
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", session)
+        .env("BOSUN_NOW", now)
+        .args(args)
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.contains(TOKEN_CANARY), "token leaked");
+    let v = one_object(&out.stdout);
+    if v["ok"] == false {
+        assert!(!v["error"]["fix"].as_str().unwrap().trim().is_empty());
+    }
+    (out.status.code().unwrap(), v)
+}
+
+/// A lease comment body as `bosun claim` writes it.
+pub fn lease_note(session: &str, expires: &str, touch: &str) -> String {
+    format!(
+        "Claimed.\n\n{{\"bosun\":\"lease\",\"session\":\"{session}\",\"origin\":\"local\",\"expires\":\"{expires}\",\"touch\":[\"{touch}\"]}}"
+    )
+}
+
+pub mod fake;
+pub mod noci;
+pub mod npm;
+pub mod schema_check;
+pub mod stamps;
+
+/// One empty directory per test process (not a git repo, no .bosun/).
+pub fn empty_dir() -> std::path::PathBuf {
+    static DIR: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("bosun-test-empty-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("create the empty test dir");
+        dir
+    })
+    .clone()
+}
+
+pub mod anthropic;
+
+/// A fresh empty directory that is a git repository (adopt refuses a directory that is not).
+pub fn git_tempdir() -> tempfile::TempDir {
+    let t = tempfile::tempdir().expect("tempdir");
+    let st = std::process::Command::new("git")
+        .args(["init", "-q"])
+        .arg(t.path())
+        .status()
+        .expect("git init");
+    assert!(st.success());
+    t
+}

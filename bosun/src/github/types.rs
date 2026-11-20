@@ -1,0 +1,553 @@
+//! The slices of GitHub's REST shapes bosun reads.
+
+use serde::{Deserialize, Deserializer};
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Issue {
+    pub number: u64,
+    pub title: String,
+    /// `None` when GitHub sent `null`; see [`Issue::body_text`].
+    #[serde(default)]
+    pub body: Option<String>,
+    pub state: String,
+    #[serde(default, deserialize_with = "label_names")]
+    pub labels: Vec<String>,
+    /// GitHub lists pull requests as issues; they carry a `pull_request` key.
+    #[serde(default, deserialize_with = "present")]
+    pub pull_request: bool,
+    #[serde(default, deserialize_with = "login")]
+    pub user: String,
+    /// RFC 3339 time the issue was closed; `None` while open.
+    #[serde(default)]
+    pub closed_at: Option<String>,
+    /// Why a closed issue was closed: `completed`, `not_planned` or `duplicate`.
+    #[serde(default)]
+    pub state_reason: Option<String>,
+    /// RFC 3339 time of the last change; empty when GitHub did not say.
+    #[serde(default)]
+    pub updated_at: String,
+    /// The slug of the GitHub App that wrote the issue or PR (`performed_via_github_app`).
+    #[serde(
+        default,
+        rename = "performed_via_github_app",
+        deserialize_with = "app_slug_name"
+    )]
+    pub via_app: String,
+}
+
+impl Issue {
+    /// The body, `""` when GitHub sent `null`.
+    pub fn body_text(&self) -> &str {
+        self.body.as_deref().unwrap_or("")
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(from = "RawComment")]
+pub struct Comment {
+    pub id: u64,
+    pub body: String,
+    pub user: String,
+    /// `user.type`: `User`, `Bot` or `Organization`; empty when GitHub left it out.
+    pub user_type: String,
+    pub created_at: String,
+    pub updated_at: String,
+    /// `performed_via_github_app`: `None` when GitHub left the field out, `Some(None)` when it
+    /// is `null` (a plain user token), `Some(Some(slug))` when an app wrote the comment.
+    pub via_app: Option<Option<String>>,
+    pub author_association: String,
+    /// `.../issues/<n>`: the issue or PR the comment is on.
+    pub issue_url: String,
+}
+
+#[derive(Deserialize)]
+struct RawUser {
+    #[serde(default)]
+    login: String,
+    #[serde(default, rename = "type")]
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct RawComment {
+    id: u64,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    body: String,
+    #[serde(default)]
+    user: Option<RawUser>,
+    created_at: String,
+    updated_at: String,
+    #[serde(
+        default,
+        rename = "performed_via_github_app",
+        deserialize_with = "app_slug"
+    )]
+    via_app: Option<Option<String>>,
+    #[serde(default)]
+    author_association: String,
+    #[serde(default)]
+    issue_url: String,
+}
+
+impl From<RawComment> for Comment {
+    fn from(r: RawComment) -> Comment {
+        let (user, user_type) = r.user.map_or_else(Default::default, |u| (u.login, u.kind));
+        Comment {
+            id: r.id,
+            body: r.body,
+            user,
+            user_type,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+            via_app: r.via_app,
+            author_association: r.author_association,
+            issue_url: r.issue_url,
+        }
+    }
+}
+
+impl Comment {
+    /// Written with a plain user token: the app field is present and `null`. A missing field
+    /// is not proof, so it counts as written by an app (fail closed).
+    pub fn by_user_token(&self) -> bool {
+        self.via_app == Some(None)
+    }
+
+    /// Never edited since it was created.
+    pub fn unedited(&self) -> bool {
+        self.created_at == self.updated_at
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Label {
+    pub name: String,
+    #[serde(default)]
+    pub color: String,
+}
+
+/// A pull request. `merged` is only sent by the single-pull endpoint; lists leave it `false`.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(from = "RawPull")]
+pub struct Pull {
+    pub number: u64,
+    pub node_id: String,
+    pub title: String,
+    pub head_sha: String,
+    pub head_ref: String,
+    pub base_sha: String,
+    pub base_ref: String,
+    pub body: String,
+    pub state: String,
+    pub merged: bool,
+    pub draft: bool,
+    pub labels: Vec<String>,
+    pub user: String,
+    /// Files the PR changes; 0 when GitHub did not say (lists omit it).
+    pub changed_files: u64,
+    /// The merge commit of a merged PR; `None` while open (or when GitHub sent `null`).
+    pub merge_commit_sha: Option<String>,
+    /// Number of commits in the PR; 0 when GitHub did not say.
+    pub commits: u64,
+    /// GitHub's lazily computed `mergeable_state` (`dirty`, `clean`, ...); `None` for `null`,
+    /// and always `None` in lists (only the pull detail has it).
+    pub mergeable_state: Option<String>,
+    /// `owner/name` of the repo the head branch lives in; `""` when GitHub did not say (a
+    /// deleted fork). A PR from a fork differs from the base repo.
+    pub head_repo: String,
+    /// RFC 3339 times GitHub reports; `None` when absent or `null` (`bosun budget report`).
+    pub merged_at: Option<String>,
+    pub closed_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub created_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct RawRepo {
+    #[serde(default)]
+    full_name: String,
+}
+
+#[derive(Deserialize)]
+struct RawRef {
+    sha: String,
+    #[serde(rename = "ref")]
+    name: String,
+    #[serde(default)]
+    repo: Option<RawRepo>,
+}
+
+#[derive(Deserialize)]
+struct RawPull {
+    number: u64,
+    #[serde(default)]
+    node_id: String,
+    #[serde(default)]
+    title: String,
+    head: RawRef,
+    base: RawRef,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    body: String,
+    state: String,
+    #[serde(default)]
+    merged: bool,
+    #[serde(default)]
+    draft: bool,
+    #[serde(default, deserialize_with = "label_names")]
+    labels: Vec<String>,
+    #[serde(default, deserialize_with = "login")]
+    user: String,
+    #[serde(default)]
+    changed_files: u64,
+    #[serde(default)]
+    merge_commit_sha: Option<String>,
+    #[serde(default)]
+    commits: u64,
+    #[serde(default)]
+    mergeable_state: Option<String>,
+    #[serde(default)]
+    merged_at: Option<String>,
+    #[serde(default)]
+    closed_at: Option<String>,
+    #[serde(default)]
+    updated_at: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+}
+
+impl From<RawPull> for Pull {
+    fn from(r: RawPull) -> Pull {
+        Pull {
+            number: r.number,
+            node_id: r.node_id,
+            title: r.title,
+            head_sha: r.head.sha,
+            head_ref: r.head.name,
+            head_repo: r.head.repo.map(|x| x.full_name).unwrap_or_default(),
+            base_sha: r.base.sha,
+            base_ref: r.base.name,
+            body: r.body,
+            state: r.state,
+            merged: r.merged,
+            draft: r.draft,
+            labels: r.labels,
+            user: r.user,
+            changed_files: r.changed_files,
+            merge_commit_sha: r.merge_commit_sha,
+            commits: r.commits,
+            mergeable_state: r.mergeable_state,
+            merged_at: r.merged_at,
+            closed_at: r.closed_at,
+            updated_at: r.updated_at,
+            created_at: r.created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct PrFile {
+    pub filename: String,
+    pub status: String,
+    #[serde(default)]
+    pub additions: u64,
+    #[serde(default)]
+    pub deletions: u64,
+    /// Absent for binary and very large files.
+    #[serde(default)]
+    pub patch: Option<String>,
+    #[serde(default)]
+    pub previous_filename: Option<String>,
+    /// The blob sha of the file at the PR head.
+    #[serde(default)]
+    pub sha: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Review {
+    #[serde(default)]
+    pub id: u64,
+    #[serde(default, deserialize_with = "login")]
+    pub user: String,
+    pub state: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub commit_id: String,
+    /// RFC 3339; GitHub leaves it out of a pending review.
+    #[serde(default)]
+    pub submitted_at: Option<String>,
+}
+
+/// One commit status as the combined-status endpoint lists it.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Status {
+    pub context: String,
+    pub state: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub description: String,
+    /// Login of the user or app that posted the status; `""` when GitHub did not say.
+    #[serde(default, deserialize_with = "login")]
+    pub creator: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(from = "RawCheckRun")]
+pub struct CheckRun {
+    pub name: String,
+    pub status: String,
+    /// `None` until the run completes.
+    pub conclusion: Option<String>,
+    pub id: u64,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    /// Slug of the GitHub App that created the run (`github-actions` for Actions); `""` if unknown.
+    pub app: String,
+    /// Id of that App (15368 for GitHub Actions); 0 if unknown.
+    pub app_id: u64,
+    /// `output.title`; `""` when the run has none.
+    pub title: String,
+}
+
+#[derive(Deserialize)]
+struct RawCheckRun {
+    name: String,
+    status: String,
+    #[serde(default)]
+    conclusion: Option<String>,
+    #[serde(default)]
+    id: u64,
+    #[serde(default)]
+    started_at: Option<String>,
+    #[serde(default)]
+    completed_at: Option<String>,
+    #[serde(default)]
+    app: Option<AppRef>,
+    #[serde(default)]
+    output: Option<RunOutput>,
+}
+
+#[derive(Deserialize)]
+struct RunOutput {
+    #[serde(default)]
+    title: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AppRef {
+    #[serde(default)]
+    slug: String,
+    #[serde(default)]
+    id: u64,
+}
+
+impl From<RawCheckRun> for CheckRun {
+    fn from(r: RawCheckRun) -> Self {
+        let (app, app_id) = r.app.map_or((String::new(), 0), |a| (a.slug, a.id));
+        CheckRun {
+            name: r.name,
+            status: r.status,
+            conclusion: r.conclusion,
+            id: r.id,
+            started_at: r.started_at,
+            completed_at: r.completed_at,
+            app,
+            app_id,
+            title: r.output.and_then(|o| o.title).unwrap_or_default(),
+        }
+    }
+}
+
+/// What a gate's check run says (spec §15). `Pending` is `in_progress`; the others complete the
+/// run. There is no `neutral` or `skipped`: both satisfy a required check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunState {
+    Pending,
+    Success,
+    Failure,
+}
+
+/// A gate check run to create or update: `title` is the description a status would carry,
+/// `summary` that text plus the matched rules.
+#[derive(Debug, Clone, Copy)]
+pub struct GateRun<'a> {
+    pub name: &'a str,
+    pub head_sha: &'a str,
+    pub state: RunState,
+    pub title: &'a str,
+    pub summary: &'a str,
+}
+
+/// A job of an Actions workflow run.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Job {
+    pub id: u64,
+    pub name: String,
+    pub run_id: u64,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub conclusion: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub html_url: String,
+}
+
+fn text_or_empty<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
+/// True when the key is present with a non-null value.
+fn present<'de, D: Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    Ok(Option::<serde::de::IgnoredAny>::deserialize(d)?.is_some())
+}
+
+fn app_slug<'de, D: Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    #[derive(Deserialize)]
+    struct App {
+        #[serde(default)]
+        slug: String,
+    }
+    Ok(Some(Option::<App>::deserialize(d)?.map(|a| a.slug)))
+}
+
+fn app_slug_name<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    struct App {
+        #[serde(default)]
+        slug: String,
+    }
+    Ok(Option::<App>::deserialize(d)?
+        .map(|a| a.slug)
+        .unwrap_or_default())
+}
+
+fn login<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    struct User {
+        login: String,
+    }
+    Ok(Option::<User>::deserialize(d)?
+        .map(|u| u.login)
+        .unwrap_or_default())
+}
+
+/// Labels arrive as `[{name, ...}]` (or plain strings in some payloads).
+fn label_names<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum L {
+        Name(String),
+        Obj { name: String },
+    }
+    Ok(Vec::<L>::deserialize(d)?
+        .into_iter()
+        .map(|l| match l {
+            L::Name(n) | L::Obj { name: n } => n,
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn issue_fixture_parses() {
+        let i: Issue =
+            serde_json::from_str(include_str!("../../tests/fixtures/github/issue.json")).unwrap();
+        assert_eq!(i.number, 1347);
+        assert_eq!(i.labels, vec!["bosun:state/ready", "bug"]);
+        assert_eq!(i.user, "octocat");
+        assert_eq!(i.body_text(), "I'm having a problem with this.");
+        assert!(!i.pull_request);
+    }
+
+    #[test]
+    fn pull_request_key_and_null_body() {
+        let i: Issue = serde_json::from_str(
+            r#"{"number":2,"title":"t","body":null,"state":"open","pull_request":{"url":"x"}}"#,
+        )
+        .unwrap();
+        assert!(i.pull_request);
+        assert_eq!(i.body_text(), "");
+        assert!(i.labels.is_empty());
+    }
+
+    #[test]
+    fn comment_and_label_fixtures_parse() {
+        let c: Comment =
+            serde_json::from_str(include_str!("../../tests/fixtures/github/comment.json")).unwrap();
+        assert_eq!(
+            (c.id, c.body.as_str(), c.user.as_str()),
+            (1, "Me too", "octocat")
+        );
+        assert_eq!(c.created_at, "2011-04-14T16:00:49Z");
+        let l: Label =
+            serde_json::from_str(include_str!("../../tests/fixtures/github/label.json")).unwrap();
+        assert_eq!((l.name.as_str(), l.color.as_str()), ("bug", "f29513"));
+    }
+}
+
+/// A comparison of two commits: `status` is `ahead`, `behind`, `identical` or `diverged`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Compare {
+    pub status: String,
+    pub files: Vec<PrFile>,
+    /// `merge_base_commit.sha` of the first page; `None` when GitHub sent none.
+    pub merge_base: Option<String>,
+    /// The file list may be incomplete: 300 or more files (GitHub's cap), or the page limit hit.
+    pub truncated: bool,
+}
+
+/// A git commit object (`GET /git/commits/{sha}`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct GitCommit {
+    pub sha: String,
+    /// The sha of the commit's root tree.
+    pub tree: String,
+    pub parents: Vec<String>,
+    /// The full commit message (empty when GitHub sent none).
+    pub message: String,
+}
+
+#[derive(Deserialize)]
+struct Sha {
+    sha: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct RawGitCommit {
+    sha: String,
+    tree: Sha,
+    parents: Vec<Sha>,
+    #[serde(default)]
+    message: String,
+}
+
+impl From<RawGitCommit> for GitCommit {
+    fn from(r: RawGitCommit) -> GitCommit {
+        GitCommit {
+            sha: r.sha,
+            tree: r.tree.sha,
+            parents: r.parents.into_iter().map(|p| p.sha).collect(),
+            message: r.message,
+        }
+    }
+}
+
+/// A git tree read recursively (`GET /git/trees/{sha}?recursive=1`).
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct GitTree {
+    /// The root sha GitHub returned.
+    pub sha: String,
+    /// GitHub cut the listing short; the entries are incomplete.
+    pub truncated: bool,
+    #[serde(rename = "tree")]
+    pub entries: Vec<TreeEntry>,
+}
+
+/// One tree entry; every field is required, none is defaulted.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct TreeEntry {
+    pub path: String,
+    pub mode: String,
+    /// `blob`, `tree` or `commit` (GitHub's `type`).
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub sha: String,
+}

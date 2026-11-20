@@ -1,0 +1,621 @@
+//! The splice channel in `channel/` (spec D16), checked without splice: the manifest and pieces,
+//! the classes of each file, GitHub expressions kept out of the template syntax, and workflows
+//! that run the pinned bosun release, never code from the PR head.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn channel() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("channel")
+}
+
+fn toml_at(path: &Path) -> toml::Table {
+    let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    text.parse()
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files_under(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+fn strings(v: Option<&toml::Value>) -> Vec<String> {
+    v.and_then(toml::Value::as_array)
+        .map(|a| {
+            a.iter()
+                .filter_map(|s| s.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[test]
+fn manifest_names_the_bosun_channel_with_core_as_base() {
+    let m = toml_at(&channel().join("splice.toml"));
+    assert_eq!(m["format"].as_integer(), Some(1));
+    assert_eq!(m["name"].as_str(), Some("bosun"));
+    assert_eq!(m["base"].as_str(), Some("core"));
+    // circleci-only removes bosun.yml: an empty re-render deletes an owned file (rule 9.27).
+    assert_eq!(m["min_splice"].as_str(), Some("0.3.0"));
+    let vars = m["vars"].as_table().unwrap();
+    for v in [
+        "project",
+        "owner",
+        "bosun_version",
+        "rust_path",
+        "ts_path",
+        "own_ci",
+    ] {
+        assert!(vars.contains_key(v), "splice.toml lacks var {v}");
+    }
+}
+
+#[test]
+fn each_piece_matches_its_directory_and_lists_real_files() {
+    let mut ids: Vec<String> = fs::read_dir(channel().join("pieces"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    ids.sort();
+    let want = [
+        "circleci",
+        "circleci-only",
+        "claude-md",
+        "core",
+        "rust",
+        "ts-pnpm",
+    ];
+    assert_eq!(ids, want);
+    for id in &ids {
+        let dir = channel().join("pieces").join(id);
+        let p = toml_at(&dir.join("piece.toml"));
+        assert_eq!(p["id"].as_str(), Some(id.as_str()));
+        let needs = ["core", "circleci"][usize::from(id == "circleci-only")];
+        if id != "core" {
+            assert_eq!(strings(p.get("requires")), [needs], "{id} requires {needs}");
+        }
+        let files = p.get("files").and_then(toml::Value::as_table);
+        for class in ["owned", "shared", "seed"] {
+            for f in strings(files.and_then(|t| t.get(class))) {
+                let plain = dir.join("files").join(&f);
+                let jinja = dir.join("files").join(format!("{f}.jinja"));
+                assert!(
+                    plain.is_file() || jinja.is_file(),
+                    "{id}: {class} {f} has no file"
+                );
+            }
+        }
+        if let Some(sections) = p.get("sections").and_then(toml::Value::as_table) {
+            for (host, fragment) in sections {
+                let f = dir.join("files").join(fragment.as_str().unwrap());
+                assert!(f.is_file(), "{id}: section {host} has no fragment");
+            }
+        }
+    }
+}
+
+/// `${{ }}` of GitHub Actions is template syntax too; in a `.jinja` file it must sit inside a raw
+/// block, and a plain file must not contain template tags at all.
+#[test]
+fn github_expressions_stay_out_of_the_template_syntax() {
+    let mut all = Vec::new();
+    files_under(&channel().join("pieces"), &mut all);
+    for path in all {
+        let text = fs::read_to_string(&path).unwrap();
+        let name = path.display();
+        if path.extension().is_some_and(|e| e == "jinja") {
+            let mut outside = String::new();
+            let mut rest = text.as_str();
+            while let Some(i) = rest.find("{% raw %}") {
+                outside.push_str(&rest[..i]);
+                let end = rest[i..]
+                    .find("{% endraw %}")
+                    .expect("unterminated raw block");
+                rest = &rest[i + end + "{% endraw %}".len()..];
+            }
+            outside.push_str(rest);
+            assert!(
+                !outside.contains("${{"),
+                "{name}: `${{{{` outside a raw block"
+            );
+        } else {
+            let no_gh = text.replace("${{", "");
+            assert!(
+                !no_gh.contains("{{") && !no_gh.contains("{%"),
+                "{name}: template tags in a file without the .jinja suffix"
+            );
+        }
+    }
+}
+
+#[test]
+fn hoist_requires_the_four_checks_and_bosun_ok_beside_a_repo_ci() {
+    let path = channel().join("pieces/core/files/hoist.toml.jinja");
+    let text = fs::read_to_string(path).unwrap();
+    let beside = r#"{% if own_ci %}"bosun-ok", {% endif %}"#;
+    assert!(text.contains(beside), "{text}");
+    let hoist: toml::Table = text.replace(beside, "").parse().unwrap();
+    let required = strings(hoist["github"].get("required_checks"));
+    assert_eq!(required, bosun::cli::pr::REQUIRED);
+}
+
+#[test]
+fn risk_and_verdict_run_the_pinned_release_not_pr_code() {
+    let wf = channel().join("pieces/core/files/.github/workflows");
+    for f in ["risk.yml.jinja", "verdict.yml.jinja"] {
+        let y = fs::read_to_string(wf.join(f)).unwrap();
+        assert!(!y.contains("cargo build"), "{f} builds bosun");
+        assert!(
+            y.contains(r#"npm install -g --ignore-scripts "@keelstackhq/bosun@${v}""#),
+            "{f} does not install the pinned release"
+        );
+        assert!(
+            !y.contains("head.sha") && !y.contains("head.ref"),
+            "{f} checks out the PR head"
+        );
+    }
+    let risk = fs::read_to_string(wf.join("risk.yml.jinja")).unwrap();
+    assert!(risk.contains("ref: ${{ github.event.pull_request.base.sha || github.sha }}"));
+    // An owner's review is read on the next run; `/bosun recheck` starts one without a push, and
+    // no review event runs the PR's copy of the file (tests/workflows.rs scans every workflow).
+    let recheck = "contains(github.event.comment.body, '/bosun recheck')";
+    assert_eq!(risk.matches(recheck).count(), 2, "job if: and concurrency");
+    assert!(!risk.contains("\n  pull_request_review:"), "{risk}");
+    // A trusted bot's marker-less verdict also runs the relay (spec §7).
+    let verdict = fs::read_to_string(wf.join("verdict.yml.jinja")).unwrap();
+    // The fence keeps bosun's own record comments (App token, "head_sha", no fence) out of it.
+    let bot = "(github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '\"head_sha\"') && contains(github.event.comment.body, '```json'))";
+    assert_eq!(verdict.matches(bot).count(), 2, "job if: and concurrency");
+}
+
+#[test]
+fn one_job_carries_the_required_check() {
+    let wf = channel().join("pieces/core/files/.github/workflows");
+    // bosun.yml, never ci.yml: a repo's own ci.yml (a hull template) stays untouched.
+    assert!(!wf.join("ci.yml.jinja").exists() && !wf.join("ci.yml").exists());
+    let ci = fs::read_to_string(wf.join("bosun.yml.jinja")).unwrap();
+    let body = &ci[ci.find("\njobs:\n").unwrap()..];
+    // CI minutes: every job is rounded up to a whole minute, so a rust stack has exactly one
+    // job, named after the required check: ci-ok, or bosun-ok beside the repo's own ci-ok. A
+    // ts-pnpm stack has one more, bosun-trusted, that runs no PR code (#234).
+    let ids: Vec<_> = body
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   ") && l.ends_with(':'))
+        .collect();
+    assert_eq!(
+        ids,
+        ["  bosun-trusted:"],
+        "every other job id sits in the own_ci switch"
+    );
+    let ts = "{% if \"ts-pnpm\" in pieces %}";
+    assert!(body.find(ts).unwrap() < body.find("  bosun-trusted:").unwrap());
+    let head = "{% if own_ci %}  bosun-ok:\n{% else %}  ci-ok:\n{% endif %}";
+    assert_eq!(
+        body.matches(head).count(),
+        2,
+        "the required check: the rust job, or the ts-pnpm job after bosun-trusted"
+    );
+    assert_eq!(body.matches("needs:").count(), 1);
+    assert!(body.contains("    needs: bosun-trusted\n"));
+    assert!(!body.contains("upload-artifact"));
+    // A draft fails it at once (never skipped: a skipped required check counts as passed);
+    // marking a PR ready runs it.
+    assert!(!body.contains("pull_request.draft\n"));
+    assert!(body.contains("DRAFT: ${{ github.event.pull_request.draft || false }}"));
+    assert!(body.contains("::error::draft: CI not run, mark ready for review"));
+    // The gates that run no PR code first (lint and test run build.rs and tests).
+    assert!(body.contains("GATES: test-integrity ci-minutes deps fmt lint test\n"));
+    assert!(ci.contains("types: [opened, synchronize, reopened, edited, ready_for_review]"));
+    // The first failed gate stops the job: no PR code (lint, test) runs after a failure.
+    assert!(body.contains(
+        "\"$bosun\" gate \"$g\" $all || { echo \"::error::gate $g failed; later gates did not run\"; exit 1; }"
+    ));
+    assert!(!body.contains("failed=\""));
+}
+
+/// The `run:` scripts of a workflow: the `run:` line and its indented block.
+fn run_scripts(yaml: &str) -> Vec<String> {
+    let lines: Vec<&str> = yaml.lines().collect();
+    let mut out = Vec::new();
+    for (i, line) in lines.iter().enumerate() {
+        let t = line.trim_start();
+        let Some(rest) = t.strip_prefix("run:").or_else(|| t.strip_prefix("- run:")) else {
+            continue;
+        };
+        let indent = line.len() - t.len();
+        let mut script = rest.to_string();
+        for next in &lines[i + 1..] {
+            if !next.trim().is_empty() && next.len() - next.trim_start().len() <= indent {
+                break;
+            }
+            script.push('\n');
+            script.push_str(next);
+        }
+        out.push(script);
+    }
+    out
+}
+
+/// The text from `start` up to `end` (exclusive).
+fn block<'a>(yaml: &'a str, start: &str, end: &str) -> &'a str {
+    let i = yaml.find(start).unwrap_or_else(|| panic!("no {start:?}"));
+    let j = yaml[i..].find(end).unwrap_or_else(|| panic!("no {end:?}")) + i;
+    &yaml[i..j]
+}
+
+/// main-health's own_ci parts, as written in the template.
+const WATCH: &str = "{% endraw %}    workflows: [bosun{% if own_ci %}, ci{% endif %}]\n{% raw %}";
+const ACTIONS_READ: &str = "{% endraw %}{% if own_ci %}  actions: read\n{% endif %}{% raw %}";
+
+/// The consumer copies keep bosun's own triggers and permissions (tests/workflows.rs pins
+/// those), check out at most the base once, and never put an expression in a script.
+#[test]
+fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
+    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let wf = channel().join("pieces/core/files/.github/workflows");
+    for (f, theirs_name) in [
+        ("risk.yml", "risk.yml.jinja"),
+        ("verdict.yml", "verdict.yml.jinja"),
+        ("main-open.yml", "main-open.yml.jinja"),
+        ("main-health.yml", "main-health.yml.jinja"),
+    ] {
+        let theirs = fs::read_to_string(wf.join(theirs_name)).unwrap();
+        let mine = fs::read_to_string(ours.join(f)).unwrap();
+        // main-health watches bosun (and the repo's ci) where bosun's own watches ci, and with
+        // the repo's ci it also reads the runs of both: the rest of `on:` and `permissions:` match.
+        // Without circleci-only (whose trigger is a CircleCI status, tests/channel_render/circleci.rs).
+        let ci_only = theirs.find("{% endraw %}{% if \"circleci-only\" in pieces %}  #");
+        let theirs = match ci_only {
+            Some(i) => {
+                let j = theirs[i..].find("{% else %}{% raw %}").unwrap() + i;
+                let end = "  workflow_dispatch:\n{% endraw %}{% endif %}{% raw %}";
+                let (head, tail) = (&theirs[..i], &theirs[j + "{% else %}{% raw %}".len()..]);
+                format!("{head}{}", tail.replacen(end, "  workflow_dispatch:\n", 1))
+            }
+            None => theirs,
+        };
+        let theirs = theirs
+            .replace(WATCH, "    workflows: [ci]\n")
+            .replace(ACTIONS_READ, "");
+        for (a, b) in [
+            ("\non:\n", "\npermissions:"),
+            ("\npermissions:\n", "\njobs:"),
+        ] {
+            assert_eq!(
+                block(&theirs, a, b),
+                block(&mine, a, b),
+                "{f}: {a:?} differs"
+            );
+        }
+        assert_eq!(
+            theirs.matches("permissions:").count(),
+            1,
+            "{f}: job-level permissions"
+        );
+    }
+    for f in ["risk.yml.jinja", "verdict.yml.jinja"] {
+        let y = fs::read_to_string(wf.join(f)).unwrap();
+        assert_eq!(y.matches("actions/checkout@").count(), 1, "{f}");
+        assert!(y.contains("persist-credentials: false"), "{f}");
+    }
+    let mut all = Vec::new();
+    files_under(&wf, &mut all);
+    for path in all {
+        let y = fs::read_to_string(&path).unwrap();
+        let scripts = run_scripts(&y);
+        for s in scripts {
+            assert!(
+                !s.contains("${{"),
+                "{}: expression in a script: {s}",
+                path.display()
+            );
+        }
+    }
+    // A fork PR from a branch called main also fires workflow_run on [main].
+    let health = fs::read_to_string(wf.join("main-health.yml.jinja")).unwrap();
+    assert!(health.contains("uses: ./.github/workflows/bosun.yml"));
+    assert!(health.contains(WATCH) && health.contains(ACTIONS_READ));
+    // With the repo's ci, a green run of one workflow alone never closes main-red.
+    let both = "for wf in bosun.yml ci.yml; do";
+    let gate = health.find(both).expect("own_ci checks both workflows");
+    assert!(gate < health.find("gh issue close").unwrap());
+    assert!(health[..gate].rfind("{% if own_ci %}") > health[..gate].rfind("{% endif %}"));
+    // Both report paths (bosun main-health and the shell fallback) read that judged result.
+    let judged = "RESULT: {% endraw %}{% if own_ci %}{% raw %}${{ steps.result.outputs.result }}";
+    assert_eq!(health.matches(judged).count(), 2, "both report paths");
+    assert!(health.find(judged).unwrap() > gate);
+    assert!(health.contains("github.event.workflow_run.event == 'push'"));
+    assert!(health.contains("workflow_run.head_repository.full_name == github.repository"));
+    // In a consumer repo the pinned-release steps are in bosun.yml; ci.yml is the repo's own.
+    for f in ["main-open.yml.jinja", "main-health.yml.jinja"] {
+        let y = fs::read_to_string(wf.join(f)).unwrap();
+        assert!(y.contains("pinned-release steps as bosun.yml"), "{f}");
+        assert!(!y.contains("job of ci.yml"), "{f}");
+    }
+    // The update bot can write: its splice is pinned.
+    let bot = fs::read_to_string(wf.join("splice.yml")).unwrap();
+    let script =
+        fs::read_to_string(channel().join("pieces/core/files/docs/setup-script.sh.jinja")).unwrap();
+    let pinned = script
+        .lines()
+        .find_map(|l| l.strip_prefix("SPLICE_VERSION="))
+        .expect("the setup script pins SPLICE_VERSION");
+    assert_eq!(pinned, "0.6.0");
+    // Every splice pin (both setup scripts, both splice.yml) is at least the channel's min_splice.
+    let ver = |v: &str| -> Vec<u64> { v.split('.').map(|n| n.parse().unwrap()).collect() };
+    let m = toml_at(&channel().join("splice.toml"));
+    let min = m["min_splice"].as_str().unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let own = fs::read_to_string(root.join("docs/setup-script.sh")).unwrap();
+    let own_bot = fs::read_to_string(root.join(".github/workflows/splice.yml")).unwrap();
+    let mut pins = vec![pinned.to_string()];
+    pins.extend(
+        own.lines()
+            .filter_map(|l| l.strip_prefix("SPLICE_VERSION="))
+            .map(str::to_string),
+    );
+    for y in [&bot, &own_bot] {
+        let v = y
+            .lines()
+            .find_map(|l| l.trim().strip_prefix("version: "))
+            .unwrap();
+        pins.push(v.trim_matches('"').to_string());
+    }
+    assert_eq!(pins.len(), 4, "{pins:?}");
+    for v in &pins {
+        assert!(
+            ver(v) >= ver(min),
+            "splice {v} is older than min_splice {min}"
+        );
+    }
+    assert!(
+        bot.contains(&format!("version: {pinned}\n")),
+        "splice.yml moves with the setup script's SPLICE_VERSION"
+    );
+    // Its token lives in environment splice-bot (main only): a PR's own workflow cannot read it.
+    assert!(
+        bot.contains("  update:\n    environment: splice-bot\n"),
+        "{bot}"
+    );
+    assert!(bot.contains("secrets.SPLICE_BOT_TOKEN"));
+}
+
+/// Every occurrence of `script` in `text` is a call through bash: `bash <script>`.
+fn calls_without_bash(text: &str, script: &str) -> usize {
+    text.match_indices(script)
+        .filter(|(i, _)| !text[..*i].ends_with("bash "))
+        .count()
+}
+
+/// Splice does not carry file modes (template format 9.13): a channel script lands as 0644, so
+/// the channel's docs, sections and workflows (and bosun's own docs, for its copy in scripts/)
+/// call each shipped script through bash, never directly.
+#[test]
+fn shipped_scripts_are_only_ever_called_through_bash() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut channel_files = Vec::new();
+    files_under(&channel().join("pieces"), &mut channel_files);
+    // A script is a file the channel ships that ends in .sh. docs/setup-script.sh is not run in a
+    // repo: the owner pastes it into the cloud environment's settings.
+    let mut scripts: Vec<String> = channel_files
+        .iter()
+        .filter_map(|p| {
+            let rel = p.to_str()?.split("/files/").nth(1)?.to_string();
+            (rel.ends_with(".sh") && rel != "docs/setup-script.sh").then_some(rel)
+        })
+        .collect();
+    scripts.push("scripts/fold-fragments.sh".into());
+    assert!(
+        scripts.contains(&".bosun/fold-fragments.sh".to_string()),
+        "{scripts:?}"
+    );
+
+    let mut texts: Vec<PathBuf> = channel_files
+        .into_iter()
+        .filter(|p| {
+            p.to_str()
+                .is_some_and(|s| s.contains("/files/") && !s.ends_with(".sh"))
+        })
+        .collect();
+    for f in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "README.md",
+        "docs/releasing.md",
+        "docs/spec.md",
+        "changelog.d/README.md",
+        "docs/progress.d/README.md",
+    ] {
+        texts.push(root.join(f));
+    }
+    files_under(&root.join("docs/spec"), &mut texts);
+    files_under(&root.join(".github/workflows"), &mut texts);
+    let mut found = 0;
+    for path in &texts {
+        let text = fs::read_to_string(path).unwrap();
+        for s in &scripts {
+            found += text.matches(s.as_str()).count();
+            assert_eq!(
+                calls_without_bash(&text, s),
+                0,
+                "{} calls {s} without `bash ` (splice ships it as 0644)",
+                path.display()
+            );
+        }
+    }
+    assert!(found >= 2, "the fold script is documented for both copies");
+}
+
+/// The setup scripts install the keelstackhq tools only from npm tarballs whose sha512 matches
+/// the pinned integrity (launcher and linux binary package), never by version alone. The one
+/// exception is bosun in the channel's script: its pin is the channel's release (or
+/// `bosun_version`), whose integrity is not known when the channel is written. A mismatch or a
+/// failed install warns and skips the tool; the script goes on.
+#[test]
+fn setup_scripts_install_the_keelstackhq_tools_checked_against_their_pinned_integrity() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let own = fs::read_to_string(root.join("docs/setup-script.sh")).unwrap();
+    let ch_path = channel().join("pieces/core/files/docs/setup-script.sh.jinja");
+    let ch = fs::read_to_string(ch_path).unwrap();
+    let pins = |t: &str| -> Vec<String> {
+        let sums = t
+            .lines()
+            .filter(|l| l.contains("_SHA512=") && !l.starts_with("BOSUN_"));
+        sums.map(str::to_string).collect()
+    };
+    assert_eq!(
+        pins(&own).len(),
+        12,
+        "splice, hoist, berth, cargo-deny: launcher, linux-x64, linux-arm64"
+    );
+    assert_eq!(
+        pins(&own),
+        pins(&ch),
+        "the two scripts pin the same integrity"
+    );
+    assert_eq!(
+        own.matches("\nBOSUN_").count(),
+        4,
+        "BOSUN_VERSION and 3 sums"
+    );
+    let bosun_ch = "  npm install -g --ignore-scripts \"@keelstackhq/bosun@${BOSUN_VERSION}\"";
+    for (t, tools, want) in [
+        (&own, &["splice", "hoist", "berth", "bosun"][..], &[][..]),
+        (&ch, &["splice", "hoist", "berth"], &[bosun_ch][..]),
+    ] {
+        for tool in tools {
+            let up = tool.to_uppercase();
+            let call = format!(
+                "install_tool {tool} \"${up}_VERSION\" \"${up}_SHA512\" \"${up}_LINUX_X64_SHA512\" \"${up}_LINUX_ARM64_SHA512\""
+            );
+            assert!(t.contains(&call), "no {call}");
+        }
+        // No other install of a keelstackhq package goes by version alone.
+        let by_version: Vec<&str> = t
+            .lines()
+            .filter(|l| l.contains("npm install") && l.contains("@keelstackhq/"))
+            .collect();
+        assert_eq!(by_version, want);
+    }
+    assert!(
+        own.contains("\nbosun --version || echo"),
+        "a skipped bosun never fails the script"
+    );
+    let start = own.find("tool_pack() {").unwrap();
+    let funcs = &own[start..start + own[start..].find("\n}\ninstall_tool ").unwrap() + 3];
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    // A fake npm: `pack` writes "abc", `install` logs its args and exits with $INSTALL.
+    let fake = "#!/bin/sh\ncase \"$1\" in pack) printf abc > x.tgz; echo x.tgz ;; root) echo \"$ROOT\" ;; *) echo \"$*\" >> log; exit \"$INSTALL\" ;; esac\n";
+    fs::write(d.join("npm"), fake).unwrap();
+    std::fs::set_permissions(
+        d.join("npm"),
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    let path = format!("{}:{}", d.display(), std::env::var("PATH").unwrap());
+    // sha512("abc"), base64.
+    let abc =
+        "3a81oZNherrMQXNJriBBMRLm+k6JqX6iCp7u5ktV05ohkpkqJ0/BqDa6PCOj/uu9RU1EI2Q86A4qmslPpUyknw==";
+    for (sum, install, logged, warn) in [
+        (abc, "0", true, ""),
+        (
+            "bad",
+            "0",
+            false,
+            "hoist-linux-x64@0.2.0 does not match its pinned sha512",
+        ),
+        (
+            abc,
+            "1",
+            true,
+            "setup-script: hoist install failed; skipping hoist",
+        ),
+    ] {
+        let _ = fs::remove_file(d.join("log"));
+        let script = format!("{funcs}install_tool hoist 0.2.0 {abc} {sum} {sum}\necho went-on");
+        let o = std::process::Command::new("bash")
+            .args(["-euo", "pipefail", "-c", &script])
+            .current_dir(d)
+            .env("PATH", &path)
+            .env("INSTALL", install)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&o.stderr);
+        assert!(
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("went-on"),
+            "{err}"
+        );
+        assert!(err.contains(warn), "{err}");
+        let log = fs::read_to_string(d.join("log")).unwrap_or_default();
+        assert_eq!(
+            log.starts_with("install -g --ignore-scripts --omit=optional "),
+            logged,
+            "{log}"
+        );
+    }
+    // A verified install records the fingerprint of what PATH now resolves to; a failed one does not.
+    let launcher = d.join("gr/@keelstackhq/hoist/bin/hoist.js");
+    fs::create_dir_all(launcher.parent().unwrap()).unwrap();
+    fs::write(&launcher, "#!/bin/sh\n").unwrap();
+    std::fs::set_permissions(
+        &launcher,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+    fs::create_dir_all(d.join("bin")).unwrap();
+    let _ = std::os::unix::fs::symlink(&launcher, d.join("bin/hoist"));
+    let path = format!("{}:{path}", d.join("bin").display());
+    for (install, recorded) in [("1", false), ("0", true)] {
+        let script = format!("{funcs}install_tool hoist 0.2.0 {abc} {abc} {abc}");
+        let o = std::process::Command::new("bash")
+            .args(["-euo", "pipefail", "-c", &script])
+            .current_dir(d)
+            .env("PATH", &path)
+            .env("INSTALL", install)
+            .env("ROOT", d.join("gr"))
+            .env("SETUP_STATE_DIR", d.join("state"))
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let rec = fs::read_to_string(d.join("state/hoist@0.2.0.sha256")).unwrap_or_default();
+        assert_eq!(
+            rec.trim().len() == 64,
+            recorded,
+            "install={install}: {rec:?}"
+        );
+    }
+}
+
+/// The splice update action runs with a write token: pinned by commit, never by a movable tag.
+#[test]
+fn the_splice_action_is_pinned_by_commit() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for f in [
+        root.join(".github/workflows/splice.yml"),
+        channel().join("pieces/core/files/.github/workflows/splice.yml"),
+    ] {
+        let y = fs::read_to_string(&f).unwrap();
+        let uses: Vec<&str> = y
+            .lines()
+            .filter_map(|l| l.split_once("uses: keelstackhq/splice/action@"))
+            .map(|(_, r)| r)
+            .collect();
+        assert!(!uses.is_empty(), "{}", f.display());
+        for r in uses {
+            let (sha, tag) = r.split_once(" # ").unwrap_or((r, ""));
+            assert!(
+                sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()),
+                "{r}"
+            );
+            assert_eq!(tag, "v0.6.0", "{r}");
+        }
+    }
+}

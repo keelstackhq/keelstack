@@ -1,0 +1,3063 @@
+//! Renders the splice channel in `channel/` for each stack variant (rust, ts-pnpm, mixed), with and
+//! without `own_ci`, and parses what comes out: every workflow as YAML, every TOML and JSON file.
+//! CI has no splice, so a minimal renderer covers the template subset the channel uses (`{{ var }}`,
+//! `{% if var %}`, `{% if "piece" in pieces %}`, `{% else %}`, `{% endif %}`, `{% raw %}`); any
+//! other tag fails the test, so the channel cannot drift past what is checked here. No Rust YAML
+//! crate is in the tree, so the YAML parse uses python3 (PyYAML) or ruby (Psych) from the runner;
+//! in CI (`CI` set) a missing parser fails the test.
+
+use std::collections::BTreeMap;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+fn channel() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("channel")
+}
+
+/// One `{% if %}` level: was the enclosing text rendered, did the condition hold, and was its
+/// `{% else %}` seen.
+struct Frame {
+    outer: bool,
+    cond: bool,
+    in_else: bool,
+}
+
+fn eval(expr: &str, vars: &BTreeMap<&str, String>, pieces: &[&str], at: &str) -> bool {
+    if let Some((lit, rest)) = expr.split_once(" in ") {
+        assert_eq!(rest.trim(), "pieces", "{at}: unknown `in` target {expr:?}");
+        let piece = lit.trim().trim_matches('"');
+        // A misspelt piece would be false in every variant and drop its branch unseen.
+        assert!(
+            channel().join("pieces").join(piece).is_dir(),
+            "{at}: no piece {piece:?}"
+        );
+        return pieces.contains(&piece);
+    }
+    let v = vars
+        .get(expr)
+        .unwrap_or_else(|| panic!("{at}: unknown variable {expr:?}"));
+    !v.is_empty()
+}
+
+/// The channel's template subset. Panics on any tag outside it.
+fn render(src: &str, vars: &BTreeMap<&str, String>, pieces: &[&str], at: &str) -> String {
+    let mut out = String::new();
+    let mut stack: Vec<Frame> = Vec::new();
+    let active = |s: &[Frame]| s.last().is_none_or(|f| f.outer && f.cond);
+    let mut rest = src;
+    loop {
+        let next = match (rest.find("{%"), rest.find("{{")) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        let Some(i) = next else {
+            if active(&stack) {
+                out.push_str(rest);
+            }
+            break;
+        };
+        if active(&stack) {
+            out.push_str(&rest[..i]);
+        }
+        let tag = &rest[i..];
+        if let Some(body) = tag.strip_prefix("{{") {
+            let end = body
+                .find("}}")
+                .unwrap_or_else(|| panic!("{at}: unterminated {{{{"));
+            let name = body[..end].trim();
+            let v = vars
+                .get(name)
+                .unwrap_or_else(|| panic!("{at}: unknown variable {name:?}"));
+            if active(&stack) {
+                out.push_str(v);
+            }
+            rest = &body[end + 2..];
+            continue;
+        }
+        let body = &tag[2..];
+        let end = body
+            .find("%}")
+            .unwrap_or_else(|| panic!("{at}: unterminated {{%"));
+        let stmt = body[..end].trim();
+        rest = &body[end + 2..];
+        match stmt {
+            "raw" => {
+                let close = rest
+                    .find("{% endraw %}")
+                    .unwrap_or_else(|| panic!("{at}: unterminated raw block"));
+                if active(&stack) {
+                    out.push_str(&rest[..close]);
+                }
+                rest = &rest[close + "{% endraw %}".len()..];
+            }
+            "else" => {
+                let f = stack
+                    .last_mut()
+                    .unwrap_or_else(|| panic!("{at}: else outside if"));
+                assert!(!f.in_else, "{at}: a second else in one if");
+                f.in_else = true;
+                f.cond = !f.cond;
+            }
+            "endif" => {
+                stack
+                    .pop()
+                    .unwrap_or_else(|| panic!("{at}: endif outside if"));
+            }
+            s => {
+                let expr = s
+                    .strip_prefix("if ")
+                    .unwrap_or_else(|| panic!("{at}: tag outside the channel subset: {s:?}"));
+                let outer = active(&stack);
+                let cond = eval(expr.trim(), vars, pieces, at);
+                stack.push(Frame {
+                    outer,
+                    cond,
+                    in_else: false,
+                });
+            }
+        }
+    }
+    assert!(stack.is_empty(), "{at}: unclosed if");
+    out
+}
+
+/// Every file of the chosen pieces, rendered: `(path in the consumer repo, text)`. Section
+/// fragments keep their path under `sections/` of the piece.
+fn render_channel(pieces: &[&str], vars: &BTreeMap<&str, String>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for piece in pieces {
+        let root = channel().join("pieces").join(piece).join("files");
+        let mut files = Vec::new();
+        collect(&root, &mut files);
+        for f in files {
+            let rel = f
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let text = fs::read_to_string(&f).unwrap();
+            let (name, text) = match rel.strip_suffix(".jinja") {
+                Some(name) => (name.to_string(), render(&text, vars, pieces, &rel)),
+                None => (rel.clone(), text),
+            };
+            out.push((name, text));
+        }
+    }
+    out
+}
+
+fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
+    if !dir.is_dir() {
+        return;
+    }
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect(&path, out);
+        } else {
+            out.push(path);
+        }
+    }
+}
+
+const PARSE_PY: &str = r#"
+import sys, yaml
+bad = 0
+for p in sys.argv[1:]:
+    try:
+        d = yaml.safe_load(open(p))
+        if not isinstance(d, dict) or "jobs" not in d:
+            raise ValueError("not a workflow mapping with jobs")
+    except Exception as e:
+        bad += 1
+        print("ERR %s: %s" % (p, e))
+sys.exit(1 if bad else 0)
+"#;
+
+const PARSE_RB: &str = r#"
+require "yaml"
+bad = 0
+ARGV.each do |p|
+  begin
+    d = YAML.safe_load(File.read(p))
+    raise "not a workflow mapping with jobs" unless d.is_a?(Hash) && d.key?("jobs")
+  rescue Exception => e
+    bad += 1
+    puts "ERR #{p}: #{e}"
+  end
+end
+exit(bad > 0 ? 1 : 0)
+"#;
+
+/// Parse the YAML files with the first parser the machine has. `None`: no parser.
+fn parse_yaml(files: &[PathBuf]) -> Option<Result<(), String>> {
+    let py = Command::new("python3").args(["-c", "import yaml"]).output();
+    let cmd = if py.is_ok_and(|o| o.status.success()) {
+        Some(("python3", PARSE_PY))
+    } else if Command::new("ruby")
+        .args(["-e", "require 'yaml'"])
+        .output()
+        .is_ok_and(|o| o.status.success())
+    {
+        Some(("ruby", PARSE_RB))
+    } else {
+        None
+    };
+    let (bin, script) = cmd?;
+    let flag = if bin == "ruby" { "-e" } else { "-c" };
+    let out = Command::new(bin)
+        .arg(flag)
+        .arg(script)
+        .args(files)
+        .output()
+        .unwrap();
+    Some(if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ))
+    })
+}
+
+#[test]
+fn every_variant_renders_to_files_that_parse() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut yaml_files = Vec::new();
+    let stacks: [(&str, &[&str]); 3] = [
+        ("rust", &["rust"]),
+        ("ts-pnpm", &["ts-pnpm"]),
+        ("mixed", &["rust", "ts-pnpm"]),
+    ];
+    for (variant, stack) in stacks {
+        for own_ci in ["", "1"] {
+            for owner in ["", "octo"] {
+                let mut pieces = vec!["core"];
+                pieces.extend_from_slice(stack);
+                pieces.push("claude-md");
+                let vars: BTreeMap<&str, String> = [
+                    ("project", "app"),
+                    ("owner", owner),
+                    ("bosun_version", ""),
+                    ("template.version", env!("CARGO_PKG_VERSION")),
+                    ("rust_path", "."),
+                    ("ts_path", if stack.len() > 1 { "web" } else { "." }),
+                    ("own_ci", own_ci),
+                    ("intake", ""),
+                    ("policy", ""),
+                    ("policy_pin_checked", ""),
+                    // Both renders of the App switch, without more variants.
+                    ("bosun_app", if owner.is_empty() { "" } else { "1" }),
+                    ("ci_provider", ""),
+                    ("ci_pin_checked", ""),
+                ]
+                .into_iter()
+                .map(|(k, v)| (k, v.to_string()))
+                .collect();
+                let at = format!("{variant} own_ci={own_ci:?} owner={owner:?}");
+                let files = render_channel(&pieces, &vars);
+                let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+                for want in [
+                    ".github/workflows/bosun.yml",
+                    "hoist.toml",
+                    ".bosun/version",
+                ] {
+                    assert!(names.contains(&want), "{at}: no {want}");
+                }
+                for (name, text) in &files {
+                    let no_gh = text.replace("${{", "");
+                    assert!(
+                        !no_gh.contains("{{") && !no_gh.contains("{%"),
+                        "{at}: {name}: template tags left"
+                    );
+                    if name.ends_with(".toml") {
+                        text.parse::<toml::Table>()
+                            .unwrap_or_else(|e| panic!("{at}: {name}: {e}"));
+                    } else if name.ends_with(".json") {
+                        serde_json::from_str::<serde_json::Value>(text)
+                            .unwrap_or_else(|e| panic!("{at}: {name}: {e}"));
+                    } else if name.ends_with(".yml") || name.ends_with(".yaml") {
+                        // The CI-minute rules (docs/ci-minutes.md) hold for every rendered workflow.
+                        let found = bosun::core::ci_minutes::check(name, text);
+                        assert!(found.is_empty(), "{at}: {found:?}");
+                        let dir = tmp.path().join(format!("{variant}-{own_ci}-{owner}"));
+                        let path = dir.join(name);
+                        fs::create_dir_all(path.parent().unwrap()).unwrap();
+                        fs::write(&path, text).unwrap();
+                        yaml_files.push(path);
+                    }
+                }
+                let bosun_yml = &files
+                    .iter()
+                    .find(|(n, _)| n == ".github/workflows/bosun.yml")
+                    .unwrap()
+                    .1;
+                let jobs = bosun::core::checks::workflow_checks(bosun_yml);
+                let aggregate = if own_ci.is_empty() {
+                    "ci-ok"
+                } else {
+                    "bosun-ok"
+                };
+                assert!(jobs.iter().any(|j| j == aggregate), "{at}: {jobs:?}");
+                let hoist: toml::Table = files
+                    .iter()
+                    .find(|(n, _)| n == "hoist.toml")
+                    .unwrap()
+                    .1
+                    .parse()
+                    .unwrap();
+                let required = hoist["github"]["required_checks"].as_array().unwrap();
+                assert_eq!(
+                    required.iter().any(|c| c.as_str() == Some("bosun-ok")),
+                    !own_ci.is_empty(),
+                    "{at}: {required:?}"
+                );
+            }
+        }
+    }
+    // 3 stacks x 2 own_ci x 2 owner, 7 workflows each (signer.yml included).
+    assert_eq!(yaml_files.len(), 3 * 2 * 2 * 7);
+    match parse_yaml(&yaml_files) {
+        Some(Ok(())) => {}
+        Some(Err(e)) => panic!("rendered workflows do not parse as YAML:\n{e}"),
+        None if std::env::var_os("CI").is_some() => {
+            panic!("CI needs python3 with PyYAML or ruby to parse the rendered workflows")
+        }
+        None => eprintln!("skipped the YAML parse: no python3 with PyYAML and no ruby"),
+    }
+}
+
+/// One variant of the channel, rendered: `(path, text)`.
+fn variant(stack: &[&str], own_ci: &str) -> Vec<(String, String)> {
+    variant_at(stack, own_ci, ".")
+}
+
+/// One variant with the ts-pnpm stack at `ts_path`.
+fn variant_at(stack: &[&str], own_ci: &str, ts_path: &str) -> Vec<(String, String)> {
+    let mut pieces = vec!["core"];
+    pieces.extend_from_slice(stack);
+    let vars: BTreeMap<&str, String> = [
+        ("project", "app"),
+        ("owner", ""),
+        ("bosun_version", ""),
+        ("template.version", "1.2.3"),
+        ("rust_path", "."),
+        ("ts_path", ts_path),
+        ("own_ci", own_ci),
+        ("intake", ""),
+        ("policy", ""),
+        ("policy_pin_checked", ""),
+        ("bosun_app", ""),
+        ("ci_provider", ""),
+        ("ci_pin_checked", ""),
+    ]
+    .into_iter()
+    .map(|(k, v)| (k, v.to_string()))
+    .collect();
+    render_channel(&pieces, &vars)
+}
+
+fn file<'a>(files: &'a [(String, String)], name: &str) -> &'a str {
+    &files.iter().find(|(n, _)| n == name).unwrap().1
+}
+
+/// The workflow as JSON through PyYAML; `None` without it (a failure in CI).
+fn yaml_json(text: &str) -> Option<serde_json::Value> {
+    let child = Command::new("python3")
+        .args([
+            "-c",
+            "import sys, yaml, json; print(json.dumps(yaml.safe_load(sys.stdin)))",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn();
+    let out = child.ok().and_then(|mut c| {
+        std::io::Write::write_all(&mut c.stdin.take().unwrap(), text.as_bytes()).ok()?;
+        c.wait_with_output().ok()
+    });
+    match out {
+        Some(o) if o.status.success() => Some(serde_json::from_slice(&o.stdout).unwrap()),
+        _ => {
+            assert!(
+                std::env::var_os("CI").is_none(),
+                "CI needs python3 with PyYAML"
+            );
+            None
+        }
+    }
+}
+
+/// In run order: the gates that run no PR code first, then lint (build.rs, proc macros) and test,
+/// so PR code on the one runner cannot change what test-integrity, deps or fmt report.
+const ALL_GATES: [&str; 6] = [
+    "test-integrity",
+    "ci-minutes",
+    "deps",
+    "fmt",
+    "lint",
+    "test",
+];
+const BOSUN_YML: &str = ".github/workflows/bosun.yml";
+
+/// The built-in test gate is `cargo test` (spec §7), but CI runs the release pinned in
+/// `.bosun/version`, and releases up to 0.11.0 run nextest: the CI files keep installing
+/// cargo-nextest (also for a repo override) next to cargo-deny.
+#[test]
+fn ci_files_install_cargo_nextest_and_cargo_deny() {
+    for stack in [&["rust"][..], &["rust", "ts-pnpm"]] {
+        for ci in [&[][..], &["circleci"], &["circleci", "circleci-only"]] {
+            for own_ci in ["", "1"] {
+                let files = variant(&[stack, ci].concat(), own_ci);
+                let nextest = files
+                    .iter()
+                    .filter(|(n, _)| {
+                        n.starts_with(".github/workflows/") || n.starts_with(".circleci/")
+                    })
+                    .any(|(_, t)| t.contains("cargo-nextest"));
+                assert!(
+                    nextest,
+                    "{stack:?} {ci:?} {own_ci:?}: no cargo-nextest install"
+                );
+                let deny = files
+                    .iter()
+                    .filter(|(n, _)| {
+                        n.starts_with(".github/workflows/") || n.starts_with(".circleci/")
+                    })
+                    .any(|(_, t)| t.contains("cargo-deny"));
+                assert!(deny, "{stack:?} {ci:?} {own_ci:?}: no cargo-deny install");
+            }
+        }
+    }
+}
+
+#[test]
+fn rust_gates_install_the_toolchain_file_once() {
+    for own_ci in ["", "1"] {
+        let files = variant(&["rust"], own_ci);
+        let wf = file(&files, BOSUN_YML);
+        assert!(!wf.contains("dtolnay/rust-toolchain"), "{wf}");
+        assert!(!wf.contains("\"1.97\""), "{wf}");
+        assert!(wf.contains("rustup component add rustfmt clippy"), "{wf}");
+        assert!(wf.contains("cache-bin: \"false\""), "{wf}");
+        // Without a toolchain file in rust_path or a parent, the old pin, never `stable` (the
+        // setup script has no fallback: it skips Rust).
+        let pin = "1.97";
+        assert!(
+            wf.contains(&format!(
+                "rustup toolchain install {pin} --profile minimal -c rustfmt,clippy"
+            )),
+            "{wf}"
+        );
+        assert!(wf.contains(&format!("rustup default {pin}")), "{wf}");
+        assert!(!wf.contains("install stable"), "{wf}");
+    }
+    let files = variant(&["ts-pnpm"], "");
+    assert!(!file(&files, BOSUN_YML).contains("rustup"));
+}
+
+/// `bash <script> --rust-version` in `cwd`: (exit ok, stdout, stderr). Nothing is installed.
+fn setup_rust_version(script: &str, cwd: &Path) -> (bool, String, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("setup-script.sh");
+    fs::write(&path, script).unwrap();
+    let out = Command::new("bash")
+        .arg(&path)
+        .arg("--rust-version")
+        .current_dir(cwd)
+        .output()
+        .unwrap();
+    let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    (out.status.success(), s(&out.stdout), s(&out.stderr))
+}
+
+/// The setup scripts users copy (the channel's and bosun's own) pin no Rust version: they install
+/// the `channel` of the repo's rust-toolchain.toml, and without one they warn and skip Rust.
+#[test]
+fn setup_scripts_read_the_rust_toolchain_file_and_pin_no_version() {
+    let files = variant(&["rust"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    for (name, script) in [
+        ("channel", file(&files, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        let pinned = script.lines().any(|l| {
+            l.trim_start()
+                .strip_prefix("RUST_VERSION=")
+                .is_some_and(|v| v.starts_with(|c: char| c.is_ascii_digit()))
+        });
+        assert!(!pinned, "{name}: a hard-coded RUST_VERSION\n{script}");
+        assert!(script.contains("rust-toolchain.toml"), "{name}");
+        // Without the file the full script warns and skips Rust: a failing setup script would
+        // block every session. Only the --rust-version mode exits 1.
+        assert!(
+            script.contains("skipping the Rust toolchain install"),
+            "{name}"
+        );
+        for l in script.lines().filter(|l| l.contains("exit 1")) {
+            assert!(l.contains("--rust-version"), "{name}: {l}");
+        }
+        let guard = script
+            .find("if [ -n \"$RUST_VERSION\" ]; then")
+            .expect(name);
+        let install = script.find("rustup toolchain install").unwrap();
+        assert!(guard < install, "{name}: rustup runs without a version");
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(
+            repo.path().join("rust-toolchain.toml"),
+            "[toolchain]\nchannel = \"1.99.1\"\ncomponents = [\"rustfmt\", \"clippy\"]\n",
+        )
+        .unwrap();
+        let (ok, out, err) = setup_rust_version(script, repo.path());
+        assert!(ok, "{name}: {err}");
+        assert_eq!(out, "1.99.1\n", "{name}");
+        let empty = tempfile::tempdir().unwrap();
+        let (ok, out, err) = setup_rust_version(script, empty.path());
+        assert!(!ok, "{name}: no toolchain file passed: {out}");
+        assert!(out.is_empty(), "{name}: {out}");
+        assert!(err.contains("rust-toolchain.toml"), "{name}: {err}");
+    }
+}
+
+/// The channel reaches `rustup` as root, so the setup scripts take only a toolchain name
+/// (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) and treat anything else like a missing file.
+#[test]
+fn setup_scripts_reject_a_channel_that_is_not_a_toolchain_name() {
+    let files = variant(&["rust"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    for (name, script) in [
+        ("channel", file(&files, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        for (channel, accepted) in [
+            ("1.99.1", true),
+            ("stable", true),
+            ("1.0; rm -rf /", false),
+            ("-x", false),
+            ("a b", false),
+        ] {
+            let repo = tempfile::tempdir().unwrap();
+            fs::write(
+                repo.path().join("rust-toolchain.toml"),
+                format!("[toolchain]\nchannel = \"{channel}\"\n"),
+            )
+            .unwrap();
+            let (ok, out, err) = setup_rust_version(script, repo.path());
+            if accepted {
+                assert!(ok, "{name} {channel:?}: {err}");
+                assert_eq!(out, format!("{channel}\n"), "{name} {channel:?}");
+            } else {
+                assert!(!ok, "{name} {channel:?} passed: {out}");
+                assert!(out.is_empty(), "{name} {channel:?}: {out}");
+                assert!(err.contains("invalid channel"), "{name} {channel:?}: {err}");
+                assert!(
+                    err.contains("skipping the Rust toolchain install"),
+                    "{name} {channel:?}: {err}"
+                );
+            }
+        }
+    }
+}
+
+/// The required check's job: `ci-ok`, or `bosun-ok` beside the repo's own ci.
+fn check_name(own_ci: &str) -> &'static str {
+    if own_ci.is_empty() {
+        "ci-ok"
+    } else {
+        "bosun-ok"
+    }
+}
+
+/// The steps of the job that plans and runs the gates with no PR code: `bosun-trusted` with a
+/// ts-pnpm stack, else the one job, the required check's.
+fn steps(j: &serde_json::Value, own_ci: &str) -> Vec<serde_json::Value> {
+    let name = if j["jobs"].get(TRUSTED).is_some() {
+        TRUSTED
+    } else {
+        check_name(own_ci)
+    };
+    j["jobs"][name]["steps"].as_array().unwrap().clone()
+}
+
+/// The steps of the required check's job.
+fn check_steps(j: &serde_json::Value, own_ci: &str) -> Vec<serde_json::Value> {
+    j["jobs"][check_name(own_ci)]["steps"]
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+const TRUSTED: &str = "bosun-trusted";
+
+fn step<'a>(steps: &'a [serde_json::Value], key: &str, value: &str) -> &'a serde_json::Value {
+    steps
+        .iter()
+        .find(|s| s[key] == value)
+        .unwrap_or_else(|| panic!("no step with {key} {value}"))
+}
+
+#[test]
+fn own_ci_gates_are_test_integrity_unless_opted_in() {
+    for stack in [&["rust"][..], &["ts-pnpm"], &["rust", "ts-pnpm"]] {
+        let plain = variant(stack, "");
+        let wf = file(&plain, BOSUN_YML);
+        assert!(!wf.contains("BOSUN_ALL_GATES"), "{wf}");
+        let own = variant(stack, "1");
+        let wf = file(&own, BOSUN_YML);
+        assert!(wf.contains("vars.BOSUN_ALL_GATES == '1'"), "{wf}");
+        let Some(j) = yaml_json(wf) else { return };
+        // rust: one job; ts-pnpm and mixed: bosun-trusted and the required check.
+        let jobs = if stack.contains(&"ts-pnpm") { 2 } else { 1 };
+        assert_eq!(j["jobs"].as_object().unwrap().len(), jobs, "{stack:?}");
+        let s = steps(&j, "1");
+        let gates = &step(&s, "name", "bosun gates")["env"]["GATES"];
+        let expr = gates.as_str().unwrap();
+        assert!(
+            expr.contains("github.event_name != 'pull_request'"),
+            "{expr}"
+        );
+        assert!(expr.contains("|| 'test-integrity ci-minutes' }}"), "{expr}");
+        assert!(
+            expr.contains(&format!("'{}'", ALL_GATES.join(" "))),
+            "{expr}"
+        );
+        let j = yaml_json(file(&plain, BOSUN_YML)).unwrap();
+        let s = steps(&j, "");
+        let gates = &step(&s, "name", "bosun gates")["env"]["GATES"];
+        assert_eq!(gates.as_str(), Some(ALL_GATES.join(" ").as_str()));
+    }
+}
+
+#[test]
+fn every_work_step_waits_for_the_plan() {
+    for stack in [&["rust"][..], &["ts-pnpm"], &["rust", "ts-pnpm"]] {
+        for own_ci in ["", "1"] {
+            let files = variant(stack, own_ci);
+            let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+                return;
+            };
+            let steps = steps(&j, own_ci);
+            let plan = steps.iter().position(|s| s["id"] == "plan").unwrap();
+            assert!(plan > 0 && plan < steps.len() - 1);
+            for s in &steps[plan + 1..] {
+                let cond = s["if"].as_str().unwrap_or_default();
+                assert!(cond.starts_with("steps.plan.outputs.work == 'true'"), "{s}");
+            }
+            // The required check's job after bosun-trusted waits for its gates (see
+            // ts_pnpm_runs_pr_code_only_in_the_required_check_after_bosun_trusted).
+        }
+    }
+}
+
+/// Runs the docs-only step's script in a real git repo whose PR changes `changed` (`a->b`: a move).
+fn docs_only(changed: &[&str]) -> String {
+    docs_only_in(&["rust"], changed)
+}
+
+fn docs_only_in(stack: &[&str], changed: &[&str]) -> String {
+    let files = variant(stack, "");
+    let j = yaml_json(file(&files, BOSUN_YML)).unwrap();
+    let steps = steps(&j, "");
+    let script = step(&steps, "id", "diff")["run"].as_str().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let sh = |cmd: &str, base: &str, head: &str| {
+        let o = Command::new("sh")
+            .current_dir(dir.path())
+            .env("GITHUB_OUTPUT", dir.path().join("out"))
+            .env("BASE", base)
+            .env("HEAD", head)
+            .args(["-c", cmd])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+    let git = |cmd: &str| sh(cmd, "", "");
+    git(
+        "git init -q -b main && git config user.email a@b.c && git config user.name n \
+        && mkdir docs src && echo a > docs/old.md && echo a > src/old.rs \
+        && git add . && git commit -qm base",
+    );
+    let base = git("git rev-parse HEAD").trim().to_string();
+    for c in changed {
+        if let Some((from, to)) = c.split_once("->") {
+            git(&format!("mkdir -p $(dirname {to}) && git mv {from} {to}"));
+        } else {
+            git(&format!("mkdir -p $(dirname {c}) && echo x >> {c}"));
+        }
+    }
+    git("git add -A && git commit -qm pr --allow-empty");
+    let head = git("git rev-parse HEAD").trim().to_string();
+    sh(script, &base, &head);
+    fs::read_to_string(dir.path().join("out"))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+#[test]
+fn docs_only_detection_fails_closed() {
+    if yaml_json("a: 1").is_none() {
+        return;
+    }
+    let all = ["docs/new/a.md", "plans/p.md", "CHANGELOG.md"];
+    assert_eq!(docs_only(&all), "docs_only=true");
+    // A crate may run README.md examples as doctests (`include_str!`), so it runs the gates.
+    assert_eq!(docs_only(&["README.md"]), "docs_only=false");
+    assert_eq!(docs_only(&["docs/a.md", "src/x.rs"]), "docs_only=false");
+    assert_eq!(docs_only(&["src/a.md"]), "docs_only=false");
+    // Only markdown is docs: code or data under docs/ still runs the gates.
+    assert_eq!(docs_only(&["docs/x.rs"]), "docs_only=false");
+    assert_eq!(docs_only(&["docs/a.md", "docs/b.json"]), "docs_only=false");
+    // ts-pnpm: prettier checks markdown, so there is no fast path at all.
+    for stack in [&["ts-pnpm"][..], &["rust", "ts-pnpm"]] {
+        assert_eq!(docs_only_in(stack, &["docs/a.md"]), "docs_only=false");
+    }
+    // A move out of src/ into docs/ still touches src/.
+    assert_eq!(docs_only(&["src/old.rs->docs/old.rs"]), "docs_only=false");
+    assert_eq!(docs_only(&[]), "docs_only=false", "an empty diff");
+}
+
+#[test]
+fn a_body_edit_waits_and_never_cancels() {
+    let files = variant(&["rust"], "1");
+    let wf = file(&files, BOSUN_YML);
+    let Some(j) = yaml_json(wf) else { return };
+    let g = j["concurrency"]["group"].as_str().unwrap();
+    assert!(
+        !g.contains("run_id") && g.contains("github.event_name"),
+        "{g}"
+    );
+    let c = j["concurrency"]["cancel-in-progress"].as_str().unwrap();
+    assert!(
+        c.contains("!(github.event.action == 'edited' && !github.event.changes.base)"),
+        "{c}"
+    );
+    assert_eq!(j["permissions"]["checks"], "read");
+}
+
+/// Runs the edit step with a fake `gh` that applies its `--jq` filter (with jq) to a check-runs
+/// answer: `runs` are `(id, app, status, conclusion, run id)`; returns the step's `mode` output.
+fn edit_runs(runs: &[(u64, &str, &str, &str, u64)]) -> String {
+    let files = variant(&["rust"], "");
+    let j = yaml_json(file(&files, BOSUN_YML)).unwrap();
+    let steps = steps(&j, "");
+    let s = step(&steps, "id", "edit");
+    assert_eq!(
+        s["if"],
+        "github.event.action == 'edited' && !github.event.changes.base"
+    );
+    // The body never decides: test-integrity re-reads it in this run.
+    assert!(!s["env"].to_string().contains("body"), "{s}");
+    let dir = tempfile::tempdir().unwrap();
+    let runs: Vec<serde_json::Value> = runs
+        .iter()
+        .map(|(id, app, status, conclusion, run)| {
+            serde_json::json!({"id": id, "app": {"slug": app}, "status": status,
+                "conclusion": if conclusion.is_empty() { serde_json::Value::Null } else { (*conclusion).into() },
+                "details_url": format!("https://github.com/o/r/actions/runs/{run}/job/{id}")})
+        })
+        .collect();
+    let answer = dir.path().join("answer.json");
+    fs::write(
+        &answer,
+        serde_json::json!({ "check_runs": runs }).to_string(),
+    )
+    .unwrap();
+    let gh = dir.path().join("gh");
+    // `gh api URL --jq EXPR`: the URL must name the head and the check.
+    fs::write(
+        &gh,
+        format!(
+            "#!/bin/sh\ncase \"$2\" in repos/o/r/commits/abc/check-runs?check_name=ci-ok\\&*) ;; *) exit 9;; esac\n\
+             [ \"$3\" = --jq ] || exit 9\njq -r \"$4\" {}\n",
+            answer.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&gh, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        dir.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let out = dir.path().join("out");
+    let ok = Command::new("bash")
+        .args(["-eo", "pipefail", "-c", s["run"].as_str().unwrap()])
+        .env("PATH", path)
+        .env("GITHUB_OUTPUT", &out)
+        .env("GITHUB_RUN_ID", "7")
+        .env("GITHUB_REPOSITORY", "o/r")
+        .env("HEAD", "abc")
+        .env("CHECK", "ci-ok")
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok, "the edit step failed");
+    fs::read_to_string(out).unwrap().trim().to_string()
+}
+
+#[test]
+fn a_body_edit_keeps_the_file_gates_of_a_passed_head_and_reruns_test_integrity() {
+    if yaml_json("a: 1").is_none() {
+        return;
+    }
+    let one = |c: &str| edit_runs(&[(5, "github-actions", "completed", c, 3)]);
+    assert_eq!(one("success"), "mode=integrity");
+    // A failure (maybe test-integrity on an older body), a cancel, a skip or nothing: every gate.
+    for prev in ["failure", "cancelled", "skipped", "neutral"] {
+        assert_eq!(one(prev), "mode=run", "{prev:?}");
+    }
+    assert_eq!(edit_runs(&[]), "mode=run", "no earlier run");
+    // The newest finished run of GitHub Actions counts; this run's own and other apps' do not.
+    let ok = (4, "github-actions", "completed", "success", 3);
+    let failed = (6, "github-actions", "completed", "failure", 4);
+    assert_eq!(edit_runs(&[ok, failed]), "mode=run");
+    assert_eq!(edit_runs(&[failed, ok]), "mode=run", "by id, not order");
+    let mine = (9, "github-actions", "completed", "success", 7);
+    assert_eq!(edit_runs(&[failed, mine]), "mode=run");
+    let other_app = (9, "forger", "completed", "success", 8);
+    assert_eq!(edit_runs(&[failed, other_app]), "mode=run");
+    let running = (9, "github-actions", "in_progress", "", 8);
+    assert_eq!(edit_runs(&[ok, running]), "mode=integrity");
+}
+
+#[test]
+fn main_open_skips_label_events_but_the_mainfix_label_in_a_group_of_their_own() {
+    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/main-open.yml");
+    let files = variant(&["rust"], "");
+    for wf in [
+        file(&files, ".github/workflows/main-open.yml").to_string(),
+        fs::read_to_string(ours).unwrap(),
+    ] {
+        let Some(j) = yaml_json(&wf) else { return };
+        let cond = j["jobs"]["judge"]["if"].as_str().unwrap();
+        assert!(
+            cond.contains("github.event.action != 'labeled' && github.event.action != 'unlabeled'"),
+            "{cond}"
+        );
+        assert!(
+            cond.contains("|| github.event.label.name == 'bosun:kind/mainfix'"),
+            "{cond}"
+        );
+        let g = j["concurrency"]["group"].as_str().unwrap();
+        assert!(g.contains("github.event.label.name != 'bosun:kind/mainfix' && format('-skip-{0}', github.run_id)"), "{g}");
+    }
+}
+
+#[test]
+fn risk_rules_cover_agent_rules_hoist_and_the_setup_script() {
+    use bosun::core::risk::{ChangedFile, Rules, evaluate};
+    let files = variant(&["rust"], "");
+    let rules = Rules::parse(file(&files, ".bosun/risk.toml")).unwrap();
+    let hit = |p: &str, rule: &str| {
+        let f = ChangedFile {
+            path: p.into(),
+            ..Default::default()
+        };
+        evaluate(&rules, &[f], &[], &[])
+            .iter()
+            .any(|m| m.rule == rule)
+    };
+    for p in [
+        "AGENTS.md",
+        "CLAUDE.md",
+        "REVIEW.md",
+        "docs/agents/project.md",
+        "crates/foo/AGENTS.md",
+        "crates/foo/CLAUDE.md",
+        "claude.md",
+        "Claude.md",
+        "agents.md",
+        "CLAUDE.local.md",
+        "crates/x/Claude.md",
+        "hoist.toml",
+        "crates/foo/hoist.toml",
+    ] {
+        assert!(hit(p, "R-gov"), "{p} is not R-gov");
+    }
+    assert!(
+        hit("docs/setup-script.sh", "R-gov") && !hit("docs/setup-script.sh", "R-ci"),
+        "the pasted setup script runs as root"
+    );
+    for p in ["tools/x/action.yml", "action.yaml"] {
+        assert!(hit(p, "R-ci"), "{p}: a local composite action is CI");
+    }
+    for p in ["crates/foo/src/lib.rs", "docs/guide.md"] {
+        assert!(!hit(p, "R-gov") && !hit(p, "R-ci"), "{p}");
+    }
+}
+
+#[test]
+fn the_renderer_refuses_tags_outside_the_subset() {
+    let vars: BTreeMap<&str, String> = [("x", String::from("1"))].into_iter().collect();
+    assert_eq!(
+        render(
+            "a{% if x %}b{% else %}c{% endif %}{% raw %}{{ y }}{% endraw %}",
+            &vars,
+            &[],
+            "t"
+        ),
+        "ab{{ y }}"
+    );
+    for bad in [
+        "{% for p in pieces %}",
+        "{{ y }}",
+        "{% if x %}",
+        "{{ x | upper }}",
+        "{% if x %}a{% else %}b{% else %}c{% endif %}",
+        "{% if \"rsut\" in pieces %}{% endif %}",
+    ] {
+        let r = std::panic::catch_unwind(|| render(bad, &vars, &[], "t"));
+        assert!(r.is_err(), "{bad} rendered");
+    }
+}
+
+/// Runs the rust toolchain step in `cwd` under the workspace `root`, with a fake
+/// `rustup` on PATH; returns the rustup calls it made.
+fn toolchain_calls(root: &std::path::Path, cwd: &std::path::Path) -> String {
+    let (ok, calls) = toolchain_run(root, cwd);
+    assert!(ok, "the toolchain step failed");
+    calls
+}
+
+/// The toolchain step's exit (true: success) and its rustup calls.
+fn toolchain_run(root: &std::path::Path, cwd: &std::path::Path) -> (bool, String) {
+    let files = variant(&["rust"], "");
+    let j = yaml_json(file(&files, BOSUN_YML)).unwrap();
+    let steps = steps(&j, "");
+    let run = step(&steps, "name", "rust toolchain")["run"]
+        .as_str()
+        .unwrap();
+    let bin = tempfile::tempdir().unwrap();
+    let log = bin.path().join("log");
+    let fake = bin.path().join("rustup");
+    fs::write(
+        &fake,
+        format!("#!/bin/sh\necho \"$*\" >> {}\n", log.display()),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let env = bin.path().join("env");
+    let ok = Command::new("bash")
+        .args(["-eo", "pipefail", "-c", run])
+        .current_dir(cwd)
+        .env("PATH", path)
+        .env("GITHUB_WORKSPACE", root)
+        .env("GITHUB_ENV", &env)
+        .env("GITHUB_OUTPUT", bin.path().join("out"))
+        .status()
+        .unwrap()
+        .success();
+    if ok {
+        // Later steps get the checked channel, so rustup ignores the file from then on.
+        let e = fs::read_to_string(&env).unwrap();
+        assert!(
+            e.starts_with("RUSTUP_TOOLCHAIN=") && e.lines().count() == 1,
+            "{e}"
+        );
+    }
+    (ok, fs::read_to_string(log).unwrap_or_default())
+}
+
+/// A toolchain file that names a `path` would run another compiler before the gates (the step
+/// reads the base's copy; it still checks it).
+#[test]
+fn the_toolchain_step_refuses_a_toolchain_path() {
+    if yaml_json("a: 1").is_none() {
+        return;
+    }
+    for (name, text) in [
+        ("rust-toolchain.toml", "[toolchain]\npath = \"./evil\"\n"),
+        ("rust-toolchain.toml", "[toolchain]\n  path= \"/opt/x\"\n"),
+        // Other TOML spellings of the same key (review of #233).
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\n\"path\" = \"/abs/evil\"\n",
+        ),
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\n'path' = \"/abs/evil\"\n",
+        ),
+        ("rust-toolchain.toml", "toolchain.path = \"/abs/evil\"\n"),
+        (
+            "rust-toolchain.toml",
+            "toolchain = { path = \"/abs/evil\" }\n",
+        ),
+        // TOML unicode escapes hide the key and the slash from a text search (review of #233).
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\n\"\\u0070ath\" = \"\\u002ftmp\\u002fevil\"\n",
+        ),
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\nchannel = \"../evil\"\n",
+        ),
+        (
+            "rust-toolchain.toml",
+            "[toolchain]\nchannel = \"1.97\"\n[other]\nx = 1\n",
+        ),
+        ("rust-toolchain.toml", "not = = toml\n"),
+        ("rust-toolchain", "/opt/evil\n"),
+    ] {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join(".cargo")).unwrap();
+        fs::write(root.path().join(name), text).unwrap();
+        let (ok, calls) = toolchain_run(root.path(), root.path());
+        assert!(!ok, "{name}: {text:?} passed");
+        assert!(calls.is_empty(), "rustup ran before the check: {calls}");
+    }
+    let root = tempfile::tempdir().unwrap();
+    fs::write(root.path().join("rust-toolchain"), "1.97\n").unwrap();
+    fs::write(
+        root.path().join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.97\"\ncomponents = [\"rustfmt\", \"clippy\"]\nprofile = \"minimal\"\n",
+    )
+    .unwrap();
+    assert!(
+        toolchain_run(root.path(), root.path()).0,
+        "a plain channel passes"
+    );
+}
+
+/// The rest of the defence before lint: cargo cannot swap rustc, the pinned bosun is checked
+/// before each gate, and the first failed gate stops the job.
+#[test]
+fn the_gates_run_a_checked_bosun_with_cargo_pinned_to_rustc() {
+    let files = variant(&["rust"], "");
+    let wf = file(&files, BOSUN_YML);
+    let Some(j) = yaml_json(wf) else { return };
+    for (k, v) in [
+        ("RUSTC", "rustc"),
+        ("RUSTC_WRAPPER", ""),
+        ("RUSTC_WORKSPACE_WRAPPER", ""),
+        ("CARGO_BUILD_RUSTC_WRAPPER", ""),
+        ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", ""),
+    ] {
+        assert_eq!(j["env"][k], v, "{k}");
+    }
+    let steps = steps(&j, "");
+    let install = step(&steps, "name", "install the pinned release");
+    assert_eq!(install["id"], "bin");
+    assert!(
+        install["run"]
+            .as_str()
+            .unwrap()
+            .contains("echo \"sha256=$(sha256sum \"$RUNNER_TEMP/bin/bosun\"")
+    );
+    let gates = step(&steps, "name", "bosun gates");
+    assert_eq!(
+        gates["env"]["BOSUN_SHA256"],
+        "${{ steps.bin.outputs.sha256 }}"
+    );
+    let run = gates["run"].as_str().unwrap();
+    let check = run.find("sha256sum -c --quiet").expect("hash check");
+    let gate = run.find("\"$bosun\" gate").unwrap();
+    assert!(check < gate);
+    assert!(
+        run[gate..].contains("later gates did not run\"; exit 1; }"),
+        "{run}"
+    );
+}
+
+#[test]
+fn the_toolchain_step_installs_the_file_or_the_old_pin() {
+    if yaml_json("a: 1").is_none() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let sub = root.path().join("crates/core");
+    fs::create_dir_all(&sub).unwrap();
+    // No toolchain file anywhere: the old pin, never the runner's default (stable).
+    let calls = toolchain_calls(root.path(), &sub);
+    assert!(calls.starts_with("toolchain install 1.97 "), "{calls}");
+    assert!(calls.contains("default 1.97"), "{calls}");
+    // The seeded root file, found from a rust_path below it: rustup installs what it names.
+    fs::write(
+        root.path().join("rust-toolchain.toml"),
+        "[toolchain]\nchannel = \"1.99.1\"\n",
+    )
+    .unwrap();
+    for cwd in [root.path(), sub.as_path()] {
+        let calls = toolchain_calls(root.path(), cwd);
+        assert!(calls.starts_with("toolchain install\n"), "{calls}");
+        assert!(!calls.contains("1.97"), "{calls}");
+    }
+}
+
+/// Runs the plan step: `Some(outputs)` when it passes, `None` when it fails the job.
+fn plan(own_ci: &str, draft: &str, docs_only: &str, mode: &str) -> Option<String> {
+    let files = variant(&["rust"], own_ci);
+    let j = yaml_json(file(&files, BOSUN_YML)).unwrap();
+    let steps = steps(&j, own_ci);
+    let run = step(&steps, "id", "plan")["run"].as_str().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let out = dir.path().join("out");
+    let ok = Command::new("bash")
+        .args(["-eo", "pipefail", "-c", run])
+        .env("GITHUB_OUTPUT", &out)
+        .env("DRAFT", draft)
+        .env("DOCS_ONLY", docs_only)
+        .env("MODE", mode)
+        .output()
+        .unwrap()
+        .status
+        .success();
+    ok.then(|| fs::read_to_string(out).unwrap().trim().to_string())
+}
+
+#[test]
+fn the_plan_skips_gates_only_on_docs_and_drafts_fail() {
+    let files = variant(&["rust"], "");
+    let wf = file(&files, BOSUN_YML);
+    assert!(
+        !wf.contains("if: github.event_name != 'pull_request' || !github.event.pull_request.draft")
+    );
+    if yaml_json("a: 1").is_none() {
+        return;
+    }
+    for own_ci in ["", "1"] {
+        let full = Some("work=true\nsetup=true".to_string());
+        let integrity = Some("work=true\nsetup=false\nonly=test-integrity".to_string());
+        let idle = Some("work=false".to_string());
+        assert_eq!(plan(own_ci, "false", "false", "run"), full);
+        assert_eq!(plan(own_ci, "false", "", "run"), full, "not a pull request");
+        assert_eq!(plan(own_ci, "", "", "run"), full, "no draft flag");
+        assert_eq!(plan(own_ci, "false", "true", "run"), idle);
+        assert_eq!(plan(own_ci, "false", "false", "integrity"), integrity);
+        assert_eq!(
+            plan(own_ci, "false", "true", "integrity"),
+            idle,
+            "docs only"
+        );
+        // A draft fails at once, never skipped: a skipped required check counts as passed.
+        for mode in ["run", "integrity"] {
+            assert_eq!(plan(own_ci, "true", "false", mode), None);
+            assert_eq!(plan(own_ci, "true", "true", mode), None);
+        }
+        assert!(
+            file(&files, BOSUN_YML).contains("::error::draft: CI not run, mark ready for review")
+        );
+        // Only the stack setup waits for `setup`; the gates step takes `only`.
+        let j = yaml_json(file(&variant(&["rust", "ts-pnpm"], own_ci), BOSUN_YML)).unwrap();
+        let steps = steps(&j, own_ci);
+        let setup: Vec<_> = steps
+            .iter()
+            .filter(|s| {
+                s["if"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .contains("steps.plan.outputs.setup == 'true'")
+            })
+            .collect();
+        assert_eq!(
+            setup.len(),
+            4,
+            "toolchain, install-action (cargo-deny), setup-node, pnpm for the audit"
+        );
+        let gates = step(&steps, "name", "bosun gates");
+        assert_eq!(gates["env"]["ONLY"], "${{ steps.plan.outputs.only }}");
+        assert!(
+            gates["run"]
+                .as_str()
+                .unwrap()
+                .contains("GATES=\"${ONLY:-$GATES}\"")
+        );
+    }
+}
+
+/// ts-pnpm and mixed stacks run two jobs (#234): `bosun-trusted` runs test-integrity and deps
+/// and never installs the PR's dependencies or restores a cache; the required check's job runs
+/// the PR's code (install, fmt, lint, test) only after `bosun-trusted` passed.
+#[test]
+fn ts_pnpm_runs_pr_code_only_in_the_required_check_after_bosun_trusted() {
+    for stack in [&["ts-pnpm"][..], &["rust", "ts-pnpm"]] {
+        for own_ci in ["", "1"] {
+            let files = variant(stack, own_ci);
+            let wf = file(&files, BOSUN_YML);
+            assert!(!wf.contains("secrets."), "no secrets in either job");
+            let Some(j) = yaml_json(wf) else { return };
+            let check = check_name(own_ci);
+            let mut ids: Vec<_> = j["jobs"].as_object().unwrap().keys().cloned().collect();
+            ids.sort();
+            let mut want = [TRUSTED, check];
+            want.sort();
+            assert_eq!(ids, want, "{stack:?}");
+            let trusted = &j["jobs"][TRUSTED];
+            let a = steps(&j, own_ci);
+            // bosun-trusted: only these actions, no cache, no install.
+            for s in &a {
+                if let Some(u) = s["uses"].as_str() {
+                    assert!(
+                        [
+                            "actions/checkout@v4",
+                            "actions/setup-node@v4",
+                            "taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21"
+                        ]
+                        .contains(&u.split(" #").next().unwrap_or(u)),
+                        "{u} in {TRUSTED}"
+                    );
+                    assert!(s["with"].get("cache").is_none(), "{s}");
+                }
+                let run = s["run"].as_str().unwrap_or_default();
+                assert!(!run.contains("pnpm install"), "{run}");
+                assert!(!run.contains("pnpm rebuild"), "{run}");
+            }
+            for k in ["npm_config_ignore_pnpmfile", "pnpm_config_ignore_pnpmfile"] {
+                assert_eq!(trusted["env"][k], "true", "{k}");
+            }
+            for k in [
+                "npm_config_manage_package_manager_versions",
+                "pnpm_config_manage_package_manager_versions",
+            ] {
+                assert_eq!(trusted["env"][k], "false", "{k}");
+            }
+            assert_eq!(
+                trusted["outputs"]["pr_gates"],
+                "${{ steps.gates.outputs.pr_gates }}"
+            );
+            // The edit step looks up the required check's earlier result, not its own job's.
+            assert_eq!(step(&a, "id", "edit")["env"]["CHECK"], check);
+            // The required check: after bosun-trusted, also when it failed (never skipped, also on
+            // a draft, where bosun-trusted is skipped and its first step fails), with a read-only
+            // token.
+            let job = &j["jobs"][check];
+            assert_eq!(job["needs"], TRUSTED);
+            assert_eq!(job["if"], "${{ always() }}", "also after a cancel");
+            assert_eq!(
+                j["jobs"][TRUSTED]["if"],
+                "github.event_name != 'pull_request' || github.event.pull_request.draft == false"
+            );
+            assert_eq!(job["permissions"], serde_json::json!({"contents": "read"}));
+            let b = check_steps(&j, own_ci);
+            assert_eq!(b[0]["name"], "bosun-trusted passed");
+            assert_eq!(
+                b[0]["if"], "always()",
+                "the first step runs after a cancel too"
+            );
+            for s in &b[1..] {
+                let cond = s["if"].as_str().unwrap_or_default();
+                assert!(
+                    cond.starts_with("needs.bosun-trusted.outputs.pr_gates != ''"),
+                    "{s}"
+                );
+            }
+            let install = step(&b, "name", "install the pinned release");
+            assert!(
+                install["run"]
+                    .as_str()
+                    .unwrap()
+                    .contains("echo \"$SHA256  $RUNNER_TEMP/bin/bosun\" | sha256sum -c --quiet")
+            );
+            let pnpm = step(&b, "name", "pnpm install");
+            assert_eq!(
+                pnpm["env"]["TS_PATHS"],
+                "${{ needs.bosun-trusted.outputs.ts_paths }}"
+            );
+            assert!(
+                pnpm["run"]
+                    .as_str()
+                    .unwrap()
+                    .contains("(cd \"$d\" && pnpm install --frozen-lockfile)")
+            );
+            let gates = step(&b, "name", "bosun gates");
+            assert_eq!(
+                gates["env"]["GATES"],
+                "${{ needs.bosun-trusted.outputs.pr_gates }}"
+            );
+            // Both jobs put the base's gate config over the checkout with the same script.
+            let base = "the base's config for the gates";
+            assert_eq!(step(&a, "name", base)["run"], step(&b, "name", base)["run"]);
+            let rust = stack.contains(&"rust");
+            assert_eq!(b.iter().any(|s| s["name"] == "rust toolchain"), rust);
+            assert_eq!(
+                b.iter().any(|s| s["uses"]
+                    .as_str()
+                    .is_some_and(|u| u.starts_with("Swatinem/rust-cache@"))),
+                rust
+            );
+        }
+    }
+}
+
+/// Runs `script` under bash in `dir` with `envs`; true when it passes.
+fn bash_in(dir: &Path, script: &str, envs: &[(&str, &str)]) -> bool {
+    let mut c = Command::new("bash");
+    c.args(["-eo", "pipefail", "-c", script])
+        .current_dir(dir)
+        .env_remove("RUSTUP_TOOLCHAIN");
+    for (k, v) in envs {
+        c.env(k, v);
+    }
+    c.output().unwrap().status.success()
+}
+
+#[test]
+fn the_required_check_fails_at_once_unless_bosun_trusted_passed() {
+    let files = variant(&["ts-pnpm"], "");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let run = check_steps(&j, "")[0]["run"].as_str().unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    for (result, ok) in [
+        ("success", true),
+        ("failure", false),
+        ("cancelled", false),
+        ("skipped", false),
+        ("", false),
+    ] {
+        let envs = [("RESULT", result), ("PR_GATES", "fmt lint test")];
+        assert_eq!(bash_in(dir.path(), &run, &envs), ok, "{result:?}");
+    }
+}
+
+fn git_in(dir: &Path, cmd: &str) -> String {
+    let o = Command::new("bash")
+        .args(["-eo", "pipefail", "-c", cmd])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    assert!(
+        o.status.success(),
+        "{cmd}: {}",
+        String::from_utf8_lossy(&o.stderr)
+    );
+    String::from_utf8_lossy(&o.stdout).trim().to_string()
+}
+
+/// bosun-trusted's gates step, run with a fake bosun that records what each gate saw: test-
+/// integrity reads the PR's manifests; deps (`pnpm audit`) sees the PR's lockfile with every
+/// package.json and pnpm-workspace.yaml from the base, so no PR setting reaches pnpm.
+#[test]
+fn bosun_trusted_audits_the_prs_lockfile_with_the_bases_pnpm_config() {
+    for stack in [&["ts-pnpm"][..], &["rust", "ts-pnpm"]] {
+        let files = variant(stack, "");
+        let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+            return;
+        };
+        let run = step(&steps(&j, ""), "name", "bosun gates")["run"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // (base has a root package.json, PR change, gates, gate that fails) -> (passes, log, pr_gates)
+        // As `case`, on a given event and ref.
+        let case_on = |event: &str,
+                       git_ref: &str,
+                       base_root: bool,
+                       pr: &str,
+                       only: &str,
+                       fail: &str| {
+            let dir = tempfile::tempdir().unwrap();
+            let tmp = tempfile::tempdir().unwrap();
+            let d = dir.path();
+            git_in(
+                d,
+                "git init -q -b main && git config user.email a@b.c && git config user.name n \
+                 && mkdir -p packages/a \
+                 && echo '{\"name\":\"r\",\"packageManager\":\"pnpm@10.28.0\"}' > package.json \
+                 && printf 'packages:\\n  - packages/*\\n' > pnpm-workspace.yaml \
+                 && echo '{\"name\":\"a\"}' > packages/a/package.json && echo base-lock > pnpm-lock.yaml",
+            );
+            if !base_root {
+                git_in(d, "rm package.json");
+            }
+            git_in(d, "git add -A && git commit -qm base");
+            let base = git_in(d, "git rev-parse HEAD");
+            git_in(d, pr);
+            git_in(d, "git add -A && git commit -qm pr");
+            let bin = tmp.path().join("bin");
+            fs::create_dir_all(&bin).unwrap();
+            let log = tmp.path().join("log");
+            fs::write(
+                bin.join("bosun"),
+                format!(
+                    "#!/bin/sh\n{{ echo \"$2: $(cat package.json) $(cat pnpm-workspace.yaml) $(cat pnpm-lock.yaml) $(cat packages/*/package.json | tr -d '\\n')\"; }} >> {}\n[ \"$2\" != \"{fail}\" ]\n",
+                    log.display()
+                ),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(bin.join("bosun"), fs::Permissions::from_mode(0o755)).unwrap();
+            let out = tmp.path().join("out");
+            let script = format!(
+                "export BOSUN_SHA256=\"$(sha256sum \"$RUNNER_TEMP/bin/bosun\" | cut -d' ' -f1)\"\n{run}"
+            );
+            let ok = bash_in(
+                d,
+                &script,
+                &[
+                    ("RUNNER_TEMP", tmp.path().to_str().unwrap()),
+                    ("GITHUB_OUTPUT", out.to_str().unwrap()),
+                    ("GITHUB_SHA", "unused"),
+                    ("GATES", "test-integrity deps fmt lint test"),
+                    ("ONLY", only),
+                    ("EVENT", event),
+                    ("REF", git_ref),
+                    ("DEFAULT_BRANCH", "main"),
+                    ("BASE", &base),
+                    ("TS_PATHS", "."),
+                ],
+            );
+            let log = fs::read_to_string(log).unwrap_or_default();
+            let out = fs::read_to_string(out).unwrap_or_default();
+            (ok, log, out.trim().to_string())
+        };
+        let case = |base_root: bool, pr: &str, only: &str, fail: &str| {
+            case_on(
+                "pull_request",
+                "refs/pull/1/merge",
+                base_root,
+                pr,
+                only,
+                fail,
+            )
+        };
+        let pr = "echo '{\"name\":\"r\",\"pnpm\":{\"configDependencies\":{\"x\":\"1.0.0\"}}}' > package.json \
+                  && printf 'packages:\\n  - packages/*\\npnpmfile: evil.cjs\\n' > pnpm-workspace.yaml \
+                  && echo pr-lock > pnpm-lock.yaml && mkdir -p packages/b \
+                  && echo '{\"name\":\"b\",\"pnpm\":{}}' > packages/b/package.json";
+        let (ok, log, out) = case(true, pr, "", "");
+        assert!(ok, "{log}");
+        let (integrity, deps) = log.split_once("deps: ").expect(&log);
+        assert!(integrity.starts_with("test-integrity: "), "{log}");
+        assert!(integrity.contains("configDependencies"), "the PR's: {log}");
+        assert!(integrity.contains("pnpmfile: evil.cjs"), "{log}");
+        assert!(integrity.contains("{\"name\":\"b\""), "{log}");
+        assert_eq!(
+            deps,
+            "{\"name\":\"r\",\"packageManager\":\"pnpm@10.28.0\"} packages:\n  - packages/* pr-lock {\"name\":\"a\"}\n",
+            "the base's config, the PR's lockfile"
+        );
+        assert_eq!(out, "pr_gates=fmt lint test");
+        // An edit after a success: test-integrity only, nothing left for the required check.
+        let (ok, log, out) = case(true, pr, "test-integrity", "");
+        assert!(ok);
+        assert!(log.starts_with("test-integrity: ") && !log.contains("deps: "));
+        assert_eq!(out, "pr_gates=");
+        // The first failure stops the job.
+        let (ok, log, _) = case(true, pr, "", "test-integrity");
+        assert!(!ok && !log.contains("deps: "), "{log}");
+        // A PR that adds the stack: the base has no root package.json, so pnpm gets {}.
+        let (ok, log, _) = case(false, pr, "", "");
+        assert!(ok);
+        assert!(log.contains("deps: {} packages:"), "{log}");
+        // A PR without the lockfile still gets the base's config.
+        let (ok, log, _) = case(true, &format!("{pr} && rm pnpm-lock.yaml"), "", "");
+        assert!(ok);
+        let deps = log.split_once("deps: ").expect(&log).1;
+        assert!(
+            !deps.contains("evil") && !deps.contains("configDependencies"),
+            "{deps}"
+        );
+        // A directory link out of the checkout: nothing is written through it.
+        let outside = tempfile::tempdir().unwrap();
+        let link = format!(
+            "rm -r packages/a && ln -s {} packages/a",
+            outside.path().display()
+        );
+        let (ok, log, _) = case(true, &link, "", "");
+        assert!(!ok && !log.contains("deps: "), "{log}");
+        assert!(!outside.path().join("package.json").exists());
+        // A push to the default branch is merged: deps reads its own copies, so an approved
+        // auditConfig applies on the run of its own merge.
+        let (ok, log, _) = case_on("push", "refs/heads/main", true, pr, "", "");
+        assert!(ok, "{log}");
+        let deps = log.split_once("deps: ").expect(&log).1;
+        assert!(
+            deps.contains("configDependencies") && deps.contains("pnpmfile: evil.cjs"),
+            "{deps}"
+        );
+        assert!(deps.contains("{\"name\":\"b\""), "{deps}");
+        // The merge queue and a push elsewhere are not merged yet: the base's copies.
+        for (event, git_ref) in [
+            ("merge_group", "refs/heads/gh-readonly-queue/main/pr-1"),
+            ("push", "refs/heads/other"),
+        ] {
+            let (ok, log, _) = case_on(event, git_ref, true, pr, "", "");
+            assert!(ok, "{log}");
+            let deps = log.split_once("deps: ").expect(&log).1;
+            assert!(
+                !deps.contains("evil") && !deps.contains("configDependencies"),
+                "{event}: {deps}"
+            );
+        }
+    }
+}
+
+/// deps learns the event and ref only through env, and names the base's copies only where it
+/// uses them (never on a push to the default branch).
+#[test]
+fn deps_names_the_base_copies_only_off_a_push_to_main() {
+    let files = variant(&["ts-pnpm"], "");
+    let yml = file(&files, BOSUN_YML);
+    assert!(yml.contains("REF: ${{ github.ref }}"), "{yml}");
+    assert!(
+        yml.contains("DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}"),
+        "{yml}"
+    );
+    let guard = yml
+        .find(r#"if [ "$EVENT" = push ] && [ "$REF" = "refs/heads/$DEFAULT_BRANCH" ]; then"#)
+        .expect("the push-to-main guard");
+    let other = yml[guard..].find("else").unwrap() + guard;
+    let notice = yml.find("uses the base's copies").unwrap();
+    assert!(other < notice, "the notice is in the else branch");
+}
+
+/// bosun-trusted installs the pnpm release the base's package.json names (the PR's while the
+/// base has none), an exact version from the registry and never a path, URL or range.
+#[test]
+fn bosun_trusted_installs_an_exact_pnpm_release() {
+    let files = variant(&["ts-pnpm"], "");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let run = step(&steps(&j, ""), "name", "pnpm for the audit")["run"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    // Some(installed spec) when the step passes.
+    // `push`: a push to the default branch, whose own package.json names the release.
+    let case_on = |base: Option<&str>, pr: &str, push: bool| -> Option<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        git_in(
+            d,
+            "git init -q -b main && git config user.email a@b.c && git config user.name n && echo x > x",
+        );
+        if let Some(b) = base {
+            fs::write(d.join("package.json"), b).unwrap();
+        }
+        git_in(d, "git add -A && git commit -qm base");
+        let base_sha = git_in(d, "git rev-parse HEAD");
+        fs::write(d.join("package.json"), pr).unwrap();
+        git_in(d, "git add -A && git commit -qm pr");
+        let bin = tmp.path().join("bin");
+        fs::create_dir_all(&bin).unwrap();
+        let root = tmp.path().join("root");
+        let log = tmp.path().join("log");
+        fs::write(
+            bin.join("npm"),
+            format!(
+                "#!/bin/sh\n[ \"$1\" = root ] && {{ echo {r}; exit 0; }}\necho \"$*\" >> {l}\necho \"${{4#pnpm@}}\" > {r}.v\n",
+                r = root.display(),
+                l = log.display()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            bin.join("pnpm"),
+            format!("#!/bin/sh\ncat {}.v\n", root.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        for f in ["npm", "pnpm"] {
+            fs::set_permissions(bin.join(f), fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let head = git_in(d, "git rev-parse HEAD");
+        let (event, sha) = if push {
+            ("push", head.as_str())
+        } else {
+            ("pull_request", "unused")
+        };
+        let ok = bash_in(
+            d,
+            &run,
+            &[
+                ("PATH", &path),
+                ("RUNNER_TEMP", tmp.path().to_str().unwrap()),
+                ("BASE", &base_sha),
+                ("GITHUB_SHA", sha),
+                ("TS_PATH", "."),
+                ("EVENT", event),
+                ("REF", "refs/heads/main"),
+                ("DEFAULT_BRANCH", "main"),
+            ],
+        );
+        let log = fs::read_to_string(log).unwrap_or_default();
+        if !ok {
+            assert!(log.is_empty(), "npm ran before the check: {log}");
+        }
+        ok.then(|| log.trim().to_string())
+    };
+    let case = |base: Option<&str>, pr: &str| case_on(base, pr, false);
+    let pm = |v: &str| format!("{{\"packageManager\": {v}}}");
+    let pnpm = |v: &str| Some(format!("install -g --ignore-scripts {v}"));
+    // A push to main is merged: its own package.json names the release, not the previous commit's.
+    assert_eq!(
+        case_on(Some(&pm("\"pnpm@9.0.0\"")), &pm("\"pnpm@10.28.0\""), true),
+        pnpm("pnpm@10.28.0")
+    );
+    assert_eq!(
+        case(
+            Some(&pm("\"pnpm@10.28.0+sha512.abc\"")),
+            &pm("\"pnpm@9.0.0\"")
+        ),
+        pnpm("pnpm@10.28.0"),
+        "the base's"
+    );
+    assert_eq!(
+        case(None, &pm("\"pnpm@9.1.2\"")),
+        pnpm("pnpm@9.1.2"),
+        "a new stack"
+    );
+    assert_eq!(
+        case(Some("{\"name\": \"r\"}"), &pm("\"pnpm@9.1.2\"")),
+        pnpm("pnpm@9.1.2")
+    );
+    for bad in [
+        "\"pnpm@8.15.0\"",
+        "\"pnpm@file:../evil\"",
+        "\"pnpm@1.2.3\\nfile:../evil\"",
+        "\"pnpm@https://e.x/p.tgz\"",
+        "\"pnpm@latest\"",
+        "\"pnpm@^10.0.0\"",
+        "\"npm@10.0.0\"",
+        "5",
+    ] {
+        assert_eq!(case(None, &pm(bad)), None, "{bad}");
+        assert_eq!(
+            case(Some(&pm(bad)), &pm("\"pnpm@9.1.2\"")),
+            None,
+            "base {bad}"
+        );
+    }
+    assert_eq!(case(None, "not json"), None);
+}
+
+/// The required check's job installs the toolchain bosun-trusted checked (mixed stack).
+#[test]
+fn the_required_check_installs_the_toolchain_bosun_trusted_checked() {
+    let files = variant(&["rust", "ts-pnpm"], "");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let b = check_steps(&j, "");
+    let run = step(&b, "name", "rust toolchain")["run"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    for (file_found, channel, want) in [
+        (
+            "1",
+            "1.99.1",
+            "toolchain install\ncomponent add rustfmt clippy 1.99.1\n",
+        ),
+        (
+            "",
+            "1.97",
+            "toolchain install 1.97 --profile minimal -c rustfmt,clippy\ncomponent add rustfmt clippy 1.97\n",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        let log = tmp.path().join("log");
+        fs::write(
+            tmp.path().join("rustup"),
+            format!(
+                "#!/bin/sh\necho \"$* $RUSTUP_TOOLCHAIN\" | sed 's/ $//' >> {}\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(tmp.path().join("rustup"), fs::Permissions::from_mode(0o755)).unwrap();
+        let env = tmp.path().join("env");
+        let path = format!(
+            "{}:{}",
+            tmp.path().display(),
+            std::env::var("PATH").unwrap()
+        );
+        assert!(bash_in(
+            tmp.path(),
+            &run,
+            &[
+                ("PATH", &path),
+                ("FILE", file_found),
+                ("CHANNEL", channel),
+                ("GITHUB_ENV", env.to_str().unwrap()),
+            ],
+        ));
+        assert_eq!(fs::read_to_string(&log).unwrap(), want);
+        assert_eq!(
+            fs::read_to_string(&env).unwrap(),
+            format!("RUSTUP_TOOLCHAIN={channel}\n")
+        );
+    }
+}
+
+/// A stack path that does not exist yet (a repo right after `bosun init`): deps runs, and
+/// bosun-trusted creates nothing there (review of #234).
+#[test]
+fn bosun_trusted_deps_passes_before_the_ts_stack_exists() {
+    let files = variant_at(&["ts-pnpm"], "", "web");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let run = step(&steps(&j, ""), "name", "bosun gates")["run"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    git_in(
+        d,
+        "git init -q -b main && git config user.email a@b.c && git config user.name n \
+         && echo x > x && git add -A && git commit -qm base && echo y > x && git commit -qam pr",
+    );
+    let base = git_in(d, "git rev-parse HEAD~1");
+    let bin = tmp.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    fs::write(bin.join("bosun"), "#!/bin/sh\nexit 0\n").unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("bosun"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = tmp.path().join("out");
+    let script = format!(
+        "export BOSUN_SHA256=\"$(sha256sum \"$RUNNER_TEMP/bin/bosun\" | cut -d' ' -f1)\"\n{run}"
+    );
+    assert!(bash_in(
+        d,
+        &script,
+        &[
+            ("RUNNER_TEMP", tmp.path().to_str().unwrap()),
+            ("GITHUB_OUTPUT", out.to_str().unwrap()),
+            ("GITHUB_SHA", "unused"),
+            ("GATES", "test-integrity deps fmt lint test"),
+            ("ONLY", ""),
+            ("EVENT", "pull_request"),
+            ("BASE", &base),
+        ],
+    ));
+    assert!(!d.join("web").exists());
+    assert_eq!(
+        fs::read_to_string(out).unwrap().trim(),
+        "pr_gates=fmt lint test"
+    );
+}
+
+/// The pnpm steps follow the ts-pnpm stacks of the (base's) .bosun/bosun.toml, not the render's
+/// ts_path: a stack the owner moved to `action/` still gets pnpm (a client repo's main went red).
+#[test]
+fn the_pnpm_steps_follow_the_configured_ts_stack_paths() {
+    let files = variant(&["ts-pnpm"], "");
+    let wf = file(&files, BOSUN_YML);
+    assert!(
+        !wf.contains("hashFiles("),
+        "no step keys off the render's path"
+    );
+    let Some(j) = yaml_json(wf) else {
+        return;
+    };
+    let a = steps(&j, "");
+    let outs = &j["jobs"][TRUSTED]["outputs"];
+    for k in ["path", "paths", "lock"] {
+        assert_eq!(
+            outs[format!("ts_{k}")],
+            format!("${{{{ steps.stack.outputs.{k} }}}}")
+        );
+    }
+    let audit = step(&a, "name", "pnpm for the audit");
+    assert!(
+        audit["if"]
+            .as_str()
+            .unwrap()
+            .ends_with("&& steps.stack.outputs.lock == 'true'")
+    );
+    assert_eq!(audit["env"]["TS_PATH"], "${{ steps.stack.outputs.path }}");
+    let b = check_steps(&j, "");
+    let lock = "needs.bosun-trusted.outputs.pr_gates != '' && needs.bosun-trusted.outputs.ts_lock == 'true'";
+    for u in [
+        "pnpm/action-setup@",
+        "actions/setup-node@",
+        "keelstackhq/hoard@",
+    ] {
+        let s = b
+            .iter()
+            .find(|s| s["uses"].as_str().is_some_and(|x| x.starts_with(u)))
+            .unwrap();
+        assert_eq!(s["if"], lock, "{u}");
+    }
+    assert_eq!(step(&b, "name", "pnpm install")["if"], lock);
+    let setup = b
+        .iter()
+        .find(|s| {
+            s["uses"]
+                .as_str()
+                .is_some_and(|x| x.starts_with("pnpm/action-setup@"))
+        })
+        .unwrap();
+    assert_eq!(
+        setup["with"]["package_json_file"],
+        "${{ needs.bosun-trusted.outputs.ts_path }}/package.json"
+    );
+    // The paths step, on a bosun.toml (Some: the outputs; None: it fails).
+    let run = step(&a, "id", "stack")["run"].as_str().unwrap().to_string();
+    let case = |toml: &str, setup: &str| -> Option<String> {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        fs::create_dir_all(d.join(".bosun")).unwrap();
+        fs::write(d.join(".bosun/bosun.toml"), toml).unwrap();
+        if !setup.is_empty() {
+            git_in(d, setup);
+        }
+        let out = d.join("out");
+        let ok = bash_in(d, &run, &[("GITHUB_OUTPUT", out.to_str().unwrap())]);
+        ok.then(|| fs::read_to_string(out).unwrap())
+    };
+    let ts =
+        |p: &str| format!("project = \"a\"\n\n[[stack]]\npath = \"{p}\"\nprofile = \"ts-pnpm\"\n");
+    let rust = "[[stack]]\npath = \".\"\nprofile = \"rust\"\n";
+    assert_eq!(
+        case(
+            &format!("{rust}{}\n[review]\nmode = \"subagent\"\n", ts("action")),
+            "mkdir action && touch action/pnpm-lock.yaml"
+        )
+        .as_deref(),
+        Some("paths=action\npath=action\nlock=true\n")
+    );
+    assert_eq!(
+        case(
+            &format!("{}{}", ts("web"), ts("api")),
+            "mkdir api && touch api/pnpm-lock.yaml"
+        )
+        .as_deref(),
+        Some("paths=web api\npath=api\nlock=true\n"),
+        "the first stack with a lockfile names pnpm"
+    );
+    assert_eq!(
+        case(&ts("action"), "").as_deref(),
+        Some("paths=action\npath=\nlock=false\n"),
+        "no lockfile yet"
+    );
+    assert_eq!(
+        case(rust, "touch pnpm-lock.yaml").as_deref(),
+        Some("paths=\npath=\nlock=false\n"),
+        "no ts-pnpm stack"
+    );
+    let outside = tempfile::tempdir().unwrap();
+    let link = format!("ln -s {} out", outside.path().display());
+    for (p, setup) in [
+        ("../x", ""),
+        ("/etc", ""),
+        ("a b", ""),
+        ("out/web", link.as_str()),
+    ] {
+        assert_eq!(case(&ts(p), setup), None, "{p}");
+    }
+}
+
+/// A PR that adds a ts-pnpm stack in a subdirectory: deps still audits its lockfile through a `{}`
+/// stand-in package.json, which is gone right after deps (no created file reaches a later gate).
+#[test]
+fn bosun_trusted_audits_a_new_stacks_lockfile_through_a_stand_in() {
+    let files = variant(&["ts-pnpm"], "");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let run = step(&steps(&j, ""), "name", "bosun gates")["run"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    git_in(
+        d,
+        "git init -q -b main && git config user.email a@b.c && git config user.name n \
+         && echo x > x && git add -A && git commit -qm base \
+         && mkdir action && echo '{\"name\":\"a\",\"pnpm\":{}}' > action/package.json \
+         && echo lock > action/pnpm-lock.yaml && git add -A && git commit -qm pr",
+    );
+    let base = git_in(d, "git rev-parse HEAD~1");
+    let bin = tmp.path().join("bin");
+    fs::create_dir_all(&bin).unwrap();
+    let log = tmp.path().join("log");
+    fs::write(
+        bin.join("bosun"),
+        format!(
+            "#!/bin/sh\necho \"$2: $(cat action/package.json 2>/dev/null) $(cat action/pnpm-lock.yaml)\" >> {}\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("bosun"), fs::Permissions::from_mode(0o755)).unwrap();
+    let out = tmp.path().join("out");
+    let script = format!(
+        "export BOSUN_SHA256=\"$(sha256sum \"$RUNNER_TEMP/bin/bosun\" | cut -d' ' -f1)\"\n{run}"
+    );
+    assert!(bash_in(
+        d,
+        &script,
+        &[
+            ("RUNNER_TEMP", tmp.path().to_str().unwrap()),
+            ("GITHUB_OUTPUT", out.to_str().unwrap()),
+            ("GITHUB_SHA", "unused"),
+            ("GATES", "test-integrity deps"),
+            ("ONLY", ""),
+            ("EVENT", "pull_request"),
+            ("BASE", &base),
+            ("TS_PATHS", "web action"),
+        ],
+    ));
+    assert_eq!(
+        fs::read_to_string(log).unwrap(),
+        "test-integrity: {\"name\":\"a\",\"pnpm\":{}} lock\ndeps: {} lock\n"
+    );
+    assert!(
+        !d.join("action/package.json").exists(),
+        "the stand-in is gone"
+    );
+    assert!(
+        !d.join("web").exists(),
+        "nothing for a stack without a lockfile"
+    );
+}
+
+/// The stack paths are the base's: a PR that moves its stack in .bosun/bosun.toml changes
+/// nothing until it merges.
+#[test]
+fn the_ts_stack_paths_come_from_the_bases_bosun_toml() {
+    let files = variant(&["ts-pnpm"], "");
+    let Some(j) = yaml_json(file(&files, BOSUN_YML)) else {
+        return;
+    };
+    let a = steps(&j, "");
+    let base_cfg = step(&a, "name", "the base's config for the gates")["run"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let stack = step(&a, "id", "stack")["run"].as_str().unwrap().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let toml = |p: &str| {
+        format!(
+            "printf '[[stack]]\\npath = \"{p}\"\\nprofile = \"ts-pnpm\"\\n' > .bosun/bosun.toml"
+        )
+    };
+    git_in(
+        d,
+        &format!(
+            "git init -q -b main && git config user.email a@b.c && git config user.name n \
+             && mkdir -p .bosun action web && echo 1.2.3 > .bosun/version && {} \
+             && echo l > action/pnpm-lock.yaml && git add -A && git commit -qm base \
+             && {} && echo l > web/pnpm-lock.yaml && git add -A && git commit -qm pr",
+            toml("action"),
+            toml("web")
+        ),
+    );
+    let base = git_in(d, "git rev-parse HEAD~1");
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    assert!(bash_in(
+        d,
+        &base_cfg,
+        &[("BASE", &base), ("GITHUB_SHA", "unused")]
+    ));
+    assert!(bash_in(
+        d,
+        &stack,
+        &[("GITHUB_OUTPUT", out.to_str().unwrap())]
+    ));
+    assert_eq!(
+        fs::read_to_string(&out).unwrap(),
+        "paths=action\npath=action\nlock=true\n"
+    );
+    // A form the parser does not read (an inline table) is named in a warning.
+    fs::write(
+        d.join(".bosun/bosun.toml"),
+        "stack = [{ path = \"action\", profile = \"ts-pnpm\" }]\n",
+    )
+    .unwrap();
+    let o = Command::new("bash")
+        .args(["-eo", "pipefail", "-c", &stack])
+        .current_dir(d)
+        .env("GITHUB_OUTPUT", &out)
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    let said = String::from_utf8_lossy(&o.stdout);
+    assert!(
+        said.contains("::warning::.bosun/bosun.toml names ts-pnpm")
+            && said.contains("inline tables"),
+        "{said}"
+    );
+}
+
+#[path = "channel_render/circleci.rs"]
+mod circleci;
+
+#[path = "channel_render/app.rs"]
+mod app;
+
+#[path = "channel_render/golden.rs"]
+mod golden;
+
+/// D-012: bootstrap mode reaches consumers only when their pinned bosun reads `[approvals]`. An
+/// empty `bosun_version` pins the channel's own release (0.3.0 or later from this channel on),
+/// so `.bosun/bosun.toml` gets `bootstrap_until`; a repo pinning an explicit version does not
+/// (its release may reject the key), and adds it by hand once it pins a release that reads it.
+#[test]
+fn bootstrap_until_renders_only_for_the_channel_version() {
+    for (bosun_version, want) in [("", true), ("0.2.3", false), ("0.3.0", false)] {
+        let pieces = ["core", "rust"];
+        let vars: BTreeMap<&str, String> = [
+            ("project", "app"),
+            ("owner", ""),
+            ("bosun_version", bosun_version),
+            ("template.version", "0.3.0"),
+            ("rust_path", "."),
+            ("ts_path", "."),
+            ("own_ci", ""),
+            ("intake", ""),
+            ("policy", ""),
+            ("policy_pin_checked", ""),
+            ("bosun_app", ""),
+            ("ci_provider", ""),
+            ("ci_pin_checked", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+        let files = render_channel(&pieces, &vars);
+        let config: toml::Table = file(&files, ".bosun/bosun.toml").parse().unwrap();
+        let until = config
+            .get("approvals")
+            .and_then(|a| a.get("bootstrap_until"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            until == Some("2026-11-30"),
+            want,
+            "bosun_version={bosun_version:?}: {config:?}"
+        );
+    }
+}
+
+/// `[ci]` follows the same pin rule as the policy: an explicit pin needs `ci_pin_checked`.
+#[test]
+fn an_explicit_pin_writes_ci_only_when_checked() {
+    for (pin, checked, written) in [("0.21.0", "", false), ("0.22.0", "1", true), ("", "", true)] {
+        let vars: BTreeMap<&str, String> = [
+            ("project", "app"),
+            ("owner", ""),
+            ("bosun_version", pin),
+            ("template.version", "0.22.0"),
+            ("rust_path", "."),
+            ("ts_path", "."),
+            ("own_ci", ""),
+            ("intake", ""),
+            ("policy", ""),
+            ("policy_pin_checked", ""),
+            ("ci_provider", "none"),
+            ("ci_pin_checked", checked),
+            ("bosun_app", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+        let files = render_channel(&["core", "rust"], &vars);
+        let text = file(&files, ".bosun/bosun.toml");
+        let config: toml::Table = text.parse().unwrap();
+        let got = config
+            .get("ci")
+            .and_then(|c| c.get("provider"))
+            .and_then(|v| v.as_str());
+        assert_eq!(got.is_some(), written, "pin {pin:?}: {text}");
+        if written {
+            assert_eq!(got, Some("none"));
+        }
+    }
+}
+
+/// An explicit `bosun_version` may predate the policy key, and the template cannot compare
+/// versions: raw splice renders a comment and no `[approvals] policy` there, so an old pin never
+/// meets a value it cannot parse. `policy_pin_checked` (set by `bosun adopt`, which refuses a
+/// pin that is too old) writes it. The channel's own release (empty pin) writes it as before.
+/// Upgrade path: a consumer on 0.12/0.13 with a pin and a policy had the key rendered; with
+/// `policy_pin_checked` unset the key now goes away (comment instead), set it keeps the old render.
+#[test]
+fn an_explicit_pin_writes_the_policy_only_when_checked() {
+    for (pin, checked, written) in [
+        ("0.4.0", "", false),
+        ("0.8.0", "", false),
+        ("0.8.0", "1", true),
+        ("", "", true),
+        ("", "1", true),
+    ] {
+        let vars: BTreeMap<&str, String> = [
+            ("project", "app"),
+            ("owner", ""),
+            ("bosun_version", pin),
+            ("template.version", "0.8.0"),
+            ("rust_path", "."),
+            ("ts_path", "."),
+            ("own_ci", ""),
+            ("intake", ""),
+            ("policy", "autonomous"),
+            ("policy_pin_checked", checked),
+            ("ci_provider", ""),
+            ("ci_pin_checked", ""),
+            ("bosun_app", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+        let files = render_channel(&["core", "rust"], &vars);
+        let text = file(&files, ".bosun/bosun.toml");
+        let config: toml::Table = text.parse().unwrap();
+        let policy = config
+            .get("approvals")
+            .and_then(|a| a.get("policy"))
+            .and_then(|v| v.as_str());
+        assert_eq!(
+            policy.is_some(),
+            written,
+            "pin {pin:?} checked {checked:?}: {text}"
+        );
+        if !written {
+            assert!(text.contains("Add it by hand"), "{text}");
+        }
+        // The bootstrap block stays tied to the empty pin alone.
+        let until = config
+            .get("approvals")
+            .and_then(|a| a.get("bootstrap_until"))
+            .is_some();
+        assert_eq!(
+            until,
+            pin.is_empty(),
+            "pin {pin:?} checked {checked:?}: {text}"
+        );
+    }
+}
+
+/// A sandbox for a full run of a setup script: stubs for every tool it calls log to `calls`.
+/// `node22` is first in PATH with a fake Node 22; `node24` holds a fake Node 24.
+struct SetupSandbox {
+    root: tempfile::TempDir,
+}
+
+impl SetupSandbox {
+    fn new() -> Self {
+        let s = Self {
+            root: tempfile::tempdir().unwrap(),
+        };
+        for d in ["bin", "node22", "node24", "repo"] {
+            fs::create_dir(s.root.path().join(d)).unwrap();
+        }
+        let log = s.root.path().join("calls");
+        let rec = format!("echo \"$(basename \"$0\") $*\" >> {}", log.display());
+        for t in ["cargo", "curl", "apt-get", "bosun"] {
+            s.stub("bin", t, &rec);
+        }
+        // `rustup show active-toolchain` fails: the image has no default toolchain.
+        let show = "[ \"$1 $2\" != \"show active-toolchain\" ]";
+        s.stub("bin", "rustup", &format!("{rec}\n{show}"));
+        s.stub(
+            "bin",
+            "npm",
+            &format!("{rec}\n[ \"$1\" = pack ] && echo x.tgz; exit 0"),
+        );
+        s.stub(
+            "node22",
+            "node",
+            "[ \"$1\" = --version ] && echo v22.3.0; exit 0",
+        );
+        s.stub(
+            "node24",
+            "node",
+            "[ \"$1\" = --version ] && echo v24.1.0; exit 0",
+        );
+        s
+    }
+
+    fn stub(&self, dir: &str, name: &str, body: &str) {
+        let p = self.path(dir).join(name);
+        fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&p, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    }
+
+    fn path(&self, p: &str) -> PathBuf {
+        self.root.path().join(p)
+    }
+
+    fn calls(&self) -> String {
+        fs::read_to_string(self.path("calls")).unwrap_or_default()
+    }
+
+    /// Run the whole script in `repo/`; (exit ok, stderr).
+    fn run(&self, script: &str, node24_dir: &str) -> (bool, String) {
+        fs::write(self.path("setup.sh"), script).unwrap();
+        let path = format!(
+            "{}:{}:{}",
+            self.path("bin").display(),
+            self.path("node22").display(),
+            std::env::var("PATH").unwrap()
+        );
+        let out = Command::new("bash")
+            .arg(self.path("setup.sh"))
+            .current_dir(self.path("repo"))
+            .env("PATH", path)
+            .env("SETUP_NODE_BIN_DIR", self.path(node24_dir))
+            .env("SETUP_NODE_LINK_DIR", self.path("link"))
+            .env("SETUP_NODE_PROFILE", self.path("profile.sh"))
+            .env("SETUP_STATE_DIR", self.path("state"))
+            .env("CARGO_HOME", self.path("cargo-home"))
+            .output()
+            .unwrap();
+        (
+            out.status.success(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+}
+
+fn setup_scripts() -> Vec<(&'static str, String)> {
+    let files = variant(&["rust"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    vec![
+        ("channel", file(&files, "docs/setup-script.sh").to_string()),
+        ("bosun", own),
+    ]
+}
+
+/// The tool calls of a sandbox run: lines that start with `<tool> `.
+fn tool_calls(calls: &str, tool: &str) -> Vec<String> {
+    let p = format!("{tool} ");
+    calls
+        .lines()
+        .filter(|l| l.starts_with(&p))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A Rust checkout without a toolchain file (the script runs inside it): cargo-deny still
+/// installs (with rustup's stable), cargo-nextest never does (it built for minutes), and a failing
+/// tool never fails the script.
+#[test]
+fn setup_scripts_install_cargo_deny_without_a_toolchain_file() {
+    for (name, script) in setup_scripts() {
+        let script = with_bosun_pin(&script, "0.12.0");
+        let sb = SetupSandbox::new();
+        fs::write(sb.path("repo/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        let (ok, err) = sb.run(&script, "node24");
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert!(
+            calls.contains("rustup toolchain install stable"),
+            "{name}: {calls}"
+        );
+        assert!(calls.contains("rustup default stable"), "{name}: {calls}");
+        assert_eq!(
+            tool_calls(&calls, "cargo"),
+            ["cargo install --locked cargo-deny"],
+            "{name}: {calls}"
+        );
+        assert!(!calls.contains("nextest"), "{name}: {calls}");
+        assert!(err.contains("no rust-toolchain.toml"), "{name}: {err}");
+
+        // A failing cargo only warns.
+        let sb = SetupSandbox::new();
+        fs::write(sb.path("repo/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        sb.stub("bin", "cargo", "exit 101");
+        let (ok, err) = sb.run(&script, "node24");
+        assert!(ok, "{name}: {err}");
+        assert!(err.contains("cargo-deny failed"), "{name}: {err}");
+    }
+}
+
+/// The script with its `BOSUN_VERSION=` line set to `pin`.
+fn with_bosun_pin(script: &str, pin: &str) -> String {
+    let out: Vec<String> = script
+        .lines()
+        .map(|l| {
+            if l.starts_with("BOSUN_VERSION=") {
+                format!("BOSUN_VERSION={pin}")
+            } else {
+                l.to_string()
+            }
+        })
+        .collect();
+    assert!(out.iter().any(|l| l == &format!("BOSUN_VERSION={pin}")));
+    out.join("\n") + "\n"
+}
+
+/// cargo-nextest builds only while the pinned bosun's test gate runs it (before 0.12.0, spec
+/// §7) or a repo profile names nextest; a 0.12.0 or later pin skips it.
+#[test]
+fn setup_scripts_install_cargo_nextest_only_for_old_pins_or_an_override() {
+    for (name, script) in setup_scripts() {
+        for (pin, profile, want) in [
+            ("0.11.0", None, true),
+            ("0.12.0", None, false),
+            ("0.13.1", None, false),
+            ("0.9.0", None, true),
+            ("1.0.0", None, false),
+            (
+                "0.12.0",
+                Some("[gates.test]\ncmd = [\"cargo\", \"nextest\", \"run\"]\n"),
+                true,
+            ),
+        ] {
+            let sb = SetupSandbox::new();
+            fs::write(sb.path("repo/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+            if let Some(p) = profile {
+                fs::create_dir_all(sb.path("repo/.bosun/profiles")).unwrap();
+                fs::write(sb.path("repo/.bosun/profiles/rust.toml"), p).unwrap();
+            }
+            let (ok, err) = sb.run(&with_bosun_pin(&script, pin), "node24");
+            let calls = sb.calls();
+            assert!(ok, "{name} {pin}: {err}");
+            assert_eq!(
+                calls.contains("cargo install --locked cargo-nextest"),
+                want,
+                "{name} {pin} {profile:?}: {calls}"
+            );
+        }
+    }
+}
+
+/// Merge guard for the nextest skip. The setup scripts skip building cargo-nextest from the
+/// threshold release on, assuming that release's built-in rust profile no longer runs nextest
+/// (the `cargo test` default gate, PR #482). This FAILS while `profiles/rust.toml` still names
+/// nextest and the threshold is at or below the next minor after the package version, so the
+/// skip cannot merge before the profile change; it passes once the profile change lands.
+#[test]
+fn nextest_skip_threshold_waits_for_the_cargo_test_default_gate() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let ver = |s: &str| -> Vec<u64> { s.split('.').map(|n| n.parse().unwrap()).collect() };
+    let cargo: toml::Table = fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let pkg = ver(cargo["package"]["version"].as_str().unwrap());
+    let next_minor = vec![pkg[0], pkg[1] + 1, 0];
+    let profile: toml::Table = fs::read_to_string(root.join("profiles/rust.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let cmd = profile["gates"]["test"]["cmd"].as_array().unwrap();
+    let runs_nextest = cmd.iter().any(|a| a.as_str() == Some("nextest"));
+    for (name, script) in setup_scripts() {
+        let line = script
+            .lines()
+            .find(|l| l.contains("sort -V") && l.contains("BOSUN_VERSION"))
+            .unwrap_or_else(|| panic!("{name}: no nextest threshold line"));
+        let threshold = line
+            .split("\\n")
+            .nth(1)
+            .and_then(|s| s.split('\\').next())
+            .unwrap_or_else(|| panic!("{name}: cannot parse threshold in {line}"));
+        assert!(
+            !(runs_nextest && ver(threshold) <= next_minor),
+            "{name}: setup script skips cargo-nextest from {threshold}, but profiles/rust.toml \
+             still runs nextest; merge the cargo test default gate first"
+        );
+    }
+}
+
+/// A tarball with one executable `<name>` that prints `<name> <version>`, as `curl` would
+/// download it; returns (path, sha256).
+fn fake_release(sb: &SetupSandbox, name: &str, version: &str) -> (PathBuf, String) {
+    let src = sb.path(&format!("src-{name}"));
+    fs::create_dir_all(src.join(format!("{name}-rel"))).unwrap();
+    let bin = src.join(format!("{name}-rel")).join(name);
+    fs::write(&bin, format!("#!/bin/sh\necho '{name} {version}'\n")).unwrap();
+    fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let tgz = sb.path(&format!("{name}.tgz"));
+    assert!(
+        Command::new("tar")
+            .args([
+                "-czf",
+                tgz.to_str().unwrap(),
+                "-C",
+                src.to_str().unwrap(),
+                "."
+            ])
+            .status()
+            .unwrap()
+            .success()
+    );
+    let sum = Command::new("sha256sum").arg(&tgz).output().unwrap().stdout;
+    let sum = String::from_utf8(sum).unwrap();
+    (tgz, sum.split_whitespace().next().unwrap().to_string())
+}
+
+/// The script with the pinned cargo tool checksums (both arches) set to `deny` and `nextest`.
+fn with_tool_sums(script: &str, deny: &str, nextest: &str) -> String {
+    script
+        .lines()
+        .map(|l| {
+            let pin =
+                |k: &str, v: &str| l.starts_with(&format!("{k}=")).then(|| format!("{k}={v}"));
+            pin("CARGO_DENY_BIN_LINUX_X64_SHA256", deny)
+                .or_else(|| pin("CARGO_DENY_BIN_LINUX_ARM64_SHA256", deny))
+                .or_else(|| pin("NEXTEST_LINUX_X64_SHA256", nextest))
+                .or_else(|| pin("NEXTEST_LINUX_ARM64_SHA256", nextest))
+                .unwrap_or_else(|| l.to_string())
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n"
+}
+
+/// cargo-deny and cargo-nextest come as pinned prebuilt release binaries (github.com assets,
+/// sha256-checked), not from `cargo install`; a mismatch falls back to cargo, a warm binary at the
+/// pinned version downloads nothing, and no cargo tool step runs without a Cargo.toml.
+#[test]
+fn setup_scripts_download_prebuilt_cargo_tools_verified_and_fall_back_to_cargo() {
+    for (name, script) in setup_scripts() {
+        let script = with_bosun_pin(&script, "0.11.0"); // an old pin: nextest installs too
+        let version = |k: &str| {
+            script
+                .lines()
+                .find_map(|l| l.strip_prefix(&format!("{k}=")))
+                .unwrap()
+                .to_string()
+        };
+        let (dv, nv) = (
+            version("CARGO_DENY_BIN_VERSION"),
+            version("NEXTEST_VERSION"),
+        );
+        let rust = |sb: &SetupSandbox| {
+            fs::write(sb.path("repo/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        };
+        let curl_copies = |sb: &SetupSandbox| {
+            // copy the fixture that belongs to the requested asset to the -o target
+            sb.stub(
+                "bin",
+                "curl",
+                &format!(
+                    "echo \"curl $*\" >> {log}\nwhile [ $# -gt 0 ]; do [ \"$1\" = -o ] && o=\"$2\"; u=\"$1\"; shift; done\ncase \"$u\" in *cargo-deny*) cp {d} \"$o\" ;; *nextest*) cp {n} \"$o\" ;; esac",
+                    log = sb.path("calls").display(),
+                    d = sb.path("cargo-deny.tgz").display(),
+                    n = sb.path("cargo-nextest.tgz").display(),
+                ),
+            );
+        };
+
+        // Verified: both tools installed from github.com assets, cargo never builds.
+        let sb = SetupSandbox::new();
+        rust(&sb);
+        let (_, dsum) = fake_release(&sb, "cargo-deny", &dv);
+        let (_, nsum) = fake_release(&sb, "cargo-nextest", &nv);
+        curl_copies(&sb);
+        let script_ok = with_tool_sums(&script, &dsum, &nsum);
+        let (ok, err) = sb.run(&script_ok, "node24");
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert!(tool_calls(&calls, "cargo").is_empty(), "{name}: {calls}");
+        let urls = tool_calls(&calls, "curl")
+            .into_iter()
+            .filter(|c| c.contains("releases/download"))
+            .collect::<Vec<_>>();
+        assert_eq!(urls.len(), 2, "{name}: {calls}");
+        assert!(
+            urls.iter().all(|u| u.contains("https://github.com/")),
+            "{name}: {urls:?}"
+        );
+        assert!(sb.path("cargo-home/bin/cargo-deny").exists(), "{name}");
+        assert!(sb.path("cargo-home/bin/cargo-nextest").exists(), "{name}");
+
+        // Warm: the installed binaries report the pins, so a rerun downloads nothing.
+        let before = tool_calls(&sb.calls(), "curl").len();
+        let (ok, err) = sb.run(&script_ok, "node24");
+        assert!(ok, "{name}: {err}");
+        assert_eq!(tool_calls(&sb.calls(), "curl").len(), before, "{name}");
+
+        // A binary that only prints the pinned version is not trusted: it installs again.
+        fs::write(
+            sb.path("cargo-home/bin/cargo-deny"),
+            format!("#!/bin/sh\n# planted\necho 'cargo-deny {dv}'\n"),
+        )
+        .unwrap();
+        let before = tool_calls(&sb.calls(), "curl").len();
+        let (ok, err) = sb.run(&script_ok, "node24");
+        assert!(ok, "{name}: {err}");
+        assert_eq!(tool_calls(&sb.calls(), "curl").len(), before + 1, "{name}");
+
+        // A failing mktemp never aborts the step: cargo builds the tool.
+        let start = script.find("# cargo_tool <crate>").unwrap();
+        let end = script
+            .find("case \"$(uname -m)\" in\n  aarch64 | arm64) DENY_ARCH")
+            .unwrap();
+        let sb = SetupSandbox::new();
+        sb.stub("bin", "mktemp", "exit 1");
+        let body = format!(
+            "set -euo pipefail\nSETUP_STATE_DIR={}\n{}cargo_tool cargo-deny 1 http://x/y abc\necho done >> {}",
+            sb.path("state").display(),
+            &script[start..end],
+            sb.path("calls").display()
+        );
+        fs::write(sb.path("f.sh"), body).unwrap();
+        let path = format!(
+            "{}:{}",
+            sb.path("bin").display(),
+            std::env::var("PATH").unwrap()
+        );
+        let out = Command::new("bash")
+            .arg(sb.path("f.sh"))
+            .env("PATH", path)
+            .env("CARGO_HOME", sb.path("cargo-home"))
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{name}: {out:?}");
+        let calls = sb.calls();
+        assert!(
+            calls.contains("cargo install --locked cargo-deny"),
+            "{name}: {calls}"
+        );
+        assert!(calls.contains("done"), "{name}: {calls}");
+
+        // Mismatch: the pinned sha256 does not match, so cargo builds both and the script still ends 0.
+        let sb = SetupSandbox::new();
+        rust(&sb);
+        fake_release(&sb, "cargo-deny", &dv);
+        fake_release(&sb, "cargo-nextest", &nv);
+        curl_copies(&sb);
+        let (ok, err) = sb.run(&script, "node24"); // the real pins match no fixture
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert_eq!(
+            tool_calls(&calls, "cargo"),
+            [
+                "cargo install --locked cargo-deny",
+                "cargo install --locked cargo-nextest"
+            ],
+            "{name}: {calls}"
+        );
+        assert!(err.contains("pinned sha256"), "{name}: {err}");
+        assert!(!sb.path("cargo-home/bin/cargo-deny").exists(), "{name}");
+
+        // No Cargo.toml: no cargo tool download or build.
+        let sb = SetupSandbox::new();
+        curl_copies(&sb);
+        let (ok, err) = sb.run(&script, "node24");
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert!(!calls.contains("releases/download"), "{name}: {calls}");
+        assert!(tool_calls(&calls, "cargo").is_empty(), "{name}: {calls}");
+    }
+}
+
+/// A checkout with neither Cargo.toml nor rust-toolchain.toml (a ts-only repo) gets no rustup and
+/// no cargo step at all, and no Rust warning.
+#[test]
+fn setup_scripts_skip_rust_in_a_checkout_without_it() {
+    for (name, script) in setup_scripts() {
+        let sb = SetupSandbox::new();
+        let (ok, err) = sb.run(&script, "node24");
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert!(tool_calls(&calls, "rustup").is_empty(), "{name}: {calls}");
+        assert!(tool_calls(&calls, "cargo").is_empty(), "{name}: {calls}");
+        assert!(!err.contains("no rust-toolchain.toml"), "{name}: {err}");
+        assert!(!calls.contains("cargo-deny"), "{name}: {calls}");
+    }
+}
+
+/// pnpm installs only in a checkout that uses it: a pnpm-lock.yaml or a package.json whose
+/// `packageManager` names pnpm.
+#[test]
+fn setup_scripts_install_pnpm_only_where_the_checkout_uses_it() {
+    let pnpm_files = variant(&["rust", "ts-pnpm"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    let pnpm = "npm install -g pnpm@12.15.0";
+    for (name, script) in [
+        (
+            "channel+pnpm",
+            file(&pnpm_files, "docs/setup-script.sh").to_string(),
+        ),
+        ("bosun", own),
+    ] {
+        for (files, want) in [
+            (&[][..], false),
+            (&[("package.json", "{\"name\": \"a\"}")][..], false),
+            (
+                &[("package.json", "{\"packageManager\": \"npm@10.0.0\"}")][..],
+                false,
+            ),
+            (&[("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")][..], true),
+            (&[("pnpm-workspace.yaml", "packages:\n  - a\n")][..], true),
+            (
+                &[(
+                    "package.json",
+                    "{\n  \"packageManager\": \"pnpm@12.15.0\"\n}",
+                )][..],
+                true,
+            ),
+        ] {
+            let sb = SetupSandbox::new();
+            for (f, text) in files {
+                fs::write(sb.path("repo").join(f), text).unwrap();
+            }
+            let (ok, err) = sb.run(&script, "node24");
+            let calls = sb.calls();
+            assert!(ok, "{name} {files:?}: {err}");
+            assert_eq!(calls.contains(pnpm), want, "{name} {files:?}: {calls}");
+        }
+    }
+}
+
+/// With its pin set, cargo-deny installs like the keelstackhq tools from the pinned
+/// `@keelstackhq/cargo-deny` packages; a mismatch warns and falls back to `cargo install`. Its
+/// pins ship empty: the npm packages are not published yet.
+#[test]
+fn setup_scripts_install_cargo_deny_from_its_pin_when_set() {
+    for (name, script) in setup_scripts() {
+        for v in [
+            "CARGO_DENY_VERSION=\"\"",
+            "CARGO_DENY_SHA512=\"\"",
+            "CARGO_DENY_LINUX_X64_SHA512=\"\"",
+            "CARGO_DENY_LINUX_ARM64_SHA512=\"\"",
+        ] {
+            assert!(script.lines().any(|l| l == v), "{name}: no {v}");
+        }
+        let pinned = script
+            .replacen(
+                "CARGO_DENY_VERSION=\"\"",
+                "CARGO_DENY_VERSION=\"0.20.2\"",
+                1,
+            )
+            .replacen("CARGO_DENY_SHA512=\"\"", "CARGO_DENY_SHA512=\"pin\"", 1);
+        let sb = SetupSandbox::new();
+        fs::write(sb.path("repo/Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        let (ok, err) = sb.run(&pinned, "node24");
+        let calls = sb.calls();
+        assert!(ok, "{name}: {err}");
+        assert!(
+            calls.contains("npm pack --silent @keelstackhq/cargo-deny@0.20.2"),
+            "{name}: {calls}"
+        );
+        // The fake tarball matches no pin: the script warns and builds it instead.
+        assert!(
+            err.contains("@keelstackhq/cargo-deny@0.20.2 does not match its pinned sha512"),
+            "{name}: {err}"
+        );
+        assert!(
+            calls.contains("cargo install --locked cargo-deny"),
+            "{name}: {calls}"
+        );
+    }
+}
+
+/// `tool_fp` resolves `cargo-deny` like the other tools: command name = package name, and the
+/// `cargo-deny/` prefix does not match its `cargo-deny-linux-*` package.
+#[test]
+fn setup_scripts_skip_cargo_deny_at_its_recorded_fingerprint() {
+    for (name, script) in setup_scripts() {
+        let start = script.find("tool_pack() {").unwrap();
+        let end = script[start..].find("\n}\ninstall_tool ").unwrap();
+        let funcs = format!("{}\n", &script[start..start + end + 3]);
+        let call = "install_tool cargo-deny 0.20.2 a b c";
+        let rec =
+            "mkdir -p \"$SETUP_STATE_DIR\"; tool_fp cargo-deny \"$A\" >\"$REC\"; : >\"$LOG\"; ";
+        let run = |extra: &str| {
+            run_with_tool_tree("cargo-deny", "0.20.2", &format!("{funcs}{extra}{call}"))
+        };
+        let packed = "pack --silent @keelstackhq/cargo-deny@0.20.2";
+        assert!(run("").contains(packed), "{name}: no record");
+        assert!(run(rec).is_empty(), "{name}: recorded install re-fetched");
+        let log = run(&format!(
+            "{rec}echo x >>\"$ROOT/@keelstackhq/cargo-deny-linux-$A/bin/cargo-deny\"; "
+        ));
+        assert!(log.contains(packed), "{name}: {log}");
+
+        // The setup step: a verified install (its record) builds nothing; another cargo-deny on
+        // PATH, or none, falls back to `cargo install`.
+        let p = script.find("# cargo-deny for the deps gate").unwrap();
+        let blk = &script[p..p + script[p..].find("\n  fi\nfi\n").unwrap() + 8];
+        let pins = "HAS_RUST=1 BOSUN_VERSION=0.12.0 CARGO_DENY_VERSION=0.20.2 CARGO_DENY_SHA512=a \
+            CARGO_DENY_LINUX_X64_SHA512=b CARGO_DENY_LINUX_ARM64_SHA512=c \
+            NEXTEST_VERSION=1 NEXTEST_LINUX_X64_SHA256=x NEXTEST_LINUX_ARM64_SHA256=x \
+            CARGO_DENY_BIN_VERSION=0.20.2 CARGO_DENY_BIN_LINUX_X64_SHA256=x CARGO_DENY_BIN_LINUX_ARM64_SHA256=x\n\
+            cargo() { echo \"cargo $*\" >>\"$LOG\"; }\n\
+            curl() { return 22; }\nCARGO_HOME=\"$D/ch\"\n";
+        let step = |extra: &str| {
+            run_with_tool_tree(
+                "cargo-deny",
+                "0.20.2",
+                &format!("{funcs}{pins}{extra}{blk}"),
+            )
+        };
+        assert!(
+            step(rec).is_empty(),
+            "{name}: a verified cargo-deny rebuilt"
+        );
+        let build = "cargo install --locked cargo-deny";
+        let log = step("");
+        assert!(log.contains(packed) && log.contains(build), "{name}: {log}");
+        let log = step(&format!("{rec}export PATH=\"$D/wrap:$PATH\"; "));
+        assert!(log.contains(build), "{name}: {log}");
+    }
+}
+
+/// With a valid channel the pinned toolchain installs; with an invalid one it is skipped with a
+/// warning and never reaches rustup, yet the cargo tools still install.
+#[test]
+fn setup_scripts_keep_the_channel_check_when_they_install_the_tools() {
+    for (name, script) in setup_scripts() {
+        for (channel, valid) in [("1.99.1", true), ("1.0; rm -rf /", false)] {
+            let sb = SetupSandbox::new();
+            fs::write(
+                sb.path("repo/rust-toolchain.toml"),
+                format!("[toolchain]\nchannel = \"{channel}\"\n"),
+            )
+            .unwrap();
+            let (ok, err) = sb.run(&script, "node24");
+            let calls = sb.calls();
+            assert!(ok, "{name} {channel}: {err}");
+            assert_eq!(
+                calls.contains("rustup toolchain install 1.99.1"),
+                valid,
+                "{name} {channel}: {calls}"
+            );
+            if !valid {
+                assert!(!calls.contains("rm -rf"), "{name}: {calls}");
+                assert!(err.contains("invalid channel"), "{name}: {err}");
+                assert!(
+                    err.contains("skipping the Rust toolchain install"),
+                    "{name}: {err}"
+                );
+            }
+            assert!(
+                calls.contains("cargo install --locked"),
+                "{name} {channel}: {calls}"
+            );
+        }
+    }
+}
+
+/// Node 24 must be the `node` that resolves, although an older Node is earlier in PATH.
+#[test]
+fn setup_scripts_make_node_24_the_node_that_resolves() {
+    for (name, script) in setup_scripts() {
+        let sb = SetupSandbox::new();
+        let (ok, err) = sb.run(&script, "node24");
+        assert!(ok, "{name}: {err}");
+        assert!(!err.contains("not Node 24"), "{name}: {err}");
+        // The old dir is still first in PATH, and the `node` there now is Node 24.
+        let path = format!(
+            "{}:{}",
+            sb.path("node22").display(),
+            std::env::var("PATH").unwrap()
+        );
+        let out = Command::new("sh")
+            .arg("-c")
+            .arg("node --version")
+            .env("PATH", path)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "v24.1.0\n", "{name}");
+        // Later shells put the Node 24 link dir first.
+        let profile = fs::read_to_string(sb.path("profile.sh")).unwrap();
+        let link = sb.path("link").display().to_string();
+        assert!(profile.contains(&link), "{name}: {profile}");
+        assert!(sb.path("link/node").exists(), "{name}");
+
+        // Node 24 missing: warn naming both paths, do not fail.
+        let sb = SetupSandbox::new();
+        let (ok, err) = sb.run(&script, "missing");
+        assert!(ok, "{name}: {err}");
+        assert!(err.contains("not Node 24"), "{name}: {err}");
+        for p in ["node22/node", "missing/node"] {
+            let p = sb.path(p).display().to_string();
+            assert!(err.contains(&p), "{name}: {err}");
+        }
+    }
+}
+
+/// When the NodeSource `node` is not Node 24 either, the script replaces nothing and links nothing.
+#[test]
+fn setup_scripts_never_replace_node_with_another_old_node() {
+    for (name, script) in setup_scripts() {
+        let sb = SetupSandbox::new();
+        fs::create_dir(sb.path("stale")).unwrap();
+        sb.stub(
+            "stale",
+            "node",
+            "[ \"$1\" = --version ] && echo v20.9.0; exit 0",
+        );
+        let (ok, err) = sb.run(&script, "stale");
+        assert!(ok, "{name}: {err}");
+        assert!(err.contains("not Node 24"), "{name}: {err}");
+        let old = sb.path("node22/node");
+        assert!(!old.is_symlink(), "{name}: {} was replaced", old.display());
+        let out = Command::new(&old).arg("--version").output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "v22.3.0\n", "{name}");
+        assert!(!sb.path("link/node").exists(), "{name}");
+        assert!(!sb.path("profile.sh").exists(), "{name}");
+    }
+}
+
+/// A draft PR starts no heavy job in any variant (CI minutes): `bosun-trusted` skips it, the
+/// single job of a rust stack fails at once in its plan step, and the required check is never
+/// skipped. The CI-minute rules find nothing in the rendered workflow.
+#[test]
+fn drafts_skip_the_heavy_jobs_and_fail_the_required_check() {
+    for stack in [&["rust"][..], &["ts-pnpm"], &["rust", "ts-pnpm"]] {
+        for own_ci in ["", "1"] {
+            let files = variant(stack, own_ci);
+            let wf = file(&files, BOSUN_YML);
+            let found = bosun::core::ci_minutes::check(BOSUN_YML, wf);
+            assert!(found.is_empty(), "{stack:?} {own_ci:?}: {found:?}");
+            assert!(
+                wf.contains("types: [opened, synchronize, reopened, edited, ready_for_review]")
+            );
+            let Some(j) = yaml_json(wf) else { continue };
+            let jobs = j["jobs"].as_object().unwrap();
+            let check = check_name(own_ci);
+            for (id, job) in jobs {
+                let cond = job["if"].as_str().unwrap_or_default();
+                if id == check {
+                    assert!(
+                        !cond.contains("draft"),
+                        "{id}: the required check is never skipped on a draft: {cond}"
+                    );
+                } else {
+                    assert!(cond.contains("pull_request.draft == false"), "{id}: {cond}");
+                }
+            }
+            assert!(wf.contains("::error::draft: CI not run, mark ready for review"));
+        }
+    }
+}
+
+/// Run `body` under bash with stub `npm` and `pnpm` on PATH; return the npm call log.
+fn run_with_stubs(body: &str, pnpm_version: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let stub = |name: &str, text: String| {
+        fs::write(d.join(name), text).unwrap();
+        fs::set_permissions(d.join(name), fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    stub(
+        "npm",
+        "#!/bin/sh\necho \"$*\" >> \"$LOG\"\ncase \"$1\" in pack) printf abc > x.tgz; echo x.tgz ;; root) echo /nonexistent ;; esac\n"
+            .into(),
+    );
+    stub("pnpm", format!("#!/bin/sh\necho '{pnpm_version}'\n"));
+    let log = d.join("log");
+    let o = std::process::Command::new("bash")
+        .args(["-euo", "pipefail", "-c", body])
+        .current_dir(d)
+        .env(
+            "PATH",
+            format!("{}:{}", d.display(), std::env::var("PATH").unwrap()),
+        )
+        .env("LOG", &log)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    fs::read_to_string(log).unwrap_or_default()
+}
+
+/// A fake global npm tree: `npm root -g` prints $ROOT, whose @keelstackhq/<name> holds the
+/// launcher (bin/<name>.js, the file PATH links to) and @keelstackhq/<name>-linux-<arch> the
+/// binary. `body` runs with $A (arch), $ROOT, $D, $REC (the record file) set; returns the npm log.
+fn run_with_tool_tree(name: &str, version: &str, body: &str) -> String {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let arch = if cfg!(target_arch = "aarch64") {
+        "arm64"
+    } else {
+        "x64"
+    };
+    let exe = |p: &Path, text: &str| {
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+        fs::set_permissions(p, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let root = d.join("gr/lib/node_modules");
+    let prog = format!("#!/bin/sh\necho '{name} {version}'\n");
+    let launcher = root.join(format!("@keelstackhq/{name}/bin/{name}.js"));
+    exe(&launcher, &prog);
+    exe(
+        &root.join(format!("@keelstackhq/{name}-linux-{arch}/bin/{name}")),
+        "bin",
+    );
+    fs::create_dir_all(d.join("bin")).unwrap();
+    std::os::unix::fs::symlink(&launcher, d.join("bin").join(name)).unwrap();
+    // Another program of the same name that prints the pinned version, for the wrapper case.
+    exe(&d.join("wrap").join(name), &prog);
+    exe(
+        &d.join("fakebin/npm"),
+        "#!/bin/sh\n[ \"$1\" = root ] && { echo \"$ROOT\"; exit 0; }\necho \"$*\" >> \"$LOG\"\ncase \"$1\" in pack) printf abc > x.tgz; echo x.tgz ;; esac\n",
+    );
+    let log = d.join("log");
+    let path = format!(
+        "{}:{}:{}",
+        d.join("fakebin").display(),
+        d.join("bin").display(),
+        std::env::var("PATH").unwrap()
+    );
+    let o = std::process::Command::new("bash")
+        .args(["-euo", "pipefail", "-c", body])
+        .current_dir(d)
+        .env("PATH", path)
+        .env("LOG", &log)
+        .env("ROOT", &root)
+        .env("D", d)
+        .env("A", arch)
+        .env("SETUP_STATE_DIR", d.join("state"))
+        .env("REC", d.join(format!("state/{name}@{version}.sha256")))
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    fs::read_to_string(log).unwrap_or_default()
+}
+
+/// The bootstrap runs the script once per checkout, also on warm containers. A tool is skipped
+/// only when the fingerprint (sha256 over the resolved command path and every file of its
+/// launcher and linux packages) equals the one recorded at its verified install; a printed
+/// version, a changed file or another program of the same name earlier in PATH re-installs it.
+#[test]
+fn setup_scripts_skip_tools_only_at_their_recorded_fingerprint() {
+    let pnpm_files = variant(&["rust", "ts-pnpm"], "");
+    let mut scripts = setup_scripts();
+    scripts.push((
+        "channel+pnpm",
+        file(&pnpm_files, "docs/setup-script.sh").to_string(),
+    ));
+    let packed = "pack --silent @keelstackhq/splice@0.4.0";
+    for (name, script) in scripts {
+        let start = script.find("tool_pack() {").unwrap();
+        let end = script[start..].find("\n}\ninstall_tool ").unwrap();
+        let funcs = format!("{}\n", &script[start..start + end + 3]);
+        let call = "install_tool splice 0.4.0 a b c";
+        let rec = "mkdir -p \"$SETUP_STATE_DIR\"; tool_fp splice \"$A\" >\"$REC\"; : >\"$LOG\"; ";
+        let run =
+            |extra: &str| run_with_tool_tree("splice", "0.4.0", &format!("{funcs}{extra}{call}"));
+        let log = run("");
+        assert!(log.contains(packed), "{name}: no record: {log}");
+        let log = run(rec);
+        assert!(log.is_empty(), "{name}: recorded install re-fetched: {log}");
+        let log = run(&format!(
+            "{rec}export LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8; "
+        ));
+        assert!(log.is_empty(), "{name}: another locale re-fetched: {log}");
+        assert!(script.contains("LC_ALL=C sort -z"), "{name}: sort by bytes");
+        for change in [
+            "echo x >>\"$ROOT/@keelstackhq/splice-linux-$A/bin/splice\"",
+            "echo x >>\"$ROOT/@keelstackhq/splice/bin/splice.js\"",
+            "rm \"$ROOT/@keelstackhq/splice-linux-$A/bin/splice\"",
+            "export PATH=\"$D/wrap:$PATH\"",
+            // A planted symlink (no regular file changes) can win Node's module lookup.
+            "mkdir -p \"$ROOT/@keelstackhq/splice/node_modules\"; ln -s /tmp \"$ROOT/@keelstackhq/splice/node_modules/x\"",
+            "ln -s /tmp \"$ROOT/@keelstackhq/splice-linux-$A/y\"",
+        ] {
+            let log = run(&format!("{rec}{change}; "));
+            assert!(log.contains(packed), "{name} {change}: {log}");
+        }
+        // The channel installs bosun by version (no pinned integrity): same fingerprint rule.
+        if let Some(p) = script.find("# bosun's integrity is not known") {
+            let blk = &script[p..p + script[p..].find("\nbosun --version").unwrap()];
+            let brec =
+                "mkdir -p \"$SETUP_STATE_DIR\"; tool_fp bosun \"$A\" >\"$REC\"; : >\"$LOG\"; ";
+            let brun = |extra: &str, tail: &str| {
+                let body = format!("{funcs}BOSUN_VERSION=0.9.0\n{extra}{blk}\n{tail}");
+                run_with_tool_tree("bosun", "0.9.0", &body)
+            };
+            let want = "install -g --ignore-scripts @keelstackhq/bosun@0.9.0";
+            assert!(brun("", "").contains(want), "{name}: bosun, no record");
+            assert!(
+                brun(brec, "").is_empty(),
+                "{name}: recorded bosun re-fetched"
+            );
+            for change in [
+                "echo x >>\"$ROOT/@keelstackhq/bosun/bin/bosun.js\"",
+                "export PATH=\"$D/wrap:$PATH\"",
+            ] {
+                let log = brun(&format!("{brec}{change}; "), "");
+                assert!(log.contains(want), "{name} {change}: {log}");
+            }
+            // A successful install records the fingerprint for the next run.
+            brun("", "test -s \"$REC\"");
+        } else {
+            assert_eq!(
+                name, "bosun",
+                "the channel script skips bosun at its fingerprint"
+            );
+        }
+        if name == "channel" {
+            continue; // no ts-pnpm piece: no pnpm install
+        }
+        // pnpm is not integrity-pinned (npm installs it by version): its guard stays a version check.
+        let p = script
+            .find("if [ \"$(cd / && pnpm --version")
+            .unwrap_or_else(|| panic!("{name}: no pnpm guard"));
+        let blk = &script[p..p + script[p..].find("\nfi\n").unwrap() + 4];
+        let body = format!("PNPM_VERSION=12.15.0\n{blk}");
+        let same = run_with_stubs(&body, "12.15.0");
+        assert!(same.is_empty(), "{name}: pnpm re-installed: {same}");
+        let log = run_with_stubs(&body, "12.14.0");
+        assert!(log.contains("install -g pnpm@12.15.0"), "{name}: {log}");
+    }
+}
+
+/// After the install both setup scripts check `bosun --version` against BOSUN_VERSION: a stale
+/// bosun earlier on PATH is shadowed by the npm-global one and the script warns loudly.
+#[test]
+fn setup_scripts_assert_the_installed_bosun_is_the_pinned_one() {
+    use std::os::unix::fs::PermissionsExt;
+    let files = variant(&["rust"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    let stub = |dir: &Path, name: &str, body: &str| {
+        fs::create_dir_all(dir).unwrap();
+        let p = dir.join(name);
+        fs::write(&p, format!("#!/bin/sh\n{body}\n")).unwrap();
+        fs::set_permissions(&p, fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    for script in [file(&files, "docs/setup-script.sh"), &own] {
+        let start = script
+            .find("# The installed bosun must be")
+            .expect("check block");
+        let end = start + script[start..].find("\nfi\n").unwrap() + 4;
+        let block = &script[start..end];
+        let t = tempfile::tempdir().unwrap();
+        let g = t.path().join("g");
+        stub(&t.path().join("old"), "bosun", "echo bosun 0.1.0");
+        stub(&g.join("bin"), "bosun", "echo bosun 9.9.9");
+        let npm = format!("[ \"$1\" = prefix ] && echo {}", g.display());
+        stub(&t.path().join("old"), "npm", &npm);
+        let run = |pinned: &str| {
+            let path = format!("{}:/usr/bin:/bin", t.path().join("old").display());
+            let cmd = format!("BOSUN_VERSION={pinned}\n{block}\nbosun --version");
+            let out = Command::new("bash")
+                .args(["-c", &cmd])
+                .env("PATH", path)
+                .output()
+                .unwrap();
+            let s = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+            (s(&out.stdout), s(&out.stderr))
+        };
+        let (o, e) = run("9.9.9");
+        assert!(o.contains("9.9.9") && e.contains("WARNING"), "{o}{e}");
+        let (o, e) = run("5.5.5");
+        assert!(e.contains("not the pinned 5.5.5"), "{o}{e}");
+        let (_, e) = run("0.1.0");
+        assert!(!e.contains("WARNING"), "{e}");
+    }
+}

@@ -1,0 +1,499 @@
+//! What commands share: the loaded context with a GitHub client, the kill switch, main-red,
+//! state changes and the issues that hold leases.
+
+use std::path::Path;
+use std::sync::OnceLock;
+
+use crate::cli::risk_check::owner_logins;
+use crate::config::{LIMITS_FILE, Limits};
+use crate::core::glob::Glob;
+use crate::core::lease::{Lease, leases_of, race_winner};
+use crate::core::meta::{TaskMeta, closing_issues_in, parse_task_meta};
+use crate::core::records::{Note, Record, parse_record, replace_record};
+use crate::core::state::{State, labels_to_remove, state_of, transition_allowed};
+use crate::ctx::Ctx;
+use crate::github::{Github, Issue, IssueState, LiveGithub, Pull, Variable};
+use crate::output::BosunError;
+use crate::time::{Timestamp, parse_rfc3339};
+use serde_json::json;
+
+pub type Result<T> = std::result::Result<T, BosunError>;
+
+pub const MAIN_RED_LABEL: &str = "bosun:main-red";
+pub const HALT_LABEL: &str = "bosun:halt";
+
+pub struct App {
+    pub ctx: Ctx,
+    pub gh: Box<dyn Github>,
+}
+
+impl App {
+    /// Context from the environment and the live client for its repo.
+    pub fn load(dir: Option<&Path>) -> Result<App> {
+        let ctx = Ctx::load(dir)?;
+        let gh = Box::new(LiveGithub::new(&ctx.repo.owner, &ctx.repo.name)?);
+        Ok(App { ctx, gh })
+    }
+}
+
+/// Exit 4 when bosun is halted (see [`halt_reason`]), or when it cannot tell (fail closed).
+pub fn kill_switch(gh: &dyn Github) -> Result<()> {
+    match halt_reason(gh)? {
+        Some((reason, fix)) => Err(BosunError::halted(reason, fix)),
+        None => Ok(()),
+    }
+}
+
+/// Why bosun is halted, with the fix; `None` when it is not (spec §8, kill switch). Two
+/// sources, either one halts: an open `bosun:halt` issue opened by an owner (owners from the
+/// default branch), and the repo variable `BOSUN_HALT=1`. Any error reading the issues or the
+/// owners is exit 4. For the variable, 404 (unset) and 403 (not readable from this token) are
+/// no signal; any other error is exit 4.
+pub fn halt_reason(gh: &dyn Github) -> Result<Option<(String, String)>> {
+    let closed = |what: &str, e: BosunError| {
+        BosunError::halted(
+            format!("cannot read {what}: {}", e.message),
+            format!(
+                "give the token Issues: read and Contents: read; bosun stays halted until it can read {what}"
+            ),
+        )
+    };
+    let issues = gh
+        .list_issues(&[HALT_LABEL], IssueState::Open)
+        .map_err(|e| closed("the bosun:halt issues", e))?;
+    if !issues.is_empty() {
+        let owners = default_ref(gh)
+            .and_then(|r| owner_logins(gh, &r))
+            .map_err(|e| closed("the owners on the default branch", e))?;
+        if owners.is_empty() {
+            return Ok(Some((
+                format!(
+                    "halt issue #{} is open and no owners are listed to judge it",
+                    issues[0].number
+                ),
+                "fill governance/owners.toml on the default branch, or close the halt issue".into(),
+            )));
+        }
+        let by_owner = issues
+            .iter()
+            .find(|i| owners.iter().any(|o| o.eq_ignore_ascii_case(&i.user)));
+        if let Some(i) = by_owner {
+            return Ok(Some((
+                format!(
+                    "halt issue #{} by {} is open: the owner stopped all work",
+                    i.number, i.user
+                ),
+                format!("wait for the owner to close #{}", i.number),
+            )));
+        }
+    }
+    match gh.variable("BOSUN_HALT") {
+        Ok(Variable::Set(v)) if v.trim() == "1" => Ok(Some((
+            "BOSUN_HALT=1: the owner stopped all work".into(),
+            "wait for the owner to set BOSUN_HALT=0".into(),
+        ))),
+        Ok(_) => Ok(None),
+        Err(e) => Err(BosunError::halted(
+            format!("cannot read the BOSUN_HALT variable: {}", e.message),
+            "retry; only 404 (unset) or 403 (not readable) on BOSUN_HALT count as no signal",
+        )),
+    }
+}
+
+/// The repo's default branch from GitHub, looked up once per process.
+pub fn default_branch(gh: &dyn Github) -> Result<String> {
+    static CACHE: OnceLock<String> = OnceLock::new();
+    if let Some(b) = CACHE.get() {
+        return Ok(b.clone());
+    }
+    let info = gh.repo_info()?.ok_or_else(|| {
+        BosunError::error(
+            "cannot read the repository to find its default branch",
+            "give the GitHub token access to the repo",
+        )
+    })?;
+    Ok(CACHE.get_or_init(|| info.default_branch).clone())
+}
+
+/// `refs/heads/<default branch>`: the full ref, so a tag or another ref named like the branch
+/// cannot stand in for it when governance files are read.
+pub fn default_ref(gh: &dyn Github) -> Result<String> {
+    Ok(format!("refs/heads/{}", default_branch(gh)?))
+}
+
+/// The number of an open issue labelled `bosun:main-red`.
+pub fn main_red(gh: &dyn Github) -> Result<Option<u64>> {
+    Ok(gh
+        .list_issues(&[MAIN_RED_LABEL], IssueState::Open)?
+        .first()
+        .map(|i| i.number))
+}
+
+/// Move an issue to `to`: refuse a transition the state machine forbids (exit 3), remove the
+/// other state labels, add the new one.
+pub fn set_state(gh: &dyn Github, number: u64, issue: &Issue, to: State) -> Result<()> {
+    if let Some(from) = state_of(&issue.labels)
+        && !transition_allowed(from, to)
+    {
+        return Err(BosunError::conflict(
+            format!("#{number} cannot move from {from} to {to}"),
+            format!("check `bosun status`; #{number} is {from}, which does not lead to {to}"),
+        ));
+    }
+    gh.ensure_label(&to.label(), "ededed", "bosun task state")?;
+    for label in labels_to_remove(&issue.labels, to) {
+        gh.remove_label(number, &label)?;
+    }
+    gh.add_labels(number, &[&to.label()])
+}
+
+/// The limits that bind enforcing commands: `.bosun/limits.toml` on the default branch, or the
+/// spec defaults when it is absent there. The working tree copy is not trusted: an uncommitted
+/// edit must not raise a hard cap. A differing local file is mentioned on stderr.
+pub fn limits_from_default(gh: &dyn Github, ctx: &Ctx) -> Result<Limits> {
+    // No repo info (a bare fake or an odd token): the limits of `main` apply.
+    let branch = default_branch(gh).unwrap_or_else(|_| "main".to_string());
+    let limits = match gh.file_at(LIMITS_FILE, &branch)? {
+        Some(text) => Limits::parse(&text, &format!("{LIMITS_FILE} on {branch}"))?,
+        None => Limits::default(),
+    };
+    if limits != ctx.limits {
+        eprintln!(
+            "bosun: warning: {LIMITS_FILE} in the working tree differs from the one on the default branch ({branch}); \
+             the default branch applies"
+        );
+    }
+    Ok(limits)
+}
+
+/// The gated path globs (risk-rule paths) of `.bosun/risk.toml` on the default branch, or of the
+/// built-in rules when it is absent there. The working tree copy is not trusted.
+pub fn gated_from_default(gh: &dyn Github) -> Result<Vec<Glob>> {
+    let branch = default_branch(gh).unwrap_or_else(|_| "main".to_string());
+    let rules = match gh.file_at(".bosun/risk.toml", &branch)? {
+        Some(text) => crate::core::risk::Rules::parse(&text).map_err(|e| {
+            BosunError::error(
+                format!(".bosun/risk.toml on {branch}: {e}"),
+                "fix .bosun/risk.toml on the default branch, or remove it to use the built-in rules",
+            )
+        })?,
+        None => crate::core::risk::Rules::defaults(),
+    };
+    Ok(crate::core::shape::gated_globs(&rules))
+}
+
+/// The blob paths of the default branch's tree, for resolving wildcard touches against gated
+/// paths. `None` when the tree is unreadable or GitHub cut it short (`truncated`). One read; the
+/// caller keeps the answer for the whole command.
+pub fn base_files(gh: &dyn Github) -> Result<Option<Vec<String>>> {
+    let branch = default_branch(gh).unwrap_or_else(|_| "main".to_string());
+    // GitHub's tree endpoint takes a branch name as well as a tree sha.
+    // Any read error is "not available" (fail closed in the callers), not a failed command.
+    let tree = gh.tree(&branch).unwrap_or_else(|e| {
+        eprintln!("bosun: cannot read the tree of {branch}: {}", e.message);
+        None
+    });
+    Ok(tree.filter(|t| !t.truncated).map(|t| {
+        (t.entries.into_iter())
+            .filter(|e| e.kind == "blob")
+            .map(|e| e.path)
+            .collect()
+    }))
+}
+
+/// The comments of an issue, oldest first.
+pub fn notes(gh: &dyn Github, number: u64) -> Result<Vec<Note>> {
+    Ok(gh
+        .list_comments(number)?
+        .into_iter()
+        .map(|c| Note {
+            id: c.id,
+            body: c.body,
+            created_at: parse_rfc3339(&c.created_at).unwrap_or(Timestamp(0)),
+        })
+        .collect())
+}
+
+/// The comments of an issue written by users with admin or write access, oldest first. A
+/// record from anyone else (a read-only user, an outsider) is forged until proven otherwise.
+pub fn trusted_notes(gh: &dyn Github, number: u64) -> Result<Vec<Note>> {
+    notes_from(gh, number, Count::Writers)
+}
+
+/// As [`trusted_notes`], plus the `lease` records of logins whose permission a proxy hides
+/// (`unknown`). For refusals only (an overlapping claim, a lost race): such a lease can block,
+/// never be evidence for anything (an edit lock, a D-017 author lease, an approval).
+pub fn blocking_notes(gh: &dyn Github, number: u64) -> Result<Vec<Note>> {
+    notes_from(gh, number, Count::Blocking)
+}
+
+/// As [`trusted_notes`], plus comments by the workflow bot (`github-actions[bot]`, whose
+/// permission lookup is not `write`): review-ci posts its spend as the bot, and only a workflow
+/// with a write token can post as it. Spend dropped here would make the daily stop fail open.
+pub fn spend_notes(gh: &dyn Github, number: u64) -> Result<Vec<Note>> {
+    notes_from(gh, number, Count::Spend)
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Count {
+    Writers,
+    Blocking,
+    Spend,
+}
+
+fn notes_from(gh: &dyn Github, number: u64, mode: Count) -> Result<Vec<Note>> {
+    let bot = mode == Count::Spend;
+    #[derive(Clone, Copy, PartialEq)]
+    enum Who {
+        Writer,
+        Unknown,
+        Other,
+    }
+    let mut cache: std::collections::HashMap<String, Who> = std::collections::HashMap::new();
+    let mut out = Vec::new();
+    for c in gh.list_comments(number)? {
+        let is_bot = bot
+            && c.user
+                .eq_ignore_ascii_case(crate::core::risk::VERDICT_AUTHOR);
+        let who = match cache.get(&c.user) {
+            _ if is_bot => Who::Writer,
+            Some(w) => *w,
+            None => {
+                let perm = gh.permission(&c.user)?.unwrap_or_default();
+                // GitHub reports the maintain role as `write`.
+                let w = match perm.as_str() {
+                    "admin" | "write" => Who::Writer,
+                    crate::github::UNKNOWN_PERMISSION => Who::Unknown,
+                    _ => Who::Other,
+                };
+                cache.insert(c.user.clone(), w);
+                w
+            }
+        };
+        // A proxy that hides permissions makes a login `unknown`: its `spend` records still
+        // count toward the caps and (for refusals only) its `lease` records block; nothing that
+        // approves or answers does, and no lease is evidence for anything.
+        let counts = match who {
+            Who::Writer => true,
+            Who::Unknown => matches!(
+                (mode, parse_record(&c.body)),
+                (Count::Spend, Some(Record::Spend { .. }))
+                    | (Count::Blocking, Some(Record::Lease { .. }))
+            ),
+            Who::Other => false,
+        };
+        if counts {
+            out.push(Note {
+                id: c.id,
+                body: c.body,
+                created_at: parse_rfc3339(&c.created_at).unwrap_or(Timestamp(0)),
+            });
+        }
+    }
+    Ok(out)
+}
+
+/// The task metadata of an issue.
+pub fn task_meta(issue: &Issue) -> Option<TaskMeta> {
+    parse_task_meta(issue.body_text())
+}
+
+/// Open issues in a state that holds a lease, with their comments, by issue number.
+pub fn active_issues(gh: &dyn Github) -> Result<Vec<(Issue, Vec<Note>)>> {
+    active_issues_with(gh, trusted_notes)
+}
+
+/// As [`active_issues`], with [`blocking_notes`]: for overlap refusals only.
+pub fn active_issues_blocking(gh: &dyn Github) -> Result<Vec<(Issue, Vec<Note>)>> {
+    active_issues_with(gh, blocking_notes)
+}
+
+fn active_issues_with(
+    gh: &dyn Github,
+    read: fn(&dyn Github, u64) -> Result<Vec<Note>>,
+) -> Result<Vec<(Issue, Vec<Note>)>> {
+    let mut found: Vec<Issue> = Vec::new();
+    for st in State::ALL.into_iter().filter(|s| s.is_active()) {
+        for issue in gh.list_issues(&[&st.label()], IssueState::Open)? {
+            if !found.iter().any(|i| i.number == issue.number) {
+                found.push(issue);
+            }
+        }
+    }
+    found.sort_by_key(|i| i.number);
+    found
+        .into_iter()
+        .map(|i| {
+            let n = read(gh, i.number)?;
+            Ok((i, n))
+        })
+        .collect()
+}
+
+/// After posting a lease (comment `comment_id` on `issue`), re-read the comments of `issue` and
+/// of `others` (the active issues that could hold an overlapping lease). When a live lease of
+/// another claim, on `issue` or overlapping `touch`, has an earlier comment, post `lease-end`
+/// (reason `lost-race`) for the new lease and return exit 3 naming the winner (spec §4).
+pub fn settle_race(
+    gh: &dyn Github,
+    session: &str,
+    issue: u64,
+    comment_id: u64,
+    touch: &[Glob],
+    others: &[u64],
+    now: Timestamp,
+) -> Result<()> {
+    let mut fresh = vec![(issue, blocking_notes(gh, issue)?)];
+    for &n in others.iter().filter(|&&n| n != issue) {
+        fresh.push((n, blocking_notes(gh, n)?));
+    }
+    let Some(w) = race_winner(issue, comment_id, touch, &fresh, now) else {
+        return Ok(());
+    };
+    end_lease(gh, issue, session, "lost-race")?;
+    Err(BosunError::conflict(
+        format!(
+            "lost the claim race for #{issue} to {} (lease on #{} until {})",
+            w.session, w.issue, w.expires
+        ),
+        "the other lease was written first; pick another task with `bosun wave plan`, or wait for it",
+    )
+    .with_data(json!({"winner": {"issue": w.issue, "session": w.session,
+        "expires": w.expires.to_string()}})))
+}
+
+/// Post the `lease-end` record of `session` on an issue.
+pub fn end_lease(gh: &dyn Github, number: u64, session: &str, reason: &str) -> Result<u64> {
+    let record = Record::LeaseEnd {
+        session: session.into(),
+        reason: reason.into(),
+    };
+    Ok(gh.add_comment(number, &record.to_line())?.id)
+}
+
+/// Edit a lease comment in place so the lease expires at `expires` (`notes` are the comments of
+/// its issue). No comment is added.
+pub fn renew_lease(
+    gh: &dyn Github,
+    lease: &Lease,
+    notes: &[Note],
+    expires: Timestamp,
+) -> Result<()> {
+    let body = notes
+        .iter()
+        .find(|n| n.id == lease.comment_id)
+        .map_or("", |n| n.body.as_str());
+    // A heartbeat keeps the Slack thread of the lease it renews.
+    let thread_ts = match parse_record(body) {
+        Some(Record::Lease { thread_ts, .. }) => thread_ts,
+        _ => None,
+    };
+    let record = Record::Lease {
+        session: lease.session.clone(),
+        origin: lease.origin.clone(),
+        expires: expires.to_string(),
+        touch: lease.touch.clone(),
+        thread_ts,
+    };
+    gh.update_comment(lease.comment_id, &replace_record(body, &record))?;
+    Ok(())
+}
+
+/// Whether a merged PR may move this task: a `queued` task always (auto-merge), a `building`,
+/// `review` or `fixing` one only when its issue is closed (GitHub closes it when a `Closes #N`
+/// PR merges into the default branch; an open issue means the work is not done).
+pub fn merge_counts(issue: &Issue) -> bool {
+    state_of(&issue.labels) == Some(State::Queued) || issue.state == "closed"
+}
+
+/// Whether `user` has write or admin permission on the repo.
+pub fn is_writer(gh: &dyn Github, user: &str) -> Result<bool> {
+    Ok(matches!(
+        gh.permission(user)?.unwrap_or_default().as_str(),
+        "admin" | "write"
+    ))
+}
+
+/// Whether the PR a task names as its own merged into `base`. The PR must close the task
+/// (`Closes #N` in its body), whoever names it: the newest `task-pr` record of a trusted writer
+/// (`trusted_notes`), else (with `scan`) a PR found in `pulls` (listed once, on first use) that
+/// closes the task and was opened by a writer. An open such PR means not merged. Without a
+/// usable record and without `scan`, no PR list is read.
+pub fn task_pr_merged(
+    gh: &dyn Github,
+    repo: &str,
+    base: &str,
+    number: u64,
+    pulls: &mut Option<Vec<Pull>>,
+    scan: bool,
+) -> Result<bool> {
+    let recorded =
+        trusted_notes(gh, number)?
+            .iter()
+            .rev()
+            .find_map(|n| match parse_record(&n.body) {
+                Some(Record::TaskPr { pr, .. }) => Some(pr),
+                _ => None,
+            });
+    if let Some(pr) = recorded
+        && let Some(p) = gh.get_pull(pr)?
+        && closing_issues_in(&p.body, Some(repo)).contains(&number)
+    {
+        match (p.state.as_str(), p.merged && p.base_ref == base) {
+            ("open", _) => return Ok(false),
+            (_, true) => return Ok(true),
+            _ => {}
+        }
+    }
+    if !scan {
+        return Ok(false);
+    }
+    let all = match pulls {
+        Some(p) => p,
+        None => pulls.insert(gh.list_pulls(None, IssueState::All)?),
+    };
+    let mut ours: Vec<&Pull> = Vec::new();
+    for p in all
+        .iter()
+        .filter(|p| closing_issues_in(&p.body, Some(repo)).contains(&number))
+    {
+        if is_writer(gh, &p.user)? {
+            ours.push(p);
+        }
+    }
+    if ours.iter().any(|p| p.state == "open") {
+        return Ok(false);
+    }
+    for p in ours.iter().filter(|p| p.base_ref == base) {
+        // Lists do not say `merged`; read the closed PR.
+        if gh.get_pull(p.number)?.is_some_and(|f| f.merged) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// The PR of `number` merged (auto-merge, or a human): move a `building`, `review`, `fixing` or
+/// `queued` task to `merged` and end the leases on the issue (only the one of `only_session` when
+/// given) with reason `merged`. Any other state is left alone. Returns whether the state moved.
+/// GitHub or a human merges, never an agent (spec D13).
+pub fn sync_merged(
+    gh: &dyn Github,
+    number: u64,
+    issue: &Issue,
+    only_session: Option<&str>,
+) -> Result<bool> {
+    if !matches!(
+        state_of(&issue.labels),
+        Some(State::Building | State::Review | State::Fixing | State::Queued)
+    ) {
+        return Ok(false);
+    }
+    set_state(gh, number, issue, State::Merged)?;
+    for lease in leases_of(number, &trusted_notes(gh, number)?) {
+        if only_session.is_none_or(|s| s == lease.session) {
+            end_lease(gh, number, &lease.session, "merged")?;
+        }
+    }
+    Ok(true)
+}

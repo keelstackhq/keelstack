@@ -1,0 +1,2205 @@
+//! `bosun risk-check <pr>`: judge a PR with the risk rules of its base branch (spec section 8).
+//! The rules, the owners and the manifests at base are read at the base SHA, never from the head.
+
+use std::path::Path;
+
+use serde_json::json;
+
+use super::RiskCheckArgs;
+use super::carry_over::{candidates, carry_approval, carry_verdict, has_verdict, is_verdict};
+use super::verdict::{APPROVABLE, CONTEXT as VERDICT, apply as apply_verdict, neutral_refusal};
+use crate::app::{App, Result, default_branch, default_ref, halt_reason, task_meta, trusted_notes};
+use crate::config::{CONFIG_FILE, Config};
+use crate::core::approve;
+use crate::core::approve::{
+    APPROVERS_PATH, ApproverKey, Form, OrchestratorCase, Policy, Role, orchestrator_counts,
+    parse_approvers, signature_lines, signed_message, signed_message_autonomous,
+    signed_message_bootstrap, signed_message_v2, trust_files_changed, verify_ed25519,
+};
+use crate::core::lease::{Member, leases_of};
+use crate::core::meta::{closing_issues_in, linked_issues_in};
+use crate::core::records::{Note, Record};
+use crate::core::risk::{
+    self, Approval, ChangedFile, FileView, Rules, VERDICTS_NEEDED, added_lines, apply_floor,
+    capability_labels, clean_verdicts, comment_approves, evaluate, lease_sessions,
+    new_dependencies, parse_owners_in, plain, replace_note, requirement, risk_note, two_verdicts,
+    unseen_diff,
+};
+use crate::core::touch::{Changed, outside, plan_tick_file};
+use crate::core::verdict::{Verdict, bot_verdict_json, comment_json, effective};
+use crate::core::weaken;
+use crate::ctx::{Ctx, RepoId};
+use crate::gates::{adapters, ts};
+use crate::github::gate::GateWriter;
+use crate::github::{Comment, Github, Issue, PrFile, Pull, Review, b64};
+use crate::output::{BosunError, CmdResult, Exit, Outcome};
+use crate::time::{Timestamp, parse_rfc3339};
+
+const RULES_PATH: &str = ".bosun/risk.toml";
+pub const OWNERS_PATH: &str = "governance/owners.toml";
+const CONTEXT: &str = "risk-check";
+/// A base with this file carries bosun's own approval code, which is then critical too.
+const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
+
+/// Owner logins from `governance/owners.toml` at `git_ref`; empty when the file is missing.
+pub fn owner_logins(gh: &dyn Github, git_ref: &str) -> Result<Vec<String>> {
+    let Some(text) = gh.file_at(OWNERS_PATH, git_ref)? else {
+        return Ok(Vec::new());
+    };
+    let owners = parse_owners_in(&text, gh.repo_owner()).map_err(|e| {
+        BosunError::error(
+            e,
+            format!("fix {OWNERS_PATH}: one `[[owner]]` table with `github = \"login\"` per owner"),
+        )
+    })?;
+    Ok(owners.into_iter().filter_map(|o| o.github).collect())
+}
+
+/// Slack IDs of the owners in `governance/owners.toml` at `git_ref`; empty when none is set.
+pub fn owner_slack_ids(gh: &dyn Github, git_ref: &str) -> Result<Vec<String>> {
+    let Some(text) = gh.file_at(OWNERS_PATH, git_ref)? else {
+        return Ok(Vec::new());
+    };
+    let owners = parse_owners_in(&text, gh.repo_owner()).map_err(|e| {
+        BosunError::error(
+            e,
+            format!("fix {OWNERS_PATH}: one `[[owner]]` table with `github = \"login\"` per owner"),
+        )
+    })?;
+    Ok(owners.into_iter().filter_map(|o| o.slack).collect())
+}
+
+pub(crate) fn is_manifest(path: &str) -> bool {
+    matches!(
+        path.rsplit('/').next(),
+        Some("Cargo.toml" | "package.json" | "pnpm-workspace.yaml")
+    )
+}
+
+pub fn run(dir: Option<&Path>, args: &RiskCheckArgs) -> CmdResult {
+    let Some(n) = args.pr.filter(|_| !args.local) else {
+        return super::risk_local::run(dir);
+    };
+    let app = App::load(dir)?;
+    let gh = app.gh.as_ref();
+    let pull = gh.get_pull(n)?.ok_or_else(|| {
+        BosunError::error(
+            format!("PR #{n} does not exist"),
+            "check the number; `gh pr list` lists the open PRs",
+        )
+    })?;
+    let w = GateWriter::for_ctx(gh, &app.ctx).dry(args.dry_run);
+    // In flight, a required check is pending, so auto-merge waits for this run's verdict.
+    if let Err(e) = w.post(&pull.head_sha, CONTEXT, "pending", PENDING) {
+        eprintln!(
+            "bosun: risk-check: cannot post the pending status: {}",
+            e.message
+        );
+    }
+    let out = judge(app.gh.as_ref(), &app.ctx, Some(&app), &w, pull.clone());
+    // A run that cannot finish must not leave `pending` behind (exit 5 posted its verdict).
+    if out.as_ref().is_err_and(|e| e.exit != Exit::NeedsHuman) {
+        // The cleanup write must not fail on the time budget that stopped the run.
+        gh.set_budget(None);
+        _ = w.post(&pull.head_sha, CONTEXT, "error", UNFINISHED);
+    }
+    if args.dry_run {
+        return match out {
+            Ok(mut o) => {
+                o.data["dry_run"] = json!(true);
+                Ok(o)
+            }
+            Err(mut e) => {
+                if let Some(d) = e.data.as_mut().filter(|d| d.is_object()) {
+                    d["dry_run"] = json!(true);
+                }
+                Err(e)
+            }
+        };
+    }
+    out
+}
+
+const PENDING: &str = "risk-check is judging this head";
+const UNFINISHED: &str = "risk-check could not finish; fix the error and re-run the risk workflow";
+
+/// R-weaken evidence (spec §8): gate files compared at base and head, diffs, deleted or thinned
+/// tests. Deduplicated, in file order.
+/// Whether the plan file at `base` rates the task bound to issue `n` (a trusted `bind` record)
+/// `risk: high`. No bind: no. A bind whose plan is missing or unparsable at base: an error.
+fn bound_task_is_high(gh: &dyn Github, n: u64, base: &str) -> Result<bool> {
+    // A read error fails the check: never a silent "not high".
+    for (_, r) in crate::cli::budget::binds_of(gh, n)? {
+        if let Record::Bind {
+            plan,
+            item,
+            task: Some(t),
+            ..
+        } = r
+        {
+            // The bind names this plan: if it cannot be read at the base, the task's risk is
+            // unknown, and a plan an author deleted or broke must not read as "not high".
+            let unknown = |why: &str| {
+                BosunError::error(
+                    format!("plan {plan} {why} at {base}, so the risk of task #{n} is unknown"),
+                    format!(
+                        "restore {plan} on the base branch (or fix its syntax), then re-run the risk workflow"
+                    ),
+                )
+            };
+            let Some(text) = gh.file_at(&plan, base)? else {
+                return Err(unknown("is missing"));
+            };
+            let Ok(parsed) = crate::core::plan::parse(&text) else {
+                return Err(unknown("does not parse"));
+            };
+            let mut tasks = (parsed.items.iter())
+                .filter(|i| i.id == item)
+                .flat_map(|i| &i.tasks)
+                .filter(|x| x.id == t)
+                .peekable();
+            if tasks.peek().is_none() {
+                return Err(unknown("has no such task"));
+            }
+            return Ok(tasks.any(|x| x.risk == "high"));
+        }
+    }
+    Ok(false)
+}
+
+/// A task is a one-off (the size cap and `R-oneoff-size` apply) unless it is planned: the issue
+/// has no `bosun:source/oneoff` label, its marker does not say `oneoff`, and the marker's item
+/// holds the marker's task in a plan file on `base`. The plan files read are the ones trusted
+/// binds name plus `plans/<project>.md`; the body is the agent's, so it can only make a task more
+/// of a one-off. A plan that is missing or does not parse leaves the task a one-off (fail closed).
+pub(crate) fn is_one_off(
+    gh: &dyn Github,
+    issue: &Issue,
+    meta: &crate::core::meta::TaskMeta,
+    base: &str,
+    project: &str,
+) -> Result<bool> {
+    use crate::core::shape::{ONE_OFF_ITEM, ONE_OFF_LABEL};
+    if meta.item == ONE_OFF_ITEM || issue.labels.iter().any(|l| l == ONE_OFF_LABEL) {
+        return Ok(true);
+    }
+    let mut plans = vec![format!("plans/{project}.md")];
+    for (_, r) in crate::cli::budget::binds_of(gh, issue.number)? {
+        if let Record::Bind { plan, .. } = r {
+            let plan = plan.trim_start_matches("./").to_string();
+            if !plans.contains(&plan) {
+                plans.push(plan);
+            }
+        }
+    }
+    for plan in plans {
+        let parsed = gh
+            .file_at(&plan, base)?
+            .and_then(|text| crate::core::plan::parse(&text).ok());
+        let planned = parsed.is_some_and(|p| {
+            (p.items.iter())
+                .filter(|i| i.id == meta.item)
+                .flat_map(|i| &i.tasks)
+                .any(|x| x.id == meta.task)
+        });
+        if planned {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+/// Where R-weaken reads files: GitHub (a PR) or the local git (`--local`).
+pub(crate) trait Files {
+    /// The text of `path` at `at`; `None` when it is not there.
+    fn read(&self, path: &str, at: &str) -> Result<Option<String>>;
+    /// Every file path at `at`; `None` when it cannot be listed whole.
+    fn paths(&self, at: &str) -> Option<Vec<String>>;
+}
+
+struct Remote<'a>(&'a dyn Github);
+
+impl Files for Remote<'_> {
+    fn read(&self, path: &str, at: &str) -> Result<Option<String>> {
+        self.0.file_at(path, at)
+    }
+    fn paths(&self, at: &str) -> Option<Vec<String>> {
+        let t = self.0.tree(at).ok()?.filter(|t| !t.truncated)?;
+        Some(
+            t.entries
+                .into_iter()
+                .filter(|e| e.kind == "blob")
+                .map(|e| e.path)
+                .collect(),
+        )
+    }
+}
+
+pub(crate) fn weaken_findings(
+    gh: &dyn Github,
+    pr_files: &[PrFile],
+    base: &str,
+    head: &str,
+) -> Result<Vec<String>> {
+    weaken_from(&Remote(gh), pr_files, base, head)
+}
+
+/// The changed Rust files that are test code, where a lone `dead_code` allow is no finding:
+/// a Cargo `tests/` file no `#[path]` pulls in, or a file only `#[cfg(test)] #[path]` mods pull
+/// in. The mods are read at `base` from every Rust file outside Cargo `tests/` (at most 300).
+/// None when the PR adds or changes a `#[path]` line or hides a Rust diff, or a read fails.
+fn test_code(src: &dyn Files, files: &[PrFile], base: &str) -> Vec<String> {
+    let adds = |f: &&PrFile| {
+        let ins = f.patch.as_deref().map(|p| weaken::split_patch(p).1);
+        ins.is_some_and(|i| i.iter().any(|l| weaken::dead_code_allow(l)))
+    };
+    let wanted: Vec<&str> = (files.iter().filter(adds))
+        .filter(|f| f.filename.ends_with(".rs"))
+        .map(|f| f.filename.as_str())
+        .collect();
+    let patches: Vec<(&str, Option<&str>)> = (files.iter())
+        .map(|f| (f.filename.as_str(), f.patch.as_deref()))
+        .collect();
+    if wanted.is_empty() || !risk::path_attributes(&patches).is_empty() {
+        return Vec::new();
+    }
+    let Some(paths) = src.paths(base) else {
+        return Vec::new();
+    };
+    let rs: Vec<&String> = (paths.iter())
+        .filter(|p| p.ends_with(".rs") && !weaken::cargo_test_file(p))
+        .collect();
+    let mut mods = Vec::new();
+    for p in rs.iter().take(if rs.len() > 300 { 0 } else { 300 }) {
+        match src.read(p, base) {
+            Ok(Some(t)) => mods.extend(weaken::path_mods(p, &t)),
+            _ => return Vec::new(),
+        }
+    }
+    if rs.len() > 300 || mods.iter().any(|(m, _)| m == "?") {
+        return Vec::new();
+    }
+    let by = |f: &str, test: bool| mods.iter().any(|(m, t)| m == f && *t == test);
+    (wanted.into_iter())
+        .filter(|f| match weaken::cargo_test_file(f) {
+            true => !by(f, true) && !by(f, false),
+            false => by(f, true) && !by(f, false),
+        })
+        .map(String::from)
+        .collect()
+}
+
+pub(crate) fn weaken_from(
+    src: &dyn Files,
+    pr_files: &[PrFile],
+    base: &str,
+    head: &str,
+) -> Result<Vec<String>> {
+    let test_files = test_code(src, pr_files, base);
+    let patches = || {
+        pr_files
+            .iter()
+            .filter_map(|f| Some((&f.filename, f.patch.as_deref()?)))
+    };
+    let added: Vec<String> = patches()
+        .flat_map(|(n, p)| weaken::ci_commands(n, p).1)
+        .collect();
+    let mut out = Vec::new();
+    for f in pr_files {
+        let p = f.patch.as_deref();
+        out.extend(
+            p.map(|p| {
+                let n = &f.filename;
+                let test = test_files.contains(n);
+                weaken::code_findings(n, p, &added, test)
+            })
+            .unwrap_or_default(),
+        );
+        // Each side of a rename on its own: the path left behind falls back to its built-in (or
+        // nothing), the new path is judged against what it replaces, never the moved file.
+        let prev = f.previous_filename.as_deref().filter(|p| *p != f.filename);
+        for (path, here) in [
+            (f.filename.as_str(), true),
+            (prev.unwrap_or_default(), false),
+        ] {
+            if path.is_empty() || !weaken::reads_text(path) {
+                continue;
+            }
+            let at_base = f.status != "added" && !(here && prev.is_some());
+            let old = match at_base {
+                true => src.read(path, base)?,
+                false => builtin_base(path).map(str::to_string),
+            };
+            let new = match here && f.status != "removed" {
+                true => src.read(path, head)?,
+                false => builtin_base(path).map(str::to_string),
+            };
+            out.extend(weaken::text_findings(path, old.as_deref(), new.as_deref()));
+        }
+    }
+    out.extend(test_findings(src, pr_files, base, head)?);
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|s| seen.insert(s.clone()));
+    // ASCII arrows: `→` comes out garbled where a terminal or log is not UTF-8.
+    Ok(out.into_iter().map(|s| s.replace('→', "->")).collect())
+}
+
+/// The built-in file a new `.bosun/risk.toml` or `.bosun/profiles/<name>.toml` replaces.
+fn builtin_base(path: &str) -> Option<&'static str> {
+    if path == RULES_PATH {
+        return Some(risk::DEFAULT_RULES);
+    }
+    let name = path
+        .strip_prefix(".bosun/profiles/")?
+        .strip_suffix(".toml")?;
+    crate::gates::profile::builtin(name)
+}
+
+/// Test counts over whole files at base and head, totalled over the PR so moving tests between
+/// files is no loss: tests, assertions, skips, `.only` and `cfg` switch-offs, as test-integrity
+/// counts them. A file counts only where it runs: a Rust test file under a `src/` or `tests/`
+/// root, a TS/JS test file. Also every deleted test file.
+fn test_findings(src: &dyn Files, files: &[PrFile], base: &str, head: &str) -> Result<Vec<String>> {
+    let (mut out, mut c) = (Vec::new(), [[0usize; 5]; 2]);
+    let mut lists: [std::collections::BTreeMap<String, Vec<String>>; 2] = Default::default();
+    // A cap on reads: past it the owner judges, no quota is burnt and nothing errors.
+    let many = files.iter().filter(|f| code_file(&f.filename)).count();
+    if many > 100 {
+        return Ok(vec![format!(
+            "tests not counted: {many} code files; the owner judges"
+        )]);
+    }
+    for f in files {
+        let n = &f.filename;
+        let prev = f.previous_filename.as_deref().unwrap_or(n);
+        if f.status == "removed" && code_file(n) && risk::test_path(n) {
+            out.push(format!("{n}: test file present → (deleted)"));
+        }
+        let sides = [
+            (prev, base, f.status != "added"),
+            (n.as_str(), head, f.status != "removed"),
+        ];
+        for (side, (path, at, exists)) in sides.into_iter().enumerate() {
+            if !exists || !code_file(path) {
+                continue;
+            }
+            match src.read(path, at) {
+                Ok(Some(t)) if t.len() <= 1 << 20 => {
+                    let r = test_counts(path, &t);
+                    (0..5).for_each(|i| c[side][i] += r[i]);
+                    if path.to_ascii_lowercase().ends_with(".rs") {
+                        for (k, v) in weaken::allowed_lists(&t) {
+                            lists[side].entry(k).or_default().extend(v);
+                        }
+                    }
+                }
+                Ok(None) => {}
+                _ => out.push(format!(
+                    "{path}: tests not counted (unreadable or over 1 MB); the owner judges"
+                )),
+            }
+        }
+    }
+    out.extend(weaken::allowed_findings(&lists[0], &lists[1]));
+    let names = ["tests", "assertions", "skips", "only", "cfg switch-offs"];
+    for (i, what) in names.iter().enumerate() {
+        let (o, n) = (c[0][i], c[1][i]);
+        if if i < 2 { n < o } else { n > o } {
+            out.push(format!("{what} (all files) {o} → {n}"));
+        }
+    }
+    Ok(out)
+}
+
+fn code_file(path: &str) -> bool {
+    let p = path.to_ascii_lowercase();
+    let exts = [
+        ".rs", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts",
+    ];
+    exts.iter().any(|e| p.ends_with(e))
+}
+
+/// `[tests, assertions, skips, only, cfg switch-offs]` of a file that runs, else zeros.
+fn test_counts(path: &str, text: &str) -> [usize; 5] {
+    let p = path.to_ascii_lowercase();
+    if p.ends_with(".rs") {
+        // What Cargo builds: inline tests under `src/`, `tests/*.rs` and `tests/<dir>/main.rs`.
+        let segs: Vec<&str> = p.split('/').collect();
+        // `src/` of a crate, not one under tests, examples, fixtures or vendored code.
+        let src = segs.iter().position(|s| *s == "src").is_some_and(|i| {
+            let not = [
+                "tests", "examples", "benches", "fixtures", "vendor", "target", "docs",
+            ];
+            !segs[..i].iter().any(|s| not.contains(s))
+        });
+        let built = src
+            || (segs.iter().rposition(|s| *s == "tests"))
+                .is_some_and(|i| matches!(&segs[i + 1..], [_] | [_, "main.rs"]));
+        let text = weaken::strip_block_comments(text);
+        if !built || !adapters::is_test_file(&p, &text) {
+            return [0; 5];
+        }
+        let off = text.lines().filter(|l| weaken::cfg_off(l)).count();
+        return [
+            adapters::test_count(&text),
+            adapters::assertions(&text),
+            adapters::pending_markers(&text).len(),
+            0,
+            off,
+        ];
+    }
+    if !ts::is_test_file(&p) {
+        return [0; 5];
+    }
+    [
+        ts::test_count(text),
+        ts::assertions(text),
+        ts::pending_markers(text).len(),
+        ts::only_count(text),
+        0,
+    ]
+}
+
+/// No-CI mode (spec §4): judge `pull` as the risk workflow would, with a writer that posts nothing.
+pub fn evaluate_local(app: &App, pull: &Pull) -> CmdResult {
+    evaluate_with(app.gh.as_ref(), &app.ctx, pull)
+}
+
+/// As [`evaluate_local`] with the client and context apart (the approve board has no `App`).
+pub fn evaluate_with(gh: &dyn Github, ctx: &Ctx, pull: &Pull) -> CmdResult {
+    let w = GateWriter::statuses(gh).dry(true);
+    judge(gh, ctx, None, &w, pull.clone())
+}
+
+/// `app` is `None` for a local judge (no `App`, and its writer is dry): no verdict re-apply.
+fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pull) -> CmdResult {
+    let n = pull.number;
+    let (base, head) = (pull.base_sha.as_str(), pull.head_sha.as_str());
+
+    let rules = base_rules(gh, base)?;
+
+    let pr_files = gh.pull_files(n)?;
+    // A plan file that only ticks checkboxes (spec §8) is no change for the rules.
+    let files: Vec<ChangedFile> = pr_files
+        .iter()
+        .filter(|f| {
+            !plan_tick_file(
+                &f.filename,
+                &f.status,
+                f.previous_filename.as_deref(),
+                f.patch.as_deref(),
+            )
+        })
+        .map(|f| ChangedFile {
+            path: f.filename.clone(),
+            previous_path: f.previous_filename.clone(),
+            added_lines: f.patch.as_deref().map(added_lines).unwrap_or_default(),
+        })
+        .collect();
+
+    let mut manifests = Vec::new();
+    for f in pr_files.iter().filter(|f| is_manifest(&f.filename)) {
+        let old_path = f.previous_filename.as_deref().unwrap_or(&f.filename);
+        let old = if f.status == "added" {
+            None
+        } else {
+            gh.file_at(old_path, base)?
+        };
+        let new = if f.status == "removed" {
+            None
+        } else {
+            gh.file_at(&f.filename, head)?
+        };
+        manifests.push((f.filename.clone(), old, new));
+    }
+    let new_deps = new_dependencies(&manifests);
+    let findings = weaken_findings(gh, &pr_files, base, head)?;
+
+    let mut capabilities = capability_labels(&pull.labels);
+    if !findings.is_empty() {
+        capabilities.push(weaken::CAPABILITY.into());
+    }
+    // Every linked issue counts: the agent writes the PR body, so a decoy first link must not
+    // hide the real task's capabilities.
+    let mut task = None;
+    let mut plan_high = Vec::new();
+    let mut one_off = false;
+    // D-021: gated work may bundle, so every task the PR closes counts for R-plan: links in the
+    // body, and closing refs in the title and commit messages (GitHub reads all three). A
+    // commit list cut at GitHub's cap (the author can pad it) fails closed to the owner.
+    let repo = ctx.repo.to_string();
+    let mut linked = linked_issues_in(&pull.body, &repo);
+    let (extra, incomplete) = closing_refs_outside_body(gh, &pull, &repo)?;
+    for n in extra {
+        if !linked.contains(&n) {
+            linked.push(n);
+        }
+    }
+    if incomplete {
+        plan_high.push(format!(
+            "the PR has {COMMIT_CAP} or more commits: closing refs in later commits cannot be ruled out"
+        ));
+    }
+    for i in linked {
+        let issue = gh.get_issue(i)?;
+        let meta = issue.as_ref().and_then(task_meta);
+        // The body is the author's: it can only add. The plan file on the base, reached through
+        // the trusted bind (plan, item, task), is the authority, also when the body has no task
+        // block at all.
+        let high = meta.as_ref().is_some_and(|m| m.risk == "high")
+            || (issue.is_some() && bound_task_is_high(gh, i, base)?);
+        if high {
+            plan_high.push(format!("#{i} is `risk: high` in the plan"));
+        }
+        if let (Some(meta), Some(issue)) = (meta, issue.as_ref()) {
+            one_off |= is_one_off(gh, issue, &meta, base, &ctx.config.project)?;
+            capabilities.extend(meta.capabilities);
+            task.get_or_insert(i);
+        }
+    }
+
+    let mut matches = evaluate(&rules, &files, &new_deps, &capabilities);
+    // The plan rates a task high on more than paths (D-021: owner approval stays); the PR never rates lower.
+    if !plan_high.is_empty() {
+        matches.push(risk::Match {
+            rule: "R-plan".into(),
+            why: "the linked task is `risk: high` in the plan, so the owner decides".into(),
+            approval: Approval::Owner,
+            evidence: plan_high,
+        });
+    }
+    let lines: u64 = pr_files.iter().map(|f| f.additions + f.deletions).sum();
+    matches.extend(risk::oneoff_size_match(one_off, lines));
+    // Built in: a weakening is R-weaken and the owner's, whatever the repo's rules say (a repo
+    // rule with the `weaken` capability only adds its own match, made owner-class too).
+    let mut findings = findings;
+    for m in &mut matches {
+        let weakens = (rules.rules.iter())
+            .any(|r| r.id == m.rule && r.capability.as_deref() == Some(weaken::CAPABILITY));
+        if weakens || m.rule == weaken::RULE {
+            m.approval = Approval::Owner;
+        }
+        // A repo rule with the capability under another id also counts as R-weaken, so no
+        // signature that keys on the id can pass it.
+        if weakens && m.rule != weaken::RULE && findings.is_empty() {
+            findings.extend(m.evidence.iter().map(|e| format!("{}: {e}", m.rule)));
+        }
+    }
+    if !findings.is_empty() {
+        matches.retain(|m| m.rule != weaken::RULE);
+        matches.push(risk::Match {
+            rule: weaken::RULE.into(),
+            why: weaken::WHY.into(),
+            approval: Approval::Owner,
+            evidence: findings.clone(),
+        });
+    }
+    // A renamed file with no patch and no changed lines is a pure rename or a renamed binary
+    // that changed: only the same blob under both names is the pure rename. One tree read, and
+    // only when such a file exists; an unreadable or cut tree proves nothing.
+    let mut base_tree = None;
+    let views: Vec<FileView> = pr_files
+        .iter()
+        .map(|f| {
+            let candidate =
+                f.status == "renamed" && f.patch.is_none() && f.additions + f.deletions == 0;
+            let same_blob = candidate && {
+                let tree = base_tree.get_or_insert_with(|| {
+                    gh.tree(&pull.base_sha)
+                        .ok()
+                        .flatten()
+                        .filter(|t| !t.truncated)
+                });
+                let blob = |p: &str| {
+                    tree.as_ref()?
+                        .entries
+                        .iter()
+                        .find(|e| e.path == p && e.kind == "blob")
+                        .map(|e| e.sha.clone())
+                };
+                let old = f.previous_filename.as_deref().and_then(blob);
+                old.is_some() && old == f.sha
+            };
+            FileView {
+                path: f.filename.clone(),
+                status: f.status.clone(),
+                has_patch: f.patch.is_some(),
+                changes: f.additions + f.deletions,
+                same_blob,
+            }
+        })
+        .collect();
+    matches.extend(unseen_diff(&views, pull.changed_files));
+    if let Some((_, evidence)) = revert_findings(gh, &rules, &pull, &pr_files)
+        && !evidence.is_empty()
+    {
+        matches.push(risk::Match {
+            rule: "R-revert".into(),
+            why: "a revert of an owner-class PR, or not its exact inverse, needs the owner".into(),
+            approval: Approval::Owner,
+            evidence,
+        });
+    }
+    // The critical floor: a delegate never approves the approval system, secrets or prod.
+    let critical = if matches.iter().any(|m| m.approval == Approval::Delegate) {
+        let bosun_code = gh.file_at(BOSUN_CODE_MARKER, base)?.is_some();
+        risk::critical(&matches, &files, bosun_code)
+    } else {
+        Vec::new()
+    };
+    apply_floor(&mut matches, &critical);
+    let level = risk::level(&matches);
+    let high = level == "high";
+    let out_of_touch = out_of_touch(gh, ctx, task, &pr_files, pull.changed_files);
+
+    let warning = out_of_touch.as_deref().and_then(touch_warning);
+    if let Some(w) = &warning {
+        eprintln!("bosun: risk-check: {w}");
+    }
+    // A warning only: the status description, the level and the state stay as they are. The
+    // PR body carries it where it already carries a Risk note (high risk).
+    let note = high.then(|| {
+        let note = risk_note(&matches, head);
+        match &warning {
+            Some(w) => note.replacen(
+                "## Risk: high\n\n",
+                &format!("## Risk: high\n\n- **warning:** {w}\n"),
+                1,
+            ),
+            None => note,
+        }
+    });
+    let body = replace_note(&pull.body, note.as_deref());
+    if body != pull.body && !w.is_dry() {
+        gh.update_pull_body(n, &body)?;
+    }
+
+    let owners = if high {
+        owner_logins(gh, base)?
+    } else {
+        Vec::new()
+    };
+    // Key and owner changes need the owner's own GitHub approval, never a signature.
+    let trust = trust_files_changed(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.previous_path.as_deref())),
+    );
+    if !trust.is_empty() {
+        eprintln!(
+            "bosun: risk-check: the PR changes {}: signed approvals do not count",
+            trust.join(", ")
+        );
+    }
+    // An unseen diff may hide a trust file: no signature counts then either.
+    let unseen = matches.iter().any(|m| m.rule == "R-unseen");
+    if unseen {
+        eprintln!(
+            "bosun: risk-check: bosun could not see the whole diff: signed approvals do not count"
+        );
+    }
+    let signed_ok = trust.is_empty() && !unseen;
+    let requirement = requirement(&matches);
+    let (mut bootstrap, policy_source) = if high && signed_ok {
+        let bosun_code = gh.file_at(BOSUN_CODE_MARKER, base)?.is_some();
+        let excluded = bootstrap_excluded(&pr_files, &matches, bosun_code);
+        let today = ctx.now.to_string();
+        let pr = (&pr_files[..], &matches[..], requirement);
+        orchestrator_window(gh, base, &today[..10], pr, (&excluded, &capabilities))?
+    } else {
+        (Err("signed approvals do not count on this PR".into()), None)
+    };
+    let repo = ctx.repo.to_string();
+    let linked = linked_issues_in(&pull.body, &repo);
+    // D-017: the signature counts only with a clean verdict and a task the author leased.
+    let auto = if policy_source.is_some() && bootstrap.is_ok() {
+        autonomous_inputs(gh, &pull, &repo)?
+    } else {
+        None
+    };
+    if policy_source.is_some() && bootstrap.is_ok() && auto.is_none() {
+        bootstrap =
+            Err("autonomous mode (D-017) needs an open linked task leased by the author".into());
+    }
+    let autonomous = auto.is_some();
+    let unlinked =
+        linked.is_empty() && matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
+    let models = review_models(gh, base)?;
+    // Chat records never count where signatures do not: trust-file and unseen-diff PRs keep the
+    // owner's own GitHub approval (or comment) as the only form.
+    let chat_on = high && signed_ok && chat_enabled(gh, base)?;
+    let need = Need {
+        repo: &ctx.repo,
+        pr: n,
+        base_ref: &pull.base_ref,
+        owners: &owners,
+        signed_ok,
+        bootstrap: bootstrap.as_deref().ok(),
+        requirement,
+        linked: &linked,
+        unlinked,
+        autonomous: auto.as_ref(),
+        models: models.as_deref(),
+        signer_on: signer_on(gh, base)?,
+        chat: chat_on.then_some(Chat {
+            author: pull.user.as_str(),
+            base,
+        }),
+    };
+    let found = if high {
+        approval_on(gh, &need, head)?
+    } else {
+        Found::default()
+    };
+    if let Some(why) = &found.delegate_blocked {
+        eprintln!("bosun: risk-check: a delegate cannot approve: {why}");
+    }
+    let passed_on_head = !high || found.passed();
+    // An older head's approval carries over a clean merge of main (design §3 C7), judged by `need`.
+    let carried = if passed_on_head {
+        None
+    } else {
+        default_branch(gh).ok().and_then(|branch| {
+            // A chat record (D-018) is for the head it names: a new push makes it stale.
+            let approve = |h: &str| approval_on(gh, &need, h).ok().filter(|f| !f.by_chat);
+            carry_approval(gh, &pull, &branch, &owners, &approve)
+        })
+    };
+    let Found {
+        mut approved_by,
+        owner_own,
+        mut verdicts,
+        mut delegate_verdicts,
+        delegate_blocked,
+        autonomous_verdicts,
+        ..
+    } = found;
+    let carried_from = carried.as_ref().map(|(h, ..)| h.clone());
+    if let Some((_, who, counted)) = carried {
+        approved_by = Some(who);
+        // The sessions counted on h, shown as the head path shows them.
+        match requirement {
+            Approval::TwoVerdicts => verdicts = counted,
+            Approval::Delegate => delegate_verdicts = counted,
+            _ => {}
+        }
+    }
+    let by_verdicts = verdicts.len() >= VERDICTS_NEEDED;
+    let passed = passed_on_head || carried_from.is_some();
+
+    let ids: Vec<&str> = matches.iter().map(|m| m.rule.as_str()).collect();
+    let tag = |h: &String| format!(" (carried from {})", &h[..7]); // a full sha (`candidates`)
+    let from: String = carried_from.iter().map(tag).collect();
+    let description = match (&approved_by, high) {
+        (_, false) => "normal risk".to_string(),
+        (Some(who), _) => format!("high risk ({}), approved by {who}{from}", ids.join(", ")),
+        (None, _) if by_verdicts => format!(
+            "high risk ({}), approved by two verdicts: {}",
+            ids.join(", "),
+            verdicts.join(", ")
+        ),
+        (None, _) if autonomous => format!(
+            "high risk, autonomous mode (D-017): clean verdict and orchestrator signature needed: {}",
+            ids.join(", ")
+        ),
+        (None, _) if unlinked => format!(
+            "high risk, owner approval needed (links no task, so verdicts cannot count): {}",
+            ids.join(", ")
+        ),
+        (None, _) if !critical.is_empty() => format!(
+            "high risk, owner approval needed (critical: {}): {}",
+            critical.join(", "),
+            ids.join(", ")
+        ),
+        (None, _) if requirement == Approval::Delegate => format!(
+            "high risk, owner approval needed (or a delegate): {}",
+            ids.join(", ")
+        ),
+        (None, _) if requirement == Approval::TwoVerdicts => format!(
+            "high risk, two verdicts needed ({}/{VERDICTS_NEEDED}): {}",
+            verdicts.len(),
+            ids.join(", ")
+        ),
+        (None, _) => format!("high risk, owner approval needed: {}", ids.join(", ")),
+    };
+    let state = if passed { "success" } else { "failure" };
+    let rules: Vec<String> = matches.iter().map(|m| format!("- {}", m.rule)).collect();
+    let summary = format!("{description}\n\nMatched rules:\n{}", rules.join("\n"));
+    w.post_full(head, CONTEXT, state, &description, &summary)?;
+    // After the check is posted, and never an error: a doubt or a failed read is no carry.
+    let carried = carry_status(gh, w, &pull, &linked);
+    // A green head with no review-verdict gets its own verdict comment applied (spec §8).
+    let reapplied = (passed && carried.is_none())
+        .then(|| app.and_then(|a| reapply_verdict(a, w, &pull)))
+        .flatten();
+    // An owner's approval of this exact head also clears an escalated verdict (spec §7).
+    // A low-risk head reads the owners' approval only when an escalation waits for it.
+    let signer = need.signer_on;
+    let cleared = clear_escalation(gh, w, head, &|| match &approved_by {
+        Some(who) if high && passed_on_head && owner_own => Ok(Some(who.clone())),
+        _ if high => Ok(None),
+        _ => {
+            let owners = owner_logins(gh, base)?;
+            let by = approver(gh, &ctx.repo, n, head, &owners, signed_ok, (None, signer))?;
+            if let Some(b) = by.filter(|b| b.1) {
+                return Ok(Some(b.0));
+            }
+            // A chat record (D-018) counts under every policy, low-risk heads included.
+            if !signed_ok || !chat_enabled(gh, base)? {
+                return Ok(None);
+            }
+            let chat = Chat {
+                author: pull.user.as_str(),
+                base,
+            };
+            chat_approver(gh, n, head, &owners, &chat)
+        }
+    });
+
+    let mut data = json!({"pr": n, "head_sha": head, "level": level, "matches": matches,
+        "approved_by": approved_by, "out_of_touch": out_of_touch,
+        "verdict_carried_from": carried, "approval_carried_from": carried_from,
+        "verdict_reapplied": reapplied});
+    if cleared.is_some() {
+        data["verdict_cleared_by"] = json!(cleared);
+    }
+    if w.checks_skipped() {
+        data["checks_skipped"] = json!(true);
+    }
+    if high {
+        data["requirement"] = json!(requirement.name());
+        if requirement == Approval::TwoVerdicts {
+            data["verdicts"] = json!(verdicts);
+        }
+        if requirement == Approval::Delegate {
+            data["delegate_verdicts"] = json!(delegate_verdicts);
+            data["delegate_blocked"] = json!(delegate_blocked);
+        }
+        if !critical.is_empty() {
+            data["critical"] = json!(critical);
+        }
+        if autonomous {
+            data["policy"] = json!("autonomous");
+            data["policy_source"] = json!(policy_source);
+            data["autonomous_verdicts"] = json!(autonomous_verdicts);
+        }
+    }
+    if passed {
+        return Ok(Outcome::data(data));
+    }
+    // A chat record that exists but does not count (the orchestrator left, or its join had
+    // expired) is the cause to name, not a missing approval.
+    let lapse = match &need.chat {
+        Some(chat) => chat_scan(gh, n, head, &owners, chat)?.1,
+        None => Lapse::NoRecord,
+    };
+    let owner_fix = if owners.is_empty() {
+        format!("fill {OWNERS_PATH} on the base branch, then an owner must approve head {head}")
+    } else {
+        format!(
+            "an owner in {OWNERS_PATH} must approve head {head}: the session asks the owner with a form in the Claude Code chat and the orchestrator posts the signed comment (`bosun approve {n}@{head} --sign-key <pem>`); fallback: an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or the owner's own PR comment `/bosun approve {head}`"
+        )
+    };
+    // A bootstrap-mode signature that does not count says why (D-012).
+    let boot = match &bootstrap {
+        Err(why) if bootstrap_signed(gh, n, head)? => {
+            eprintln!("bosun: risk-check: a bootstrap-mode approval does not count: {why}");
+            format!("a bootstrap-mode approval (D-012) does not count: {why}; ")
+        }
+        _ => String::new(),
+    };
+    let verdict_class =
+        autonomous || matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
+    let model_note = match &models {
+        Some(m) if verdict_class => format!(
+            "; only verdicts by a model in `[approvals] review_models` ({}) count, a verdict with another or no model does not",
+            m.join(", ")
+        ),
+        _ => String::new(),
+    };
+    let chat_note = match lapse {
+        Lapse::NoRecord => String::new(),
+        Lapse::Withdrawn => format!(
+            "a chat approval record for head {head} exists but does not count: it was withdrawn by the owner's review (changes requested, or dismissed); the owner must approve again, or: "
+        ),
+        Lapse::Orchestrator => format!(
+            "a chat approval record for head {head} exists but does not count: its orchestrator session left or expired (its join had expired when the record was written; the registry is read at check time); a live orchestrator must join and record the owner's chat approval again, or: "
+        ),
+        Lapse::Unsigned => format!(
+            "a chat approval record for head {head} exists but does not count: it is unsigned (no owner's unedited comment carries it); the orchestrator must post it again as the owner, or: "
+        ),
+    };
+    let fix = if autonomous {
+        format!(
+            "get one independent clean verdict (approve, confidence >= {}, no major finding) on head {head} from a reviewer session (`bosun verdict comment --from -`; without CI add `--sign-key <reviewer.pem>`), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap`; or an owner approval: {owner_fix}",
+            risk::VERDICT_MIN_CONFIDENCE
+        )
+    } else if unlinked {
+        format!(
+            "the PR links no task (`Closes #N`), so verdicts cannot be checked for independence: link the task, or get an owner approval: {owner_fix}"
+        )
+    } else if requirement == Approval::Delegate {
+        format!(
+            "get one independent review verdict (approve, confidence >= {}, no major finding) on head {head} and a delegate's signed approval (`bosun approve {n}@{head} --sign-key <pem> --as delegate`), or an owner approval: {owner_fix}",
+            risk::VERDICT_MIN_CONFIDENCE
+        )
+    } else if requirement == Approval::TwoVerdicts {
+        format!(
+            "get a second review verdict from a different session (approve, confidence >= {}) on head {head}, or an owner approval: {owner_fix}",
+            risk::VERDICT_MIN_CONFIDENCE
+        )
+    } else {
+        owner_fix
+    };
+    // Agents open PRs through the Claude GitHub App as the owner's login: GitHub refuses the
+    // owner's review of it, so say what still works.
+    let author_is_owner = owners.iter().any(|o| o.eq_ignore_ascii_case(&pull.user));
+    let author_note = if author_is_owner {
+        data["author_is_owner"] = json!(true);
+        let signer = if autonomous {
+            format!(
+                ", the CI signer (`bosun approve {n}@{head} --via-signer`) where D-017 covers the PR"
+            )
+        } else {
+            String::new()
+        };
+        format!(
+            "; the PR author {} is the owner (agents open PRs through the Claude GitHub App as the owner), so GitHub refuses a self-review: the owner approves with a plain `/bosun approve {head}` comment from their own account, a signed approval (`bosun approve {n}@{head} --sign-key <pem>`){signer}, or merges it themselves",
+            pull.user
+        )
+    } else {
+        String::new()
+    };
+    Err(BosunError::needs_human(
+        format!(
+            "{boot}PR #{n} is high risk ({}) and not approved on head {head}",
+            ids.join(", ")
+        ),
+        format!("{boot}{chat_note}{fix}{model_note}{author_note}"),
+    )
+    .with_data(data))
+}
+
+/// The risk rules at `base` (the built-in defaults when it has none).
+pub(crate) fn base_rules(gh: &dyn Github, base: &str) -> Result<Rules> {
+    rules_from(&Remote(gh), base)
+}
+
+pub(crate) fn rules_from(src: &dyn Files, base: &str) -> Result<Rules> {
+    Ok(match src.read(RULES_PATH, base)? {
+        Some(text) => Rules::parse(&text).map_err(|e| {
+            BosunError::error(
+                format!("{RULES_PATH} at base {base}: {e}"),
+                "fix the file on the base branch in a PR; a PR cannot change the rules that judge it",
+            )
+        })?,
+        None => Rules::defaults(),
+    })
+}
+
+fn patch_files(files: &[PrFile]) -> Vec<risk::PatchFile<'_>> {
+    (files.iter())
+        .map(|f| risk::PatchFile {
+            path: &f.filename,
+            previous_path: f.previous_filename.as_deref(),
+            status: &f.status,
+            patch: f.patch.as_deref(),
+            changes: f.additions + f.deletions,
+        })
+        .collect()
+}
+
+/// Built-in R-revert (§8): `None` without a revert marker, else `(N, evidence)`; no evidence =
+/// #N needed no owner and this is its exact inverse. A failed read is evidence, never an error.
+pub(crate) fn revert_findings(
+    gh: &dyn Github,
+    rules: &Rules,
+    pull: &Pull,
+    pr_files: &[PrFile],
+) -> Option<(u64, Vec<String>)> {
+    let t = risk::revert_targets(&pull.body);
+    let n = *t.first()?;
+    let ev = if t.len() > 1 || n == pull.number {
+        vec!["the marker names several PRs or this PR".into()]
+    } else {
+        revert_evidence(gh, rules, pull, pr_files, n)
+            .unwrap_or_else(|e| vec![format!("cannot judge #{n}: {}", e.message)])
+    };
+    Some((n, ev))
+}
+
+fn revert_evidence(
+    gh: &dyn Github,
+    rules: &Rules,
+    pull: &Pull,
+    pr_files: &[PrFile],
+    n: u64,
+) -> Result<Vec<String>> {
+    let Some(old) = gh.get_pull(n)?.filter(|p| p.merged) else {
+        return Ok(vec![format!("#{n} does not exist or is not merged")]);
+    };
+    let old_files = gh.pull_files(n)?;
+    let whole =
+        pull.changed_files == pr_files.len() as u64 && old.changed_files == old_files.len() as u64;
+    if !whole || old.base_ref != pull.base_ref {
+        let why = "the file lists are not whole, or the bases differ";
+        return Ok(vec![format!("#{n}: {why}")]);
+    }
+    let mut ev = Vec::new();
+    let problems = risk::inverse_problems(&patch_files(&old_files), &patch_files(pr_files));
+    if !problems.is_empty() {
+        ev.push(format!(
+            "not the exact inverse of #{n}: {}",
+            problems.join("; ")
+        ));
+    }
+    let changed: Vec<ChangedFile> = (old_files.iter())
+        .map(|f| ChangedFile {
+            path: f.filename.clone(),
+            previous_path: f.previous_filename.clone(),
+            added_lines: f.patch.as_deref().map(added_lines).unwrap_or_default(),
+        })
+        .collect();
+    // #N's labels and links are editable after the merge: its own trusted risk-check outcome
+    // counts instead, and only `normal risk` is no owner class (fail closed).
+    let trusted = |s: &&crate::github::Status| {
+        s.context == CONTEXT && s.creator == crate::core::approve::TRUSTED_CREATOR
+    };
+    let statuses = crate::github::gate::gate_statuses(gh, &old.head_sha)?; // newest first
+    if statuses
+        .iter()
+        .find(trusted)
+        .map(|s| s.description.as_str())
+        != Some("normal risk")
+    {
+        ev.push(format!(
+            "#{n} needed the owner (its risk-check was not normal risk)"
+        ));
+    }
+    // The files under today's rules too; a changed manifest counts as a new dependency.
+    let deps: Vec<String> = (old_files.iter())
+        .filter(|f| is_manifest(&f.filename))
+        .map(|f| f.filename.clone())
+        .collect();
+    let mut ms = evaluate(rules, &changed, &deps, &[]);
+    if !weaken_findings(gh, &old_files, &old.base_sha, &old.head_sha)?.is_empty() {
+        ms.push(risk::Match {
+            rule: weaken::RULE.into(),
+            why: weaken::WHY.into(),
+            approval: Approval::Owner,
+            evidence: Vec::new(),
+        });
+    }
+    let bosun_code = gh.file_at(BOSUN_CODE_MARKER, &pull.base_sha)?.is_some();
+    let critical = risk::critical(&ms, &changed, bosun_code);
+    apply_floor(&mut ms, &critical);
+    let owner = |m: &&risk::Match| {
+        m.approval == Approval::Owner || ["R-weaken", "R-gate", "R-gov"].contains(&m.rule.as_str())
+    };
+    let mut ids: Vec<&str> = ms.iter().filter(owner).map(|m| m.rule.as_str()).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ev.extend(ids.iter().map(|id| format!("#{n} needed the owner ({id})")));
+    Ok(ev)
+}
+
+/// What an approval is judged by: the checked head's own diff, the rules and owners at base.
+struct Need<'a> {
+    repo: &'a RepoId,
+    pr: u64,
+    base_ref: &'a str,
+    owners: &'a [String],
+    signed_ok: bool,
+    /// The label under which an orchestrator signature counts as the owner (D-012, D-014): see
+    /// `orchestrator_window`.
+    bootstrap: Option<&'a str>,
+    requirement: Approval,
+    linked: &'a [u64],
+    unlinked: bool,
+    /// Autonomous policy (D-017), nothing excluded: the PR comments and the lease sessions the
+    /// signature's clean verdict is judged by.
+    autonomous: Option<&'a (Vec<Comment>, Vec<String>)>,
+    /// `[approvals] review_models` at base: when set, only verdicts by these models count.
+    models: Option<&'a [String]>,
+    /// `[approvals] signer` at base: a signer key's signature counts only while it is true.
+    signer_on: bool,
+    /// Set when chat records count (`[approvals] chat` at base): the PR author and the base ref
+    /// the owners file is read at (for the no-owners fallback).
+    chat: Option<Chat<'a>>,
+}
+
+/// What the chat-record counter needs besides the PR: the author and the base commit.
+#[derive(Clone, Copy)]
+struct Chat<'a> {
+    author: &'a str,
+    base: &'a str,
+}
+
+/// How a head is approved: by an owner or delegate (`approved_by`), or by two verdicts.
+#[derive(Default)]
+pub(crate) struct Found {
+    pub(crate) approved_by: Option<String>,
+    /// `approved_by` is an owner's own approval of the head (review, comment, owner key).
+    pub(crate) owner_own: bool,
+    /// `approved_by` is a chat record (D-018): it belongs to this head only and never carries.
+    by_chat: bool,
+    pub(crate) verdicts: Vec<String>,
+    delegate_verdicts: Vec<String>,
+    delegate_blocked: Option<String>,
+    autonomous_verdicts: Vec<String>,
+}
+
+impl Found {
+    pub(crate) fn passed(&self) -> bool {
+        self.approved_by.is_some() || self.verdicts.len() >= VERDICTS_NEEDED
+    }
+
+    /// The sessions whose verdicts count in this approval; `None` when an owner approved.
+    pub(crate) fn counted(&self) -> Option<&[String]> {
+        let delegate = (!self.delegate_verdicts.is_empty()).then_some(&self.delegate_verdicts[..]);
+        if self.approved_by.is_none() {
+            Some(&self.verdicts)
+        } else {
+            delegate
+        }
+    }
+}
+
+/// The approval of a high-risk PR on `sha`: an owner, two verdicts, or a delegate.
+fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
+    let Need {
+        repo, pr, owners, ..
+    } = *need;
+    let mut found = Found::default();
+    let mut bootstrap = need.bootstrap;
+    if let Some((comments, excluded)) = need.autonomous {
+        found.autonomous_verdicts = autonomous_clean(comments, sha, excluded, need.models);
+        if found.autonomous_verdicts.is_empty() {
+            bootstrap = None;
+        }
+    }
+    // Under the autonomous policy only its own form counts, else only the bootstrap form.
+    let form = if need.autonomous.is_some() {
+        Form::Autonomous
+    } else {
+        Form::Bootstrap
+    };
+    let bootstrap = bootstrap.map(|l| (l, form));
+    let by = approver(
+        gh,
+        repo,
+        pr,
+        sha,
+        owners,
+        need.signed_ok,
+        (bootstrap, need.signer_on),
+    )?;
+    found.owner_own = by.as_ref().is_some_and(|b| b.1);
+    found.approved_by = by.map(|b| b.0);
+    if let (None, Some(chat)) = (&found.approved_by, &need.chat) {
+        found.approved_by = chat_approver(gh, pr, sha, owners, chat)?;
+        found.owner_own = found.approved_by.is_some();
+        found.by_chat = found.owner_own;
+    }
+    let open = found.approved_by.is_none() && !need.unlinked;
+    // Two verdicts only matter when the owner has not approved and the class allows them.
+    if open && need.requirement == Approval::TwoVerdicts {
+        let (comments, excluded) = verdict_inputs(gh, pr, need.linked)?;
+        found.verdicts = two_verdicts(
+            comments.iter().map(|c| (c.user.as_str(), c.body.as_str())),
+            sha,
+            &excluded,
+            need.models,
+        );
+    }
+    // A delegate decides only with one clean independent verdict on the head (spec §8).
+    if open && need.requirement == Approval::Delegate {
+        found.delegate_blocked = delegation_blocked(gh, need.base_ref, need.linked)?;
+        if found.delegate_blocked.is_none() && need.signed_ok {
+            let (comments, excluded) = verdict_inputs(gh, pr, need.linked)?;
+            found.delegate_verdicts = clean_verdicts(
+                comments.iter().map(|c| (c.user.as_str(), c.body.as_str())),
+                sha,
+                &excluded,
+                need.models,
+            );
+            if !found.delegate_verdicts.is_empty() && !owners_withdrawn(gh, pr, sha, owners)? {
+                let v1 = |f: Form| f == Form::V1;
+                let key =
+                    signed_approver(gh, repo, pr, sha, &comments, (Role::Delegate, false), &v1)?;
+                found.approved_by = key.map(|id| format!("delegate {id}"));
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// Turn an escalated, otherwise approving `review-verdict` on `head` green once `owner` (asked
+/// only then) names an owner's own approval of that head. A request for changes, a low confidence
+/// or a blocker stays red. Never an error.
+fn clear_escalation(
+    gh: &dyn Github,
+    w: &GateWriter,
+    head: &str,
+    owner: &dyn Fn() -> Result<Option<String>>,
+) -> Option<String> {
+    let top = crate::github::gate::gate_statuses(gh, head)
+        .ok()?
+        .into_iter()
+        .find(is_verdict)?;
+    // Only the approvable form, judged unrounded when the verdict was recorded; an older
+    // release's `escalated to the owner; ` form is never cleared (it can hide a request for changes).
+    if !top.description.starts_with(APPROVABLE) {
+        return None;
+    }
+    let log = |e: BosunError| {
+        eprintln!(
+            "bosun: risk-check: cannot clear the escalation: {}",
+            e.message
+        )
+    };
+    let who = owner().map_err(log).ok()??;
+    let description = format!("owner cleared escalation ({who})");
+    w.post(head, VERDICT, "success", &description)
+        .map_err(log)
+        .ok()?;
+    Some(who)
+}
+
+/// Carries `review-verdict` of an older head onto exactly `pull.head_sha` (design §3 C7), checking
+/// its statuses before and after posting (verdict.yml is not serialized with us). Never an error.
+fn carry_status(gh: &dyn Github, w: &GateWriter, pull: &Pull, linked: &[u64]) -> Option<String> {
+    let head = pull.head_sha.as_str();
+    if w.is_dry() {
+        return None;
+    }
+    // A carried status on top of a real verdict (a run was cancelled mid-post) is repaired first.
+    let top = crate::github::gate::gate_statuses(gh, head)
+        .ok()
+        .and_then(|l| l.into_iter().find(is_verdict));
+    if let Some(s) = top.filter(|s| s.description.starts_with(CARRIED)) {
+        settle(gh, w, head, &s.description);
+        return None;
+    }
+    let branch = default_branch(gh).ok()?;
+    if candidates(gh, pull, &branch).is_empty() {
+        return None;
+    }
+    let owners = owner_logins(gh, &pull.base_sha).ok()?;
+    let h = carry_verdict(gh, pull, &branch, linked, &owners)?;
+    let short: String = h.chars().take(7).collect();
+    let text = format!("{CARRIED}{short}: clean merge of the default branch");
+    if has_verdict(gh, head) {
+        return None;
+    }
+    w.post(head, VERDICT, "success", &text).ok()?;
+    settle(gh, w, head, &text).then_some(h)
+}
+
+/// The newest verdict comment for exactly the head (any session), applied when it is an
+/// approval, bosun is not halted (and can tell) and the head has no `review-verdict` (a doubt
+/// counts as having one, our own withdrawal does not). A red verdict is left to verdict.yml. A
+/// neutrally refused comment is ignored, as verdict.yml ignores it (at most `MAX_IGNORED`).
+/// After each apply the comments are read again and a newer verdict is applied instead, for at
+/// most `REAPPLY_ROUNDS` applies; an unreadable list, a newer verdict that is no approval, or
+/// one still racing withdraws. Never an error.
+fn reapply_verdict(app: &App, w: &GateWriter, pull: &Pull) -> Option<u64> {
+    let gh = app.gh.as_ref();
+    let head = pull.head_sha.as_str();
+    let blocked = || {
+        let top = crate::github::gate::gate_statuses(gh, head)
+            .ok()
+            .and_then(|l| l.into_iter().find(is_verdict));
+        !top.is_some_and(|s| s.description.starts_with(WITHDRAWN)) && has_verdict(gh, head)
+    };
+    if w.is_dry() || !matches!(halt_reason(gh), Ok(None)) || blocked() {
+        return None;
+    }
+    // Verdict comments for exactly this PR and head newer than `after`, newest first.
+    let newer = |after: u64| {
+        let mut comments = gh.list_comments(pull.number).ok()?;
+        comments.retain(|c| {
+            // As `verdict apply` reads it: a Bot's marker-less ```json verdict counts too.
+            let text = comment_json(&c.body).or_else(|| {
+                (c.user_type == "Bot")
+                    .then(|| bot_verdict_json(&c.body))
+                    .flatten()
+            });
+            let v = text.and_then(|t| Verdict::parse(t).ok());
+            c.id > after && v.is_some_and(|v| v.head_sha == head && v.pr == pull.number)
+        });
+        comments.sort_unstable_by_key(|c| std::cmp::Reverse(c.id));
+        Some(comments)
+    };
+    let withdraw = |why: &str| {
+        eprintln!("bosun: risk-check: verdict re-apply withdrawn: {why}");
+        if let Err(e) = w.post(head, VERDICT, "failure", &format!("{WITHDRAWN}{why}")) {
+            eprintln!(
+                "bosun: risk-check: cannot withdraw the re-apply: {}",
+                e.message
+            );
+        }
+        None
+    };
+    let (mut cands, mut ignored, mut stands, mut rounds) = (newer(0)?, Vec::new(), None, 0);
+    loop {
+        // An apply that failed (it may have posted) and was not replaced is withdrawn.
+        let done = |stands: Option<u64>| match stands {
+            None if rounds > 0 => withdraw("the last re-apply failed"),
+            s => s,
+        };
+        let Some(c) = cands.iter().find(|c| !ignored.contains(&c.id)) else {
+            return done(stands);
+        };
+        let id = c.id;
+        if rounds == REAPPLY_ROUNDS {
+            return withdraw("newer verdicts kept racing it");
+        }
+        let applied = match neutral_refusal(gh, c) {
+            Ok((Some(_), ..)) => None,
+            Ok((None, text, ..)) => {
+                let v = text.and_then(|t| Verdict::parse(t).ok());
+                if !v.is_some_and(|v| effective(&v).approve && !v.escalate_risk) {
+                    if rounds == 0 {
+                        return None; // verdict.yml owns red statuses and task moves
+                    }
+                    return withdraw("a newer verdict that is no approval raced it");
+                }
+                if rounds == 0 && blocked() {
+                    return None;
+                }
+                Some(apply_verdict(app, id).map(|o| !o.data["status"].is_null()))
+            }
+            Err(e) => Some(Err(e)),
+        };
+        match applied {
+            // Past a green, an unseen older candidate may be a racing request for changes.
+            None | Some(Ok(false)) if ignored.len() == MAX_IGNORED && rounds > 0 => {
+                return withdraw("too many refused verdict comments to confirm it");
+            }
+            None | Some(Ok(false)) if ignored.len() == MAX_IGNORED => return None,
+            None | Some(Ok(false)) => {
+                ignored.push(id);
+                continue;
+            }
+            Some(Ok(true)) => stands = Some(id),
+            Some(Err(e)) => {
+                eprintln!("bosun: risk-check: verdict comment {id}: {}", e.message);
+                stands = None;
+            }
+        }
+        rounds += 1;
+        cands = match newer(id) {
+            Some(c) => c,
+            None => return withdraw("cannot confirm no newer verdict raced it"),
+        };
+    }
+}
+
+const REAPPLY_ROUNDS: u32 = 3;
+const MAX_IGNORED: usize = 20;
+const WITHDRAWN: &str = "re-apply withdrawn: ";
+
+const CARRIED: &str = "carried from ";
+const UNSURE: &str = "carry withdrawn: could not confirm no verdict raced it";
+
+/// True only when `ours` stands unchallenged on `head`. Another review-verdict is a real verdict
+/// that raced us: the newest is posted again. If that fails, or the history is unreadable: withdraw.
+fn settle(gh: &dyn Github, w: &GateWriter, head: &str, ours: &str) -> bool {
+    let post = |state: &str, text: &str| w.post(head, VERDICT, state, text);
+    let seen = crate::github::gate::gate_history(gh, head).map(|l| {
+        l.into_iter()
+            .find(|s| is_verdict(s) && s.description != ours && !s.description.starts_with(CARRIED))
+    });
+    match seen {
+        Ok(None) => return true,
+        Ok(Some(f)) if post(&f.state, &f.description).is_ok() => {}
+        _ => _ = post("failure", UNSURE),
+    }
+    eprintln!("bosun: risk-check: a verdict raced the carry-over; it was not kept");
+    false
+}
+
+/// "N files outside the task's lease: a, b" (ten names at most, then "and N more"); `None` when
+/// there are none.
+fn touch_warning(out: &[String]) -> Option<String> {
+    if out.is_empty() {
+        return None;
+    }
+    // File names are repo data in a PR body: quoted, and `plain`, so one cannot end the note.
+    let quote = |n: &String| format!("`{}`", plain(n));
+    let mut names = out
+        .iter()
+        .take(10)
+        .map(quote)
+        .collect::<Vec<_>>()
+        .join(", ");
+    if out.len() > 10 {
+        names.push_str(&format!(" and {} more", out.len() - 10));
+    }
+    let n = out.len();
+    Some(format!(
+        "{n} file{} outside the task's lease: {names}",
+        if n == 1 { "" } else { "s" }
+    ))
+}
+
+/// The PR files outside the linked task's newest live lease (design C3), for a warning. `None`
+/// when the PR links no task, the task has no live lease with a touch, the file list is cut or
+/// the comments cannot be read. The task is the first linked issue with task metadata; humans'
+/// PRs have no lease and so get `None`.
+fn out_of_touch(
+    gh: &dyn Github,
+    ctx: &Ctx,
+    task: Option<u64>,
+    pr_files: &[PrFile],
+    changed_files: u64,
+) -> Option<Vec<String>> {
+    // GitHub lists at most 3000 files; a shorter list than it reports is cut.
+    if (pr_files.len() as u64) < changed_files || pr_files.len() >= 3000 {
+        return None;
+    }
+    let task = task?;
+    // Only a warning: a failed read costs the warning, never the check.
+    let notes = match trusted_notes(gh, task) {
+        Ok(notes) => notes,
+        Err(e) => {
+            eprintln!(
+                "bosun: risk-check: no touch warning, cannot read the comments of #{task}: {}",
+                e.message
+            );
+            return None;
+        }
+    };
+    let lease = leases_of(task, &notes)
+        .into_iter()
+        .filter(|l| l.is_live(ctx.now) && !l.touch.is_empty())
+        .max_by_key(|l| l.comment_id)?;
+    let changed: Vec<Changed> = pr_files
+        .iter()
+        .map(|f| Changed {
+            path: f.filename.clone(),
+            status: f.status.clone(),
+            previous: f.previous_filename.clone(),
+            tick_only: plan_tick_file(
+                &f.filename,
+                &f.status,
+                f.previous_filename.as_deref(),
+                f.patch.as_deref(),
+            ),
+        })
+        .collect();
+    Some(outside(&changed, &lease.touch))
+}
+
+/// When a review was submitted; `None` when GitHub gave no time or it does not parse.
+pub fn submitted(r: &Review) -> Option<Timestamp> {
+    r.submitted_at.as_deref().and_then(parse_rfc3339)
+}
+
+/// `owner`'s newest approve, request-changes or dismissed review on `head`, by `submitted_at`
+/// (ties by id), not by list position. If any of them has no usable time the order is unknown, so
+/// the most withdrawing one is returned (the newest request for changes or dismissal, if any).
+fn decisive<'a>(reviews: &'a [Review], owner: &str, head: &str) -> Option<&'a Review> {
+    let mine: Vec<&Review> = (reviews.iter())
+        .filter(|r| r.user.eq_ignore_ascii_case(owner) && r.commit_id == head)
+        .filter(|r| {
+            matches!(
+                r.state.as_str(),
+                "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+            )
+        })
+        .collect();
+    if mine.iter().any(|r| submitted(r).is_none()) {
+        let against = mine.iter().filter(|r| withdrawn(Some(&r.state)));
+        return against
+            .max_by_key(|r| r.id)
+            .or(mine.iter().max_by_key(|r| r.id))
+            .copied();
+    }
+    mine.into_iter().max_by_key(|r| (submitted(r), r.id))
+}
+
+/// The id of `owner`'s decisive review on `head` when it was dismissed.
+pub fn dismissed_review(reviews: &[Review], owner: &str, head: &str) -> Option<u64> {
+    decisive(reviews, owner, head)
+        .filter(|r| r.state == "DISMISSED")
+        .map(|r| r.id)
+}
+
+/// The state of `owner`'s newest approve, request-changes or dismissed review on `head`.
+pub fn decisive_review(reviews: &[Review], owner: &str, head: &str) -> Option<String> {
+    decisive(reviews, owner, head).map(|r| r.state.clone())
+}
+
+/// The owner who approved `head`: by a GitHub review (their newest decisive review on `head` is
+/// an approval) or by an unedited PR comment `/bosun approve <head>`.
+/// The approver and whether it is the owner's own approval (not a bootstrap or autonomous
+/// signature).
+fn approver(
+    gh: &dyn Github,
+    repo: &RepoId,
+    pr: u64,
+    head: &str,
+    owners: &[String],
+    signed_ok: bool,
+    (bootstrap, signer_on): (Option<(&str, Form)>, bool),
+) -> Result<Option<(String, bool)>> {
+    let reviews = gh.list_reviews(pr)?;
+    let state = |o: &str| decisive_review(&reviews, o, head);
+    let by_review = owners
+        .iter()
+        .find(|o| state(o).as_deref() == Some("APPROVED"));
+    if let Some(o) = by_review {
+        return Ok(Some((o.clone(), true)));
+    }
+    let comments = gh.list_comments(pr)?;
+    // Only a comment written with a plain user token counts: agent sessions act as the same
+    // login through an app, and GitHub marks that in `performed_via_github_app` (spec §8).
+    // An edited comment does not count: users with write access can edit others' comments. An
+    // owner whose newest decisive review on `head` requests changes, or was dismissed, has
+    // withdrawn the approval; after a dismissal only a comment made later than the dismissal
+    // (its time on the issue timeline, not the review's) clears it.
+    let by_comment = owners.iter().find(|o| match state(o).as_deref() {
+        Some("DISMISSED") => {
+            let newer = newer_than(&comments, dismissed_at(gh, pr, &reviews, o, head));
+            owner_comment(&newer, o, head).is_some()
+        }
+        s if withdrawn(s) => false,
+        _ => owner_comment(&comments, o, head).is_some(),
+    });
+    if let Some(o) = by_comment {
+        return Ok(Some((o.clone(), true)));
+    }
+    // A signed approval stands for the owner: with no owners it counts for no one, and any
+    // owner's request for changes withdraws it. A v1 signature carries no time, so a re-posted
+    // old one could pass for new: it never clears a dismissal. Each dismissed owner review needs
+    // an owner v2 signature naming its id, and the timeline must show the dismissal.
+    let changes = |o: &String| state(o).as_deref() == Some("CHANGES_REQUESTED");
+    if !signed_ok || owners.is_empty() || owners.iter().any(changes) {
+        return Ok(None);
+    }
+    let sign = |accept: &dyn Fn(Form) -> bool| {
+        signed_approver(
+            gh,
+            repo,
+            pr,
+            head,
+            &comments,
+            (Role::Owner, signer_on),
+            accept,
+        )
+    };
+    let ids: Vec<u64> = (owners.iter())
+        .filter_map(|o| dismissed_review(&reviews, o, head))
+        .collect();
+    // A bootstrap-mode signature never clears a dismissal.
+    if ids.is_empty() {
+        // Bootstrap and autonomous signatures are not owner approvals.
+        if let Some(id) = sign(&|f| matches!(f, Form::V1 | Form::V2(_)))? {
+            return Ok(Some((format!("key {id}"), true)));
+        }
+        let Some((label, form)) = bootstrap else {
+            return Ok(None);
+        };
+        let boot = sign(&|f| f == form)?;
+        return Ok(boot.map(|id| (format!("key {id} ({label})"), false)));
+    }
+    let mut by = None;
+    for id in ids {
+        let seen = (gh.review_dismissed_at(pr, id))
+            .map_err(|e| eprintln!("bosun: risk-check: cannot read the timeline: {}", e.message))
+            .ok()
+            .flatten();
+        if id == 0 || seen.and_then(|t| parse_rfc3339(&t)).is_none() {
+            return Ok(None);
+        }
+        let Some(key) = sign(&|f| f == Form::V2(id))? else {
+            return Ok(None);
+        };
+        by.get_or_insert(key);
+    }
+    Ok(by.map(|id| (format!("key {id}"), true)))
+}
+
+/// Whether a counted chat record approves the head of `p` (the board's no-CI check).
+pub(crate) fn chat_counted(gh: &dyn Github, p: &Pull) -> Result<bool> {
+    if !chat_enabled(gh, &p.base_sha)? {
+        return Ok(false);
+    }
+    let owners = owner_logins(gh, &p.base_sha)?;
+    let chat = Chat {
+        author: &p.user,
+        base: &p.base_sha,
+    };
+    Ok(chat_approver(gh, p.number, &p.head_sha, &owners, &chat)?.is_some())
+}
+
+/// The owner whose chat record (spec §8) approves `head`: written by an orchestrator session
+/// for the owner who authored the comment, unedited; an owner's withdrawal (changes requested,
+/// or a dismissal not followed by a newer record) stops it. With no owners file at all the repo
+/// owner (user repo) or the PR author with admin permission (org repo) stands in; an owners file
+/// that exists but names nobody does not (fail closed). The registry is read only when a record
+/// for `head` exists.
+fn chat_approver(
+    gh: &dyn Github,
+    pr: u64,
+    head: &str,
+    owners: &[String],
+    chat: &Chat,
+) -> Result<Option<String>> {
+    Ok(chat_scan(gh, pr, head, owners, chat)?.0)
+}
+
+/// Why a chat record for the head exists but does not count.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Lapse {
+    /// No record for this head.
+    NoRecord,
+    /// A record exists, but no owner's unedited comment carries it (nobody signed it).
+    Unsigned,
+    /// The owner's review withdrew it (changes requested, or dismissed with no newer record).
+    Withdrawn,
+    /// The orchestrator left, or its join had expired when the record was written.
+    Orchestrator,
+}
+
+/// [`chat_approver`], plus why a record that exists does not count, so a failing check can name
+/// the cause.
+fn chat_scan(
+    gh: &dyn Github,
+    pr: u64,
+    head: &str,
+    owners: &[String],
+    chat: &Chat,
+) -> Result<(Option<String>, Lapse)> {
+    let comments = gh.list_comments(pr)?;
+    if !(comments.iter()).any(|c| approve::parse_chat_record(&c.body, head, Some(pr)).is_some()) {
+        return Ok((None, Lapse::NoRecord));
+    }
+    let owners = if owners.is_empty() && gh.file_at(OWNERS_PATH, chat.base)?.is_none() {
+        fallback_owners(gh, chat.author)?
+    } else {
+        owners.to_vec()
+    };
+    let signed_by = |o: &String| {
+        comments.iter().any(|c| {
+            c.unedited()
+                && c.user.eq_ignore_ascii_case(o)
+                && approve::parse_chat_record(&c.body, head, Some(pr)).is_some()
+        })
+    };
+    let seen = owners.iter().any(signed_by);
+    let Some((_, notes)) = crate::registry::load(gh)? else {
+        return Ok((
+            None,
+            if seen {
+                Lapse::Orchestrator
+            } else {
+                Lapse::Unsigned
+            },
+        ));
+    };
+    let reviews = gh.list_reviews(pr)?;
+    let reg = Registry {
+        notes: &notes,
+        now: crate::core::lease::members(&notes),
+    };
+    let mut withdrawn_by_review = false;
+    let by = owners.iter().find(|o| {
+        let one = std::slice::from_ref(*o);
+        match decisive_review(&reviews, o, head).as_deref() {
+            Some("DISMISSED") => {
+                let newer = newer_than(&comments, dismissed_at(gh, pr, &reviews, o, head));
+                let ok = chat_comment_by(&newer, one, &reg, (pr, head)).is_some();
+                withdrawn_by_review |= !ok && signed_by(o);
+                ok
+            }
+            s if withdrawn(s) => {
+                withdrawn_by_review |= signed_by(o);
+                false
+            }
+            _ => chat_comment_by(&comments, one, &reg, (pr, head)).is_some(),
+        }
+    });
+    let lapse = if by.is_some() {
+        Lapse::NoRecord
+    } else if withdrawn_by_review {
+        Lapse::Withdrawn
+    } else if seen {
+        Lapse::Orchestrator
+    } else {
+        Lapse::Unsigned
+    };
+    Ok((by.cloned(), lapse))
+}
+
+/// The registry notes and the members standing now (a `leave` after the record removes one).
+struct Registry<'a> {
+    notes: &'a [Note],
+    now: Vec<Member>,
+}
+
+/// The owners a chat record counts for when the base has no owners file: the repo's owner for
+/// a user repo; for an org repo the PR author when an admin of the repo; else none.
+fn fallback_owners(gh: &dyn Github, author: &str) -> Result<Vec<String>> {
+    let Some(owner) = gh.repo_info()?.and_then(|r| r.owner) else {
+        return Ok(Vec::new());
+    };
+    if owner.kind == "User" {
+        return Ok(vec![owner.login]);
+    }
+    let admin = !author.is_empty() && gh.permission(author)?.as_deref() == Some("admin");
+    Ok(if admin {
+        vec![author.into()]
+    } else {
+        Vec::new()
+    })
+}
+
+/// `[approvals] chat` at base (unset: on). A config that does not parse turns chat off.
+pub(crate) fn chat_enabled(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)
+            .map_err(|e| eprintln!("bosun: risk-check: chat records are off: {}", e.message))
+            .is_ok_and(|c| c.approvals.chat_enabled()),
+        None => true,
+    })
+}
+
+/// The chat record approving `head` of PR `pr`: unedited, by one of `owners`, through any app
+/// (the cloud posts as the owner via the Claude app), whose marker names an orchestrator
+/// session. The orchestrator is judged by the join in force when the record was written (the
+/// newest join older than the comment, not expired then), and must not have left since.
+fn chat_comment_by<'a>(
+    comments: &'a [Comment],
+    owners: &[String],
+    reg: &Registry,
+    (pr, head): (u64, &str),
+) -> Option<&'a Comment> {
+    comments.iter().find(|c| {
+        c.unedited()
+            && owners.iter().any(|o| c.user.eq_ignore_ascii_case(o))
+            && approve::parse_chat_record(&c.body, head, Some(pr)).is_some_and(|r| {
+                // An unreadable time is no orchestrator (fail closed).
+                let Some(at) = parse_rfc3339(&c.created_at) else {
+                    return false;
+                };
+                if !approve::question_fresh(r.question.as_deref(), at.0) {
+                    return false;
+                }
+                let before: Vec<Note> = (reg.notes.iter())
+                    .filter(|n| n.id < c.id)
+                    .cloned()
+                    .collect();
+                reg.now.iter().any(|m| m.session == r.session)
+                    && approve::is_orchestrator(
+                        &crate::core::lease::members(&before),
+                        &r.session,
+                        at,
+                    )
+            })
+    })
+}
+
+/// A decisive review in this state withdraws the owner's approvals (anyone with write access can
+/// dismiss a review; GitHub then reports DISMISSED).
+pub fn withdrawn(state: Option<&str>) -> bool {
+    matches!(state, Some("CHANGES_REQUESTED" | "DISMISSED"))
+}
+
+/// When `owner`'s decisive review was dismissed (issue timeline); `None` when unknown.
+fn dismissed_at(
+    gh: &dyn Github,
+    pr: u64,
+    reviews: &[Review],
+    owner: &str,
+    head: &str,
+) -> Option<Timestamp> {
+    let id = decisive(reviews, owner, head)?.id;
+    parse_rfc3339(&gh.review_dismissed_at(pr, id).ok()??)
+}
+
+/// The comments created after `since`; with no time nothing is newer (fail closed).
+fn newer_than(comments: &[Comment], since: Option<Timestamp>) -> Vec<Comment> {
+    let Some(since) = since else {
+        return Vec::new();
+    };
+    comments
+        .iter()
+        .filter(|c| parse_rfc3339(&c.created_at).is_some_and(|t| t > since))
+        .cloned()
+        .collect()
+}
+
+/// Why a delegate cannot approve now, if it cannot: bosun is halted (or cannot tell), the PR
+/// targets another branch than the default one, or a linked issue is not an open bosun task
+/// with a lease record (a decoy link would hide the real task's capabilities and its lease
+/// holders). An unreadable task issue is a reason; an error listing its comments errors the
+/// check (fail closed, as every other read here).
+pub(crate) fn delegation_blocked(
+    gh: &dyn Github,
+    base_ref: &str,
+    linked: &[u64],
+) -> Result<Option<String>> {
+    match halt_reason(gh) {
+        Ok(None) => {}
+        Ok(Some((why, _))) => return Ok(Some(format!("bosun is halted ({why})"))),
+        Err(e) => {
+            return Ok(Some(format!(
+                "cannot tell whether bosun is halted: {}",
+                e.message
+            )));
+        }
+    }
+    let branch = default_branch(gh)?;
+    if base_ref != branch {
+        return Ok(Some(format!(
+            "the PR targets {base_ref}, not the default branch {branch}"
+        )));
+    }
+    for i in linked {
+        let issue = match gh.get_issue(*i) {
+            Ok(Some(issue)) => issue,
+            Ok(None) => return Ok(Some(format!("linked #{i} does not exist"))),
+            Err(e) => return Ok(Some(format!("cannot read linked #{i}: {}", e.message))),
+        };
+        if issue.pull_request || issue.state != "open" || task_meta(&issue).is_none() {
+            return Ok(Some(format!("linked #{i} is not an open bosun task")));
+        }
+        let notes = gh.list_comments(*i)?;
+        if lease_sessions(notes.iter().map(|c| c.body.as_str())).is_empty() {
+            return Ok(Some(format!("linked task #{i} has no lease record")));
+        }
+    }
+    Ok(None)
+}
+
+/// Whether a signed approval of `head` cannot count: no owners, or an owner's newest decisive
+/// review on `head` requests changes or was dismissed.
+fn owners_withdrawn(gh: &dyn Github, pr: u64, head: &str, owners: &[String]) -> Result<bool> {
+    let reviews = gh.list_reviews(pr)?;
+    Ok(owners.is_empty()
+        || owners
+            .iter()
+            .any(|o| withdrawn(decisive_review(&reviews, o, head).as_deref())))
+}
+
+/// The PR's comments oldest first, and the sessions that cannot review it independently: every
+/// session with a lease record (past or live) on a linked issue. `bosun pr` records no session
+/// for the PR author, so the lease is the only trace of who wrote the change.
+pub fn verdict_inputs(gh: &dyn Github, n: u64, ls: &[u64]) -> Result<(Vec<Comment>, Vec<String>)> {
+    let mut comments = gh.list_comments(n)?;
+    comments.sort_by_key(|c| c.id);
+    // In checks mode only the gate App's records count (UC-B2-4).
+    for c in &mut comments {
+        c.user = crate::github::gate::record_author(&c.user);
+    }
+    let mut excluded = Vec::new();
+    for i in ls {
+        let notes = gh.list_comments(*i)?;
+        excluded.extend(lease_sessions(notes.iter().map(|c| c.body.as_str())));
+    }
+    Ok((comments, excluded))
+}
+
+/// D-017: the PR's comments and the sessions that cannot review it, only when the PR closes an
+/// open task issue (not a PR, not itself, with task meta) on which the PR author wrote a lease
+/// record; else no reviewer can be shown independent of the author (a decoy link fails closed).
+/// The excluded sessions are every lease session on any linked issue.
+pub(crate) fn autonomous_inputs(
+    gh: &dyn Github,
+    pull: &Pull,
+    repo: &str,
+) -> Result<Option<(Vec<Comment>, Vec<String>)>> {
+    // Without CI a `github-actions[bot]` record is any writer's push workflow (spec section 8).
+    if super::pr_no_ci::provider_default(gh)? == crate::config::CiProvider::None {
+        return Ok(None);
+    }
+    let mut task = false;
+    for i in closing_issues_in(&pull.body, Some(repo)) {
+        let open = |x: &Issue| x.state == "open" && !x.pull_request && task_meta(x).is_some();
+        if i != pull.number && gh.get_issue(i)?.is_some_and(|x| open(&x)) {
+            let notes = gh.list_comments(i)?;
+            let by = |c: &&Comment| c.user.eq_ignore_ascii_case(&pull.user);
+            let bodies = notes.iter().filter(by).map(|c| c.body.as_str());
+            task |= !lease_sessions(bodies).is_empty();
+        }
+    }
+    let linked = linked_issues_in(&pull.body, repo);
+    let (comments, excluded) = verdict_inputs(gh, pull.number, &linked)?;
+    Ok(task.then_some((comments, excluded)))
+}
+
+/// D-017: the sessions with a counting verdict on `head` ([`risk::autonomous_verdicts`]).
+pub(crate) fn autonomous_clean(
+    comments: &[Comment],
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+) -> Vec<String> {
+    let c = comments.iter();
+    risk::autonomous_verdicts(
+        c.map(|c| (c.user.as_str(), c.body.as_str(), c.unedited())),
+        head,
+        excluded,
+        models,
+    )
+}
+
+/// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
+/// base config that does not parse fails closed (an empty list: no verdict counts).
+/// `[approvals] signer` at base; a config that does not parse turns it off (fail closed).
+fn signer_on(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE).is_ok_and(|c| c.approvals.signer),
+        None => false,
+    })
+}
+
+/// `[approvals] autonomous_allow` on `base`: `None` when unset; a base config that does not parse
+/// allows nothing.
+pub(crate) fn autonomous_allow(gh: &dyn Github, base: &str) -> Result<Option<Vec<String>>> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c.approvals.autonomous_allow,
+            Err(_) => Some(Vec::new()),
+        },
+        None => None,
+    })
+}
+
+/// `[approvals] oneoff_allow` on `base`, parsed; a missing or bad config or glob allows nothing.
+pub(crate) fn oneoff_allow(gh: &dyn Github, base: &str) -> Result<Vec<crate::core::glob::Glob>> {
+    let c = gh.file_at(CONFIG_FILE, base)?;
+    let c = c.and_then(|t| Config::parse(&t, CONFIG_FILE).ok());
+    let globs = c.and_then(|c| c.approvals.oneoff_allow).unwrap_or_default();
+    Ok(globs
+        .iter()
+        .filter_map(|g| crate::core::glob::Glob::parse(g).ok())
+        .collect())
+}
+
+pub(crate) fn review_models(gh: &dyn Github, base: &str) -> Result<Option<Vec<String>>> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c.approvals.review_models,
+            Err(_) => Some(Vec::new()),
+        },
+        None => None,
+    })
+}
+
+/// The id of an enrolled key that signed an approval of `head` on this PR (spec §8, signed
+/// approvals); `accept` takes the comment's form. Only an owner key signs v2 and bootstrap.
+/// The keys come from the default branch only, so a PR cannot enroll its own. Any author and app
+/// count: the signature is the proof. A missing or malformed key file, an unknown key or a bad
+/// signature is no approval, logged to stderr, never an error.
+fn signed_approver(
+    gh: &dyn Github,
+    repo: &RepoId,
+    pr: u64,
+    head: &str,
+    comments: &[Comment],
+    (role, signer_on): (Role, bool),
+    accept: &dyn Fn(Form) -> bool,
+) -> Result<Option<String>> {
+    let sigs: Vec<(u64, Form, &str, &str)> = comments
+        .iter()
+        .flat_map(|c| {
+            signature_lines(&c.body, head)
+                .into_iter()
+                .map(move |(form, id, sig)| (c.id, form, id, sig))
+        })
+        .collect();
+    if sigs.is_empty() {
+        return Ok(None);
+    }
+    let keys = match enrolled_keys(gh) {
+        Ok(keys) => keys,
+        Err(why) => {
+            eprintln!("bosun: risk-check: signed approvals are off: {why}");
+            return Ok(None);
+        }
+    };
+    let (o, r) = (&repo.owner, &repo.name);
+    for (comment, form, id, sig) in sigs {
+        let msg = match (form, role) {
+            (Form::V1, _) => signed_message(role, o, r, pr, head),
+            (Form::V2(v), Role::Owner) => signed_message_v2(o, r, pr, head, v),
+            (Form::Bootstrap, Role::Owner) => signed_message_bootstrap(o, r, pr, head),
+            (Form::Autonomous, Role::Owner) => signed_message_autonomous(o, r, pr, head),
+            _ => continue,
+        };
+        if !accept(form) {
+            continue;
+        }
+        let Some(key) = keys.iter().find(|k| k.id == id) else {
+            eprintln!("bosun: risk-check: comment {comment}: unknown key {id:?}, not counted");
+            continue;
+        };
+        // A signer key counts only for the autonomous form, in place of an owner key.
+        let role_ok = key.role == role
+            || (signer_on
+                && role == Role::Owner
+                && form == Form::Autonomous
+                && key.role == Role::Signer);
+        if !role_ok {
+            eprintln!(
+                "bosun: risk-check: comment {comment}: key {id:?} is a {} key, not counted as {}",
+                key.role.name(),
+                role.name()
+            );
+            continue;
+        }
+        let ok = b64::decode(&key.ed25519)
+            .zip(b64::decode(sig))
+            .is_some_and(|(k, s)| verify_ed25519(&k, msg.as_bytes(), &s));
+        if ok {
+            return Ok(Some(key.id.clone()));
+        }
+        eprintln!(
+            "bosun: risk-check: comment {comment}: signature of key {id:?} does not verify for {msg:?}, not counted"
+        );
+    }
+    Ok(None)
+}
+
+/// The label of an orchestrator approval (a bootstrap-form signature) when it can count on this
+/// PR, else why not: `[approvals]` at base, read like the rules, decides with the window (D-012),
+/// `policy` (D-014) and the PR's rules, exclusions and workflow files.
+fn orchestrator_window(
+    gh: &dyn Github,
+    base: &str,
+    today: &str,
+    pr: (&[PrFile], &[risk::Match], Approval),
+    (excluded, capabilities): (&[String], &[String]),
+) -> Result<(std::result::Result<String, String>, Option<&'static str>)> {
+    let (files, matches, requirement) = pr;
+    let approvals = match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c.approvals,
+            Err(e) => return Ok((Err(format!("bootstrap mode is off: {}", e.message)), None)),
+        },
+        None => Default::default(),
+    };
+    let paths: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+        .collect();
+    let workflows = risk::workflow_files(&paths);
+    let rules: Vec<&str> = matches.iter().map(|m| m.rule.as_str()).collect();
+    let mut autonomous_excluded =
+        risk::autonomous_excluded(&paths, matches, approvals.autonomous_allow.as_deref());
+    let patches: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.patch.as_deref()))
+        .collect();
+    autonomous_excluded.extend(risk::path_attributes(&patches));
+    let counts = orchestrator_counts(&OrchestratorCase {
+        policy: approvals.policy(),
+        bootstrap_until: approvals.bootstrap_until.as_deref(),
+        today,
+        requirement: requirement.name(),
+        excluded,
+        rules: &rules,
+        workflows: &workflows,
+        autonomous_excluded: &autonomous_excluded,
+        capabilities,
+    });
+    let autonomous = approvals.policy() == Policy::Autonomous;
+    Ok((counts, autonomous.then(|| approvals.policy_source())))
+}
+
+/// The paths and rules of the PR that a bootstrap-mode approval never covers.
+fn bootstrap_excluded(files: &[PrFile], matches: &[risk::Match], bosun_code: bool) -> Vec<String> {
+    let f: Vec<_> = (files.iter())
+        .map(|f| {
+            (
+                &*f.filename,
+                f.previous_filename.as_deref(),
+                f.patch.as_deref(),
+            )
+        })
+        .collect();
+    risk::bootstrap_excluded(&f, matches, bosun_code)
+}
+
+/// Whether a comment on the PR has a bootstrap-mode signature line for `head`, valid or not.
+fn bootstrap_signed(gh: &dyn Github, pr: u64, head: &str) -> Result<bool> {
+    let comments = gh.list_comments(pr)?;
+    Ok((comments.iter()).any(|c| {
+        (signature_lines(&c.body, head).iter())
+            .any(|(f, ..)| matches!(f, Form::Bootstrap | Form::Autonomous))
+    }))
+}
+
+/// The keys of `.bosun/approvers.toml` on the default branch, read at `refs/heads/<branch>` so
+/// a tag or another ref of the same name cannot stand in for it. `Err` says why signed
+/// approvals are off: the file is missing, unreadable or malformed (a key that is not 32 bytes
+/// of base64 makes the whole file malformed). Never an error of the check.
+pub fn enrolled_keys(gh: &dyn Github) -> std::result::Result<Vec<ApproverKey>, String> {
+    let git_ref = default_ref(gh).map_err(|e| format!("no default branch: {}", e.message))?;
+    let text = match gh.file_at(APPROVERS_PATH, &git_ref) {
+        Ok(Some(text)) => text,
+        Ok(None) => return Err(format!("{APPROVERS_PATH} is missing on {git_ref}")),
+        Err(e) => return Err(format!("cannot read {APPROVERS_PATH}: {}", e.message)),
+    };
+    let keys = parse_approvers(&text)
+        .map_err(|e| format!("{APPROVERS_PATH} on {git_ref} is malformed: {e}"))?;
+    let raw: Vec<Option<Vec<u8>>> = keys.iter().map(|k| b64::decode(&k.ed25519)).collect();
+    if let Some(k) = keys
+        .iter()
+        .zip(&raw)
+        .enumerate()
+        .find(|(i, (_, r))| r.is_some() && raw[..*i].contains(r))
+        .map(|(_, (k, _))| k)
+    {
+        return Err(format!(
+            "{APPROVERS_PATH} on {git_ref} is malformed: the public key of {:?} is enrolled twice",
+            k.id
+        ));
+    }
+    match keys
+        .iter()
+        .find(|k| b64::decode(&k.ed25519).is_none_or(|b| b.len() != 32))
+    {
+        Some(k) => Err(format!(
+            "{APPROVERS_PATH} on {git_ref} is malformed: key {:?} is not a base64 32-byte ed25519 key",
+            k.id
+        )),
+        None => Ok(keys),
+    }
+}
+
+/// The comment that approves `head` for `owner`: unedited, written with a plain user token and
+/// exactly `/bosun approve <head>`.
+pub fn owner_comment<'a>(comments: &'a [Comment], owner: &str, head: &str) -> Option<&'a Comment> {
+    comments.iter().find(|c| {
+        c.user.eq_ignore_ascii_case(owner)
+            && c.unedited()
+            && c.by_user_token()
+            && comment_approves(&c.body, head)
+    })
+}
+
+/// GitHub lists at most this many commits of a PR.
+const COMMIT_CAP: usize = 250;
+
+/// Closing refs to this repo's issues in the PR title and commit messages, and whether the
+/// commit list hit GitHub's 250-commit cap. A commit that cannot be read (an API error, not
+/// the author's choice) is skipped; risk-check runs again on every push.
+fn closing_refs_outside_body(
+    gh: &dyn crate::github::Github,
+    pull: &crate::github::Pull,
+    repo: &str,
+) -> crate::app::Result<(Vec<u64>, bool)> {
+    let mut out = closing_issues_in(&pull.title, Some(repo));
+    let shas = gh.pull_commits(pull.number)?;
+    let incomplete = shas.len() >= COMMIT_CAP;
+    for sha in &shas {
+        if let Ok(Some(c)) = gh.commit(sha) {
+            out.extend(closing_issues_in(&c.message, Some(repo)));
+        }
+    }
+    out.dedup();
+    Ok((out, incomplete))
+}

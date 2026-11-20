@@ -1,0 +1,56 @@
+[package]
+name = "keel-bosun"
+version = "0.21.0"
+edition = "2024"
+rust-version = "1.97"
+description = "Orchestration helper for repos where agents write all the code"
+license = "MIT"
+repository = "https://github.com/keelstackhq/bosun"
+readme = "README.md"
+keywords = ["ai-agents", "orchestration", "github", "cli", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+# Only what builds the crate: no tests, fixtures, npm packages or docs in the .crate file.
+# profiles/ is embedded with include_str!.
+include = ["/src/**", "/profiles/**", "/channel/pieces/core/files/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[lib]
+name = "bosun"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bosun"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.6.7", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+thiserror = "=2.0.21"
+regex = "=1.13.1"
+# Already in the tree through rustls: ed25519 for signed owner approvals (spec §8).
+ring = { version = "=0.17.14", default-features = false }
+toml = "=1.1.8"
+ureq = { version = "=3.4.2", features = ["platform-verifier"] }
+
+[dev-dependencies]
+assert_cmd = "=2.2.2"
+predicates = "=3.1.4"
+tempfile = "=3.27.0"
+tiny_http = "=0.12.0"
+
+# Dev builds: line tables are enough for backtraces; dependencies carry no debug info.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
+# Release binary: small and single-unit. panic must stay "unwind": the hooks (pre_tool_use, stop,
+# compact) wrap their work in catch_unwind so a panic fails open or closed on purpose instead of
+# aborting with no hook output.
+[profile.release]
+panic = "unwind"
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true

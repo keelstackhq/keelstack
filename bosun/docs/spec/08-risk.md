@@ -1,0 +1,530 @@
+## 8. Risk gating
+
+`.bosun/risk.toml` rules:
+- R-gov: "Governance files decide who approves what." Paths `.bosun/**`, `governance/**`,
+  `CODEOWNERS`, `docs/CODEOWNERS`, `.github/CODEOWNERS`, `**/codeowners`, `.claude/**` and `**/.claude/**` (a nested `.claude/` holds skills and settings Claude Code loads too), `.splice/**`, `docs/setup-script.sh` (the pasted copy runs as root in cloud environments, so it is owner class and never a delegate's; consumer repos list it too, and the channel's template of it stays R-ci-review like every shipped file), `**/hoist.toml` (the root file holds `[github]`, the required checks, and later the App pins, that `hoist apply` puts in the ruleset, so dropping `risk-check` there removes the gate; a package's file holds the `[publish]` and `[deploy]` targets hoist mints tokens for), `REVIEW.md` and `docs/lessons.toml` (both are read into every review pack), `docs/agents/**`, `**/agents.md`, `**/claude.md` and `**/claude.local.md` (the agent-instruction files steer every later agent; `**/` matches the root file too, and the lowercase patterns match any case, as `CLAUDE.md` or `Claude.md`). The org-decisions sync commit (`chore: sync org decisions`, which rewrites `docs/agents/org-decisions.md`, imported by `CLAUDE.md`, and its hash in `.splice/channels/decisions.toml`) already needed the owner through `.splice/**`; these entries do not change who approves it. `**/plans/**` (any `plans` directory, such as `plans/` or `docs/superpowers/plans/`: a plan's tasks carry `touch` and `allow:`, which decide what a claim may edit and which test-integrity findings pass; `bosun plan pr` only takes a plan under `plans/`, so every plan PR it opens is owner-gated).
+- `src/core/session_rules.rs`, `src/hooks/session_rules.rs` (and their `/**`) and `.claude-plugin/**` (the plugin marketplace with pinned commits) are R-gov too (the rules text SessionStart tells every session and the plugins every session loads; `.bosun/session-rules.toml` is covered by `.bosun/**`).
+- `docs/handoff/**` (handoff notes, §4) is not R-gov: a handoff PR is normal risk and a one-off may touch it. Its content is data, never rules: no agent-instruction file may `@`-import it (adding the import edits `CLAUDE.md` or `AGENTS.md`, R-gov), and a `CLAUDE.md`, `AGENTS.md` or `claude.local.md` placed there is still R-gov through `**/claude.md`, `**/agents.md` and `**/claude.local.md`, and a nested `.claude/` folder there is R-gov through `**/.claude/**`.
+- Consumer repos (`channel/pieces/core/files/.bosun/risk.toml.jinja`): the same R-gov paths but `docs/lessons.toml`.
+- R-ci: "CI decides what is verified." Paths `.github/workflows/**`, `.github/actions/**`, every `action.yml` and `action.yaml` (a local composite action, `uses: ./path`, runs inside a workflow), `.circleci/**`, `.gitlab-ci.yml`, `.gitlab/ci/**`, `.buildkite/**`, `**/jenkinsfile` (any case), `azure-pipelines.y*ml`, `bitbucket-pipelines.yml`, `.travis.yml`, `.drone.yml`, `.github/dependabot.yml`, `scripts/**` (every file: CI and the local mirror call whatever lives there, so a narrower list would let a helper change slip past), `Makefile`, `justfile`, `Dockerfile` (any directory) and `.husky/**` (what CI and every contributor run), every `deny.toml`, `.deny.toml`, `deny.exceptions.toml`, `.deny.exceptions.toml` (the files cargo deny reads), `deny.local.toml`, `.deny.local.toml` (hull's licence overlay) and `scripts/deny.mjs` (merges it), `rust-toolchain.toml` and the legacy `rust-toolchain`.
+- R-gate: "The gate code decides what passes." The risk, weaken, verdict, records, meta, glob and approve logic in `src/core` and their CLI commands, the test-integrity, gate and review commands, the config, lease, state and review logic, `src/gates/**`, `src/github/**`, `Cargo.toml`, `Cargo.lock`, `build.rs` (any directory), `.cargo/**`, `.config/**` (build inputs), `src/anthropic.rs`, `src/core/lessons.rs`, `src/core/budget.rs`, `src/sessions/**` (review feeders), the approval path (carry-over, PR bundles, touch, text, shape, plan, lock-merge) and the hooks with their guard and repeat logic (`src/hooks/**`, `src/core/guard.rs`, `src/core/repeat.rs`), the gate stamps and records and the CI-minutes gate (`stamps`, `gate_record`, `ci_minutes`), `src/app.rs`, `src/output.rs`, `src/lib.rs`, `src/main.rs`, `profiles/**`, `npm/**`. A module is listed as `x.rs` and `x/**`. The full list is in `.bosun/risk.toml`.
+- R-ci-review (`approval = "two-verdicts"`): "Shipped CI for other repos; two independent reviews instead of the owner." Path `channel/**` (the CI and governance `bosun init` ships).
+- R-secrets: "A secret in the repo is a leak." Paths `**/secrets.toml`, `**/access.toml` and `**/*.sops.*` (`.sops.yaml` included); content `(?i)(?:(api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?|token|passw(or)?d|private[_-]?key)["']?\s*:?=\s*(?:={1,2}\s*["'](?:[^"'$]|\$\w)|[^\s$="'>]|["'](?:[^"'$]|\$\w)|\$[\w"']|$|\$\s*(?:\|\||\?\?|\?:|or\b|\.\s*(?:ok\(\)\s*\.\s*)?unwrap_or(?:_else)?\(\s*(?:\|[^|]*\|\s*)?)\s*["'])|(?:^\s*|\b(?:const|let|var|val|static|mut|final|private|public|protected|readonly)\s+)[\w.-]*(api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?|token|passw(or)?d|private[_-]?key)["']?\s*:\s*[\w&<>\[\].' ]+=\s*(?:[^\s$="'>]|["'](?:[^"'$]|\$\w)|\$[\w"']|$|\$\s*(?:\|\||\?\?|\?:|or\b|\.\s*(?:ok\(\)\s*\.\s*)?unwrap_or(?:_else)?\(\s*(?:\|[^|]*\|\s*)?)\s*["'])|(?:^|[{,])\s*(?:-\s+)?["']?(?:[\w.-]*(api[_-]?key|token|passw(or)?d|private[_-]?key)|(?:[\w.]*[_.-])?secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?)["']?\s*:\s*["']([^"'$]|\$\w))|AGE-SECRET-KEY-1|SOPS_AGE_KEY\s*[:=]|://[^/\s:@]+:(?:[^/\s@$]|\$\w)[^/\s@]*@` (a name, an optional quote, then `=` or `:=` and a value; a typed binding (`const TOKEN: &str = "abc"`, `const password: string = "x"`); or `:` and a quoted literal where the key is at statement or mapping-key position (line start, or after `{` or `,`), never inside a string literal (`print("Password: " + x)`, `log.info("token: %s", v)`, `read -p "Token: " T` match nothing); a value that is only a quoted variable reference (`PASSWORD="$DB_PASSWORD"`) is no literal; Go `password := "x"` matches: `SECRET_KEY=abc`, `"apiKey": "x"`, `token: 'x'`; a type, field or reference after `:` (`pub token: String`, `token: cfg.token`, `secrets: inherit`) is no secret, and neither is `${{ .. }}`, `${VAR}`, `process.env.X` `env::var(..)` or `$VAR` as a value (references are scrubbed to `$` first, so a literal after one still counts: `TOKEN=${X}real`, `TOKEN=$'abc'`, `TOKEN=$"abc"`, `password: "${{ x }}hunter2"`, `env::var("T").unwrap_or("hardcoded")`, `.unwrap_or_else(|| "x")`, `os.getenv("X") or "x"`); `getenv("X")`, `os.getenv`, `System.getenv`, `os.environ["X"]`, `os.environ.get("X")`, `ENV["X"]` and `ENV.fetch("X")` with the name as the only argument are references too (a default argument stays a literal; so does a reader call whose only argument looks like a secret: 8 or more characters with a digit, no `/`, `\`, `.`, space or `:`, not an env var name; `FormValue("password")` is a field name: `token = get_token("abc12345xyz")`); a comparison with a literal matches: `if token == "abc"`, `secret === "abcdef"` (`secret == expected` does not); a key ending in `_name`, `_id`, `_path` or `_file` (`secret_name`, `token_file`) names a secret and holds none; the default in `${X:-lit}`, `${X-lit}`, `${X:=lit}`, `${X=lit}`, `${X:+lit}` and `${X+lit}` is a literal (`TOKEN=${TOKEN:-abcd1234}` matches), and so is a `$..` value after a single quote anywhere, or after a double quote in a code file (`token = '$ecret1'`, `"$2b$10$.."`); `secret` is a keyword only whole or as `secret_key`, `secretKey`, `secret_access_key` or `secret_token` (`secrets`, `secretary`, `secret_dir`, `secret_version`, `secretName`, `secretRef`, `secretKeyRef`, `tokenSecret:` are no secret); a bare yaml `token: abc` is caught by the built-in config forms below, not by `content`), a URL with `user:password@` (not a reference password) , `=>` entries (`'token' => env(..)`, `'password' => $pw`, `=> ''`) and `{{ .Values.x }}` tags are no assignment and no literal, `AGE-SECRET-KEY-1` or `SOPS_AGE_KEY\s*[:=]` (a path or the content matches). It is critical, so it never goes to a delegate. Risk paths also match the lowercased path against the lowercased pattern (a case-insensitive filesystem treats `Secrets.toml` and `.CircleCI/` as the same files), so a pattern with capitals matches any case too.
+- R-deps: "A new dependency adds code that nobody reviewed." `new_dependency = true`. risk-check reads every changed `Cargo.toml`, `package.json` and `pnpm-workspace.yaml` at base and head. A dependency counts when its name is declared at head but not at base (`new dependency x`), or when its source changed (`new dependency x (source changed)`): registry to git or another registry, a `package =` rename, an npm `npm:` alias, a git, URL, `file:` or `user/repo` spec. A version bump is neither. Read: the Cargo dependency tables (and their `target` tables), `[workspace.dependencies]`, `[patch.<registry>]` (as `patch.<registry>/<name>`) and `[replace]` (as `replace/<spec>`); the npm dependency maps, `overrides`, `resolutions`, `pnpm.overrides` (all as `overrides/<name>` or `resolutions/<name>`) and `pnpm.patchedDependencies` (as `patchedDependencies/<name>`, whose value is compared whole); the pnpm workspace's `catalog`, `catalogs`, `overrides` and `patchedDependencies`. Edges that add no outside code do not count: `x.workspace = true` (it inherits a root pin, which counts in the root manifest when it is added or its source changes), a Cargo `path` entry without `git` (in-repo code, in the diff; a `[patch]` to a path too), and npm `catalog:` and `workspace:` references (the catalog entry counts in `pnpm-workspace.yaml`). So a task that uses a crate already pinned in the root `[workspace.dependencies]` is not high. bosun has no YAML parser: the `pnpm-workspace.yaml` reader takes block-style `name: spec` lines, with quoted or spaced keys and an anchor after a block key (`catalog: &c`); anything else in or opening one of those blocks (flow style, an alias, a merge key, an anchored value, other nesting) counts as a dependency named by its line, so a change to it is never missed.
+- R-prod-write: "A write to production cannot be undone by a revert." `capability = "prod-write"`.
+- R-weaken: "A change that loosens a gate weakens what verifies every later change." Built in: when `src/core/weaken.rs` finds a loosening, risk-check adds an R-weaken match (owner class) with the findings (`file: key old → new`) as evidence, whatever the repo's rules say, so a repo whose `.bosun/risk.toml` has no such rule is covered too. The rule files also carry `capability = "weaken"` for it; a repo rule with that capability adds its own match, made owner-class, and also an R-weaken match with its evidence, so a signature that keys on the id never passes it. Whole files at base and head: numeric caps raised, removed, made non-numeric or added (a new cap can lift a built-in default) in `.bosun/limits*.toml` and `*budget*.toml`; any other value there (`[models]`) changed or removed; in `.bosun/bosun.toml` any change to `[[stack]]`, `[approvals]` (policy, bootstrap date), `[checks]` (mode, App; §15), `[ci]` (CI off or another provider; §9), `[prices]` or `[review]`, and in `[mode]` (§18) a move down the ladder (`mode gatekeeper → booster`) or an effective `push_gates` push → ready, `brake` on → off or `budget_feature` lowered (ask > warn > off; by preset only when the mode did not move up; by an override looser than the new mode's preset), while the helper knobs alone are no finding; in the risk rules (`.bosun/risk.toml`, `risk_default.toml`) a rule removed, a `paths` entry removed, `approval` changed to anything but owner, `content`, `capability` or `new_dependency` changed or removed; in `deny.toml`, `deny.exceptions.toml` and `deny.local.toml` (dot-prefixed too) a level lowered (deny > warn > allow) or removed, an item added to `allow`, `ignore`, `skip`, `skip-tree`, `exceptions`, `allow-git`, `allow-registry` or under `allow-org`, an item removed from `deny`, any other setting changed, removed or added (`graph`, scopes, thresholds, `private.ignore`) except a new `deny`; in any `Cargo.toml` a lint level lowered or removed (forbid > deny > warn > allow), a new lint set to `allow`, any `priority` changed, added or removed, or `lints.workspace = true` dropped (a dotted key stays quoted, so `"lints.rust.x" = ..` never stands in for `[lints.rust] x`); in `profiles/*.toml` any key changed or removed (`manifest`, `adapters`, a gate, a `cmd`), a key added to an existing gate or the top level (`manifest`, `when_no_package`, `each_package`) is a finding too, a whole new gate is fine, a new profile with no built-in is a finding. Each side of a rename is judged on its own: the old path is compared with what replaces it at head, the new path with what it replaced at base. What replaces a missing `.bosun/risk.toml` or `.bosun/profiles/<name>.toml` is the built-in file; anything else missing counts as empty. A head that does not parse is a finding. Diffs: in CI files (`.github/workflows`, `.github/actions`, `.circleci`, `action.yml`, GitLab, Buildkite, Jenkins, Azure, Bitbucket, Travis, Drone) more `continue-on-error` set to true (also `"true"`, `'true'`, `${{ true }}`, trailing comment ignored), an added `if:` that is false, `${{ false }}`, `${{ !true }}` or contains `0==1`, and a removed `run:` step, `uses:` step (by action name, so a version bump is no removal) or `cargo`, `bosun`, `npm`, `pnpm` or `npx` command line (names and comments are no steps) that no CI file of the PR adds back (digits masked, so a version bump is an edit); CI checks are best effort, as a CI file is R-ci and owner-class anyway; in config files (`.toml`, `.yml`, `.yaml`, `.json`, `.cfg`, `.ini`, `.conf`, `.xml`, `.coveragerc`; not `clippy.toml`) a lowered or removed coverage floor (`fail-under`, `*threshold*`, `min-coverage`; every value of a key is compared, the lowest added against the lowest removed); in Rust more attribute lines with `allow(` or `expect(` (a lone `#![allow(dead_code)]` or `#[allow(dead_code)]` is no finding in test code: a Cargo integration test under `tests/` with no `src/` above it that no `#[path]` mod pulls in, cfg(test) or not, or a file that only `#[cfg(test)]` `#[path = ".."]` mods pull in; the mods are read at base from every Rust file outside Cargo `tests/` (comments and literals masked; over 300 files, a failed read or a path it cannot resolve exempts nothing), and a PR that adds or changes a `#[path]` line, or hides a Rust diff, exempts nothing; unused shared test helpers loosen no gate), fewer `#![forbid(` or `#![deny(` lines; more `"off"` or `"warn"` in `oxlint`, `eslintrc` and `eslint.config` files, more `eslint-disable` or `oxlint-disable` in ts and js; a Rust `const` whose name has a `MIN`, `THRESHOLD`, `NEEDED` or `REQUIRED` part (split on `_`) whose lowest value went down, or a `MAX`, `LIMIT`, `CAP` or `BUDGET` part whose highest went up (either one removed counts too); and tests: risk-check reads every changed Rust and TS/JS file whole at base and head (a rename on both sides) and totals over the PR (so tests moved between files are no loss) fewer tests or assertions, or more skips, `.only` or `#[cfg]` switch-offs (`any()`, `not(all())`, `not(test)`, `feature = "never"`, or a bare name rustc does not set, such as `false`, `FALSE` or a typo), with the test-integrity counters; in every changed Rust file read whole at base and head (built or not), the entries of each `const` or `static` named `*_ALLOWED`: its whole initializer from the `=` to the `;` split at brackets and commas, comments dropped (block comments nest, as in Rust), literals kept whole, whitespace normalised, leading `&`, `*`, `mut` and `||` and a trailing macro `!` trimmed (a leading `!` is negation and stays), comments read as a space, `r#` names and Rust's whitespace (U+200E, U+200F) understood (`->` in a fn pointer type closes no bracket); so `&[..]`, `vec![..]`, both branches of an `if` and a bare `OTHER` all count, each as its text; a declaration with no `=` has none. Entries are counted per name over the PR (a multiset; evidence `NAME (all files): entry old → new`): any entry that occurs more often at head than at base is a finding, and when no entry grew any other change to the whole initializer (whitespace and trailing commas aside) is one too, `order or structure changed`: a reorder, a regrouping, an operator change and also a shrink, since dropping a conjunct or a tuple can widen (the owner judges it) (an added, duplicated or swapped-in entry widens what the list allows; a new list counts as empty at base; a list moved between files is no finding, and neither is an entry moved between two lists of the same name, a known limit); a list with entries at base and none of that name, or only empty ones, at head (deleted, renamed, inlined, emptied) is a finding too (`list → (removed)`); known limits: only `.rs` paths are read (`#[path]` to another extension or `include!` moves a list out of view) and entries built by a `const fn`, macro or other item are compared only by their call text; a Rust file counts only when Cargo builds it as tests (under a crate's `src/`, not one inside `tests`, `examples`, `benches`, `fixtures`, `vendor`, `target` or `docs`; `tests/*.rs`, `tests/<dir>/main.rs`; `/* */` comments dropped, strings and chars kept), a TS/JS file when it is a test file, so a rename out of those paths, deeper under `tests/` too, counts as a loss; over 100 changed code files, or a file that cannot be read or is over 1 MB, gives one `tests not counted` finding instead (the owner judges); a deleted test file is a finding too.. Evidence prints `->` for the arrow (ASCII, never garbled). `bosun risk-check --local` judges `git diff origin/main...HEAD` offline before a push: the path rules at the merge base and R-weaken as above, files read from git at the repo root (any working directory; no colour, textconv or external diff); exit 5 with the matches when any rule hits, 0 when none; it posts nothing, and what needs the PR (linked tasks, approvals, reverts, one-off size) is CI's. CI runs risk-check from the release pinned in `.bosun/version`, so R-weaken starts to fire once the pin moves to a release that has it. Only an owner approval counts on an R-weaken match (owner decision): risk-check keeps it owner-class whatever `approval` the repo's rules set, and no orchestrator, bootstrap (D-012), policy (D-014), autonomous (D-017) or delegate signature counts on it, nor on any PR with the `weaken` capability under another rule id; agents may propose relaxing a gate, never apply it.
+- R-deps also matches a lockfile (`Cargo.lock`, `package-lock.json`, `npm-shrinkwrap.json`, `pnpm-lock.yaml`, `yarn.lock`) added line `source =` or `resolved` whose host is not crates.io, registry.npmjs.org or registry.yarnpkg.com (a lock that fetches from elsewhere); evidence names the file and line. Without it, a lockfile-only PR could redirect every download.
+- R-deps also has paths: `**/.cargo/config.toml`, `**/.cargo/config`, `**/.npmrc`, `**/.yarnrc`, `**/.yarnrc.yml`, `**/.pnpmfile.cjs`, `**/bunfig.toml`, `**/.yarn/plugins/**` and `**/.yarn/releases/**` (any directory, any case). They decide where every package comes from or what it becomes (Cargo `[source]` replace-with and `[registries]`; npm, pnpm and yarn registry and `@scope:registry` lines; a pnpm `readPackage` hook can rewrite every dependency; bun's install settings; yarn plugins and the yarn binary itself run at install), so any change to them counts, in the built-in rules, this repo's `.bosun/risk.toml` and the channel's (`tests/risk_deps_registry_config.rs`). An edit to another setting in these files needs the approval too.
+
+Rule evaluation:
+- risk-check unions the capabilities of every issue the PR body links (`Closes|Fixes|Resolves #N`, `Closes this/repo#N` or a URL of this repo, any case, and `<!-- bosun:task-pr N -->`; a reference qualified with another repo is ignored), because the agent writes the body.
+- risk-check adds the built-in match `R-plan` (owner class) when a linked task is `risk: high`. Every task counts (D-021 lets gated work bundle): each issue linked in the body, and each closing ref to this repo in the title and commit messages; a commit list at GitHub's 250-commit cap (the author can pad it) fails closed to the owner, while a commit that cannot be read (an API error) is skipped and re-judged on the next push. The rating is read from the plan file on the base through the task's trusted `bind` (plan, item, task), or from the task body (which can only add); deleting the line from the body does not dodge it. The PR is never rated below its task.
+- Added lines are the `+` lines of the hunks (a `++x` line is the added line `+x`; only the headers before the first `@@` are skipped).
+- A task bound to the PR whose plan file is missing or unparsable at the base fails risk-check (exit 1, `error` status): its `risk: high` cannot be read, so it is never taken as not high.
+- risk-check adds the built-in match `R-unseen` ("bosun could not see the whole diff", so high) when GitHub lists fewer files than the PR changed, or lists a file with changed lines but without a patch or a file that is not removed has no patch at all (GitHub lists no patch for a binary file and reports 0 changed lines; the file name never exempts a file; a pure rename is the one exception, its new path is judged by the rules; pure means the file's blob at the head equals the previous path's blob in the base tree, so a renamed binary that also changed, or a base tree bosun cannot read whole (cut, or the read failed), is unseen: on a very large repo a pure rename then needs the owner).
+- risk-check adds the built-in match `R-revert` (owner) to a PR whose body carries `<!-- bosun:revert N -->` (a revert without the marker gets the normal rules) when it names several PRs or itself, when #N is missing, not merged, into another base, or either file list is not whole, when the PR is not the exact inverse of #N (files paired by path or rename, added/removed, modified/modified and renamed/renamed status pairs, patches compared by hunk start lines and lines, runs of changed lines sorted; a missing patch fails closed, a rename too), or when #N itself may have needed the owner: its newest trusted `risk-check` on its head is not `normal risk` (labels and links are editable after the merge, so its recorded outcome counts; missing fails closed), or its files match an owner-class rule at the revert's base (R-weaken, R-gate, R-gov or the critical floor; a changed manifest counts as a new dependency). It applies in every mode: a hand-made `bosun revert` that is no longer the exact inverse (main moved) needs the owner. Only an exactly `normal risk` #N gets a non-owner revert: a delegate- or bootstrap-approved #N's revert needs the owner. Until App check runs (§15), a forged `github-actions` status on #N's head is possible (the D32 hole). A failed read is evidence (`cannot judge #N`), never an error. `bosun heal` (§9) reuses the same judgment before it turns auto-merge on for a revert.
+- risk-check evaluates the rules from the base branch, never from the PR head. A PR cannot change
+  the rules that judge it.
+- A rule only escalates; nothing de-escalates. (Proposed, not built: §17 would lower a clean
+  template update from the splice bot; the critical floor and every R-ci path stay with the owner.)
+- The bosun version pin (`.bosun/version`) is R-gov.
+- A rule with several conditions matches when any one does. Content rules read only the lines a PR adds, and their evidence names the file and line number, not the line, so a secret is not copied into the PR body. `bosun risk-check` reads capabilities from the `capabilities` list of the linked task's metadata and from `bosun:capability/<c>` labels on the PR.
+- R-secrets exemptions (built in, for the rule with id `R-secrets`, so a repo's own copy gets them too). A content match on an added line does not count when:
+  - the file is under a `test`, `tests`, `__tests__`, `fixtures`, `testdata`, `snapshots` or `__snapshots__` directory at any depth, any case. A file name exempts nothing (`test_*`, `*.spec.*`, `.snap`: the author picks the name). An env or config file never is, even under such a directory: a `.env*` or `*.env` name, or a `config` or `deploy` directory;
+  - (no marker comment exempts a line: the author of the line would write it; `bosun:allow-secret` is gone);
+  - every statement of the line (split on `;`) that the content matches is a code binding without a literal: `let`, `const`, `var`, `val` or `my`, a name, `=`, then a value with no quote anywhere (`let <name> = cfg.k`). In a source file (`.py`, `.rs`, `.js`, `.ts`, `.java`, `.go`, `.rb`, `.php`, `.c` and the like; never an env, ini, yaml, toml or shell file) a statement `<name> = <value>` is a binding too when the value holds no string literal: an identifier, attribute, call, subscript, `None` or `null` (`self.password = password`, `password=password,`, `password = config["password"]`, `password = input("Password: ")`, `private_key = read_file("k.pem")`). A reader call (`get*`, `read*`, `input`, `prompt*`, `load*`, `fetch*`, `lookup*`, `find*`, `open*`, ..) may take one quoted argument and no fallback; any other string, a digit start or a fallback (`cfg.get("k", "x")`, `Secret("x")`, `x or "y"`) still matches. Any string after the `=` (`"..."`, `String::from("...")`, `Some("...")`, `&"..."`, an `||` fallback, a raw or byte string) or a second, unbound assignment on the line still matches.
+
+  Built-in config forms (for the rule with id `R-secrets`, in `.yml`, `.yaml`, `.properties` and env files only, not lockfiles (`*.lock`, `*-lock.json`, `*-lock.yaml`, `*-lock.yml`) or `pnpm-workspace.yaml`, never a source file, so a type or a parameter like `password: String` or `fn f(password: &str)` stays out; the test-directory exemption applies): an unquoted yaml literal under a secret key (`password: hunter2`, `  db_password: x # c`, `- password: x`), and a Kubernetes env `value:` literal on the added line right after a `name:` that ends in a secret name (`- name: DB_PASSWORD # c` then `value: "x"` or `value: x`; known limit: "right after" is the previous added line of the file, so a `name:` and a `value:` in two hunks still pair, and a changed `value:` under an unchanged `name:` (context, not added) is missed). Known over-denial: a one-word label under a secret key in a locale file (`password: Password`, `'password' => 'Passwort'`). In any file, a php or ruby array entry: a quoted secret key `=>` a quoted one-word literal (`'password' => 'x'`, `"api_key" => "abc"`), but no `$`, `|` or empty value (`=> $pw`, `=> 'required|min:8'`, `=> ''`); in a PHP, Ruby or Perl file (`.php`, `.phtml`, `.inc`, `.rb`, `.rake`, `.pl`, `.pm`) a single-quoted value that starts with `$` is a literal, since single quotes never interpolate there (`'password' => '$ecret1'` matches); this overrides the whole-reference exclusion below for that form only. `"$x"`, `"{$x}"`, `"#{x}"`, a bare `$x`, `'${X}'`, a lone `'$'`, a password hash (`'$2y$10$..'`, `'$argon2id$..'`, `'$P$..'`), and the same line in any other file (a shell heredoc expands `'$X'`) do not match. A plain value is no literal when it has a space (prose), starts with `*`, `&`, `!`, `|`, `>`, `{`, `[`, `%`, `@`, `<`, `~` or a backtick (a reference, alias, tag, block or flow; references are scrubbed first: `${{ .. }}`, `${X}`, `{{ .. }}`), or is null, a boolean, a type name (`string`, `int`, `array`), `read`/`write` (`id-token: write`) or a Laravel cast or validation rule (`hashed`, `encrypted`, `required`, `confirmed`, `nullable`, `sometimes`, `present`, `filled`), a duration (`1h`, `720h`, `30s`), a pure version or range, digits and dots only (`9.0.2`, `^9.0.2`, `v1.2.3`; `9.Xk3m` or `v1.2.3x` is a literal), a whole reference or interpolation after scrubbing (`$X`, `${X}`, `$(X)`, `"#{ENV['X']}"`, `"#{pw}"`, `"{$pass}"`; a reference glued to text, `${X}hunter2`, and `P4ss$word` are literals) or a path (`/etc/x`, `./x`, `../x`, `~/x`); these exclusions also apply to quoted `value:` and `=>` values (`value: "1h"`, `=> 'hashed'`); neither is an empty value, `valueFrom:`, `value: "$(X)"` or a name ending in `_FILE`. `content` is not needed for these, like the strong formats (`config_secret`, `arrow_secret` in `src/core/risk.rs`).
+
+  No exemption covers a strong secret format: age secret keys, PEM private key headers, PGP private key blocks, GitHub tokens (`ghp_`, `gho_`, `ghu_`, `ghs_`, `ghr_`, `github_pat_`), `sk-`, `sk-ant-` and `sk-proj-` keys, Stripe `sk_live_` and `rk_live_` keys, AWS access key ids (`AKIA`, `ASIA`) and Slack tokens (`xoxb-` and the like). Those match R-secrets on any added line, even where the rule's `content` does not (`STRONG_SECRETS` in `src/core/risk.rs`). Path matches have no exemption. Evidence still names only the file and line number.
+
+Approval classes (mechanism): a rule has `approval = "owner"` (the default), `"two-verdicts"` or `"delegate"`; any other value is a parse error naming the rule (risk-check exits 1 and posts an `error` status, see Pending below). A high PR needs the owner when any match needs the owner (a rule without `approval`, and the built-in R-unseen), else a delegate when any match is `delegate` (see delegated decisions below), else two verdicts. `risk-check` sets `data.requirement` (`owner`, `delegate` or `two-verdicts`) and, for two verdicts, `data.verdicts` (the sessions). The built-in rules use the two-verdicts class for R-ci-review only and never delegate; this repo's `.bosun/risk.toml` also makes R-ci, R-gate and R-deps `delegate` (risk.yml judges every PR with the release pinned in `.bosun/version`, so the rules on main must parse with the pin: `delegate` needs 0.2.1 or later; `tests/governance.rs` checks it). A test keeps the two files equal apart from that opt-in.
+
+`bosun risk-check <pr> --dry-run` judges the same way but writes nothing (no pending, status, check run or comment) and adds `dry_run: true` to `data`: for a cloud session, which cannot post statuses (the agent proxy answers 403).
+
+Pending: every `risk-check` run first posts `risk-check` `pending` ("risk-check is judging this head") on the head, so auto-merge waits while a run is in flight; the run's verdict (`success`, or `failure` with exit 5) then replaces it. A run that cannot finish (exit 1: an unreadable file, a GitHub error, a rules parse error) posts `error` ("risk-check could not finish; fix the error and re-run the risk workflow"), never leaving `pending` behind. A failed `pending` post is logged to stderr and the run goes on. Stale pending: a run killed before its verdict (runner loss, a timeout, a newer run in the same concurrency group cancelling it) can leave `pending`; it only blocks, never passes, and the next run on the head (a push, a `/bosun approve` or `/bosun recheck` comment, a verdict) overwrites it. Without such an event, comment `/bosun recheck` or re-run the risk workflow for the PR. `bosun approve --list` shows a head whose newest `risk-check` is `pending` or `error` as waiting ("risk-check pending or errored: comment `/bosun recheck` (or re-run the risk workflow) if it stays"), so a stuck run is on the owner board.
+
+Touch warning (design C3): `risk-check` takes the first linked issue with task metadata, its newest live lease (any session) and applies the same `touch::outside` rules as `bosun pr` to the PR's files (added and copied files, lockfile companions and the fragments pass; a rename is checked by its old name). `data.out_of_touch` lists the paths outside, and a high-risk PR's Risk note gains the line `- **warning:** <n> files outside the task's lease: <paths>` (ten names at most, then `and N more`); each name, like every file name in the Risk note, is shown with backticks, angle brackets and anything but printable ASCII (control, bidi and zero-width characters, line separators, other non-ASCII) as `?`, and in backticks (each name in the warning, each evidence line in the note); `data` keeps the raw names, so a name cannot end the note, one stderr line is printed, and the status description is unchanged. It is a warning only: it never changes the level or the state. With no linked task, no live lease or a cut file list (fewer files listed than the PR changes) it is `null` and nothing is added. The linked task is the first linked issue with task metadata; leases with an empty touch are ignored. It costs one paginated comments read of that task issue, and a failed read only logs to stderr and gives `null`.
+
+Two verdicts:
+- The class passes when, on the PR's current head, verdict records of at least two distinct sessions have `approved = true` and `confidence >= 0.9`. An owner approval (below) also passes it. The status is `high risk, two verdicts needed (<n>/2): <ids>` (failure, exit 5) while waiting, and `high risk (<ids>), approved by two verdicts: <s1>, <s2>` when met. The owner status text is `high risk, owner approval needed: <ids>`.
+- A record counts only when `bosun verdict apply` wrote it: the comment author is `github-actions[bot]`, the first line starts with `Review verdict: `, the record is the last non-empty line, and no other line is a record. A session's newest such record for the head decides, so a later disapproval withdraws its approval. A record without `confidence` never counts.
+- Independence: the sessions `unknown` and empty never count, and neither does any session with a `lease` or `lease-end` record (past or live) on an issue the PR body links. `bosun pr` records no session for the PR author, so the lease is the only trace of who wrote the change.
+- A verdict record is written with `GITHUB_TOKEN`, which starts no other workflow, so verdict.yml runs `bosun risk-check` for the PR after `bosun verdict apply` (exit 5, still waiting, does not fail the job). It has `statuses: write` for the status and `pull-requests: write` for the Risk note.
+- Residual risk: the session in a verdict comment is self-declared, so one agent that posts two verdict comments under two session tags can still pass when neither tag holds a lease on the task. Later options: a GitHub App per reviewer, or one check run per reviewer.
+- A PR that links no task (`Closes #N`) cannot satisfy the class by verdicts, as there is no lease to check the reviewers against: only an owner approval passes, and the status (`high risk, owner approval needed (links no task, so verdicts cannot count): <ids>`, so `bosun approve --list` finds it) and fix say so.
+- More residual risks. A `review-ci` record (session `review-ci`, mode b, dormant) counts as one verdict, and review.yml does not re-run risk-check. Any workflow that runs with `GITHUB_TOKEN` (for example on a pushed branch) can post a comment of the shape `apply` writes as `github-actions[bot]`; this is the same trust class as the `statuses: write` limit below. The repository's default workflow token should be read-only (an owner setting: Settings > Actions > General > Workflow permissions, read repository contents): it narrows this, since a workflow that asks for no write scope then cannot comment or post a status, but it does not close it, as a workflow can still ask for write scopes in its own `permissions:` key. Binding verdict records to the verdict workflow run is #298. The risk-check step in verdict.yml runs outside risk.yml's concurrency group, so a stale run can overwrite a newer risk-check status until the next trigger (liveness only).
+
+High-risk PRs:
+- Owners: with one owner, nothing that needs an owner merges while that owner is away (fail
+  closed, by design); list at least two owners, or a team once §16 (B4) is built.
+- A high PR needs an approval on the head SHA by a user in `governance/owners.toml`, and
+  CODEOWNERS. The default way (D-012): the session asks the owner with a form in the Claude Code
+  chat (repo, PR, head SHA; approve or hold), and on approve the orchestrator posts the signed
+  `bosun approve` comment (signed approvals, below). The owner's own review or comment is the
+  fallback. Either counts: a GitHub review that approves the head SHA (the owner's newest
+  approve, request-changes or dismissed review on that SHA; read on the next run, as no review
+  event runs the `risk` workflow: a push, a `/bosun recheck` comment or a re-run), or a PR comment by the owner whose
+  body, trimmed, is exactly `/bosun approve <head_sha>` with the full 40-character SHA. The
+  comment path exists because GitHub forbids approving your own PR, and an owner may also be the
+  account that opens the PRs. A comment binds to that SHA: a new push needs a new comment. An
+  edited comment does not count (users with write access can edit other users' comments). Only a
+  comment written with a plain user token counts: its `performed_via_github_app` is present and
+  `null`. Agent sessions act as the same login through the Claude app, and GitHub stamps that
+  app on their comments, so an agent cannot approve; a response without the field does not
+  count either (fail closed). When
+  the owner's newest decisive review on the head SHA requests changes, their comment does not
+  count either. Withdrawal: an owner whose newest decisive review (APPROVED, CHANGES_REQUESTED
+  or DISMISSED) on the head is CHANGES_REQUESTED or DISMISSED has withdrawn approval: their
+  comment approval and every signed and delegate approval stop counting. Anyone with write
+  access can dismiss a review (GitHub then reports DISMISSED, also for an APPROVED one), so a
+  dismissal never lifts a withdrawal, and a DISMISSED review is never an approval. A request
+  for changes ends only with a newer APPROVED review from that owner. After a dismissal, a
+  plain-token, unedited `/bosun approve <head>` comment from that owner also ends it when its
+  `created_at` is strictly later than the dismissal time, read from the issue timeline
+  (`GET /issues/<n>/timeline`, the `review_dismissed` event whose `dismissed_review.review_id`
+  is the decisive review's id). If the timeline cannot be read, has no matching event or a
+  time does not parse, nothing counts as newer. With several owners, each owner's own newest
+  decisive review decides for that owner's comment, and any owner's withdrawal blocks signed
+  and delegate approvals. A v1 signature, owner or delegate, never ends a withdrawal: it carries
+  no time, so a re-posted old one would pass for new. A DISMISSED withdrawal (never a
+  CHANGES_REQUESTED one) ends also with a v2 owner signature, which names the dismissed review
+  (below). No review event runs the `risk` workflow, so a withdrawal does not change a green
+  `risk-check` by itself (the ruleset requires status checks, not reviews): to withdraw, request
+  changes or dismiss the approval, then comment `/bosun recheck` (or re-run the risk workflow;
+  it re-judges and fails);
+  turning off auto-merge also stops a merge. `tests/cli_risk.rs` pins that the next run fails.
+- Signed approvals let the owner approve from a Claude chat, whose GitHub writes the cloud
+  proxy re-attributes to the Claude app. The orchestrator session holds an ed25519 private key
+  in its own container (never shared) and, on the owner's answer to the chat form, posts a PR comment whose
+  first line, trimmed, is `/bosun approve <head_sha>` and of which some later line, trimmed, is
+  exactly `bosun-sig ed25519 <key id> <base64 64-byte signature>` (single spaces). Any author
+  and any app attribution count, and edits do not matter: the signature is the proof. Other
+  text (a footer) is ignored. The signed message is exactly the UTF-8 bytes
+  `bosun-approve v1 <owner>/<repo>#<pr> <head_sha>` with no trailing newline, owner and repo
+  lowercased. risk-check counts it, as `approved by key <id>`, only when the key id is in
+  `.bosun/approvers.toml` read through the API at `refs/heads/<default branch>` (the full ref,
+  so a tag or other ref of that name cannot stand in; never the PR head, the base SHA or the
+  checkout, so a PR that adds its own key does not count), the signature
+  verifies over the message built from this repo, this PR's number and its current head, and
+  line 1 names that head. A signature for an old head, another PR or another repo does not
+  verify. Each signature line is checked on its own; one that verifies is enough. A key stands
+  for the owners: with no owners in `governance/owners.toml` at base, or while any owner's
+  newest decisive review on the head requests changes, a signed approval does not count; while
+  one was dismissed, only a v2 signature (below) counts. Heads
+  are 40-hex SHA-1, so a SHA-256 repo has the feature off. A missing or unreadable
+  `.bosun/approvers.toml` turns the feature off. A malformed file (bad TOML,
+  unknown fields, a duplicate or empty id, a key that is not 32 bytes of base64), an unknown
+  key id and a bad signature count as no approval, never error the check, and are logged to
+  stderr. The file is under R-gov. The crypto is `ring` (already in the tree through rustls).
+  ```toml
+  [[key]]
+  id = "orchestrator-2026-10"
+  ed25519 = "<base64 of the raw 32-byte public key>"
+  ```
+  Enroll or rotate a key with a PR that changes `.bosun/approvers.toml` (R-gov), approved by
+  the owner on GitHub (a review or a plain-token comment). No signed approval counts, owner or
+  delegate key, on a PR that changes or renames away `.bosun/approvers.toml`,
+  `governance/owners.toml` or a `CODEOWNERS` file (root, `.github/`, `docs/`; `TRUST_FILES` in
+  `src/core/approve.rs`), or on a PR whose diff bosun could not see whole (R-unseen: it may hide
+  one), so a compromised key cannot enroll keys or owners; risk-check logs why to stderr. A removed key stops counting once that PR merges. `bosun keygen [--out PEM] [--id ID] [--role owner|delegate] [--enroll]` makes the key (PKCS#8 PEM, mode 0600, default `~/.bosun/approver.pem`, refused inside any git worktree, never overwritten) and prints or, with `--enroll`, appends its block. A bare-repo dotfiles setup (`git --git-dir=~/.cfg --work-tree=~`) has no `.git` entry and is not detected, so keep `~/.bosun` out of it. By hand, make a key with
+  `openssl genpkey -algorithm ed25519 -out key.pem`; its public key is
+  `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`. risk.yml runs the
+  release pinned in `.bosun/version`, so signed approvals count in CI once that pin is a
+  release with this feature.
+- `bosun approve <pr>@<head> --sign-key <pem>` is the signer's helper. It reads an ed25519 PKCS#8 PEM
+  (as `openssl genpkey -algorithm ed25519` writes it; errors name the path only, the key is
+  never printed or logged; a file readable by group or others gets a warning on stderr). The
+  argument is `<pr>@<head>`, the head the owner approved (a bare number is exit 2, so a push in
+  between is never signed unseen; `bosun approve --list` gives the heads and works in the
+  cloud). It reads the PR's current head (another head is exit 3, nothing signed), finds the
+  key's id by its public key in `.bosun/approvers.toml` on the default branch (not enrolled, or
+  the file missing or malformed: exit 1, nothing posted, the fix names the public key or the
+  file), and posts the signed comment with the session's own token
+  (`GITHUB_TOKEN`); `data.approved` lists `pr`, `head_sha`, `key_id`, `comment_id`. It trusts
+  the head only from an `https://` or loopback `BOSUN_GITHUB_API` (else exit 1). It is exit 4
+  while bosun is halted, `--print` included. The cloud refusal below does not apply with `--sign-key`. `--print`
+  puts the comment in `data.body` (with `pr`, `head_sha`, `key_id`, `role`; `bodies` lists each `{after_review, body}`) and posts nothing. When an owner's decisive review on the head was dismissed (and
+  none requests changes), an owner key signs v2 for each dismissed owner review and posts one
+  comment per review (`data.approved[].after_review`); with `--as delegate` it is exit 3. A
+  request for changes is exit 3, nothing signed. Otherwise it signs v1.
+- Signed clearing of a dismissal (v2). The owner works from mobile chat, where only signatures
+  are possible, so a signature can be bound to the dismissal. The signed message is
+  `bosun-approve v2 <owner>/<repo>#<pr> <head_sha> after-review <review_id>` (same lowercasing),
+  and the comment's first line is `/bosun approve <head_sha> after-review <review_id>` (v1
+  comments and messages stay as above). `<review_id>` is the plain decimal id (no sign, no
+  leading zero, else the comment is ignored) of the owner's dismissed review that is decisive on
+  the head. When an owner's decisive review is DISMISSED, risk-check counts that withdrawal as
+  cleared only if all hold: a signature line verifies over the v2 message; its key is an
+  enrolled `owner` key (a delegate never clears); the head is the current head; `after-review`
+  equals the id of that owner's CURRENT decisive dismissed review; and the timeline shows that
+  review's dismissal (else nothing clears: fail closed). A v1 signature never clears. A v2
+  naming an older review id does not either, so a new request for changes plus a dismissal
+  invalidates every earlier signature, and a copy of an old v2 comment is no replay. With
+  several owners every dismissed owner review needs its own v2 (any owner's request for changes
+  still blocks all signatures). Outside a withdrawal a valid owner v2 is a normal signed
+  approval, `approved by key <id>`. The same trust-file and R-unseen exclusions apply. A
+  delegate has no v2. Keys stand for the owners: any enrolled owner key's v2 clears any
+  owner's dismissed review, whichever owner the key belongs to. A v2 signed for another PR
+  number or another repo does not verify and clears nothing.
+- Chat approval record (D-018). Form, three lines: `/bosun approve <40-hex head> chat`, `Approved by the owner in chat (session <id>, <UTC time>).`, `<!-- bosun:chat-approval v1 session=<id> head=<sha> question=<id> -->`. It parses only when the first non-blank line is exact and not indented, the head is 40 lowercase hex, and exactly one line mentions `bosun:chat-approval` and reads exactly `<!-- bosun:chat-approval v1 session=<id> head=<head>[ question=<id>] -->` (keys in this order, non-empty, none unknown or repeated); the second line is free text. No signing key is needed. Orchestrator: the session's newest registry join has no parent (required for every branch), is not expired (`expires` is honoured), and has depth 1 or origin `local` or `slack`; an id with `/` (wave agent) never is; `bosun join` refuses `--origin local` and `--origin slack` for a session whose environment says spawned or routine, or whose registry record already says spawned or routine. The origin is self-declared, and an unset origin is treated as `local`: a worker that joins with no origin and no parent, or any session that lies, passes this check. The rule guards confused workers, not liars; the stronger fix (a binding that does not rest on self-declared origin) is planned as Task 16 in the chat-approval plan. A record that carries `question=<pr>-<short>-<unix>` is valid only if `<short>` equals the first 7 characters of the head, where the caller knows the PR `<pr>` is that PR, and `<unix>` is all digits and an `i64`; risk-check also requires `<unix>` to be at most 60 s after the comment's creation time and at most 14 days before it. A record without `question` stays valid. Question id: `<pr>-<short head (7)>-<unix secs>`. `[approvals] chat = false` turns chat records off (unset: on; known from release 0.22.0 (0.21.0 does not read it), so set it only once the pin reads it).
+- Chat record counting (D-018). risk-check counts a chat record as an owner approval of the head, under every approval policy (owner-gated, delegate, autonomous) and on R-weaken, but never on a PR that changes trust files (`governance/owners.toml`, approvers) or whose diff bosun cannot see (R-unseen): there only the owner's own GitHub approval or comment counts, as for signatures: the comment is unedited, its author is an owner (any app: the cloud posts as the owner through the Claude app, unlike a plain `/bosun approve`), it parses for the PR's current head, its `question=` (when present) names this PR and the head, and its `session=` is an orchestrator by the join in force when the comment was created (the newest join older than the comment, not expired then; a later rejoin does not vouch for it, an unreadable time never counts). The registry is read at check time, so a `leave` of that session posted before the check (a join that was already expired when the comment was created never counted; expiry is checked at record time only) makes its records stop counting: a re-run after the orchestrator left goes red (fail closed, by design); the risk-check `fix` then names the chat record as the cause. A chat record also clears an escalated `review-verdict` on a normal-risk head, like an owner review. An owner's newest decisive review on the head withdraws it like the owner's comment (changes requested; dismissed, unless the record is newer than the dismissal). `[approvals] chat = false` at base turns it off; a base config that does not parse turns it off too. With no `governance/owners.toml` at base, a chat record (only it) counts for the repo's owner (a user repo) or for the PR author when GitHub reports `admin` permission on the repo (an org repo; this is repository `admin`, wider than org owners: any repo admin counts); else the empty-owners halt stays. An owners file that exists but names nobody is not "no owners file": no fallback (fail closed). A failed read of the repo or the permission errors the check. A chat record belongs to the head it names: a new push makes it stale, and it does not carry over a clean merge of main (an owner's own review or comment still does). `data.approved_by` is the owner's login. Trust (option A): this checks who wrote the record, not that the owner answered. The orchestrator check (and a PreToolUse guard, later PR) stops a confused worker (a child, a reviewer, a wave agent) from approving; it does not stop a session that lies about being the orchestrator or about the owner's answer.
+- Chat record writing (plan 2026-11-10 T5). `bosun approve <pr>@<head> --chat --question <id>` (the id is required) posts the chat record with the session's own token (it works in the cloud: risk-check counts the record through the app). Refusals, in order, nothing posted: the PR is not open (exit 3); `[approvals] chat = false` at the PR's base (exit 5); this session is not an orchestrator in the registry (live now), or its origin is `spawned` or `routine`, or `CLAUDE_CODE_CHILD_SESSION` is set to any non-empty value (read directly, whatever `BOSUN_ORIGIN` says) (exit 5, fix: `bosun handoff-pr`); the PR head is not `<head>` (exit 3); the question id's `<unix>` is not fresh (the risk-check rule: at most 60 s after now, at most 14 days before it, `now` standing in for the comment time; exit 5, fix: ask again), so a record risk-check would reject is never posted; no clean verdict on the head from a session that is neither a lease holder of a linked issue nor this one  (no linked issue with a lease: nothing counts, fail closed) (exit 5); no stored owner answer (`<git common dir>/bosun/answers.json`, written by the PostToolUse hook for this repo, whose `session` (the bosun identity the hook resolves with the same environment as the CLI: `BOSUN_SESSION`, else the remote session id; the CLI's own `session_id` UUID is kept as `cli_session_id`, audit only) is non-empty and equal to this session; the newest answer for the PR and head must be that `approve`: a newer hold, or a newer answer of another session, refuses) for the id with `approve`, the same PR and the same full head, and an id naming `<pr>-<short head>-` (exit 5, fix: ask again). A stored `hold` for the PR at that head (any question) refuses too. The Claude Tag ask text names each PR's question id and full head, and the 7-character head is only what the owner types; `--chat` takes the full 40-hex head (a short one is a usage error), except `--slack-user`, which also takes the 7-character head the owner typed: it is resolved against the current ready list (`approve --list`), must start exactly one ready PR's head (zero or several: exit 3, nothing recorded), and the PR in `--question` must be that PR (else exit 3). `--chat` refuses, exit 3, when the head is not the PR's current head, also with `--slack-user`. The session's registry read for the orchestrator check includes every commenter (a cloud session cannot see permissions); risk-check's trusted read is what counts. From Claude Tag (origin `slack` and a newest registry join with origin `slack`; else exit 5), `--slack-user U...` replaces the stored answer: the question id must name the PR and head and must be an ask that `approve --list` issued as a Claude Tag post (it stores each such ask as `answer: asked` in the same answers file, with the asking session; a missing one, or one stored by another session, refuses, exit 5), and a stored hold for the PR and head refuses. bosun does not record a Slack hold reply: only a hold from the chat hook is stored. The Slack user ID must be an owner's `slack` in `governance/owners.toml` on the default branch (exit 5). `data {pr, head_sha, comment_id, question_id}`. The answers file is agent-writable: it only stops confused workers (option A). The hook reads a PR's full head only when `head <short> = <full>` occurs exactly once before its `[bosun:<id>]` marker (a forged copy in a title or verdict stores nothing); answers are stored as spec 14 says (tmp + rename, 14 days).
+- Chat record and intakes (D-014 as amended; follow-up task). `bosun intake verify` today needs the ed25519 intake signature. Planned: provision.yml also accepts, instead of `--sig`, `--chat <issue>`: an unedited comment on the intake issue by an owner, written by an orchestrator session (the rules above), whose first line is `/bosun approve-intake <intake_sha256> chat` with the same marker form (`head=` replaced by `intake=<sha256>`), not older than 3600 s; the signature stays valid and optional. Until it lands, an intake still needs the signature.
+- Reviewer model (operating model #8). A verdict comment carries the reviewer's model as `<!-- bosun:model <id> -->` next to the session tag (`BOSUN_MODEL`, else `ANTHROPIC_MODEL`; `bosun review-ci` passes its own `model`), and `verdict apply` and `verdict post` copy it into the verdict record as `model` (absent in older records, which stay valid). `[approvals] review_models = ["<exact model id>", ...]` in `.bosun/bosun.toml`, read at the PR's base like `bootstrap_until`, limits which verdicts count for two-verdicts, delegate (clean verdict) and autonomous (D-017) approval: a record counts only if its `model` is in the list, exact match, and a record without a model never counts. Unset: any model counts (unchanged). A new model id therefore stops counting until the owner adds it (`.bosun/bosun.toml` is R-gov). The model is self-declared like the session, so this guards against accidents (a swapped reviewer), not against a lying author. The list limits only these gated approvals, not the low-risk `review-verdict` status. A base config that does not parse counts as an empty list: no verdict counts. When the list is set and a verdict class is missing, the risk-check `fix` names the list. Release ordering: a pinned release rejects the unknown key, so a repo sets it only after its `.bosun/version` pins a release that reads it. Carrying a `review-verdict` status to a new head (`carry_verdict`) is filtered the same way: the older head's independent approving record must name a listed model (the list is read at the PR's base; an unreadable one means no carry).
+- Bootstrap mode (D-012). `[approvals] bootstrap_until = "YYYY-MM-DD"` in `.bosun/bosun.toml`
+  is the last day (UTC, inclusive) on which the orchestrator may approve gated PRs itself, after
+  an independent reviewer approved the head; bosun's own file says `2026-11-30` since the 0.3.0 pin, the first release that reads `[approvals]` (the gates run the pinned release, which rejects unknown keys; `tests/pinned_config.rs`). An invalid date
+  is a parse error naming the key; missing means off. `bosun approve <pr>@<head> --sign-key <pem>
+  --bootstrap` (an owner key only; `--as delegate` is exit 2) reads the setting on the default
+  branch (off, ended or invalid: exit 1, nothing signed, the fix names D-012) and signs
+  `bosun-bootstrap v1 <owner>/<repo>#<pr> <head_sha>`; the comment's first line is
+  `/bosun approve <head_sha> bootstrap`, its second `Signed in bootstrap mode (D-012, until
+  <date>)` (for the reader only), and `data.bootstrap_until` gives the date. The marker is the
+  signed prefix: an owner v1 or v2 signature never verifies as bootstrap, nor the reverse, and
+  adding or stripping the first-line marker breaks the signature. It never clears a dismissal
+  (after one it is exit 3). risk-check counts it as the owner, `approved by key <id> (bootstrap
+  mode, D-012)` in the status, only when all hold: it verifies with an enrolled `owner` key on
+  the default branch, as owner signatures do (trust files and R-unseen exclude it too); today
+  (`BOSUN_NOW`, UTC) is on or before `bootstrap_until` read at the base SHA; the PR's
+  requirement is `owner`; and the PR touches no path of `BOOTSTRAP_EXCLUDED` in
+  `src/core/risk.rs`: `.bosun/**` (`.bosun/version` pins the gate release),
+  `governance/**`, the `CODEOWNERS` files, every `hoist.toml`, in bosun (its base has
+  `src/cli/risk_check.rs`) every `APPROVAL_CODE_PATHS` entry (`src/**`, `Cargo.toml`,
+  `Cargo.lock`, `build.rs` in any directory, `.cargo/**`, `npm/**`: the code of the check and of
+  signature verification, derived from the same list so the two never drift), the channel's
+  `.bosun/**`, `release.yml` and every `splice.yml`, `risk.yml` and `verdict.yml` workflow (also as `.jinja`)
+  (root and channel copies), nor a `.github/workflows/**` file whose diff adds or removes a line
+  naming `environment:` (or is not shown), nor matches R-secrets; inside the window it also never counts on a PR that matches R-gov or R-prod-write (`bootstrap mode (D-012) never covers ...`), after it the policy decides as below. The list is separate from
+  `CRITICAL_PATHS`, so the window can never be widened or reopened from inside it. Otherwise a
+  bootstrap signature counts for nothing, and the error message and fix start with `a
+  bootstrap-mode approval (D-012) does not count: <why>`, naming the end date where it is set.
+  Normal owner approvals are unchanged. The channel's `bosun.toml.jinja` sets
+  `bootstrap_until = "2026-11-30"` only while `bosun_version` is empty, so the repo pins the
+  channel's own release (0.3.0 or later); a repo pinning an explicit version gets no
+  `[approvals]`, since its release may reject the key (`tests/channel_render.rs`). A consumer
+  drops the key to opt out.
+- Approval policy (D-014 draft, spec B6). `[approvals] policy = "owner" | "owner-gated" |
+  "orchestrator"` (or `"autonomous"`, next bullet; default `owner`, fail safe: intake writes the policy explicitly for new and
+  adopted repos, and `bosun adopt --policy` writes it, §11; another value is a parse error) says when an orchestrator approval (the
+  bootstrap-form signature above, format unchanged) counts. Checks, in order, first failure wins
+  (`orchestrator_counts` in `src/core/approve.rs`): the requirement is `owner`; no
+  `BOOTSTRAP_EXCLUDED` hit; no changed `WORKFLOW_PATHS` file (`.github/workflows/**`,
+  `.github/actions/**`, any `action.yml` or `action.yaml` (a local composite action, `uses:
+  ./path`), `.circleci/**` and the other CI configs R-ci names, previous names too),
+  in every policy and in the window too: a workflow's permissions, environments and tag or publish
+  steps cannot be judged reliably from a diff, so every workflow PR is owner-class; then the
+  window, `today <= min(bootstrap_until, BOOTSTRAP_END)` with `BOOTSTRAP_END = 2026-11-30`
+  (D-012's last day, so no later date widens it), counts as `bootstrap mode, D-012`; after it
+  `orchestrator` counts (`policy orchestrator, D-014`), `owner` never, `owner-gated` only when
+  every matched rule is `R-ci` (`policy owner-gated, D-014`). A refusal names the policy and,
+  where `bootstrap_until` is set or missing, D-012 and its end date. `bosun approve --bootstrap`
+  reads the same setting on the default branch: inside the window it signs as before; after it
+  `orchestrator` signs (note line `Signed under approval policy orchestrator (D-014)`), `owner`
+  exits 1, and `owner-gated` signs (`... owner-gated (D-014)`) only when the trusted
+  `risk-check` status lists `R-ci` alone and the PR changes no workflow file, else exit 1 (the
+  owner approves, asked with a chat form). `data.policy` names the policy of `--print` and posted
+  approvals. Release ordering: the pinned release rejects unknown keys, so set `policy` only after
+  a release that reads it is pinned and `KNOWN_APPROVALS` in `tests/pinned_config.rs` lists it.
+- Autonomous policy (D-017). `[approvals] policy = "autonomous"`, or `[mode] name` booster or
+  autonomous with no `[approvals] policy` (§18; `data.policy_source` says `explicit` or `preset`
+  in risk-check, also `default` in `approve`), lets the orchestrator approve
+  gated PRs inside the allowlist below, signed in its own form
+  (first line `/bosun approve <head> autonomous`, message `bosun-autonomous v1 <o>/<r>#<pr> <head>`, owner keys only; under this policy a bootstrap-form signature does not count, and an autonomous one never counts under another policy or as an owner approval) with the note line `Signed in autonomous mode (D-017), not an owner answer`
+  (`data.policy = "autonomous"`). It decides first in `orchestrator_counts`, also inside the
+  bootstrap window and whatever the requirement, and only by an allowlist
+  (`risk::autonomous_excluded`): every changed path (previous name too, any case) must be under
+  the allowlist: by default `src/**`, `tests/**`, `docs/**`, `changelog.d/**` and `.changeset/*.md` (`AUTONOMOUS_ALLOWED`), or the globs of `[approvals] autonomous_allow` in `.bosun/bosun.toml` instead (`[approvals] oneoff_allow` is another key: it only lets a task-less PR or a one-off reach those paths, §4, and never covers an approval) (the owner widens or narrows the default there: read at the PR's base; an unset key is the default, a base config that does not parse or a glob that does not parse allows nothing; changing `[approvals]` is R-weaken, so only the owner's PR sets it; the deny set below wins over any allow glob) and outside
+  `.github/**`, `**/.github/**`, `.circleci/**`, `.bosun/**`, `**/.bosun/**`, `.claude/**`, `**/.claude/**`, `.splice/**`, `governance/**`, `cargo.toml`, `**/cargo.toml`, `deny.toml`, `channel/**`, `.cargo/**`, `rust-toolchain*`, `scripts/**`, `profiles/**`, `npm/**`, `**/package.json`, `*.yaml`, `review.md`, `**/agents.md`, `**/claude.md`, `**/claude.local.md` (the deny globs are lowercase: matching ignores case), `.claude-plugin/**`, `**/hoist.toml`, `.changeset/config.json`, `docs/setup-script.sh`, `docs/agents/**`, `docs/lessons.toml`, `docs/spec/**`, `docs/superpowers/specs/**`, `**/plans/**`, `**/*.jinja` and
+  `**/build.rs` (`AUTONOMOUS_DENIED`). Everything the allowlist does not cover is the owner's, and so is an `R-secrets`, `R-prod-write`, `R-gate`, `R-weaken`, `R-gov`, `R-deps`, `R-ci`, `R-ci-review` or `R-oneoff-size` match (a one-off task over 300 changed lines: the signer computes it like risk-check, and a task counts as one-off unless it is planned: no `bosun:source/oneoff` label, a marker item other than `oneoff`, and the marker's item holding the marker's task in a plan file on the base (`plans/<project>.md` or a plan a trusted bind names), so an unplanned marker cannot lift the cap; a marker that copies a real planned item and task is not detected, a known limit; a tick-only plan PR is still refused in autonomous mode, as `**/plans/**` is denied; symlinks are not detected, a low risk; `CODEOWNERS` at any depth is in `AUTONOMOUS_DENIED`) (a path outside `AUTONOMOUS_DENIED` that a rule makes the owner's, such as the gate code, goes through the rule) (the status keeps the `high
+  risk, owner approval needed` text). Trust files and an unseen diff still make signatures not
+  count at all. A signature counts in risk-check only with a counting verdict on the head
+  (`risk::autonomous_verdicts`): approve, confidence >= min, no major finding, from a session
+  that holds no lease on a linked issue, on an unedited comment by the verdict author; any
+  unedited non-approving verdict record on the head, from any session and in any order, leaves
+  nothing. The PR must close (`Closes`, `Fixes`, `Resolves`; the `bosun:task-pr` marker does not
+  count) an issue that is open, not a PR, not the PR itself, carries task meta and has a lease
+  record written by the PR author; else it fails closed to the owner path. Waiting for the
+  verdict or signature is `high risk, autonomous mode (D-017): clean verdict and orchestrator
+  signature needed`, which does not start with the owner-wait text, so `bosun approve --list`
+  leaves it off the owner board. `data.autonomous_verdicts` lists the counted sessions. It
+  carries over a clean merge of main (design C7); a rejection on the new head then blocks the merge through `review-verdict`, not risk-check. `bosun approve --bootstrap` refuses (exit 1)
+  on an excluded path (it cannot see R-secrets or R-prod-write), and unless a counting verdict on the head comes
+  from a session that is neither a lease holder nor the signer. Known limits: a session id is
+  self-declared (`<!-- bosun:session -->` comes from `BOSUN_SESSION`) and cloud sessions have no
+  verifiable identity, so reviewer independence holds only against honest agents; the signer key
+  is the trust root. risk-check cannot see the signer's session, so only `approve` enforces
+  signer != reviewer. The task link binds the PR author's login, not a session: agents that
+  share one login can close another session's task and review their own PR, which is within
+  the honest-agent limit. The session that holds an owner key must never build or run bosun code
+  from an autonomous PR (it would run unreviewed code next to the key). Gate code always goes to
+  the owner: any path the base branch's R-gate rule matches (`AUTONOMOUS_DENIED_RULES`, with
+  R-secrets, R-prod-write, R-weaken and R-gov, so an allowlisted governance file such as
+  `src/core/session_rules.rs` still needs the owner; a unit test walks every default R-gate path), the module roots
+  `src/lib.rs`, `src/main.rs` and `src/**/mod.rs`, and any Rust file whose diff is not shown or
+  changes a line that may set `#[path]` (`path = "`, spaces dropped, `cfg_attr` too;
+  `risk::path_attributes`). R-gate is the trust boundary: every module risk-check and `approve` import is on it today
+  (app, github, output and the approval path included); a new module on that path is gate code
+  only once the rule names it, and `tests/governance.rs` keeps both rule files equal. `bosun approve` sees paths and
+  `#[path]` only, not R-gate, so it may sign a PR risk-check then refuses. Any verdict record on the head that would not count (a rejection,
+  majors, a low or missing confidence), edited or not, blocks autonomous approval. The verdict
+  record carries no `escalate_risk`, so an escalation is seen only as its verdict. Never
+  covered: release environments, secrets, tags. `policy =
+  "autonomous"` under an older pinned release is a parse error (fails closed); set it only after
+  pinning a release that knows it.
+- Keyless fast lane: the CI signer (D-017 in ephemeral sessions). Off by default: `[approvals]
+  signer = true` turns it on (an `[approvals]` change, so R-weaken: the owner decides), it needs
+  `[checks] mode = "checks"` with the gate App (`approve --as signer` refuses otherwise, exit 1, and
+  only the gate App's newest `ci-ok` run counts, never GitHub Actions': in statuses mode a push
+  workflow on any branch can post one), and the orchestrator-held key path stays the recommended
+  default. Trust model, plainly: verdict session tags and the dispatch `requester` are
+  self-declared, so with the signer on, independence rests on honest agents, with no cryptographic
+  separation; the accepted residual is an author who leases as session A, posts a verdict as B and
+  requests as C. Cloud and Claude Tag sessions
+  are ephemeral and hold no secrets, so no session keeps the autonomous key. Chosen over a
+  verdict-only approval with no signature: risk-check keeps its one trust root (a signature by a
+  key enrolled on the default branch, checks unchanged), the key never reaches a session, and
+  the signing decision runs from default-branch code with the pinned release, never PR code.
+  The owner does one computer step per repo (setup docs): `bosun keygen --role signer --id
+  signer-ci --out <pem outside the repo> --enroll` in a checkout, merge that `.bosun/approvers.toml`
+  PR (R-gov, owner-approved), create the GitHub environment `bosun-signer` with deployment
+  branches limited to the default branch and the secret `BOSUN_SIGNER_KEY` (the PEM), then delete
+  the PEM. A `role = "signer"` key verifies only the autonomous form (`bosun-autonomous v1`):
+  never v1, v2, bootstrap, delegate or any other owner use (`approve`, `answer`, `digest`,
+  `intake`, budget raises), so a leaked signer key can at most sign what D-017 already lets the
+  orchestrator approve. risk-check counts an autonomous signature by an `owner` or `signer` key,
+  a `signer` key only while `[approvals] signer = true` at the PR's base (unset, false or a base
+  config that does not parse revokes every signer signature), with every D-017 condition above
+  unchanged. `.github/workflows/signer.yml` (bosun's own and the
+  channel's `core` piece, owned; R-ci, so owner-class) runs on `workflow_dispatch` only (inputs
+  `pr`, `head`, `requester`), only from the default branch, never checks out the PR: job `sign` (environment
+  `bosun-signer`) installs the release pinned in `.bosun/version` and runs `bosun approve
+  <pr>@<head> --sign-key <pem> --bootstrap --as signer`; job `judge` (needs `sign`, the same default-branch `if:`, environment
+  `bosun-app`) runs `bosun risk-check <pr>`, because a comment posted with `GITHUB_TOKEN` starts
+  no workflow. Two jobs on purpose (D-007 exception): the signer key and the App key never share
+  a job. `--as signer` signs only when the policy at the default branch is autonomous, the head is
+  the PR's current head, every D-017 check `approve` runs passes (the session that asked, the
+  workflow's `requester` input, is excluded as a reviewer like the signer's own, so signer !=
+  reviewer holds in CI), and the head's `ci-ok` is green as `ci_green` reads it: the newest
+  check run of the gate App (`checks.app_id`, §15), never a status and never GitHub Actions'. The hole it narrows: anyone or any workflow with `checks: write`, or any
+  App, can create a check run named `ci-ok` (D32), so no other creator counts. `approve --as signer`
+  also refuses, as risk-check does, a PR with R-weaken findings or a `weaken` capability (label or
+  linked task), which are the owner's (else exit 1, nothing signed; `data.ci_ok`). Any session asks for it
+  with `bosun approve <pr>@<head> --via-signer` (no key; exit 4 while halted, exit 3 on a stale
+  head): it posts nothing and returns the `mcp__github__actions_run_trigger` call in `next` (exit 2 without a plain `BOSUN_SESSION`). A
+  dispatch by anyone signs nothing the gates do not allow. The `if: github.ref` guard in `sign` is
+  no barrier: a dispatch with `ref` set to another branch runs that branch's copy of the file, and
+  anyone who can push a branch can remove the guard. The one real barrier is the environment's
+  deployment-branch rule: `bosun-signer` must allow only the default branch, so a run from any other
+  branch cannot read `BOSUN_SIGNER_KEY`. `bosun doctor` shows the step as `off (default)` unless `signer` is on; when on, under the autonomous policy, it checks that
+  `signer.yml` exists and a `signer` key is enrolled, and with `--remote` that `bosun-signer`
+  allows exactly the default branch (custom branch policy, one entry of type branch; protected-branches
+  mode counts as not verified); unreadable (no token, 403) it says `verify: owner`. It cannot see
+  environment secrets and says so.
+- Author is the owner. Agents open PRs through the Claude GitHub App as the owner's login, and
+  GitHub refuses a review of one's own PR, so the owner cannot approve those PRs with a review.
+  When the PR author is an owner of `governance/owners.toml` at base and the PR waits for the
+  owner, risk-check sets `data.author_is_owner = true` and its `fix` says so and names what still
+  works: a plain `/bosun approve <head>` comment from the owner's own account (agents' app comments
+  never count), a signed approval (`bosun approve`, chat form, D-012), the CI signer where D-017
+  covers the PR, or the owner merges it themselves. Nothing that needs the owner is relaxed.
+- Delegated decisions let one Claude session decide high-risk PRs itself; only critical
+  changes go to the owner. A key in `.bosun/approvers.toml` has `role = "owner"` (the default,
+  as above) or `role = "delegate"`; one public key under two ids is a malformed file. A delegate
+  signs `bosun-delegate v1 <owner>/<repo>#<pr> <head_sha>` (same comment shape and rules as
+  above: `bosun approve <pr>@<head> --sign-key <pem> --as delegate`; `--as` must be the key's
+  enrolled role, else exit 1). Each role verifies only its own message, so a delegate signature
+  never counts as an owner's, nor the reverse. risk-check counts it, as `approved by delegate
+  <id>`, only when all hold:
+  - every rule matched on the head is `approval = "delegate"` (any owner rule needs the owner,
+    and so does a mix of delegate and two-verdicts rules: a delegate never stands in for two
+    verdicts; the mode is off in a repo without `delegate` rules, and the built-in rules have
+    none);
+  - the PR is not critical (below);
+  - bosun is not halted (a halt, or an error reading it, stops delegation, not owner
+    approvals), and the PR targets the default branch;
+  - the PR links tasks (`Closes #N`), and every linked issue is an open bosun task (`bosun:task`
+    metadata, not a PR) with at least one lease record, so a decoy link cannot hide the task's
+    capabilities or its lease holders;
+  - at least one review verdict record on the head, written by `bosun verdict apply` (author
+    `github-actions[bot]`, the shape of the two-verdicts class) from a session without a lease on
+    a linked task, approves with confidence >= 0.9 and counts `major: 0` findings (the record
+    carries `major` from this version on; an older record without it never counts; an
+    approving verdict has no blocker); a session's newest record for the head decides;
+  - owners exist at base and no owner has withdrawn approval on the head (withdrawal, above);
+  - the signature checks of signed approvals above.
+  The critical floor is hard-coded and holds whatever a rule's `approval` says: the rules
+  R-secrets, R-prod-write and R-unseen (bosun could not see the whole diff, so it cannot rule
+  out a critical file or a secret in it), and any changed file whose path or previous path
+  (renames count both ways) is `.bosun/**` (approvers.toml and risk.toml included),
+  `governance/**`, `CODEOWNERS` (root, `.github/`, `docs/`), the root `hoist.toml` (the
+  ruleset's required checks), `.github/workflows/**`, `.github/actions/**` or any `action.yml`/`action.yaml` (any workflow with `statuses: write` can post a `risk-check` status for
+  any PR), `.circleci/**` or another CI provider's config (the R-ci list). Where the base has `src/cli/risk_check.rs` (bosun and its forks), bosun's code is
+  critical too: all of `src/**` (the approval modules call most others, and any module can do
+  I/O with the workflow's token once released), `Cargo.toml`, `Cargo.lock`, `build.rs` (any
+  directory), `.cargo/**` and `npm/**` (`CRITICAL_PATHS` and `APPROVAL_CODE_PATHS` in
+  `src/core/risk.rs`). On a critical PR every delegate match becomes an owner match, and the
+  status reads `high risk, owner approval needed (critical: <rules and paths>): <ids>`;
+  `data.critical` lists them. While a delegate may approve, the status reads `high risk, owner
+  approval needed (or a delegate): <ids>` (so `bosun approve --list` lists it),
+  `data.delegate_verdicts` lists the clean verdicts and `data.delegate_blocked` says why a
+  delegate cannot approve now (null when it can). In bosun this leaves `deny.toml`, the toolchain
+  files, `.config/**` and `profiles/**` to a delegate (R-ci and R-gate); R-deps is delegate-class
+  but every manifest it reads is critical here. Releases stay human through the `release`
+  environment. To turn delegation off at once, the owner deletes the delegate key from
+  `.bosun/approvers.toml` (read live from the default branch); deleting the `approval =
+  "delegate"` lines from `.bosun/risk.toml` applies to each open PR once its base moves. Both
+  are critical, so only the owner approves that PR. Residuals: the verdict session is
+  self-declared, so a steered delegate can post the one verdict itself under a session without a
+  lease: the mode lets one session decide by design, and the verdict is a quality gate, not
+  proof of independence. A workflow on a pushed branch can post a record as
+  `github-actions[bot]` (Limits above). Files that match no rule (`tests/**` in this repo) are
+  normal risk, so neither the owner nor the floor sees them; that is a follow-up for the rules. A self-made task issue
+  with its own lease record still passes the task check, hiding the real task's capabilities
+  (the same trust class as the self-declared session). No job that runs repo code (tests, build
+  scripts, `.config/nextest.toml`) holds a token that can write statuses or issues: main-health's
+  nightly job is `contents: read` without persisted credentials (`tests/workflows.rs`).
+- `bosun approve` is the owner's shortcut, run on the owner's own machine (a local shell or a
+  local Claude Code session, also through Remote Control), never in a Claude cloud session: the cloud agent proxy rewrites
+  every GitHub write (app attribution and a footer), so an approval sent from there never counts,
+  whatever the token. It
+  reads `BOSUN_OWNER_TOKEN` (a fine-grained PAT of the owner) and makes all its calls with it,
+  never with `GITHUB_TOKEN`; without it the command is exit 5, except `--list`. `--list` only
+  reads and writes nothing; without `BOSUN_OWNER_TOKEN` it reads with no token at all (no
+  `Authorization` header, so any `BOSUN_GITHUB_API`), `data.auth` is `none` (else `owner-token`)
+  and a read that fails skips that PR, or the PR list, into `data.skipped` (`{pr, why}`, `pr`
+  null for the list) with `data.skipped_fix`, still exit 0. It sends the token only to
+  `https://` or a loopback `BOSUN_GITHUB_API` (else exit 1) and redacts it from every message.
+  Flow: the owner says "approve the ready PRs"; Claude runs `bosun approve --list`, shows the
+  owner the ready list (PR, title, risk, files), then runs exactly `data.approve_command`, one
+  line `bosun approve 199@<head> 200@<head>` (null when nothing is ready), and `data.hint` says
+  to approve only by running `data.approve_command` or in the GitHub UI: a `/bosun approve` comment posted through the Claude
+  GitHub tool goes through an app and carries a footer, so it never counts. `--list` also gives
+  `message`, `message_id` (8 hex characters of the SHA-256 of the shown pairs' sorted
+  `<pr>@<head>` lines) and `message_pairs` (at most 10, the binding). Titles are untrusted and
+  shown inert; only the latest relayed message is answerable, PR numbers come only from the
+  owner's chat, and each (id, pr) is signed at most once (design F7). Each ready item has an
+  `ask` and `next` holds the owner question (AskUserQuestion, or `slack_post` for origin
+  `slack`; §14); a PR the owner held at its current head is in `data.held[]`, not asked
+  again (§14). `--list` shows each
+  open PR whose `risk-check` status is `failure` with a description that starts `high risk,
+  owner approval needed`, whose `review-verdict` is `success` and whose `ci-ok` is green. Only
+  statuses created by `github-actions[bot]` count (anyone with write access can post a status
+  under any context, an agent included; the newest such status per context decides; this raises
+  the bar, it is no guarantee: a workflow on a pushed branch with `statuses: write` posts as
+  `github-actions[bot]` too, see Limits), and only
+  a `ci-ok` check run of the `github-actions` app (no commit status). The rule ids come from
+  the status text and are printed as `risk_from_status` (advisory); `files` is the comparison
+  of base and the listed head, so statuses, files and head describe one commit
+  (`files_truncated` is true at GitHub's compare cap of 300 files: review the PR on GitHub then). PRs that wait
+  for an owner but are not ready are listed under `waiting`. A bare PR number is a usage
+  error: each argument names the head the owner saw. The command recomputes the list and
+  posts `/bosun approve <head>` on each PR only if every named PR is ready at exactly that
+  head; otherwise nothing is posted (exit 3, `data.not_ready`, for example `head changed`) and
+  the owner needs a new `--list`. If a later comment fails, the ones posted stay recorded and
+  `data.approved` lists them (exit 1). A PR whose owner has a review on that head that requests
+  changes (the newest decisive review withdraws an approval comment) is not ready: it is in
+  `waiting` (the hint names only a newer APPROVED review) and refused with exit 3. One whose
+  request was dismissed is in `waiting` too ("needs a fresh plain owner comment", that is
+  `bosun approve <pr>@<head>`, "or a GitHub review") but an explicit `<pr>@<head>` is allowed:
+  it posts exactly the comment that ends the withdrawal. `--sign-key` refuses a request for
+  changes (exit 3, the fix names the review way) and signs v2 after a dismissal (above). Otherwise the comment is always posted, also when one that
+  counts (the owner test of risk-check: unedited, plain user token, exact text) already exists,
+  because the new comment re-runs risk-check if its run was lost; `data.approved` marks that
+  entry `"repost": true`. In a Claude cloud session (`CCR_AGENT_PROXY_ENABLED` is `1`, `true`,
+  `yes` or `on`, or `CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE` starts with `cloud`, any case) the
+  agent proxy rewrites every GitHub write (app attribution, a footer), so no token
+  yields a counting approval there: the posting modes without `--sign-key` are exit 5 before any call (run it on
+  your own machine, or comment in the GitHub app), and `--list` still works with
+  `data.cloud: true`. Both are exit 4 while bosun is halted. One `approve`
+  record (`prs`, `at`, no session) goes on the registry issue; it is an audit hint, never
+  authority: risk-check derives approval only from the owner's PR comment or review, or a
+  signed approval.
+  `--main-open <pr>` is for a PR that changes `.github/workflows/main-open.yml` (the base
+  workflow cannot judge it; any other PR is exit 3). It posts the `main-open` status with the
+  decision of `bosun gate main-open`, exit 4 when main is red and the PR is no mainfix, and
+  records it as `main_open`. The comment still counts only for an owner in
+  `governance/owners.toml`, on an unedited comment of a plain user token.
+- The `risk` workflow runs on `pull_request_target` (opened, synchronize, reopened, edited) and
+  on PR comments (`issue_comment` created) that contain `/bosun approve` or `/bosun recheck`, so
+  a comment re-evaluates `risk-check` without a push. `/bosun recheck` approves nothing: it only
+  re-judges the current head. It runs only for the repo's owners, members and collaborators
+  (`author_association` `OWNER`, `MEMBER` or `COLLABORATOR`) and then shares the judge's
+  concurrency group, as an approval does; anyone else's recheck gets a group of its own and runs
+  no job. The filter limits CI minutes only: an outsider's `/bosun approve` still re-judges (and
+  joins the judge's group), harmlessly. It also drops a recheck from an owner with private org
+  membership or from an app or bot (`NONE`): re-run the risk workflow then, which every hint that
+  says to comment `/bosun recheck` also names. `/bosun approve` is not filtered by author: bosun
+  checks the commenter against `governance/owners.toml` itself.
+  There is no review trigger: an owner's GitHub review (APPROVED on the head SHA) is read through
+  the API on the next run, a push, a `/bosun recheck` comment or any re-run of the workflow.
+  `pull_request_target` and `issue_comment` run
+  the workflow file from the base branch, so a PR cannot rewrite the job that judges it. The job
+  never checks out or runs PR-head code: it runs the release pinned in `.bosun/version` of the
+  PR's base SHA (on a comment, the default branch; built from it only while the pin says
+  `unreleased`), so a base that does not compile cannot block its own mainfix, and reads the PR through the API. Event data reaches scripts through `env`
+  only. Permissions: `contents: read`, `issues: read`, `statuses: write`, and
+  `pull-requests: write` for the Risk note in the PR body. `tests/workflows.rs` asserts all of
+  this, and that no workflow of bosun or the channel runs on `pull_request_review` or
+  `pull_request_review_comment` (both run the PR's copy of the file, with its token and the
+  repo's secrets) or checks out PR code on `workflow_run`.
+  Residual (open): any `on: pull_request` workflow that a same-repo PR adds or edits (ci.yml,
+  bosun.yml or a new file) runs the PR's copy with a token that can be given `statuses: write`,
+  so it can post a forged `risk-check` (or `review-verdict`, `main-open`) success on its own head.
+  The status context is not bound to a source, so the required check is only as strong as that.
+  Making such a PR R-ci does not help: the owner gate is the `risk-check` status that gets
+  forged. The close is B2 (designed in §15): the three gates become check runs of a dedicated
+  GitHub App whose key only `main` jobs get, and the `main` ruleset pins each to that App, so no
+  workflow's `GITHUB_TOKEN` can satisfy them. The pins live in `hoist.toml`, which no rule or
+  floor covers yet (normal risk today, a gap of its own): B2/T6 makes it R-gov and critical
+  before the ruleset switch.
+  Such a workflow can also read every repository secret, so no workflow secret is a repository
+  secret: each lives in an environment whose deployment branch policy allows only `main` (as the
+  App key in `bosun-app`, §15), and only the jobs that need it name that environment
+  (`HOIST_RELEASE_TOKEN` in `release-pr`, jobs `release-token` and `prepare` of release.yml;
+  `SPLICE_BOT_TOKEN` in `splice-bot`, job `update` of splice.yml, also in the channel's copy;
+  `ANTHROPIC_API_KEY` in `review`). `tests/workflows.rs` asserts that every job that reads a
+  secret other than `GITHUB_TOKEN` names a literal environment (also as `{ name: x, .. }`), and
+  none is read outside a job.
+- bosun writes a Risk note into the PR body: the rules that matched, why, and what the owner (or, for two verdicts, the two reviewers) must check.
+- `bosun ask` sends the question to the owner (GitHub mention, and Slack if set). Seed: the GitHub mention only, owners read from `governance/owners.toml` on `main`; the comment carries an `ask` record. There is no
+  timeout and no automatic approval.
+- A risky task is small: the target is under 100 changed lines.
+
+Kill switch: bosun is halted while either source says so, and then every command that starts or
+changes work (including `bosun pr` and `bosun verdict post`) is exit 4:
+- An open issue with the label `bosun:halt`, opened by a login in `governance/owners.toml` (read
+  from the default branch at `refs/heads/<branch>`, so a tag of that name cannot stand in; `bosun notify` likewise). An issue opened by anyone else is ignored. Any error reading the
+  issues or the owners is exit 4 (fail closed), and so is an open halt issue while no owners
+  are listed. Agents must never close a halt issue or remove its label; bosun does not yet
+  enforce that (a token with Issues: write can), so against a misbehaving agent the owner also
+  sets `BOSUN_HALT=1`, which agents cannot change. The owner creates the label once:
+  `gh label create bosun:halt --repo <owner>/<repo> --color B60205`. To halt:
+  `gh issue create --repo <owner>/<repo> --label bosun:halt --title "halt" --body "<why>"`; to
+  resume, close the issue.
+- The repo variable `BOSUN_HALT`, where the token can read it: `1` halts. 404 (unset) and 403 (not
+  readable from this token, as in cloud sessions behind the agent proxy) are no signal from this
+  source. Any other error reading it is exit 4. Only the owner sets it.
+
+`bosun status` and the SessionStart context show whether bosun is halted; `bosun doctor` step 5
+checks that the `bosun:halt` label exists and that the kill switch is readable.
+
+Audit: the high PRs, who approved them and the time to approval are read from the `risk-check` statuses and the approval comments (no dedicated command).
+
+Owner clears an escalation: on a head whose approval is an owner's own (review, comment or owner-key signature of exactly that head, not carried; on a normal-risk head it is read only while such an escalation waits), `risk-check` also turns an escalated `review-verdict` that would otherwise approve (description starting "escalated to the owner (approvable): ", decided by `verdict post`/`apply` on the unrounded confidence) `success` with "owner cleared escalation (<who>)" and reports `data.verdict_cleared_by`. Whether the approval is the owner's own is a structured flag from the approver (`Found.owner_own`), never read from its text; an older release's "escalated to the owner; " form is never cleared; any other verdict, another head or a failed write leaves it as it is (never an error). Residual: a later withdrawal of the owner's approval does not turn a cleared status red again.
+
+Verdict carry-over (design 2026-10-27 §3 C7, rules 1-5): after its own status, `bosun risk-check` (every level) posts `review-verdict` `success` ("carried from <7 hex>: clean merge of the default branch") on the head checked, and `data.verdict_carried_from` (the sha of `h`, or null). Only `review-verdict` is carried. Any error or doubt means no carry, never a failed check. It re-reads the head's statuses before and after posting, and restores a real verdict that raced it (or withdraws the carry when it cannot tell); every run on the head repairs a carried status that sits on top of a real verdict. It carries when:
+- the head has no `review-verdict` yet and is at most 5 clean merges of the default branch into an older head `h` (`core::carry` accepts the merge);
+- the newest verdict record on `h` (verdict workflow, unedited) approves, from a known session with no lease on a linked task (open, leased, not halted);
+- the hops have no verdict record, and no later record judges a head off the path (a force-push);
+- no owner's newest decisive review on `h`, or on any single hop, is CHANGES_REQUESTED or DISMISSED.
+
+Verdict re-apply: when its own status is `success` (not `--dry-run`), no carry happened, bosun is not halted (a halt state that cannot be read counts as halted) and the head has no `review-verdict` (an unreadable status list counts as having one; a top `review-verdict` that is risk-check's own `re-apply withdrawn: ` counts as none, so a later run retries), `bosun risk-check` takes the verdict comments (`<!-- bosun:verdict -->`, any session or author) whose verdict is for exactly this PR and head, newest first. A comment `bosun verdict apply` refuses neutrally (an outsider or unlisted bot, which verdict.yml ignores too) is ignored and the next-newest is taken, at most 20 per run (then it stops: nothing withdrawn before the first apply, withdrawn after one, since a racing request for changes may be among the unseen). The newest other one is re-applied only if it is an approval (`approve`, confidence and findings that approve, no `escalate_risk`); otherwise nothing is done: a missing `review-verdict` already blocks the merge, and verdict.yml owns red statuses and task moves (risk.yml's token reads issues only). The head's statuses are read again, then it runs `bosun verdict apply` on it (the same checks: unedited, writer or listed bot, newest of its session, all chunks); an approval writes only the status and the record comment, never a task move. So a head that turned green later (an owner's `/bosun approve` reran risk-check) gets the approval its review already gave. Fail closed, never an older comment: verdict.yml runs in another concurrency group, so after each apply (also a failed one) the comments are listed again and a newer verdict for the head is taken next, for at most 3 applies. A newer verdict that is no approval, a failed apply with no newer one, an unreadable list, or a newer verdict still there after 3 applies withdraws: `review-verdict` is set to `failure` with a description starting `re-apply withdrawn: ` (a failed post is only logged). `data.verdict_reapplied` is the id of the comment that finally stands (null otherwise); with no verdict for exactly this head nothing is posted.
+
+Once a carry stands, later runs only repair it. An owner's CHANGES_REQUESTED that arrives after the carry leaves `review-verdict` green, but risk-check's owner-withdrawal rule (`withdrawn()` in `src/cli/risk_check.rs`, applied to the head and to a carried approval by rule 5) still fails the high-risk check.
+
+Approval carry-over (design §3 C7): a high-risk head `H2` that is at most 5 clean merges of the default branch into an older head `h` (rules 1-4, `core::carry`) passes when `h`'s approval would have passed and still stands: an owner review, `/bosun approve <h>` comment or owner signature of exactly `h`, or two verdicts (an edited counted record never carries). The delegate class carries too, under the same rules: a delegate v1 signature of exactly `h` plus one clean verdict on `h`, with the delegate checks (not halted, every linked issue an open leased task, no trust file or unseen diff in `H2`) made again now. The status reads `approved by <who> (carried from <7 hex>)` and `data.approval_carried_from` is the full sha of `h` (null otherwise). Only the approval is carried; the risk rules (at base), owners and keys (at the default branch), the requirement, the critical floor, trust files and R-unseen are all recomputed from `H2`'s own diff, so a signature never counts when `H2` changes a trust file or its diff is unseen, and a rule tightened on main applies. Rule 5: no owner's newest decisive review on `h` or any hop is CHANGES_REQUESTED or DISMISSED; for verdicts, none of the sessions that count (or any session) has a record on a hop, and no record for a head off the path is newer than the oldest counted one; the lease exclusion is applied afresh. Whatever the class, the carry is refused when an owner's newest decisive review on any commit of the PR (by review id), even one off the path (a force-pushed-away head), is CHANGES_REQUESTED or DISMISSED; a later approval (an owner APPROVED review on any commit, by review order) clears an older one. Residual, failing closed: an owner who approved by comment or signature after a request for changes on an older head still has that review as the newest, so the carry is refused until they approve the head directly or submit an APPROVED review. `h` is tried nearest first, and only if its approval passes is the merge checked. Any error or doubt tries the next head, then means no carry: the check still fails with exit 5, never an error.
+
+Lockfile merges (rule 6, both carries): parallel tasks that add crates all change `Cargo.lock`, so a merge of main into an approved head usually conflicts there and the lockfile is regenerated. `core::carry` (rule 2) still refuses any path both the PR and main changed, except a lockfile (`Cargo.lock` or `pnpm-lock.yaml`, any directory) that each side modified in place (listed once, `modified`, no rename). For it, rule 3's blob equality is replaced by an entry check on the texts read through the API at `h`, `M` and `H2` by commit sha (`core::lockmerge`): every whole entry of `H2`'s file must be byte for byte an entry of `h`'s or `M`'s file, and no entry may appear twice. A Cargo entry is a `[...]` block (a `[[package]]` with name, version, source, checksum and dependencies) or the text before the first block; a pnpm entry is a top-level line, or a key two spaces in with everything under it, tied to its top-level section. Entries are compared byte for byte (only the newlines that end an entry are dropped; a `\r` counts, so a CRLF copy is refused). An entry of one side may be dropped (a merge prunes it), but every entry both `h` and `M` hold must stay, so a subset or an empty file is refused; none may be new, changed or moved to another section, so one package's name cannot be stitched to another's checksum or tarball, and a workspace member whose dependency list mixes both sides is refused. The entry must be a plain `100644` blob in `H2`; its directories must match between `B` and `M`; any unreadable text, other overlap or other tree difference refuses. Every other file of `H2` is still checked exactly. Second line of defence: the gates build and test with `--locked` (`profiles/rust.toml`) and install with `pnpm install --frozen-lockfile`, so a lockfile that does not match its manifests fails CI on `H2` whatever the carry decided.
+
+Decisive reviews (APPROVED, CHANGES_REQUESTED, DISMISSED) are ordered by `submitted_at`, ties by review id, never by list position; a decisive review without a usable time fails closed: on the head the most withdrawing state of that owner on that commit wins, and a carry is refused.

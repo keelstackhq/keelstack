@@ -1,0 +1,933 @@
+mod common;
+
+use common::fake::FakeGithub;
+use common::{bosun, one_object};
+use serde_json::{Value, json};
+use std::path::Path;
+
+const T0: &str = "2026-10-22T10:00:00Z";
+
+fn doctor(fake: &FakeGithub, dir: &Path, routines_ok: bool) -> (i32, Value) {
+    let mut cmd = bosun();
+    cmd.env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_NOW", T0)
+        .env("CLAUDE_CONFIG_DIR", dir.join(".test-claude"))
+        .arg("-C")
+        .arg(dir)
+        .args(["doctor", "--full"]);
+    if routines_ok {
+        cmd.env("BOSUN_ROUTINES_OK", "1");
+    }
+    let out = cmd.output().unwrap();
+    let v = one_object(&out.stdout);
+    if v["ok"] == false {
+        assert!(!v["error"]["fix"].as_str().unwrap().trim().is_empty());
+    }
+    (out.status.code().unwrap(), v)
+}
+
+fn write(dir: &Path, rel: &str, text: &str) {
+    let p = dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+fn statuses(v: &Value) -> Vec<String> {
+    v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["status"].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+fn an_empty_repo_reports_all_fourteen_steps_and_the_update_item() {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    let (code, v) = doctor(&fake, tmp.path(), false);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["error"]["kind"], "needs-human");
+    let items = v["data"]["items"].as_array().unwrap();
+    // The 14 checklist steps, then step 17 (update), which is skipped here: the tests turn the
+    // npm check off with BOSUN_PIN_CHECK=0.
+    assert_eq!(items.len(), 15);
+    assert_eq!(
+        (items[14]["step"].as_u64(), items[14]["status"].as_str()),
+        (Some(17), Some("skipped"))
+    );
+    for (i, it) in items[..14].iter().enumerate() {
+        assert_eq!(it["step"], i + 1);
+        assert!(!it["fix"].as_str().unwrap().is_empty());
+    }
+    // Step 1 (the fake repo is readable) is ok; Slack (7) and release (10) are not configured,
+    // so they are skipped, not missing (F11); Routines (11) and the plan (12) are optional too. Step 13 (plugins) is missing without the keelstack pins.
+    let st = statuses(&v);
+    assert_eq!(st[0], "ok");
+    assert_eq!((st[6].as_str(), st[9].as_str()), ("skipped", "skipped"));
+    assert_eq!(st[12], "missing");
+    assert_eq!(st[13], "ok", "no workflows, nothing to find");
+    assert!(
+        st.iter()
+            .enumerate()
+            .skip(1)
+            .filter(|(i, _)| ![6, 9, 10, 11, 12, 13, 14].contains(i))
+            .all(|(_, s)| s == "missing"),
+        "{st:?}"
+    );
+    assert_eq!(v["error"]["message"], "8 checklist steps missing");
+    // The janitor is opt-in; without [slack] there is no notify Routine (F17).
+    assert_eq!(v["data"]["routines"].as_array().unwrap().len(), 1);
+    assert_eq!(v["data"]["routines"][0]["name"], "curator");
+    assert_eq!(v["data"]["notify"]["skipped"], true, "{v}");
+    assert!(!v.to_string().contains("janitor"), "{v}");
+}
+
+#[test]
+fn the_janitor_is_listed_only_when_enabled() {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    write(
+        tmp.path(),
+        ".bosun/bosun.toml",
+        "[routines]\njanitor = true\njanitor_cron = \"30 * * * *\"\n",
+    );
+    let (_, v) = doctor(&fake, tmp.path(), false);
+    assert_eq!(v["data"]["routines"].as_array().unwrap().len(), 2, "{v}");
+    let janitor = &v["data"]["routines"][0];
+    assert_eq!(janitor["name"], "janitor");
+    assert_eq!(janitor["cron"], "30 * * * *");
+    let prompt = janitor["prompt"].as_str().unwrap();
+    assert!(!prompt.contains("bosun notify"), "{prompt}");
+    for part in [
+        "bosun reap",
+        "bosun budget check",
+        "`next`",
+        "interrupt_session",
+    ] {
+        assert!(
+            prompt.contains(part),
+            "janitor prompt lacks {part}: {prompt}"
+        );
+    }
+    let step = v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["step"] == 11)
+        .unwrap();
+    assert!(
+        step["fix"]
+            .as_str()
+            .unwrap()
+            .contains("confirm the janitor"),
+        "{step}"
+    );
+}
+
+#[test]
+fn a_slack_warning_leaves_doctor_at_exit_0() {
+    let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\n");
+    let (code, v) = doctor(&fake, tmp.path(), true);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(statuses(&v)[6], "warn");
+    assert_eq!(v["data"]["missing"], 0);
+}
+
+#[test]
+fn unparsable_owners_are_named_in_the_warning() {
+    let (tmp, fake) = full_repo("owners = [\"adam\"]\n");
+    let (_, v) = doctor(&fake, tmp.path(), true);
+    let item = &v["data"]["items"][6];
+    assert_eq!(item["status"], "warn", "{item}");
+    assert_eq!(
+        item["detail"],
+        "governance/owners.toml does not parse as [[owner]] tables"
+    );
+}
+
+#[test]
+fn a_fully_set_up_repo_is_ok() {
+    let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+    let d = tmp.path();
+    let (code, v) = doctor(&fake, d, true);
+    assert_eq!(code, 0, "{v}");
+    // The Claude Tag seat is skipped: this session has not joined with one.
+    for it in v["data"]["items"].as_array().unwrap() {
+        let want = if it["name"] == "claude-tag" || it["name"] == "update" {
+            "skipped"
+        } else {
+            "ok"
+        };
+        assert_eq!(it["status"], want, "{it}");
+    }
+    // Without the Routines confirmation, only step 11 is missing.
+    let (code, v) = doctor(&fake, d, false);
+    assert_eq!(code, 5);
+    assert_eq!(v["error"]["message"], "1 checklist steps missing");
+    assert_eq!(statuses(&v)[10], "missing");
+}
+
+#[test]
+fn step_9_says_when_auto_merge_is_off() {
+    let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+    fake.repo_set("allow_auto_merge", json!(false));
+    let (code, v) = doctor(&fake, tmp.path(), true);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(statuses(&v)[8], "missing");
+    assert!(
+        v["data"]["items"][8]["detail"]
+            .as_str()
+            .is_some_and(|s| s.contains("allow_auto_merge is off")),
+        "{v}"
+    );
+}
+
+fn full_repo(owners: &str) -> (tempfile::TempDir, FakeGithub) {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    let d = tmp.path();
+    fake.repo_set("allow_auto_merge", json!(true));
+    fake.release("v0.1.0");
+    fake.state
+        .lock()
+        .unwrap()
+        .labels
+        .push(("bosun:halt".into(), "B60205".into()));
+    fake.issue(1, "bosun registry", &["bosun:registry"], "");
+    fake.content(".bosun/registry", "refs/heads/main", "1\n");
+    fake.issue(2, "task", &[], "");
+    fake.comment_by(2, "claude[bot]", "On it.");
+    fake.enforce_checks(&["ci-ok", "risk-check", "review-verdict", "main-open"]);
+    write(
+        d,
+        "hoist.toml",
+        "[github]\nrequired_checks = [\"ci-ok\", \"risk-check\", \"review-verdict\", \"main-open\"]\n",
+    );
+    write(
+        d,
+        ".github/workflows/ci.yml",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    write(d, "governance/owners.toml", owners);
+    let (m, sp, cv) = ("main".to_string(), "b".repeat(40), "c".repeat(40));
+    write(
+        d,
+        "docs/setup-script.sh",
+        &format!(
+            "#!/bin/sh\nKEELSTACK_MARKETPLACE_REF={m}\nSUPERPOWERS_SHA={sp}\nCAVEMAN_SHA={cv}\n"
+        ),
+    );
+    write(
+        d,
+        ".claude/settings.json",
+        &format!(
+            r#"{{"extraKnownMarketplaces":{{"keelstack":{{"source":{{"source":"github","repo":"keelstackhq/bosun","ref":"{m}"}}}}}},
+"enabledPlugins":{{"superpowers@keelstack":true,"caveman@keelstack":true}}}}"#
+        ),
+    );
+    write(
+        d,
+        ".test-claude/plugins/installed_plugins.json",
+        &format!(
+            r#"{{"version":2,"plugins":{{"superpowers@keelstack":[{{"gitCommitSha":"{sp}"}}],"caveman@keelstack":[{{"gitCommitSha":"{cv}"}}]}}}}"#
+        ),
+    );
+    write(d, ".bosun/version", "unreleased\n");
+    write(d, ".bosun/bosun.toml", "[slack]\nchannel = \"#bosun\"\n");
+    write(d, "plans/bosun.md", "# plan\n");
+    (tmp, fake)
+}
+
+const FOUR: &str =
+    "[github]\nrequired_checks = [\"ci-ok\", \"risk-check\", \"review-verdict\", \"main-open\"]\n";
+const FIVE: &str = "[github]\nrequired_checks = [\"ci-ok\", \"bosun-ok\", \"risk-check\", \"review-verdict\", \"main-open\"]\n";
+
+fn step3(dir: &Path) -> Value {
+    let fake = FakeGithub::start();
+    fake.enforce_checks(&[
+        "ci-ok",
+        "bosun-ok",
+        "risk-check",
+        "review-verdict",
+        "main-open",
+    ]);
+    step3_on(&fake, dir)
+}
+
+fn step3_on(fake: &FakeGithub, dir: &Path) -> Value {
+    let (_, v) = doctor(fake, dir, false);
+    v["data"]["items"][2].clone()
+}
+
+#[test]
+fn step_3_finds_ci_ok_in_any_workflow() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), "hoist.toml", FOUR);
+    write(
+        tmp.path(),
+        ".github/workflows/bosun.yml",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    assert_eq!(step3(tmp.path())["status"], "ok");
+}
+
+#[test]
+fn step_3_wants_bosun_ok_in_hoist_toml_when_a_workflow_has_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    write(d, "hoist.toml", FOUR);
+    write(
+        d,
+        ".github/workflows/ci.yml",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    write(
+        d,
+        ".github/workflows/bosun.yml",
+        "jobs:\n  bosun-ok:\n    runs-on: x\n",
+    );
+    let item = step3(d);
+    assert_eq!(item["status"], "missing", "{item}");
+    assert!(
+        item["detail"].as_str().unwrap().contains("bosun-ok"),
+        "{item}"
+    );
+    assert!(item["fix"].as_str().unwrap().contains("bosun-ok"), "{item}");
+    write(d, "hoist.toml", FIVE);
+    assert_eq!(step3(d)["status"], "ok");
+}
+
+#[test]
+fn step_3_reads_jobs_not_other_keys_and_accepts_comments_and_yaml() {
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    write(d, "hoist.toml", FOUR);
+    // `ci-ok:` under `on:` is not a job.
+    write(
+        d,
+        ".github/workflows/ci.yml",
+        "on:\n  ci-ok:\n    x: 1\njobs:\n  build:\n    runs-on: x\n",
+    );
+    assert_eq!(step3(d)["status"], "missing");
+    write(
+        d,
+        ".github/workflows/bosun.yaml",
+        "jobs: # gates\n  ci-ok: # aggregate\n    runs-on: x\n",
+    );
+    assert_eq!(step3(d)["status"], "ok");
+}
+
+fn slack_step(owners: &str) -> Value {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    write(tmp.path(), "governance/owners.toml", owners);
+    write(
+        tmp.path(),
+        ".bosun/bosun.toml",
+        "[slack]\nchannel = \"#bosun\"\n",
+    );
+    let (_, v) = doctor(&fake, tmp.path(), false);
+    v["data"]["items"][6].clone()
+}
+
+#[test]
+fn doctor_warns_when_no_owner_has_a_slack_id() {
+    let item = slack_step("[[owner]]\ngithub = \"adam\"\n");
+    assert_eq!(item["status"], "warn", "{item}");
+    assert_eq!(
+        item["fix"],
+        "add `slack = \"U…\"` to your [[owner]] table in governance/owners.toml"
+    );
+}
+
+#[test]
+fn doctor_does_not_warn_when_an_owner_has_a_slack_id() {
+    let item = slack_step("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+    assert_eq!(item["status"], "ok", "{item}");
+}
+
+fn step2(fake: &FakeGithub) -> Value {
+    let tmp = tempfile::tempdir().unwrap();
+    let (_, v) = doctor(fake, tmp.path(), false);
+    v["data"]["items"][1].clone()
+}
+
+/// The app acts as the owner's login: only `performed_via_github_app` shows it.
+#[test]
+fn step_2_sees_the_app_through_performed_via_github_app() {
+    let fake = FakeGithub::start();
+    fake.issue(2, "task", &[], "");
+    assert_eq!(step2(&fake)["status"], "missing");
+    fake.issue_via_app(2, "claude");
+    assert_eq!(step2(&fake)["status"], "ok");
+
+    let fake = FakeGithub::start();
+    fake.issue(2, "task", &[], "");
+    fake.comment_by(2, "adam", "On it.");
+    fake.last_comment(|c| c.via_app = Some("Claude".into()));
+    assert_eq!(step2(&fake)["status"], "ok");
+
+    let fake = FakeGithub::start();
+    fake.issue(2, "task", &[], "");
+    fake.issue_via_app(2, "dependabot");
+    assert_eq!(step2(&fake)["status"], "missing");
+}
+
+fn step3_repo() -> tempfile::TempDir {
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path(), "hoist.toml", FOUR);
+    write(
+        tmp.path(),
+        ".github/workflows/ci.yml",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    tmp
+}
+
+/// hoist.toml only says what hoist would apply; step 3 also reads what the branch enforces.
+#[test]
+fn step_3_checks_what_the_default_branch_enforces() {
+    let tmp = step3_repo();
+    let fake = FakeGithub::start();
+    // Nothing enforced.
+    let item = step3_on(&fake, tmp.path());
+    assert_eq!(item["status"], "missing", "{item}");
+    assert!(
+        item["detail"].as_str().unwrap().contains("risk-check"),
+        "{item}"
+    );
+    assert!(
+        item["fix"]
+            .as_str()
+            .unwrap()
+            .contains("hoist apply --area github"),
+        "{item}"
+    );
+    // Partly, through a ruleset.
+    fake.enforce_checks(&["ci-ok"]);
+    let item = step3_on(&fake, tmp.path());
+    assert_eq!(item["status"], "missing", "{item}");
+    assert!(
+        !item["detail"].as_str().unwrap().contains("ci-ok,"),
+        "{item}"
+    );
+    // The rest through classic protection: the union counts.
+    fake.enforce_classic(&["risk-check", "review-verdict", "main-open"]);
+    assert_eq!(step3_on(&fake, tmp.path())["status"], "ok");
+}
+
+/// A 403 on both endpoints is no evidence of drift: the step keeps its local verdict and says
+/// what it could not verify.
+#[test]
+fn step_3_notes_when_the_enforced_checks_cannot_be_read() {
+    let tmp = step3_repo();
+    let fake = FakeGithub::start();
+    fake.fail_path("/rules/branches/main", 403);
+    fake.fail_path("/protection/required_status_checks", 403);
+    let item = step3_on(&fake, tmp.path());
+    assert_eq!(item["status"], "ok", "{item}");
+    let d = item["detail"].as_str().unwrap();
+    assert!(d.contains("cannot verify the enforced checks (403"), "{d}");
+}
+
+/// One endpoint 403 is no evidence either: a repo protected only by classic protection (often
+/// unreadable while /rules/branches answers 200) is not reported missing; the note names the
+/// endpoint. Checks the readable endpoint enforces still count.
+#[test]
+fn step_3_notes_when_only_the_classic_endpoint_is_unreadable() {
+    let tmp = step3_repo();
+    let fake = FakeGithub::start();
+    fake.fail_path("/protection/required_status_checks", 403);
+    let item = step3_on(&fake, tmp.path());
+    assert_eq!(item["status"], "ok", "{item}");
+    let d = item["detail"].as_str().unwrap();
+    assert!(d.contains("cannot verify"), "{d}");
+    assert!(d.contains("classic branch protection"), "{d}");
+    // All enforced through the readable ruleset: ok, no note needed.
+    fake.enforce_checks(&["ci-ok", "risk-check", "review-verdict", "main-open"]);
+    let item = step3_on(&fake, tmp.path());
+    assert_eq!(item["status"], "ok", "{item}");
+    assert!(
+        !item["detail"].as_str().unwrap().contains("cannot verify"),
+        "{item}"
+    );
+}
+
+/// `--remote` checks the environment of every workflow job: only `main` may deploy to it.
+#[cfg(unix)]
+mod environments {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    const STEPS: &str = "Deployment branches → Selected branches → add `main`";
+    const CUSTOM: &str = r#"{"protected_branches": false, "custom_branch_policies": true}"#;
+
+    fn main_only(fake: &FakeGithub, name: &str) {
+        let main = json!([{"name": "main", "type": "branch"}]);
+        fake.environment(name, serde_json::from_str(CUSTOM).unwrap(), main);
+    }
+
+    /// A full repo whose workflows name `release-pr` twice and `splice-bot` as a mapping.
+    fn env_repo() -> (tempfile::TempDir, FakeGithub) {
+        let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+        let wf = "on:\n  workflow_dispatch:\n    inputs:\n      environment:\n        name: no\njobs:\n  prepare:\n    environment: release-pr\n    steps:\n      - name: x\n  again:\n    environment: \"release-pr\" # twice\n  update:\n    environment:\n      name: splice-bot\n      url: x\n";
+        write(tmp.path(), ".github/workflows/rel.yml", wf);
+        let hoist = tmp.path().join("fake-hoist");
+        let report = r#"{"version":1,"command":"check","ok":true,"exit_code":0,"items":[]}"#;
+        std::fs::write(&hoist, format!("#!/bin/sh\necho '{report}'\n")).unwrap();
+        std::fs::set_permissions(&hoist, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (tmp, fake)
+    }
+
+    fn remote(fake: &FakeGithub, dir: &Path) -> (i32, Value) {
+        let out = bosun()
+            .env("BOSUN_GITHUB_API", fake.url())
+            .env("BOSUN_HOIST", dir.join("fake-hoist"))
+            .env("BOSUN_ROUTINES_OK", "1")
+            .env("CLAUDE_CONFIG_DIR", dir.join(".test-claude"))
+            .arg("-C")
+            .arg(dir)
+            .args(["doctor", "--full", "--remote"])
+            .output()
+            .unwrap();
+        (out.status.code().unwrap(), one_object(&out.stdout))
+    }
+
+    /// `splice-bot` is main-only; returns the exit code, step 5 and the `release-pr` entry.
+    fn release_pr(setup: impl FnOnce(&FakeGithub)) -> (i32, Value, Value) {
+        let (tmp, fake) = env_repo();
+        main_only(&fake, "splice-bot");
+        setup(&fake);
+        let (code, v) = remote(&fake, tmp.path());
+        let envs = v["data"]["environments"].as_array().unwrap().clone();
+        assert_eq!(envs.len(), 2, "{v}");
+        assert_eq!(envs[1]["status"], "ok", "{v}");
+        (code, v["data"]["items"][4].clone(), envs[0].clone())
+    }
+
+    /// A warning, never a failure: exit 0, step 5 warns with the entry's detail and fix.
+    fn warns(setup: impl FnOnce(&FakeGithub), detail: &str, fix: &str) {
+        let (code, step5, env) = release_pr(setup);
+        assert_eq!(code, 0, "{step5}");
+        assert_eq!(env["name"], "release-pr", "{env}");
+        assert_eq!(env["status"], "warn", "{env}");
+        let (d, f) = (
+            env["detail"].as_str().unwrap(),
+            env["fix"].as_str().unwrap(),
+        );
+        assert!(d.contains(detail), "{d}");
+        assert!(f.contains(fix), "{f}");
+        assert_eq!(step5["status"], "warn", "{step5}");
+        assert!(step5["detail"].as_str().unwrap().contains(d), "{step5}");
+        assert!(step5["fix"].as_str().unwrap().contains(f), "{step5}");
+    }
+
+    #[test]
+    fn an_environment_doctor_cannot_read_warns() {
+        let (tmp, fake) = env_repo();
+        let dynamic = "jobs:\n  deploy:\n    environment: ${{ inputs.e }}\n  flow:\n    environment: {url: x}\n";
+        write(tmp.path(), ".github/workflows/dyn.yml", dynamic);
+        main_only(&fake, "release-pr");
+        main_only(&fake, "splice-bot");
+        let (code, v) = remote(&fake, tmp.path());
+        assert_eq!(code, 0, "{v}");
+        let envs = v["data"]["environments"].as_array().unwrap();
+        for job in ["deploy", "flow"] {
+            let e = envs.iter().find(|e| e["job"] == job).expect(job);
+            assert_eq!(e["status"], "warn", "{e}");
+            let d = e["detail"].as_str().unwrap();
+            assert!(
+                d.contains(&format!(
+                    "cannot read the environment of job {job} in dyn.yml"
+                )),
+                "{d}"
+            );
+        }
+        assert_eq!(v["data"]["items"][4]["status"], "warn", "{v}");
+    }
+
+    #[test]
+    fn main_only_environments_are_ok() {
+        let (code, step5, env) = release_pr(|f| main_only(f, "release-pr"));
+        assert_eq!(code, 0, "{step5}");
+        assert_eq!(env["status"], "ok", "{env}");
+        assert_eq!(step5["status"], "ok", "{step5}");
+        let d = step5["detail"].as_str().unwrap();
+        assert!(
+            d.contains("only main deploys to release-pr, splice-bot"),
+            "{d}"
+        );
+        // A missing `type` is a branch too.
+        let main = json!([{"name": "main"}]);
+        let custom = serde_json::from_str(CUSTOM).unwrap();
+        let (_, _, env) = release_pr(|f| f.environment("release-pr", custom, main));
+        assert_eq!(env["status"], "ok", "{env}");
+    }
+
+    #[test]
+    fn a_missing_environment_warns() {
+        warns(|_| {}, "does not exist", STEPS);
+        let (_, _, env) = release_pr(|_| {});
+        let fix = env["fix"].as_str().unwrap();
+        let new = "Settings → Environments → New environment `release-pr`";
+        assert!(fix.contains(new), "{fix}");
+        assert!(fix.contains("/acme/widget/settings/environments"), "{fix}");
+    }
+
+    #[test]
+    fn no_policy_warns_that_any_branch_can_deploy() {
+        let fix = format!("Settings → Environments → release-pr → {STEPS}");
+        let none = |f: &FakeGithub| f.environment("release-pr", Value::Null, json!([]));
+        warns(none, "any branch", &fix);
+    }
+
+    #[test]
+    fn protected_branches_warn() {
+        let p = json!({"protected_branches": true, "custom_branch_policies": false});
+        let set = |f: &FakeGithub| f.environment("release-pr", p, json!([]));
+        warns(set, "every protected branch", STEPS);
+    }
+
+    #[test]
+    fn other_branch_policies_warn() {
+        let custom: Value = serde_json::from_str(CUSTOM).unwrap();
+        let with = |list: Value| {
+            let c = custom.clone();
+            move |f: &FakeGithub| f.environment("release-pr", c, list)
+        };
+        let dev = json!([{"name": "main", "type": "branch"}, {"name": "dev", "type": "branch"}]);
+        warns(with(dev), "main, dev", STEPS);
+        warns(
+            with(json!([{"name": "main", "type": "tag"}])),
+            "main (tag)",
+            STEPS,
+        );
+        warns(with(json!([])), "no branch", STEPS);
+    }
+
+    #[test]
+    fn an_unreadable_environment_warns_cannot_verify() {
+        let grant = "give the token Environments: read (or Administration: read)";
+        let env403 = |f: &FakeGithub| f.fail_path("/environments/release-pr", 403);
+        warns(env403, "cannot verify", grant);
+        let policies = |f: &FakeGithub| {
+            main_only(f, "release-pr");
+            f.fail_path("/release-pr/deployment-branch-policies", 403);
+        };
+        warns(policies, "cannot verify", grant);
+        let env500 = |f: &FakeGithub| f.fail_path("/environments/release-pr", 500);
+        warns(env500, "cannot verify", "run `bosun doctor --remote` again");
+    }
+}
+
+#[test]
+fn slack_is_skipped_without_a_slack_section_and_missing_with_an_empty_channel() {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    let (_, v) = doctor(&fake, tmp.path(), false);
+    let item = &v["data"]["items"][6];
+    assert_eq!(item["status"], "skipped", "{item}");
+    assert!(
+        item["detail"].as_str().unwrap().contains("optional"),
+        "{item}"
+    );
+    write(tmp.path(), ".bosun/bosun.toml", "[slack]\nchannel = \"\"\n");
+    let (_, v) = doctor(&fake, tmp.path(), false);
+    assert_eq!(v["data"]["items"][6]["status"], "missing", "{v}");
+    assert!(v["data"].get("notify").is_none(), "{v}");
+    assert_eq!(v["data"]["routines"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn with_slack_the_janitor_still_runs_notify() {
+    let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+    let cfg = std::fs::read_to_string(tmp.path().join(".bosun/bosun.toml")).unwrap_or_default();
+    write(
+        tmp.path(),
+        ".bosun/bosun.toml",
+        &format!("{cfg}\n[routines]\njanitor = true\n"),
+    );
+    let (_, v) = doctor(&fake, tmp.path(), true);
+    let janitor = v["data"]["routines"][0]["prompt"].as_str().unwrap();
+    assert!(janitor.contains("bosun notify"), "{janitor}");
+    assert_eq!(v["data"]["routines"][2]["name"], "notify");
+}
+
+#[test]
+fn release_is_missing_only_when_configured() {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    let d = tmp.path();
+    let (_, v) = doctor(&fake, d, false);
+    let item = &v["data"]["items"][9];
+    assert_eq!(item["status"], "skipped", "{item}");
+    assert!(
+        item["detail"].as_str().unwrap().contains("not configured"),
+        "{item}"
+    );
+    for (rel, text) in [
+        ("hoist.toml", "[release]\n"),
+        ("hoist.toml", "[publish]\ncrates = {}\n"),
+        (
+            ".github/workflows/release.yml",
+            "jobs:\n  publish:\n    runs-on: x\n",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        write(tmp.path(), rel, text);
+        let (_, v) = doctor(&fake, tmp.path(), false);
+        assert_eq!(v["data"]["items"][9]["status"], "missing", "{rel}: {v}");
+    }
+}
+
+#[test]
+fn a_publishable_package_means_release_is_configured() {
+    let fake = FakeGithub::start();
+    let crate_toml = "[package]\nname = \"x\"\nversion = \"0.1.0\"\n";
+    for files in [
+        vec![("Cargo.toml", crate_toml)],
+        vec![("package.json", "{\"name\": \"x\", \"version\": \"1.0.0\"}")],
+        vec![
+            ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+            ("crates/a/Cargo.toml", crate_toml),
+        ],
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        for (rel, text) in &files {
+            write(tmp.path(), rel, text);
+        }
+        let (_, v) = doctor(&fake, tmp.path(), false);
+        assert_eq!(v["data"]["items"][9]["status"], "missing", "{files:?}: {v}");
+    }
+}
+
+#[test]
+fn unpublished_packages_leave_release_skipped() {
+    let fake = FakeGithub::start();
+    let tmp = tempfile::tempdir().unwrap();
+    let d = tmp.path();
+    write(
+        d,
+        "Cargo.toml",
+        "[workspace]\nmembers = [\"crates/*\"]\n[package]\nname = \"x\"\nversion = \"0.1.0\"\npublish = false\n",
+    );
+    write(
+        d,
+        "crates/a/Cargo.toml",
+        "[package]\nname = \"a\"\nversion = \"0.1.0\"\npublish = []\n",
+    );
+    write(d, "package.json", "{\"name\": \"x\", \"private\": true}");
+    let (_, v) = doctor(&fake, d, false);
+    assert_eq!(v["data"]["items"][9]["status"], "skipped", "{v}");
+}
+
+fn join_line(seat: &str, expires: &str) -> String {
+    format!(
+        r#"{{"bosun":"join","session":"session_test","origin":"slack","depth":1,"expires":"{expires}","slack":{seat}}}"#
+    )
+}
+
+fn tag_doctor(
+    extra_env: &[(&str, &str)],
+    slack: bool,
+    joined: Option<&str>,
+) -> (i32, Value, String) {
+    tag_doctor_with(extra_env, slack.then_some("C1"), |fake| {
+        if let Some(seat) = joined {
+            fake.issue(1, "bosun registry", &["bosun:registry"], "");
+            fake.comment(1, &join_line(seat, "2026-10-22T10:30:00Z"));
+        }
+    })
+}
+
+fn tag_doctor_with(
+    extra_env: &[(&str, &str)],
+    channel: Option<&str>,
+    setup: impl Fn(&FakeGithub),
+) -> (i32, Value, String) {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    if let Some(c) = channel {
+        write(
+            tmp.path(),
+            ".bosun/bosun.toml",
+            &format!("[slack]\nchannel = \"{c}\"\n"),
+        );
+    }
+    setup(&fake);
+    let mut cmd = bosun();
+    cmd.env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_NOW", T0)
+        .env("CLAUDE_CONFIG_DIR", tmp.path().join(".test-claude"))
+        .arg("-C")
+        .arg(tmp.path())
+        .args(["doctor", "--full"]);
+    for (k, v) in extra_env {
+        cmd.env(k, v);
+    }
+    let out = cmd.output().unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    (out.status.code().unwrap(), one_object(&out.stdout), all)
+}
+
+fn item_named<'a>(v: &'a Value, name: &str) -> Option<&'a Value> {
+    v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == name)
+}
+
+#[test]
+fn claude_tag_step_names_the_seat_or_the_join_command() {
+    let (_, v, _) = tag_doctor(&[], false, None);
+    assert!(item_named(&v, "claude-tag").is_none(), "{v}");
+
+    let (_, v, _) = tag_doctor(&[], true, None);
+    let it = item_named(&v, "claude-tag").unwrap();
+    assert_eq!(it["status"], "skipped", "{it}");
+    assert!(
+        it["fix"]
+            .as_str()
+            .unwrap()
+            .contains("bosun join --origin slack --slack-channel C"),
+        "{it}"
+    );
+
+    let seat = r#"{"role":"thread","channel":"C1","thread_ts":"1700000000.000200"}"#;
+    let (_, v, _) = tag_doctor(&[], true, Some(seat));
+    let it = item_named(&v, "claude-tag").unwrap();
+    assert_eq!(it["status"], "ok", "{it}");
+    let d = it["detail"].as_str().unwrap();
+    assert!(
+        d.contains("thread") && d.contains("1700000000.000200"),
+        "{d}"
+    );
+}
+
+#[test]
+fn a_pat_in_a_cloud_session_warns_without_printing_it_or_failing() {
+    let cloud = [
+        ("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE", "cloud_default"),
+        ("GITHUB_TOKEN", "ghp_secretvalue"),
+    ];
+    let (code, v, all) = tag_doctor(&cloud, false, None);
+    let it = item_named(&v, "github-token").unwrap();
+    assert_eq!(it["status"], "warn", "{it}");
+    assert!(
+        it["detail"]
+            .as_str()
+            .unwrap()
+            .contains("personal access token")
+    );
+    assert!(!all.contains("secretvalue"), "token leaked");
+    let (code0, _, _) = tag_doctor(&[], false, None);
+    assert_eq!(code, code0, "warn must not change the exit code");
+
+    let fine = [
+        ("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE", "cloud_default"),
+        ("GITHUB_TOKEN", "ghs_app"),
+    ];
+    let (_, v, _) = tag_doctor(&fine, false, None);
+    assert!(item_named(&v, "github-token").is_none());
+    let local = [("GH_TOKEN", "github_pat_x")];
+    let (_, v, _) = tag_doctor(&local, false, None);
+    assert!(item_named(&v, "github-token").is_none());
+    let both = [
+        ("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE", "cloud_default"),
+        ("GH_TOKEN", "github_pat_x"),
+    ];
+    let (_, v, _) = tag_doctor(&both, false, None);
+    assert!(item_named(&v, "github-token").is_some());
+}
+
+#[test]
+fn claude_tag_ignores_forged_and_expired_seats_and_shows_read_errors() {
+    let seat = r#"{"role":"channel","channel":"C1"}"#;
+    let (_, v, _) = tag_doctor_with(&[], Some("G9"), |f| {
+        f.permission("mallory", "none");
+        f.issue(1, "bosun registry", &["bosun:registry"], "");
+        f.comment_by(1, "mallory", &join_line(seat, "2026-10-22T10:30:00Z"));
+    });
+    let it = item_named(&v, "claude-tag").unwrap();
+    assert_eq!(it["status"], "skipped", "{it}");
+    assert!(
+        it["fix"].as_str().unwrap().contains("--slack-channel G9 "),
+        "{it}"
+    );
+
+    let (_, v, _) = tag_doctor_with(&[], Some("C1"), |f| {
+        f.issue(1, "bosun registry", &["bosun:registry"], "");
+        f.comment(1, &join_line(seat, "2026-10-22T09:00:00Z"));
+    });
+    assert_eq!(item_named(&v, "claude-tag").unwrap()["status"], "skipped");
+
+    let (_, v, _) = tag_doctor_with(&[], Some("C1"), |f| {
+        f.issue(1, "bosun registry", &["bosun:registry"], "");
+        f.fail_path_message("/issues/1/comments", 500, "boom-registry");
+    });
+    let it = item_named(&v, "claude-tag").unwrap();
+    assert_eq!(it["status"], "warn", "{it}");
+    assert!(
+        it["detail"].as_str().unwrap().contains("boom-registry"),
+        "{it}"
+    );
+}
+
+#[test]
+fn the_notify_routine_has_a_live_session_fallback() {
+    let (tmp, fake) = full_repo("[[owner]]\ngithub = \"adam\"\nslack = \"U1\"\n");
+    let (_, v) = doctor(&fake, tmp.path(), false);
+    let step11 = v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["step"] == 11)
+        .unwrap();
+    let fix = step11["fix"].as_str().unwrap();
+    assert!(
+        fix.contains("cannot attach connectors") && fix.contains("Slack connector"),
+        "{fix}"
+    );
+    let notify = v["data"]["routines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "notify")
+        .unwrap();
+    assert!(
+        notify["fallback"]
+            .as_str()
+            .unwrap()
+            .contains("live session"),
+        "{notify}"
+    );
+}
+
+#[test]
+fn a_cloud_session_is_warned_about_the_merge_identity() {
+    let cloud = [("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE", "cloud_default")];
+    let (code, v, all) = tag_doctor(&cloud, false, None);
+    let it = item_named(&v, "merge-identity").unwrap();
+    assert_eq!(it["status"], "warn", "{it}");
+    let d = it["detail"].as_str().unwrap();
+    assert!(
+        d.contains("GITHUB_TOKEN") && d.contains("no workflows"),
+        "{d}"
+    );
+    let fix = it["fix"].as_str().unwrap();
+    assert!(
+        fix.contains("bypass actor") && fix.contains("BOSUN_MERGE_IDENTITY_OK=1"),
+        "{fix}"
+    );
+    assert!(!all.contains("ghp_"), "token leaked");
+    let (code0, _, _) = tag_doctor(&[], false, None);
+    assert_eq!(code, code0, "warn must not change the exit code");
+
+    let ok = [
+        ("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE", "cloud_default"),
+        ("BOSUN_MERGE_IDENTITY_OK", "1"),
+    ];
+    let (_, v, _) = tag_doctor(&ok, false, None);
+    assert!(item_named(&v, "merge-identity").is_none_or(|i| i["status"] == "ok"));
+    let (_, v, _) = tag_doctor(&[], false, None);
+    assert!(item_named(&v, "merge-identity").is_none(), "local session");
+}

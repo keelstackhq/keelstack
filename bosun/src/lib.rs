@@ -1,0 +1,86 @@
+#![forbid(unsafe_code)]
+//! bosun: orchestration helper for repos where agents write all the code. See `docs/spec.md`.
+
+pub mod anthropic;
+pub mod app;
+pub mod cli;
+pub mod config;
+pub mod core;
+pub mod ctx;
+pub mod gates;
+pub mod github;
+pub mod hooks;
+pub mod output;
+pub mod registry;
+pub mod schema;
+pub mod sessions;
+pub mod slack;
+pub mod time;
+
+pub use cli::{Cli, Command};
+pub use output::{BosunError, CmdResult, Exit, Next, Outcome, envelope};
+
+/// Run one command. `main` prints the envelope and exits with its code.
+pub fn run(mut cli: Cli) -> CmdResult {
+    cli.apply_full();
+    let dir = cli.dir.as_deref();
+    match &cli.command {
+        Command::Join(a) => cli::join::run(dir, a),
+        Command::Claim(a) => cli::claim::run(dir, a),
+        Command::Heartbeat => cli::heartbeat::run(dir),
+        Command::Release(a) => cli::release::run(dir, a),
+        Command::Reap => cli::reap::run(dir),
+        Command::Spawn(a) => cli::spawn::run(dir, a),
+        Command::Wave(a) => cli::wave::run(dir, a),
+        Command::Wait(a) => cli::wait::run(dir, a),
+        Command::Msg(a) => cli::msg::run(dir, a),
+        Command::Gate(a) => cli::gate::run(dir, a),
+        Command::Approve(a) => cli::approve::run(dir, a),
+        Command::Keygen(a) => cli::keygen::run(dir, a),
+        Command::Merge(a) => cli::merge::run(dir, a),
+        Command::RiskCheck(a) => cli::risk_check::run(dir, a),
+        Command::TestIntegrity(a) => cli::test_integrity::run(dir, a),
+        Command::ReviewPack(a) => cli::review_pack::run(dir, a),
+        Command::ReviewLoop(a) => cli::review_loop::run(dir, a),
+        Command::Verdict(a) => cli::verdict::run(dir, a),
+        Command::Pr(a) => cli::pr::run(dir, a),
+        Command::CiLog(a) => cli::ci_log::run(dir, a),
+        Command::Status => cli::status::run(dir),
+        Command::Mode => cli::mode::run(dir),
+        Command::Rules(a) => cli::rules::run(dir, a.write),
+        Command::Heal(a) => cli::heal::run(dir, a),
+        Command::Digest(a) => cli::digest::run(dir, a),
+        Command::Metrics(a) => cli::metrics::run(dir, a),
+        Command::Ask(a) => cli::ask::run(dir, a),
+        Command::Hold(a) => cli::hold::run(dir, a),
+        Command::Answer(a) => cli::answer::run(dir, a),
+        Command::Lesson(a) => cli::lesson::run(dir, a),
+        Command::Hook(a) => hooks::dispatch(dir, a),
+        Command::Doctor(a) => cli::doctor::run_with(dir, a.remote, a.full),
+        Command::Budget(a) => cli::budget::run(dir, a),
+        Command::Plan(a) => cli::plan::run(dir, a),
+        Command::Fail(a) => cli::stop::run(dir, a),
+        Command::Resume(a) => cli::resume::run(dir, a),
+        Command::Handoff(a) => cli::handoff::run(dir, a),
+        Command::HandoffPr(a) => cli::handoff_pr::run(dir, a),
+        Command::Progress(a) => cli::progress::run(dir, a),
+        Command::Result(a) => cli::result::run(dir, a),
+        Command::MainTriage(a) => cli::main_triage::run(dir, a),
+        Command::Init(a) => cli::init::run(dir, a),
+        Command::Revert(a) => cli::revert::run(dir, a),
+        Command::Trailers(a) => cli::trailers::run(dir, a),
+        Command::Intake(a) => cli::intake::run(dir, a),
+        Command::MainHealth(a) => cli::main_health::run(dir, a),
+        Command::GateMissed(a) => cli::gate_missed::run(dir, a),
+        Command::ReviewCi(a) => cli::review_ci::run(dir, a),
+        Command::Notify(a) => cli::notify::run(dir, a),
+        Command::Prereqs(a) => cli::prereqs::run(dir, a),
+        Command::Adopt(a) => cli::adopt::run(dir, a),
+        Command::Uninstall(a) => cli::uninstall::run(dir, a),
+        Command::Pin(a) => cli::pin::run(dir, a),
+        Command::Migrate(a) => cli::migrate::run(dir, a),
+        Command::Owners(a) => cli::owners::run(dir, a),
+        Command::SetupSnippet => cli::setup_snippet::run(dir),
+        Command::Schema(a) => cli::schema::run(a),
+    }
+}

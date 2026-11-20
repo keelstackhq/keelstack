@@ -1,0 +1,350 @@
+//! The edit lock keeps a session with a lease inside its own touch (spec §4 layer 3).
+
+mod common;
+
+use std::fs;
+use std::path::Path;
+use std::process::Command;
+
+use common::fake::FakeGithub;
+use common::{bosun, lease_note};
+use serde_json::{Value, json};
+
+const LIVE: &str = "2026-10-22T10:20:00Z";
+
+fn git(dir: &Path, args: &[&str]) {
+    let cfg = ["-c", "user.name=t", "-c", "user.email=t@example.com"];
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(cfg)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+}
+
+/// A repo with one commit that `origin/main` points at, and a fake GitHub where `holder` has
+/// leased `touch` (a glob, or several joined as `a","b`) on issue 5.
+fn setup(holder: &str, touch: &str) -> (FakeGithub, tempfile::TempDir) {
+    let (fake, tmp) = (FakeGithub::start(), tempfile::tempdir().unwrap());
+    let d = tmp.path();
+    git(d, &["init", "-q", "-b", "main"]);
+    git(
+        d,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://github.com/acme/widget.git",
+        ],
+    );
+    for f in ["src/core/a.rs", "src/cli/b.rs", "Cargo.toml", "Cargo.lock"] {
+        fs::create_dir_all(d.join(f).parent().unwrap()).unwrap();
+        fs::write(d.join(f), "x").unwrap();
+    }
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "base"]);
+    git(d, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    fake.issue(5, "mine", &["bosun:state/claimed"], "x");
+    fake.comment(5, &lease_note(holder, LIVE, touch));
+    (fake, tmp)
+}
+
+/// Run the hook as `session_me` for an Edit of `rel`; `Some(reason)` when it denies.
+fn edit(fake: &FakeGithub, repo: &Path, rel: &str) -> Option<String> {
+    let input = json!({"session_id": "s", "tool_name": "Edit", "cwd": repo.to_str().unwrap(),
+        "tool_input": {"file_path": repo.join(rel).to_str().unwrap()}});
+    let out = bosun()
+        .current_dir(repo)
+        .env("BOSUN_SESSION", "session_me")
+        .env("BOSUN_NOW", "2026-10-22T10:00:00Z")
+        .env("BOSUN_GITHUB_API", fake.url())
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(input.to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    if stdout.is_empty() {
+        assert_eq!(String::from_utf8_lossy(&out.stderr), "", "{rel}");
+        return None;
+    }
+    let v: Value = serde_json::from_str(&stdout).expect("one JSON object");
+    assert_eq!(v["hookSpecificOutput"]["permissionDecision"], "deny");
+    Some(
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .into(),
+    )
+}
+
+#[test]
+fn edits_stay_inside_the_own_touch() {
+    let (fake, tmp) = setup("session_me", "src/core/**\",\"Cargo.toml");
+    let r = tmp.path();
+    // Inside the touch, a lockfile companion, a new file, a fragment: allowed.
+    for rel in [
+        "src/core/a.rs",
+        "Cargo.lock",
+        "src/cli/new.rs",
+        "changelog.d/x.md",
+    ] {
+        assert_eq!(edit(&fake, r, rel), None, "{rel}");
+    }
+    // Outside it, also spelled with `..`: denied, naming the globs and the fix.
+    for rel in ["src/cli/b.rs", "src/core/../cli/b.rs"] {
+        let why = edit(&fake, r, rel).expect(rel);
+        assert!(
+            why.starts_with("src/cli/b.rs is outside your lease (touch: src/core/**, Cargo.toml)")
+                && why.contains("bosun claim 5 --touch src/cli/b.rs"),
+            "{why}"
+        );
+    }
+}
+
+#[test]
+fn only_a_lease_of_the_plain_session_restricts() {
+    // No lease at all, and a wave orchestrator holding only per-task leases: free.
+    let (fake, tmp) = setup("session_me/x", "src/core/**");
+    assert_eq!(edit(&fake, tmp.path(), "src/cli/b.rs"), None);
+    let (fake, tmp) = setup("session_other", "src/cli/**");
+    assert!(
+        edit(&fake, tmp.path(), "src/cli/b.rs")
+            .unwrap()
+            .contains("claimed")
+    );
+}
+
+#[test]
+fn a_stale_cache_is_rechecked_before_denying() {
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    let r = tmp.path();
+    assert!(edit(&fake, r, "src/cli/b.rs").is_some()); // fills the cache
+    // The claim grows on GitHub; the cache still holds the old touch.
+    fake.comment(
+        5,
+        &lease_note("session_me", LIVE, "src/core/**\",\"src/cli/b.rs"),
+    );
+    assert_eq!(edit(&fake, r, "src/cli/b.rs"), None);
+    assert!(edit(&fake, r, "Cargo.toml").is_some()); // still outside the grown touch
+}
+
+#[test]
+fn a_file_counts_as_new_unless_it_is_on_the_base_branch() {
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    let r = tmp.path();
+    // Written, then committed on a branch: not on origin/main, so still editable.
+    fs::write(r.join("src/cli/new.rs"), "x").unwrap();
+    assert_eq!(edit(&fake, r, "src/cli/new.rs"), None);
+    git(r, &["checkout", "-q", "-b", "work"]);
+    git(r, &["add", "-A"]);
+    git(r, &["commit", "-q", "-m", "add new.rs"]);
+    assert_eq!(edit(&fake, r, "src/cli/new.rs"), None);
+    // Without any base ref nothing can be called existing (fail open).
+    assert!(edit(&fake, r, "src/cli/b.rs").is_some());
+    git(r, &["update-ref", "-d", "refs/remotes/origin/main"]);
+    assert_eq!(edit(&fake, r, "src/cli/b.rs"), None);
+}
+
+#[cfg(unix)]
+#[test]
+fn paths_are_judged_by_their_real_target() {
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    let r = tmp.path();
+    // A link inside the touch to a file outside it: the real target decides.
+    std::os::unix::fs::symlink(r.join("src/cli/b.rs"), r.join("src/core/l.rs")).unwrap();
+    let why = edit(&fake, r, "src/core/l.rs").expect("link to a file outside the touch");
+    assert!(
+        why.starts_with("src/cli/b.rs is outside your lease"),
+        "{why}"
+    );
+    // `link/../x`: `..` follows the real directory (src/cli), not the lexical one.
+    std::os::unix::fs::symlink(r.join("src/cli"), r.join("src/core/link")).unwrap();
+    let why = edit(&fake, r, "src/core/link/../cli/b.rs");
+    assert!(why.is_some_and(|w| w.starts_with("src/cli/b.rs is outside")));
+    assert_eq!(edit(&fake, r, "src/core/link/../core/a.rs"), None);
+    // A link to a file outside the repo counts as outside: allowed.
+    let out = tempfile::tempdir().unwrap();
+    fs::write(out.path().join("o.rs"), "x").unwrap();
+    std::os::unix::fs::symlink(out.path().join("o.rs"), r.join("src/cli/o.rs")).unwrap();
+    assert_eq!(edit(&fake, r, "src/cli/o.rs"), None);
+}
+
+#[test]
+fn a_root_file_named_dot_dot_x_is_inside_the_repo() {
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    // On the base branch, so it counts as existing.
+    fs::write(tmp.path().join("..x"), "x").unwrap();
+    git(tmp.path(), &["add", "-A"]);
+    git(tmp.path(), &["commit", "-q", "-m", "add ..x"]);
+    git(
+        tmp.path(),
+        &["update-ref", "refs/remotes/origin/main", "HEAD"],
+    );
+    let why = edit(&fake, tmp.path(), "..x").expect("`..x` is a repo file outside the touch");
+    assert!(why.starts_with("..x is outside your lease"), "{why}");
+    // A real parent directory is outside the repo: not claimable, allowed.
+    assert_eq!(edit(&fake, tmp.path(), "../x"), None);
+}
+
+/// The hook for a tool call as `session_me`; `true` when it denies.
+fn denied(fake: &FakeGithub, repo: &Path, tool: &str, tool_input: Value) -> bool {
+    let input = json!({"session_id": "s", "tool_name": tool, "cwd": repo.to_str().unwrap(),
+        "tool_input": tool_input});
+    let out = bosun()
+        .current_dir(repo)
+        .env("BOSUN_SESSION", "session_me")
+        .env("BOSUN_NOW", "2026-10-22T10:00:00Z")
+        .env("BOSUN_GITHUB_API", fake.url())
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(input.to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    String::from_utf8_lossy(&out.stdout).contains("\"deny\"")
+}
+
+fn bash_denied(fake: &FakeGithub, repo: &Path, command: &str) -> bool {
+    denied(fake, repo, "Bash", json!({ "command": command }))
+}
+
+/// The spawn lease `bosun spawn --record` writes for a child: origin spawned, no touch.
+fn spawn_lease(session: &str) -> String {
+    format!(
+        "Handed to {session}.\n\n{{\"bosun\":\"lease\",\"session\":\"{session}\",\"origin\":\"spawned\",\"expires\":\"{LIVE}\",\"touch\":[]}}"
+    )
+}
+
+const META: &str = r#"{"item":"M1","task":"T9","epic":5,"touch":["src/a.rs"]}"#;
+
+fn create(meta: &str) -> String {
+    format!("gh issue create --title t --body '<!-- bosun:task {meta} -->'")
+}
+
+#[test]
+fn a_spawned_child_may_create_a_task_issue_for_its_epic_and_nothing_else() {
+    let (fake, tmp) = setup("session_other", "docs/**");
+    fake.comment(5, &spawn_lease("session_me"));
+    let r = tmp.path();
+    assert!(!bash_denied(&fake, r, &create(META)));
+    assert!(!denied(
+        &fake,
+        r,
+        "mcp__github__issue_write",
+        json!({"method":"create","owner":"acme","repo":"widget",
+            "body": format!("<!-- bosun:task {META} -->")})
+    ));
+    // Edits, comments, API writes, other repos, nested shells: refused.
+    for cmd in [
+        format!("gh issue edit 5 --body '<!-- bosun:task {META} -->'"),
+        format!("gh issue comment 5 --body '<!-- bosun:task {META} -->'"),
+        format!("gh api -X PATCH repos/acme/widget/issues/5 -f body='<!-- bosun:task {META} -->'"),
+        format!("gh issue create -R evil/other --title t --body '<!-- bosun:task {META} -->'"),
+        format!("bash -c \"{}\"", create(META)),
+    ] {
+        assert!(bash_denied(&fake, r, &cmd), "{cmd}");
+    }
+    assert!(denied(
+        &fake,
+        r,
+        "mcp__github__issue_write",
+        json!({"method":"create","owner":"evil","repo":"other",
+            "body": format!("<!-- bosun:task {META} -->")})
+    ));
+    // The allow and capabilities keys, another epic, and the epic marker: refused.
+    for meta in [
+        r#"{"epic":5,"allow":["delete-test"]}"#,
+        r#"{"epic":5,"capabilities":[]}"#,
+        r#"{"epic":6,"touch":["src/a.rs"]}"#,
+    ] {
+        assert!(bash_denied(&fake, r, &create(meta)), "{meta}");
+    }
+    assert!(bash_denied(
+        &fake,
+        r,
+        "gh issue create --title t --body '<!-- bosun:epic 3 -->'"
+    ));
+}
+
+#[test]
+fn the_child_check_reads_the_lease_record_and_its_author() {
+    // A claim (it has touch paths) is not a spawn lease, whatever its origin says.
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    fake.comment(
+        5,
+        &format!(
+            "Claimed.\n\n{{\"bosun\":\"lease\",\"session\":\"session_me\",\"origin\":\"spawned\",\"expires\":\"{LIVE}\",\"touch\":[\"src/core/**\"]}}"
+        ),
+    );
+    assert!(bash_denied(&fake, tmp.path(), &create(META)));
+    // A spawn lease written by someone without write access is not a record.
+    let (fake, tmp) = setup("session_other", "docs/**");
+    fake.comment_by(5, "mallory", &spawn_lease("session_me"));
+    fake.permission("mallory", "read");
+    assert!(bash_denied(&fake, tmp.path(), &create(META)));
+    // Another session's spawn lease, an expired one, and a lease on another epic.
+    let (fake, tmp) = setup("session_other", "docs/**");
+    fake.comment(5, &spawn_lease("session_third"));
+    assert!(bash_denied(&fake, tmp.path(), &create(META)));
+    let (fake, tmp) = setup("session_other", "docs/**");
+    fake.comment(
+        5,
+        &spawn_lease("session_me").replace(LIVE, "2026-10-22T09:00:00Z"),
+    );
+    assert!(bash_denied(&fake, tmp.path(), &create(META)));
+}
+
+/// Run the hook as `session_me` for a Bash command; `Some(reason)` when it denies.
+fn bash(fake: &FakeGithub, repo: &Path, command: &str) -> Option<String> {
+    let input = json!({"session_id": "s", "tool_name": "Bash", "cwd": repo.to_str().unwrap(),
+        "tool_input": {"command": command}});
+    let out = bosun()
+        .current_dir(repo)
+        .env("BOSUN_SESSION", "session_me")
+        .env("BOSUN_NOW", "2026-10-22T10:00:00Z")
+        .env("BOSUN_GITHUB_API", fake.url())
+        .args(["hook", "pre-tool-use"])
+        .write_stdin(input.to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: Value = serde_json::from_str(&stdout).ok()?;
+    (v["hookSpecificOutput"]["permissionDecision"] == "deny").then(|| {
+        v["hookSpecificOutput"]["permissionDecisionReason"]
+            .as_str()
+            .unwrap()
+            .into()
+    })
+}
+
+#[test]
+fn bash_writes_are_judged_like_edits() {
+    let (fake, tmp) = setup("session_me", "src/core/**");
+    let r = tmp.path();
+    for cmd in [
+        "echo x > src/cli/b.rs",
+        "cargo test | tee src/cli/b.rs",
+        "cp /tmp/x src/cli/b.rs",
+        "sed -i 's/x/y/' src/cli/b.rs",
+    ] {
+        let why = bash(&fake, r, cmd).unwrap_or_else(|| panic!("allowed: {cmd}"));
+        assert!(
+            why.starts_with("src/cli/b.rs is outside your lease"),
+            "{why}"
+        );
+    }
+    for cmd in [
+        "echo x > src/core/a.rs",
+        "echo x > /tmp/out.log",
+        "cat src/cli/b.rs",
+        "echo x > changelog.d/x.md",
+    ] {
+        assert_eq!(bash(&fake, r, cmd), None, "{cmd}");
+    }
+    let (fake, tmp) = setup("session_other", "src/cli/**");
+    let why = bash(&fake, tmp.path(), "echo x >> src/cli/b.rs").expect("foreign lease");
+    assert!(why.contains("claimed"), "{why}");
+}
