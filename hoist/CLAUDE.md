@@ -2,7 +2,7 @@
 
 Provision and verify a repo's GitHub and Cloudflare setup from what the repo already says
 (`hoist explain|plan|check|auth check|import` read; `apply` and `secrets set|rotate` write after
-a preflight; `init` writes `.github/workflows/release.yml`; `release plan|prepare|publish` version, tag and publish; `release bootstrap` does the first publish locally). One static Rust binary. Part of the keelstackhq family (hull, splice, hoard, hoist, berth, bosun).
+a preflight; `init` writes `.github/workflows/release.yml`; `release plan|prepare|publish` version, tag and publish; `release bootstrap` does the first publish locally). One static Rust binary. Lives in the `hoist/` folder of the keelstack monorepo; run commands from the repo root.
 
 - Agents using the CLI: read `skills/hoist/SKILL.md` first (which command, exit codes, `--json`, human steps). Quickstart: `docs/QUICKSTART.md`.
 - Spec: `docs/superpowers/specs/2026-10-16-hoist-design.md` — source of truth (§15 secrets repos: `…-hoist-secrets-repos.md`). Read only the
@@ -36,13 +36,13 @@ tests/           cli_*.rs integration tests; common/mod.rs builds the scrubbed `
 
 ```bash
 export PATH=/root/.cargo/bin:$PATH
-cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings
-cargo test                          # unit + integration
-cargo test --test cli_basics        # one file
-cargo nextest run                   # if installed
+cargo fmt --all --check && cargo clippy -p keel-hoist --all-targets --locked -- -D warnings
+cargo test -p keel-hoist --locked   # unit + integration
+cargo test -p keel-hoist --locked --test cli_basics   # one file
+cargo nextest run -p keel-hoist     # if installed
 ```
 
-Run the fast checks (fmt, clippy, test) before every commit.
+Run the fast checks (fmt, clippy, test) before every commit. Release: lockstep, one version for all tools; see the root `AGENTS.md`.
 
 ## Rules that must never break
 
@@ -78,6 +78,6 @@ Run the fast checks (fmt, clippy, test) before every commit.
 
 ## Gotchas
 
-- `TMPDIR` is `/` in some containers; `tests/common` sets it for child processes, but set it for `cargo` too.
+- `TMPDIR` is `/` in some containers; the root `.cargo/config.toml` sets `/tmp` for `cargo test`.
 - clap exits 2 on usage errors by default; `main` maps every non-help/version error to 3.
-- `rust-toolchain.toml` pins 1.97; CI installs the same version.
+- The root `rust-toolchain.toml` pins the toolchain; CI installs the same version.

@@ -3,12 +3,12 @@
 An opinionated, AI-native monorepo template (pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro,
 cascivo, Storybook, docspack, Rust, Tauri, Hono on Cloudflare). It owns structure, stack, tool
 versions and config, never app logic. Consumers render it with `splice` from
-`gh:keelstackhq/hull//template`. Until splice v0.1 exists, `scripts/render.mjs` renders it.
+`gh:keelstackhq/keelstack//hull/template`. Until splice v0.1 exists, `scripts/render.mjs` renders it.
 
 - Design: `docs/superpowers/specs/2026-10-14-hull-design.md` — the source of truth. Read only the
   sections your task touches; change the spec in the same commit when behaviour changes.
-- Contract: `docs/template-format.md` — shared with `keelstackhq/splice`, binding (incl. §9).
-  Never edit it here alone; changes go to both repos in the same week.
+- Contract: `../splice/docs/template-format.md` — binding (incl. §9); one contract, hull and
+  splice change it in the same PR.
 - Plans: `docs/superpowers/plans/` (01 base-renderer, 02 web-pieces, 03 native-docs-dogfood, 04 agent-layer-skeletons).
 - Progress: `docs/PROGRESS.md` — one line per finished task, plus Blocked and Status.
 
@@ -37,6 +37,7 @@ tests/                          node:test: renderer units + template invariants 
 ## Commands
 
 ```bash
+# hull is pnpm, outside the Cargo workspace; run from hull/ (or `pnpm --dir hull ...`)
 pnpm install
 pnpm test                                   # node --test "tests/**/*.test.mjs"
 pnpm lint && pnpm format:check              # vp lint / vp fmt --check on scripts and tests
@@ -87,7 +88,7 @@ change under `template/` or `scripts/`, run dogfood for the combos `affected-com
 - Verify with real output before claiming a pass (superpowers:verification-before-completion).
 - Dependencies: ask before adding anything not in the plan's Tech Stack.
 - Version facts: check with `npm view <pkg> version` and record the date; never guess.
-- Human-only or cross-repo items (splice/hoard releases, Cloudflare token, npm scopes, GitHub repo
+- Human-only items (releases are lockstep, see the root `AGENTS.md`; Cloudflare token, npm scopes, GitHub repo
   settings, cascivo access, tags) go to Blocked in `docs/PROGRESS.md` with the exact action.
 
 ## Gotchas
@@ -104,11 +105,4 @@ change under `template/` or `scripts/`, run dogfood for the combos `affected-com
 - pnpm 12 blocks dependency build scripts unless listed in `allowBuilds` (`onlyBuiltDependencies` is
   ignored). `minimumReleaseAge` is strict: a pin younger than 3 days needs `minimumReleaseAgeExclude`.
 
-<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
-<!-- splice:decisions:end -->
+Org decisions: read `../decisions/DECISIONS.md` in place; change one by a PR to `decisions/` (D-002).

@@ -3,7 +3,7 @@
 One-line CI cache for TypeScript monorepos (Turborepo, Vite+). A Rust binary serves the Turborepo
 remote-cache API on localhost and stores artifacts in the GitHub Actions cache, a Cloudflare R2
 bucket, or the local filesystem. A small node24 GitHub Action downloads, starts and stops it.
-Part of the keelstackhq family: hull, splice, hoard, hoist, berth, bosun.
+Lives in the `hoard/` folder of the keelstack monorepo; run Rust commands from the repo root.
 
 - Design: `docs/superpowers/specs/2026-10-14-hoard-design.md` — the source of truth. Read the
   section you touch before changing behaviour; update the spec in the same PR when behaviour changes.
@@ -37,9 +37,9 @@ scripts/           release and benchmark helpers
 ```bash
 docker compose up -d minio                       # S3/R2 tests need it
 export HOARD_TEST_S3_ENDPOINT=http://127.0.0.1:9000
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
-cargo test                                       # unit + integration
-cargo test -- --ignored                          # large-artifact streaming test
+cargo fmt --all --check && cargo clippy -p keel-hoard --all-targets --locked -- -D warnings
+cargo test -p keel-hoard --locked                # unit + integration
+cargo test -p keel-hoard --locked -- --ignored   # large-artifact streaming test
 tests/e2e/turbo.sh                               # real turbo, fs storage
 PACK=on tests/e2e/turbo.sh                       # real turbo, fs storage, packing
 STORAGE=r2 tests/e2e/turbo.sh                    # real turbo, MinIO as R2
@@ -89,16 +89,9 @@ commit. Run the e2e script before pushing anything that touches `server/`, `stor
 - R2 lifecycle age counts from the last write, not the last read.
 - OpenDAL ignores `if_not_exists` unless the service reports `write_with_if_not_exists`; fall back
   to `stat` first.
-- A release starts when a version-bump PR (Cargo.toml) merges to `main`; the owner approves the
-  `release` environment. `workflow_dispatch` is the fallback. Never tag or publish by hand.
+- Releases are lockstep for all tools: one version, `scripts/bump-version.sh`, tag created by the
+  release workflow only (root `AGENTS.md`). Never tag or publish by hand.
 - Vite+ remote caching is unreleased upstream; until it ships we only save/restore its
   task-cache directory.
 
-<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
-<!-- splice:decisions:end -->
+Org decisions: read `../decisions/DECISIONS.md` in place; change one by a PR to `decisions/` (D-002).

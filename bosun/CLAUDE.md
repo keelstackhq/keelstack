@@ -1,8 +1,8 @@
 # bosun
 
 Orchestration helper for repos where agents write all the code. A session calls `bosun <command>`
-and acts on the one JSON object it prints. One static Rust binary. Part of the keelstackhq family
-(splice, hull, hoard, hoist, berth).
+and acts on the one JSON object it prints. One static Rust binary. Lives in the `bosun/` folder of
+the keelstack monorepo; run all commands from the repo root.
 
 - Spec: `docs/spec/NN-*.md`, one file per section (index: `docs/spec.md`) — source of truth.
   Read only the section you touch (§1 decisions and output, §4 lifecycle and leases, §5 spawn
@@ -39,12 +39,13 @@ tests/common/               fake GitHub (tiny_http, stateful), bosun() command b
 
 ```bash
 export PATH=/root/.cargo/bin:$PATH
-cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
-cargo deny check
-cargo test --locked --test cli_claim   # one file
+cargo fmt --all --check && cargo clippy -p keel-bosun --all-targets --locked -- -D warnings && cargo test -p keel-bosun --locked
+cargo deny check                                  # root deny.toml
+cargo test -p keel-bosun --locked --test cli_claim   # one file
 ```
 
-Run the fast checks before every commit.
+Toolchain, `Cargo.lock` and `deny.toml` live at the repo root. Run the fast checks before every
+commit. Release: lockstep, one version for all tools; see the root `AGENTS.md`.
 
 ## Rules that must never break
 
@@ -73,13 +74,4 @@ Run the fast checks before every commit.
 
 - The package is `keel-bosun`; the binary and the lib are `bosun`.
 
-<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
-
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
-
-<!-- splice:decisions:end -->
+Org decisions: read `../decisions/DECISIONS.md` in place; change one by a PR to `decisions/` (D-002).
