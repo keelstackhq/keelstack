@@ -1,3 +1,8 @@
 * text=auto eol=lf
 *.png binary
 tests/fixtures/** -text
+
+# Fixtures are byte-exact test data (trailing spaces and blank lines are the point).
+tests/fixtures/** -whitespace
+# The diff3 conflict example is documentation, not a leftover conflict.
+docs/getting-started.md conflict-marker-size=32

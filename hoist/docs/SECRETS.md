@@ -56,4 +56,3 @@ A consumer repo whose release runs decrypt secrets must tag releases `<name>-v<v
 lowercase name and no `/` or `@` (so not `@scope/x`): set `[release] tag_format =
 "{name}-v{version}"`. `secrets exec` refuses any other tag, including hoist's defaults
 `v{version}` and `{name}@{version}` (spec §15.7.2).
-

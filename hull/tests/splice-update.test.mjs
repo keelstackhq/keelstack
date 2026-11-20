@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,13 +13,44 @@ const HULL = fileURLToPath(new URL("..", import.meta.url));
 const TEMPLATE = join(HULL, "template");
 const WEB = ["preact-app:web", "ui-storybook", "hono-worker:api"];
 
-/** Latest `v<semver>` tag reachable from HEAD, or undefined. */
-function previousTag() {
-  const r = spawnSync("git", ["tag", "--merged", "HEAD", "--list", "v*", "--sort=-v:refname"], {
+const SEMVER = /^v\d+\.\d+\.\d+$/;
+const bySemver = (a, b) => {
+  const [x, y] = [a, b].map((t) => t.slice(1).split(".").map(Number));
+  return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+};
+
+/**
+ * hull's release tags from keelstackhq/hull (not imported, D-023), each mapped to its commit in this
+ * repository (`legacy-tags.txt`). Tags of this repository's releases (> 0.21.0) come after them.
+ */
+const LEGACY = new Map(
+  readFileSync(join(HULL, "legacy-tags.txt"), "utf8")
+    .split("\n")
+    .filter((l) => l && !l.startsWith("#"))
+    .map((l) => l.split(" ")),
+);
+
+/** Commit of `v<semver>` tag `tag`: a tag of this repository, else a legacy hull tag. */
+function tagCommit(tag) {
+  const r = spawnSync("git", ["rev-parse", "--verify", "--quiet", `refs/tags/${tag}^{commit}`], {
     cwd: HULL,
     encoding: "utf8",
   });
-  return r.status === 0 ? r.stdout.split("\n").find((t) => /^v\d+\.\d+\.\d+$/.test(t)) : undefined;
+  return r.status === 0 ? r.stdout.trim() : LEGACY.get(tag);
+}
+
+/** Latest `v<semver>` tag reachable from HEAD (this repository's or a legacy hull tag), or undefined. */
+function previousTag() {
+  const r = spawnSync("git", ["tag", "--merged", "HEAD", "--list", "v*"], {
+    cwd: HULL,
+    encoding: "utf8",
+  });
+  const own = r.status === 0 ? r.stdout.split("\n").filter((t) => SEMVER.test(t)) : [];
+  const legacy = [...LEGACY].filter(([, sha]) => {
+    const a = spawnSync("git", ["merge-base", "--is-ancestor", sha, "HEAD"], { cwd: HULL });
+    return a.status === 0;
+  });
+  return [...own, ...legacy.map(([t]) => t)].sort(bySemver).at(-1);
 }
 
 const prev = previousTag();
@@ -33,11 +64,17 @@ const skip = !BIN
  * @param {string} [from] a `v<semver>` tag of this repo; defaults to the latest one
  */
 async function templateRepo(root, from = prev) {
-  assert.ok(from, "no v<semver> tag reachable from HEAD; CI must fetch tags (fetch-depth: 0)");
+  assert.ok(
+    from,
+    "no v<semver> tag reachable from HEAD; CI must fetch the history (fetch-depth: 0)",
+  );
   const repo = join(root, "tpl");
   await mkdir(repo, { recursive: true });
   git(repo, "init", "-q");
-  const tar = spawnSync("git", ["archive", from, "template"], { cwd: HULL });
+  const commit = tagCommit(from);
+  assert.ok(commit, `no commit for ${from}: not a tag here and not in legacy-tags.txt`);
+  // Run in hull/: archive paths are relative to it (template/), as in hull's own repository.
+  const tar = spawnSync("git", ["archive", commit, "template"], { cwd: HULL });
   assert.equal(tar.status, 0, String(tar.stderr));
   const x = spawnSync("tar", ["-x", "-C", repo], { input: tar.stdout });
   assert.equal(x.status, 0, String(x.stderr));

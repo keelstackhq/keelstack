@@ -144,14 +144,32 @@ jobs:
           filter: blob:none
           persist-credentials: false
       # The base is a worktree outside the checkout; with no base (first push) the head is used.
+      # Setup PR (D-023): a base without the root workspace has no bosun to build, so the gates use
+      # bosun from keelstackhq/bosun at the commit imported into bosun/ (pinned, not this change's
+      # code) and judge the change against the commit that holds the plain imports (pinned, an
+      # ancestor of HEAD): the imported repos' own tests are the baseline, not "no tests".
       - name: bosun of the base
         id: base
         env:
           BASE: ${{ needs.detect.outputs.base }}
+          SETUP_BOSUN_SHA: 6fe5305b49330f46cf0b87bbf4f7a2125d2bed31
+          SETUP_IMPORTS_SHA: 3a1975b477ee262c38a15803258a78a858d48e9b
         run: |
           sha="${BASE:-$GITHUB_SHA}"
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
-          git worktree add --detach "$RUNNER_TEMP/base" "$sha"
+          if git cat-file -e "$sha:Cargo.toml" 2>/dev/null; then
+            echo "gate_base=$sha" >> "$GITHUB_OUTPUT"
+            git worktree add --detach "$RUNNER_TEMP/base" "$sha"
+            exit 0
+          fi
+          git merge-base --is-ancestor "$SETUP_IMPORTS_SHA" HEAD \
+            || { echo "::error::setup PR: $SETUP_IMPORTS_SHA (the imports) is not an ancestor of HEAD"; exit 1; }
+          echo "::warning::the base has no root Cargo.toml (setup PR): gates use keelstackhq/bosun@$SETUP_BOSUN_SHA and judge against $SETUP_IMPORTS_SHA"
+          echo "gate_base=$SETUP_IMPORTS_SHA" >> "$GITHUB_OUTPUT"
+          git init -q "$RUNNER_TEMP/base"
+          git -C "$RUNNER_TEMP/base" fetch -q --depth 1 https://github.com/keelstackhq/bosun.git "$SETUP_BOSUN_SHA"
+          git -C "$RUNNER_TEMP/base" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" = "$SETUP_BOSUN_SHA" ] || { echo "::error::fetched bosun is not $SETUP_BOSUN_SHA"; exit 1; }
       # Before anything runs rustc or cargo: the gates use the base commit's .bosun/, every .cargo
       # directory, every rust-toolchain(.toml), .npmrc, .pnpmfile and deny.toml. Files the base
       # lacks are deleted. A PR's changes to them take effect after it merges (R-gov or R-ci).
@@ -214,7 +232,7 @@ jobs:
           BOSUN_INTEGRITY_ALLOW: ${{ steps.allow.outputs.kinds }}
           # test-integrity reads the snapshot-change line from the PR body.
           BOSUN_PR_BODY: ${{ github.event.pull_request.body }}
-          BASE: ${{ steps.base.outputs.sha }}
+          BASE: ${{ steps.base.outputs.gate_base }}
           EVENT: ${{ github.event_name }}
         run: |
           # A PR runs each gate on what it changed; main and the queue run it on everything.
