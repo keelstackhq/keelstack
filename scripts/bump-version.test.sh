@@ -17,10 +17,15 @@ fail() {
   echo "FAIL $*" >&2
   fails=$((fails + 1))
 }
-check() { # <description> <command...>
-  local what=$1
+check() { # <description> <command...>: on failure, the command's output goes to stderr
+  local what=$1 log="$tmp/check.log"
   shift
-  if "$@" >/dev/null 2>&1; then ok "$what"; else fail "$what"; fi
+  if "$@" >"$log" 2>&1; then
+    ok "$what"
+  else
+    fail "$what"
+    sed 's/^/     /' "$log" >&2
+  fi
 }
 
 # --- copy the working tree ---------------------------------------------------------------------
