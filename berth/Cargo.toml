@@ -1,0 +1,46 @@
+[package]
+name = "keel-berth"
+version = "0.2.1"
+edition = "2024"
+rust-version = "1.97"
+description = "Give each parallel coding agent an isolated, ready workspace in a git repo"
+license = "MIT"
+repository = "https://github.com/keelstackhq/berth"
+readme = "README.md"
+keywords = ["git", "worktree", "ai-agents", "cli", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+# Only what builds the crate: no tests, fixtures, npm packages or docs in the .crate file.
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[lib]
+name = "berth"
+path = "src/lib.rs"
+
+[[bin]]
+name = "berth"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "=4.6.7", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.154"
+thiserror = "=2.0.21"
+toml = "=1.1.8"
+
+[dev-dependencies]
+assert_cmd = "=2.2.2"
+insta = { version = "=1.49.0", features = ["json", "filters"] }
+predicates = "=3.1.4"
+tempfile = "=3.27.0"
+
+# Faster CI builds; backtraces keep line numbers.
+[profile.dev]
+debug = "line-tables-only"
+
+# Smaller binary, shorter link; the CLI is not CPU-bound.
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
