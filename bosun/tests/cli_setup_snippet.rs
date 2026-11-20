@@ -182,7 +182,7 @@ const NPM_OK: &str = r#"echo "npm $*" >>"$LOG"
 if [ "$1" = install ]; then
   m="$3/node_modules"; mkdir -p "$m/.bin" "$m/@keelstackhq/bosun"
   printf '#!/bin/bash\necho bosun 9.9.9\n' >"$m/.bin/bosun"; chmod +x "$m/.bin/bosun"
-  printf '{"packages":{"":{},"node_modules/@keelstackhq/bosun":{"version":"9.9.9","integrity":"sha512-q83v"},"node_modules/@keelstackhq/bosun-darwin-x64":{"version":"9.9.9","integrity":"sha512-AAAA"}}}' >"$3/package-lock.json"
+  printf '{"packages":{"":{},"node_modules/@keelstackhq/bosun":{"version":"VER","integrity":"sha512-q83v"},"node_modules/@keelstackhq/bosun-darwin-x64":{"version":"9.9.9","integrity":"sha512-AAAA"}}}' >"$3/package-lock.json"
 fi"#;
 
 /// A fake attestations endpoint: serves a fixture (a signed statement for digest abcdef, `q83v`,
@@ -204,16 +204,31 @@ fn curl_stub(bin: &Path, fixture: Option<&str>) {
 #[test]
 fn without_a_repo_script_the_latest_bosun_is_kept_only_with_signatures_and_bosun_provenance() {
     let good = Some("attestations-good.json");
-    // (audit, attestations, lockfile integrity, kept)
-    for (audit, att, integrity, kept) in [
-        ("exit 0", good, "q83v", true),
-        ("exit 1", good, "q83v", false),
+    // (audit, attestations, lockfile integrity, bosun version, kept)
+    for (audit, att, integrity, ver, kept) in [
+        ("exit 0", good, "q83v", "0.21.0", true),
+        ("exit 1", good, "q83v", "0.21.0", false),
+        // The old keelstackhq/bosun identity is accepted only for bosun <= 0.21.0.
+        ("exit 0", good, "q83v", "0.22.0", false),
+        ("exit 0", good, "q83v", "0.9.1-rc.1", true),
         // The payload names keelstackhq/bosun, but the signing certificate is another repo's.
-        ("exit 0", Some("attestations-evil-san.json"), "q83v", false),
-        ("exit 0", good, "q83w", false),
+        (
+            "exit 0",
+            Some("attestations-evil-san.json"),
+            "q83v",
+            "0.21.0",
+            false,
+        ),
+        ("exit 0", good, "q83w", "0.21.0", false),
         // The right certificate, but the payload changed after signing.
-        ("exit 0", Some("attestations-bad-sig.json"), "q83v", false),
-        ("exit 0", None, "q83v", false),
+        (
+            "exit 0",
+            Some("attestations-bad-sig.json"),
+            "q83v",
+            "0.21.0",
+            false,
+        ),
+        ("exit 0", None, "q83v", "0.21.0", false),
     ] {
         let tmp = tempfile::tempdir().unwrap();
         let (work, bin, log) = (
@@ -224,7 +239,9 @@ fn without_a_repo_script_the_latest_bosun_is_kept_only_with_signatures_and_bosun
         fs::create_dir_all(&work).unwrap();
         fs::create_dir_all(&bin).unwrap();
         tools(&bin);
-        let npm = NPM_OK.replace("sha512-q83v", &format!("sha512-{integrity}"));
+        let npm = NPM_OK
+            .replace("sha512-q83v", &format!("sha512-{integrity}"))
+            .replace("VER", ver);
         stub(
             &bin,
             "npm",
@@ -232,7 +249,7 @@ fn without_a_repo_script_the_latest_bosun_is_kept_only_with_signatures_and_bosun
         );
         curl_stub(&bin, att);
         let (code, err, l) = boot(&work, &bin, &log);
-        let case = format!("{audit} {att:?} {integrity}");
+        let case = format!("{audit} {att:?} {integrity} {ver}");
         assert_eq!(code, 0, "{case}: {err}");
         assert!(
             l.contains("@keelstackhq/bosun@latest") && l.contains("npm audit signatures"),
@@ -251,7 +268,7 @@ fn without_a_repo_script_the_latest_bosun_is_kept_only_with_signatures_and_bosun
         if audit == "exit 0" {
             // Only the installed package is checked, with a time limit, at registry.npmjs.org.
             assert!(
-                l.contains("-m 30 https://registry.npmjs.org/-/npm/v1/attestations/%40keelstackhq%2Fbosun@9.9.9"),
+                l.contains(&format!("-m 30 https://registry.npmjs.org/-/npm/v1/attestations/%40keelstackhq%2Fbosun@{ver}")),
                 "{l}"
             );
             assert!(!l.contains("darwin"), "{l}");

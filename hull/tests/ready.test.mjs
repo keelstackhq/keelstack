@@ -123,7 +123,10 @@ test("checklistUrl links to the rendered hull tag, else main", async () => {
     checklistUrl(d),
     "https://github.com/keelstackhq/keelstack/blob/v0.5.0/hull/docs/start-checklist.md",
   );
-  for (const source of ["gh:keelstackhq/hull//template", "https://github.com/keelstackhq/hull.git"]) {
+  for (const source of [
+    "gh:keelstackhq/hull//template",
+    "https://github.com/keelstackhq/hull.git",
+  ]) {
     await put(d, ".splice/lock.toml", `[template]\nsource = "${source}"\nversion = "0.13.0"\n`);
     assert.equal(
       checklistUrl(d),
