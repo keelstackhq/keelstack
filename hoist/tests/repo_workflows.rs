@@ -1,0 +1,355 @@
+mod common;
+
+use hoist::HoistError;
+use hoist::repo::workflows::read_workflows;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+fn fixture(name: &str) -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/repos")
+        .join(name)
+}
+
+fn inline(files: &[(&str, &str)]) -> tempfile::TempDir {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let wf = dir.path().join(".github/workflows");
+    fs::create_dir_all(&wf).expect("mkdir");
+    for (name, text) in files {
+        fs::write(wf.join(name), text).expect("write");
+    }
+    dir
+}
+
+#[test]
+fn site_fixture_jobs_include_ci_ok() {
+    let w = read_workflows(&fixture("site")).expect("workflows");
+    let ids: Vec<&str> = w.jobs.iter().map(|j| j.value.as_str()).collect();
+    for want in ["ci", "ci-ok", "preview", "deploy"] {
+        assert!(ids.contains(&want), "missing job {want}: {ids:?}");
+    }
+    let ci_ok = w.jobs.iter().find(|j| j.value == "ci-ok").expect("ci-ok");
+    assert!(
+        ci_ok.source.starts_with(".github/workflows/ci.yml:"),
+        "{}",
+        ci_ok.source
+    );
+    assert_eq!(ci_ok.source, ".github/workflows/ci.yml:98");
+}
+
+#[test]
+fn site_fixture_secrets() {
+    let w = read_workflows(&fixture("site")).expect("workflows");
+    let mut names: Vec<&str> = w.secrets.iter().map(|s| s.value.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN"]);
+}
+
+#[test]
+fn merge_group_detected() {
+    let w = read_workflows(&fixture("site")).expect("workflows");
+    assert!(w.merge_group);
+    let b = read_workflows(&fixture("bare")).expect("workflows");
+    assert!(!b.merge_group);
+    assert_eq!(b.jobs.len(), 1);
+}
+
+#[test]
+fn environment_object_form() {
+    let dir = inline(&[(
+        "release.yml",
+        "name: release\non: push\njobs:\n  publish:\n    environment: { name: release }\n    runs-on: ubuntu-latest\n    steps: []\n  other:\n    environment: staging\n    runs-on: ubuntu-latest\n    steps: []\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let envs: Vec<&str> = w.environments.iter().map(|e| e.value.as_str()).collect();
+    assert_eq!(envs, ["release", "staging"]);
+}
+
+#[test]
+fn merge_group_detected_with_boolean_on_key() {
+    let dir = inline(&[("a.yml", "on: true\njobs: {}\n")]);
+    assert!(!read_workflows(dir.path()).expect("workflows").merge_group);
+    let dir = inline(&[(
+        "a.yml",
+        "on:\n  merge_group:\njobs:\n  ci:\n    steps: []\n",
+    )]);
+    assert!(read_workflows(dir.path()).expect("workflows").merge_group);
+    let dir = inline(&[(
+        "a.yml",
+        "on: [push, merge_group]\njobs:\n  ci:\n    steps: []\n",
+    )]);
+    assert!(read_workflows(dir.path()).expect("workflows").merge_group);
+    let dir = inline(&[("a.yml", "on: merge_group\njobs:\n  ci:\n    steps: []\n")]);
+    assert!(read_workflows(dir.path()).expect("workflows").merge_group);
+}
+
+#[test]
+fn secrets_dedupe_and_skip_github_token() {
+    let dir = inline(&[
+        (
+            "a.yml",
+            "on: push\njobs:\n  a:\n    env:\n      T: ${{ secrets.GITHUB_TOKEN }}\n      X: ${{secrets.FOO}}\n",
+        ),
+        (
+            "b.yaml",
+            "on: push\njobs:\n  b:\n    env:\n      X: ${{ secrets.FOO }}\n",
+        ),
+    ]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.secrets.len(), 1);
+    assert_eq!(w.secrets[0].value, "FOO");
+    assert_eq!(w.secrets[0].source, ".github/workflows/a.yml:6");
+}
+
+#[test]
+fn missing_workflows_dir_is_empty() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert!(w.jobs.is_empty() && w.secrets.is_empty() && !w.merge_group);
+}
+
+#[test]
+fn invalid_yaml_names_file() {
+    let dir = inline(&[("broken.yml", "on: push\njobs: [\n")]);
+    let err = read_workflows(dir.path()).expect_err("must fail");
+    match &err {
+        HoistError::Config { file, .. } => {
+            assert_eq!(file, ".github/workflows/broken.yml")
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(err.to_string().contains("broken.yml"));
+}
+
+#[test]
+fn job_environments_name_file_and_job() {
+    let dir = inline(&[(
+        "release.yml",
+        "on: push\njobs:\n  build:\n    runs-on: x\n  publish:\n    environment:\n      name: release\n    runs-on: x\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.job_environments.len(), 1);
+    let j = &w.job_environments[0];
+    assert_eq!(
+        (j.file.as_str(), j.job.as_str(), j.environment.as_str()),
+        ("release.yml", "publish", "release")
+    );
+}
+
+#[test]
+fn secret_uses_name_each_job_and_its_environment() {
+    // A workflow-level `env:` reaches every job of that file.
+    let dir = inline(&[(
+        "deploy.yml",
+        "on: push\nenv:\n  A: ${{ secrets.ACCOUNT }}\njobs:\n  deploy:\n    environment: prod\n    runs-on: x\n    env:\n      T: ${{ secrets.TOKEN }}\n  check:\n    runs-on: x\n    steps:\n      - run: echo ${{ secrets.TOKEN }}\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let mut uses: Vec<(String, String, Option<String>)> = w
+        .secret_uses
+        .iter()
+        .map(|u| (u.secret.clone(), u.job.clone(), u.environment.clone()))
+        .collect();
+    uses.sort();
+    let prod = Some("prod".to_string());
+    assert_eq!(
+        uses,
+        [
+            ("ACCOUNT".into(), "deploy.yml:check".into(), None),
+            ("ACCOUNT".into(), "deploy.yml:deploy".into(), prod.clone()),
+            ("TOKEN".into(), "deploy.yml:check".into(), None),
+            ("TOKEN".into(), "deploy.yml:deploy".into(), prod),
+        ]
+    );
+}
+
+#[test]
+fn bracketed_secret_references_count() {
+    let dir = inline(&[(
+        "deploy.yml",
+        "on: push\njobs:\n  deploy:\n    environment: prod\n    runs-on: x\n    env:\n      A: ${{ secrets['ALPHA'] }}\n      B: ${{ secrets[\"BETA\"] }}\n      C: ${{secrets.GAMMA}}\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let mut names: Vec<&str> = w.secrets.iter().map(|s| s.value.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["ALPHA", "BETA", "GAMMA"]);
+    let mut used: Vec<&str> = w.secret_uses.iter().map(|u| u.secret.as_str()).collect();
+    used.sort();
+    assert_eq!(used, ["ALPHA", "BETA", "GAMMA"]);
+}
+
+#[test]
+fn inherited_secrets_to_another_repos_workflow_are_listed() {
+    // A local reusable workflow is scanned like any other file; a remote one cannot be.
+    let dir = inline(&[(
+        "ci.yml",
+        "on: push\njobs:\n  local:\n    uses: ./.github/workflows/lib.yml\n    secrets: inherit\n  remote:\n    uses: acme/shared/.github/workflows/deploy.yml@v1\n    secrets: inherit\n  plain:\n    runs-on: x\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.opaque_inherits, ["ci.yml:remote"]);
+}
+
+#[test]
+fn secret_references_inside_any_expression_count() {
+    // Anywhere in `${{ … }}`, any case; names are case-insensitive (GitHub keeps them upper).
+    let dir = inline(&[(
+        "deploy.yml",
+        "on: push\njobs:\n  deploy:\n    environment: prod\n    runs-on: x\n    env:\n      A: ${{ secrets.ALPHA || 'x' }}\n      B: ${{ format('{0}', secrets.BETA) }}\n      C: ${{ Secrets.gamma }}\n      D: ${{ SECRETS['DELTA'] }}\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let mut names: Vec<&str> = w.secrets.iter().map(|s| s.value.as_str()).collect();
+    names.sort();
+    assert_eq!(names, ["ALPHA", "BETA", "DELTA", "GAMMA"]);
+    assert!(
+        w.unresolved_secrets.is_empty(),
+        "{:?}",
+        w.unresolved_secrets
+    );
+}
+
+#[test]
+fn whole_or_computed_secret_references_are_unresolved() {
+    let forms = [
+        "${{ toJSON(secrets) }}",
+        "${{ secrets[format('{0}_KEY', matrix.n)] }}",
+        "${{ secrets[matrix.n] }}",
+        "${{ fromJSON(toJSON(Secrets)).X }}",
+    ];
+    for form in forms {
+        let dir = inline(&[(
+            "deploy.yml",
+            &format!(
+                "on: push\njobs:\n  deploy:\n    environment: prod\n    runs-on: x\n    env:\n      A: {form}\n"
+            ),
+        )]);
+        let w = read_workflows(dir.path()).expect("workflows");
+        assert_eq!(w.unresolved_secrets, ["deploy.yml:deploy"], "{form}");
+    }
+    // `secrets` outside an expression, or as part of another word, is plain text.
+    let dir = inline(&[(
+        "deploy.yml",
+        "on: push\njobs:\n  deploy:\n    runs-on: x\n    steps:\n      - run: echo secrets mysecrets ${{ github.secrets_path }}\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert!(
+        w.unresolved_secrets.is_empty(),
+        "{:?}",
+        w.unresolved_secrets
+    );
+}
+
+#[test]
+fn an_environment_expression_is_unresolved_not_a_name() {
+    let dir = inline(&[(
+        "deploy.yml",
+        "name: deploy\non: push\njobs:\n  a:\n    runs-on: ubuntu-latest\n    environment: ${{ inputs.env }}\n    steps: []\n  b:\n    runs-on: ubuntu-latest\n    environment:\n      name: ${{ github.ref_name }}\n    steps: []\n  c:\n    runs-on: ubuntu-latest\n    environment: staging\n    steps: []\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let envs: Vec<&str> = w.environments.iter().map(|e| e.value.as_str()).collect();
+    assert_eq!(envs, ["staging"]);
+    let un: Vec<(&str, &str)> = w
+        .unresolved_environments
+        .iter()
+        .map(|e| (e.value.as_str(), e.source.as_str()))
+        .collect();
+    assert_eq!(
+        un,
+        [
+            ("${{ inputs.env }}", ".github/workflows/deploy.yml:6"),
+            ("${{ github.ref_name }}", ".github/workflows/deploy.yml:10"),
+        ]
+    );
+    assert!(
+        w.job_environments
+            .iter()
+            .all(|j| j.environment == "staging")
+    );
+}
+
+#[test]
+fn a_caller_passing_an_environment_input_references_it() {
+    let dir = inline(&[(
+        "call.yml",
+        "name: call\non: push\njobs:\n  deploy:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      environment: production\n  other:\n    uses: acme/shared/.github/workflows/d.yml@v1\n    with:\n      environment: ${{ matrix.env }}\n  plain:\n    runs-on: ubuntu-latest\n    with:\n      environment: ignored\n    steps: []\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.environments.len(), 1, "{:?}", w.environments);
+    assert_eq!(w.environments[0].value, "production");
+    assert_eq!(w.environments[0].source, ".github/workflows/call.yml:7");
+    assert_eq!(w.unresolved_environments.len(), 1);
+    assert_eq!(w.unresolved_environments[0].value, "${{ matrix.env }}");
+}
+
+#[test]
+fn variable_references_are_upper_cased_and_inside_expressions_only() {
+    let dir = inline(&[(
+        "a.yml",
+        "name: a\non: push\njobs:\n  j:\n    runs-on: ubuntu-latest\n    env:\n      U: ${{ vars.api_url }}\n      R: ${{ vars['Region'] || vars.API_URL }}\n      N: ${{ needs.x.outputs.vars.nope }}\n      T: vars.plain_text_not_an_expression\n    steps:\n      - run: echo ${{ VARS.Last }}\n",
+    )]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    let vars: Vec<(&str, &str)> = w
+        .variables
+        .iter()
+        .map(|v| (v.value.as_str(), v.source.as_str()))
+        .collect();
+    assert_eq!(
+        vars,
+        [
+            ("API_URL", ".github/workflows/a.yml:7"),
+            ("REGION", ".github/workflows/a.yml:8"),
+            ("LAST", ".github/workflows/a.yml:12"),
+        ]
+    );
+}
+
+#[test]
+fn unresolved_environments_are_listed_once_per_expression() {
+    let dir = inline(&[
+        (
+            "a.yml",
+            "name: a\non: push\njobs:\n  x:\n    runs-on: u\n    environment: ${{ matrix.e }}\n    steps: []\n",
+        ),
+        (
+            "b.yml",
+            "name: b\non: push\njobs:\n  y:\n    runs-on: u\n    environment: ${{ matrix.e }}\n    steps: []\n",
+        ),
+    ]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.unresolved_environments.len(), 1);
+    assert_eq!(
+        w.unresolved_environments[0].source,
+        ".github/workflows/a.yml:6"
+    );
+}
+
+#[test]
+fn a_callee_input_expression_is_resolved_when_every_caller_passes_a_literal() {
+    let callee = "name: r\non:\n  workflow_call:\n    inputs:\n      target:\n        type: string\njobs:\n  go:\n    runs-on: u\n    environment: ${{ inputs.target }}\n    steps: []\n";
+    let dir = inline(&[
+        ("reusable.yml", callee),
+        (
+            "c1.yml",
+            "name: c1\non: push\njobs:\n  a:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      target: staging\n  b:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      target: production\n",
+        ),
+    ]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert!(
+        w.unresolved_environments.is_empty(),
+        "{:?}",
+        w.unresolved_environments
+    );
+    let _ = w;
+    // A caller that passes an expression, or none, keeps it unresolved.
+    let dir = inline(&[
+        ("reusable.yml", callee),
+        (
+            "c1.yml",
+            "name: c1\non: push\njobs:\n  a:\n    uses: ./.github/workflows/reusable.yml\n    with:\n      target: staging\n  b:\n    uses: ./.github/workflows/reusable.yml\n",
+        ),
+    ]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.unresolved_environments.len(), 1);
+    // No caller at all: unresolved.
+    let dir = inline(&[("reusable.yml", callee)]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.unresolved_environments.len(), 1);
+}

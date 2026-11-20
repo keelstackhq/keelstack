@@ -1,0 +1,179 @@
+//! `hoist plan`: desired state against live state, GET requests only.
+
+use crate::auth::{Secret, cloudflare_token, github_token};
+use crate::cli::Area;
+use crate::cloudflare::{LiveCloudflare, read_cloudflare};
+use crate::desired::{Desired, build_desired};
+use crate::diff::{diff_cloudflare, diff_github};
+use crate::diff_release::{diff_registry, diff_release, read_registries};
+use crate::error::HoistError;
+use crate::github::{LiveGithub, read_github};
+use crate::http::{Http, Service};
+use crate::release::PkgKind;
+use crate::report::{Action, Item, Report};
+use std::path::Path;
+
+/// Plan the selected areas (all when `areas` is empty). Cloudflare is only read when a deploy
+/// target exists, so a repo without targets needs no Cloudflare token. The `npm`, `crates` and
+/// `release` areas exist only for repos with publishing packages; `npm`/`crates` read the
+/// registries anonymously, `release` reads GitHub (the release environment). Exit code 0: a plan is
+/// a preview, even with changes.
+pub fn plan(dir: &Path, areas: &[Area], adopt: bool, verbose: bool) -> Result<Report, HoistError> {
+    run_with_state(dir, areas, verbose, "plan", adopt).map(|s| s.report)
+}
+
+/// The `release/model` item for a release model that could not be read.
+fn model_error(err: &HoistError) -> Item {
+    Item {
+        area: "release".to_string(),
+        kind: "model".to_string(),
+        key: "release".to_string(),
+        action: Action::Unknown,
+        reason: err.to_string(),
+        source: match err {
+            HoistError::Config { file, .. } => file.clone(),
+            _ => String::new(),
+        },
+        verify: None,
+    }
+}
+
+/// A plan together with the state it was computed from, for `check` to verify against and
+/// `apply` to write with. The clients are `None` for areas that were not read.
+pub(crate) struct PlanState {
+    pub report: Report,
+    pub desired: Desired,
+    /// Read for the `github` area, or for the `release` area alone.
+    pub github: Option<LiveGithub>,
+    pub cloudflare: Option<LiveCloudflare>,
+    pub github_http: Option<Http>,
+    pub cloudflare_http: Option<Http>,
+    /// The `[cloudflare.dns]` writes `apply` makes.
+    pub dns_writes: Vec<crate::dns::DnsWrite>,
+}
+
+pub(crate) fn run_with_state(
+    dir: &Path,
+    areas: &[Area],
+    verbose: bool,
+    command: &str,
+    adopt: bool,
+) -> Result<PlanState, HoistError> {
+    let mut desired = build_desired(dir)?;
+    desired.adopt = adopt;
+    // R18: a broken release model exits 3 only when a release area was asked for; with no
+    // `--area` it is one `release/model` item and the other areas proceed.
+    let explicit = [Area::Npm, Area::Crates, Area::Release]
+        .iter()
+        .any(|a| areas.contains(a));
+    let mut model_item = None;
+    match desired.read_release(dir) {
+        Ok(()) => {}
+        Err(err) if explicit => return Err(err),
+        Err(err) => {
+            if areas.is_empty() {
+                model_item = Some(model_error(&err));
+            }
+        }
+    }
+    let wants = |area: Area| areas.is_empty() || areas.contains(&area);
+    let has_targets = !(desired.cloudflare.pages.is_empty()
+        && desired.cloudflare.workers.is_empty()
+        && desired.cloudflare.r2.is_none());
+    if wants(Area::Cloudflare) {
+        desired.require_account_id()?;
+    }
+
+    let release = desired.release.as_ref();
+    let has = |kind: PkgKind| release.is_some_and(|r| r.packages.iter().any(|p| p.kind == kind));
+    let gh_needed = wants(Area::Github) || (wants(Area::Release) && release.is_some());
+    // Registry reads are anonymous: an empty token sends no Authorization header.
+    let registry = |area: Area, kind: PkgKind, service: Service| {
+        (wants(area) && has(kind)).then(|| Http::new(service, Secret::from("")).verbose(verbose))
+    };
+    let npm = registry(Area::Npm, PkgKind::Npm, Service::Npm);
+    let crates = registry(Area::Crates, PkgKind::Crate, Service::Crates);
+
+    // Resolve every needed token before the first request.
+    let github = gh_needed
+        .then(github_token)
+        .transpose()?
+        .map(|t| Http::new(Service::Github, t).verbose(verbose));
+    // `[cloudflare.dns]` needs only a token, and without one its records are `unknown` with
+    // human steps (spec §6.3); deploy targets still require one.
+    let dns_wanted = wants(Area::Cloudflare) && desired.cloudflare.dns.is_some();
+    let cf_token = match (wants(Area::Cloudflare) && has_targets, dns_wanted) {
+        (true, _) => Some(cloudflare_token()?),
+        (false, true) => cloudflare_token().ok(),
+        (false, false) => None,
+    };
+    let cloudflare = cf_token.map(|t| Http::new(Service::Cloudflare, t).verbose(verbose));
+
+    let mut items: Vec<Item> = model_item.into_iter().collect();
+    let mut human_steps = Vec::new();
+    let mut live_cloudflare = None;
+    let mut live_github = None;
+    if let Some(http) = &cloudflare {
+        let live = read_cloudflare(http, &desired)?;
+        let (i, s) = diff_cloudflare(&desired, &live);
+        items.extend(i);
+        human_steps.extend(s);
+        live_cloudflare = Some(live);
+    }
+    let mut dns_writes = Vec::new();
+    if dns_wanted {
+        let dns = crate::dns::plan(&desired, cloudflare.as_ref(), dir)?;
+        items.extend(dns.items);
+        human_steps.extend(dns.steps);
+        dns_writes = dns.writes;
+    }
+    if let Some(http) = &github {
+        let live = read_github(http, &desired)?;
+        // --adopt: live settings stricter than the desired ones are kept (spec §7.6).
+        let kept = match adopt {
+            true => crate::adopt::raise(&mut desired, &live),
+            false => Vec::new(),
+        };
+        if wants(Area::Github) {
+            let (mut i, s) = diff_github(&desired, &live, live_cloudflare.as_ref());
+            crate::adopt::note(&mut i, &kept);
+            items.extend(i);
+            human_steps.extend(s);
+        }
+        if wants(Area::Release) {
+            items.extend(diff_release(&desired, &live));
+            items.extend(crate::ops::init::file_item(dir));
+        } else if wants(Area::Github) && desired.release_holds_secrets() {
+            // The release environment holds hoist's secrets: `--area github` reports it too.
+            items.extend(crate::diff_release::release_env_item(&desired, &live));
+        }
+        live_github = Some(live);
+    }
+    if npm.is_some() || crates.is_some() {
+        let live = read_registries(&desired, npm.as_ref(), crates.as_ref())?;
+        for (http, kind) in [(&npm, PkgKind::Npm), (&crates, PkgKind::Crate)] {
+            if http.is_some() {
+                let (i, s) = diff_registry(&desired, kind, &live);
+                items.extend(i);
+                human_steps.extend(s);
+            }
+        }
+    }
+    items.sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
+    Ok(PlanState {
+        report: Report {
+            command: command.to_string(),
+            items,
+            human_steps,
+            exit_code: 0,
+            text: None,
+            hint: None,
+        },
+        desired,
+        github: live_github,
+        cloudflare: live_cloudflare,
+        github_http: github,
+        cloudflare_http: cloudflare,
+        dns_writes,
+    })
+}
