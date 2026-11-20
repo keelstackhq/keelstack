@@ -1,6 +1,6 @@
 [package]
 name = "keel-cli"
-version = "0.1.0"
+version.workspace = true
 edition = "2024"
 rust-version = "1.97"
 description = "Bootstrap a repo with the keelstackhq tools: one manifest, one command, one human step at a time"
@@ -17,22 +17,17 @@ name = "keel"
 path = "src/main.rs"
 
 [dependencies]
-base64 = "=0.23.1"
-clap = { version = "=4.6.7", features = ["derive"] }
-rpassword = "=7.5.4"
-serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.154"
-sha2 = "=0.11.1"
-thiserror = "=2.0.21"
-toml = "=1.1.8"
-zeroize = "=1.9.1"
+base64.workspace = true
+clap = { workspace = true, features = ["derive"] }
+rpassword.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
-assert_cmd = "=2.2.2"
-predicates = "=3.1.4"
-tempfile = "=3.27.0"
-
-[profile.release]
-strip = true
-lto = true
-codegen-units = 1
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true

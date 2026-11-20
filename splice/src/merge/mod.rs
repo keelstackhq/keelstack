@@ -4,6 +4,7 @@ pub mod json;
 pub mod keypath;
 pub mod text;
 pub mod toml;
+pub mod value;
 pub mod yaml;
 
 pub use text::{merge_text, wrap_whole};

@@ -31,10 +31,8 @@ fn read_json(path: &Path) -> serde_json::Value {
 }
 
 fn cargo_version() -> String {
-    read_toml(&root().join("Cargo.toml"))["package"]["version"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    // `version.workspace = true`: cargo resolves the lockstep workspace version.
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 fn npm_dir(name: &str) -> PathBuf {

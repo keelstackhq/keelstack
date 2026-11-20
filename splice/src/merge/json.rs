@@ -5,10 +5,10 @@ use std::cell::RefCell;
 use std::collections::{BTreeSet, HashSet};
 
 use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
-use serde_json::Value;
 use serde_json::ser::{PrettyFormatter, Serializer};
 
 use super::keypath::{Conflict, Tree, merge_tree};
+use super::value::Value;
 use super::{Merged, ParseError};
 
 /// True when `text` is one JSON value without a repeated object key at any depth.

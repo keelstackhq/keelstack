@@ -20,6 +20,14 @@ fn read(repo: &TempDir, rel: &str) -> String {
     std::fs::read_to_string(repo.path().join(rel)).unwrap()
 }
 
+/// Snapshot stdout with its real key order (a plain `serde_json::Value` would sort keys).
+macro_rules! snap_json {
+    ($out:expr) => {{
+        let v: splice::merge::value::Value = serde_json::from_slice($out).unwrap();
+        insta::assert_json_snapshot!(v);
+    }};
+}
+
 #[test]
 fn golden_v1_to_v2_with_user_edits() {
     let tpl = template_repo(&["v1", "v2"]);
@@ -31,7 +39,7 @@ fn golden_v1_to_v2_with_user_edits() {
         .get_output()
         .stdout
         .clone();
-    insta::assert_json_snapshot!(serde_json::from_slice::<serde_json::Value>(&out).unwrap());
+    snap_json!(&out);
     insta::assert_snapshot!(redact(&tree_snapshot(repo.path())));
     assert!(repo.path().join(".splice/migrated.txt").exists());
     assert!(
@@ -245,8 +253,7 @@ fn golden_untagged_lock_follows_ancestry() {
         .get_output()
         .stdout
         .clone();
-    let v: serde_json::Value = serde_json::from_slice(&out).unwrap();
-    insta::assert_json_snapshot!(v);
+    snap_json!(&out);
     let lock = Lock::read(repo.path()).unwrap().unwrap();
     assert_eq!(lock.template.version.to_string(), "2.0.0");
     // Migration 2.0.0 ran: its tag descends from X and is not behind it (spec §10 item 21).

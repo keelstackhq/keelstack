@@ -2,10 +2,10 @@
 //! `toml_edit` document in place, so comments and layout of everything untouched survive.
 
 use indexmap::IndexMap;
-use serde_json::Value;
 use toml_edit::{DocumentMut, Item, TableLike};
 
 use super::keypath::{Leaf, Tree, merge_tree};
+use super::value::Value;
 use super::{Merged, ParseError};
 
 pub fn merge_toml(base: &str, ours: &str, theirs: &str) -> Result<Merged, ParseError> {

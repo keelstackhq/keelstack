@@ -1,0 +1,13 @@
+# Env for every process cargo starts (tests, `cargo run`); built binaries are unaffected.
+# `force`: some agent sandboxes export TMPDIR=/, and a plain [env] entry never overrides it.
+[env]
+# bosun tests need a writable TMPDIR outside the repo (inside it, bosun finds the repo's own
+# .bosun config).
+TMPDIR = { value = "/tmp", force = true }
+# Hermetic git (berth tests): no ~/.gitconfig, fixed identity.
+GIT_CONFIG_GLOBAL = { value = "/dev/null", force = true }
+GIT_CONFIG_NOSYSTEM = { value = "1", force = true }
+GIT_AUTHOR_NAME = { value = "berth-test", force = true }
+GIT_AUTHOR_EMAIL = { value = "berth-test@example.invalid", force = true }
+GIT_COMMITTER_NAME = { value = "berth-test", force = true }
+GIT_COMMITTER_EMAIL = { value = "berth-test@example.invalid", force = true }

@@ -46,8 +46,20 @@ fn with_post(tpl: &TempDir, run: &str) {
     amend_tip(tpl.path(), "v1.0.0");
 }
 
+/// Snapshot stdout with its real key order (a plain `serde_json::Value` would sort keys).
+macro_rules! snap_json {
+    ($out:expr) => {{
+        let v: splice::merge::value::Value = serde_json::from_slice($out).unwrap();
+        insta::assert_json_snapshot!(v);
+    }};
+}
+
 fn new_ok(tpl: &TempDir, dest: &Path, extra: &[&str]) -> serde_json::Value {
-    let out = splice_cmd()
+    json(new_out(tpl, dest, extra))
+}
+
+fn new_out(tpl: &TempDir, dest: &Path, extra: &[&str]) -> Vec<u8> {
+    splice_cmd()
         .args(["new", s(tpl), dest.to_str().unwrap()])
         .args(["--data", "project=demo", "--yes", "--json"])
         .args(extra)
@@ -55,15 +67,15 @@ fn new_ok(tpl: &TempDir, dest: &Path, extra: &[&str]) -> serde_json::Value {
         .success()
         .get_output()
         .stdout
-        .clone();
-    json(out)
+        .clone()
 }
 
 #[test]
 fn new_renders_fixture_and_writes_lock() {
     let tpl = template_repo(&["v1"]);
     let dest = tempfile::tempdir().unwrap();
-    let r = new_ok(&tpl, dest.path(), &["--piece", "app:web"]);
+    let raw = new_out(&tpl, dest.path(), &["--piece", "app:web"]);
+    let r = json(raw.clone());
     assert_eq!(r["ok"], true);
     assert_eq!(r["command"], "new");
     assert!(dest.path().join(".splice/lock.toml").exists());
@@ -74,7 +86,7 @@ fn new_renders_fixture_and_writes_lock() {
     // The instance name feeds the `target` path.
     assert!(dest.path().join("apps/web/package.json").exists());
     insta::assert_snapshot!(redact(&tree_snapshot(dest.path())));
-    insta::assert_json_snapshot!(r);
+    snap_json!(&raw);
 }
 
 #[test]

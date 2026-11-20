@@ -1,8 +1,9 @@
 //! Key-path 3-way merge shared by the json, yaml and toml strategies (contract §5).
 
 use indexmap::IndexMap;
-use serde_json::Value;
 use std::collections::BTreeSet;
+
+use super::value::Value;
 
 /// A value that is merged as a whole: scalars, arrays (no element merge) and anything else that
 /// is not a map. Compared by value.
@@ -177,7 +178,13 @@ fn join(path: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    /// Parse JSON text keeping key order (the `json!` macro would sort keys).
+    macro_rules! json {
+        ($($t:tt)*) => {
+            serde_json::from_str::<Value>(&stringify!($($t)*)).unwrap()
+        };
+    }
 
     fn merge(b: Value, o: Value, t: Value) -> (Value, Vec<String>) {
         let mut conflicts = Vec::new();

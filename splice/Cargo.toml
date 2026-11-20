@@ -1,6 +1,6 @@
 [package]
 name = "keel-splice"
-version = "0.6.0"
+version.workspace = true
 edition = "2024"
 description = "Bootstrap a repo from versioned template pieces and keep it current"
 license = "MIT"
@@ -15,38 +15,31 @@ name = "splice"
 path = "src/main.rs"
 
 [dependencies]
-clap = { version = "4.6", features = ["derive"] }
-dialoguer = { version = "0.12", default-features = false }
-diffy = "0.5"
-dirs = "7"
-globset = "0.4"
-indexmap = { version = "2", features = ["serde"] }
-minijinja = "2.24"
-regex = "1.13"
-semver = "1"
-serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order"] }
-sha2 = "0.11"
-tempfile = "3"
-thiserror = "2"
-toml = "1.1"
-toml_edit = "0.25"
-walkdir = "2.5"
-yaml_serde = "0.10"
+clap = { workspace = true, features = ["derive"] }
+dialoguer.workspace = true
+diffy.workspace = true
+dirs.workspace = true
+globset.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
+minijinja.workspace = true
+regex.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+walkdir.workspace = true
+yaml_serde.workspace = true
 
 [dev-dependencies]
-assert_cmd = "2.2"
-sha2 = "0.11"
-tempfile = "3"
-serde_json = { version = "1", features = ["preserve_order"] }
-insta = { version = "1.49", features = ["json"] }
-
-[profile.release]
-lto = "thin"
-codegen-units = 1
-strip = true
-panic = "abort"
-opt-level = "s"
+assert_cmd.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+insta = { workspace = true, features = ["json"] }
 
 # SpliceError carries a Report; boxing it would touch every error site for no gain.
 [lints.clippy]

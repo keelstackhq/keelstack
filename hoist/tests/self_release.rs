@@ -42,6 +42,15 @@ fn self_copy() -> TempDir {
         std::fs::copy(&from, &to).unwrap();
     }
     let d = dir.path();
+    // hoist/ is a member of the monorepo workspace; the copy is a standalone repo, so write the
+    // inherited version as a literal (hoist plans a release from `[package] version`).
+    let manifest = d.join("Cargo.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let text = text.replace(
+        "version.workspace = true",
+        &format!("version = \"{}\"", env!("CARGO_PKG_VERSION")),
+    );
+    std::fs::write(&manifest, text).unwrap();
     git(d, &["init", "-q"]);
     git(d, &["checkout", "-q", "-b", "main"]);
     git(d, &["remote", "add", "origin", REMOTE]);
@@ -61,14 +70,9 @@ fn cmd(repo: &TempDir, tools: &TempDir) -> assert_cmd::Command {
     c
 }
 
-/// `[package] version` of the real checkout's Cargo.toml.
+/// The crate version (`version.workspace = true`: cargo resolves the lockstep workspace version).
 fn manifest_version() -> String {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let cargo: toml::Table = std::fs::read_to_string(root.join("Cargo.toml"))
-        .unwrap()
-        .parse()
-        .unwrap();
-    cargo["package"]["version"].as_str().unwrap().to_string()
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 fn json(output: &std::process::Output) -> Value {

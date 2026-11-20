@@ -2,9 +2,8 @@
 //! values (tags, non-string keys) are parse errors, so `merge3` falls back to the text merge.
 //! Comments and layout are lost on a real merge; indentation is yaml_serde's two spaces.
 
-use serde_json::Value;
-
 use super::keypath::{Conflict, Tree, merge_tree};
+use super::value::Value;
 use super::{Merged, ParseError};
 
 pub fn merge_yaml(base: &str, ours: &str, theirs: &str) -> Result<Merged, ParseError> {
