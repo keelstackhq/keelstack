@@ -1,0 +1,102 @@
+---
+source: tests/golden_channels.rs
+assertion_line: 89
+expression: v
+---
+{
+  "ok": false,
+  "command": "update",
+  "changes": [
+    {
+      "path": ".agents/skills/verify/SKILL.md",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": ".claude/agents/explorer.md",
+      "action": "delete",
+      "class": "owned"
+    },
+    {
+      "path": ".claude/agents/reviewer.md",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": ".claude/skills/verify/SKILL.md",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": ".editorconfig",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "action": "conflict",
+      "class": "shared"
+    },
+    {
+      "path": "AGENTS.md#rig",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": "CHANGELOG.md",
+      "action": "create",
+      "class": "seed"
+    },
+    {
+      "path": "apps/web/tsconfig.json",
+      "action": "update",
+      "class": "owned"
+    },
+    {
+      "path": "config/settings.toml",
+      "action": "merge",
+      "class": "shared"
+    },
+    {
+      "path": "notes.txt",
+      "action": "merge",
+      "class": "shared"
+    },
+    {
+      "path": "old.txt",
+      "action": "delete",
+      "class": "owned"
+    },
+    {
+      "path": "package.json",
+      "action": "merge",
+      "class": "shared"
+    },
+    {
+      "path": "tool.config.mts",
+      "action": "delete",
+      "class": "owned"
+    },
+    {
+      "path": "tool.config.ts",
+      "action": "create",
+      "class": "owned"
+    }
+  ],
+  "messages": [
+    "source=main",
+    "main: new question `license` (license) took its default `MIT`; the owner can override it under [vars] in .splice/lock.toml",
+    "main: `.github/workflows/ci.yml` key `jobs.test.runs-on`: yours \"macos-latest\", template \"ubuntu-24.04\"; kept yours",
+    "main: `.github/workflows/ci.yml` has conflicts (jobs.test.runs-on); the file keeps your values there, edit those keys to take the template's",
+    "source=channel:rig",
+    "main: conflicts in .github/workflows/ci.yml: review the kept keys (your values stay; edit them to take the template's); lock already at 2.0.0; to abort: git checkout -- . && git checkout HEAD -- .splice/lock.toml"
+  ],
+  "new_questions": [
+    {
+      "name": "license",
+      "prompt": "license",
+      "status": "defaulted",
+      "value": "MIT"
+    }
+  ]
+}
