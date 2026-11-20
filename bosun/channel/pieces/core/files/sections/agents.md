@@ -48,10 +48,10 @@ never work around a refusal.
 - Stay inside your task's `touch:`. Put new tests in a new file; on a lockfile conflict take
   main's copy and regenerate it (`git checkout origin/main -- <lockfile>`, `cargo update -w` or
   `pnpm install`). Planning rules:
-  https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md#cutting-tasks-for-parallel-work.
+  https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md#cutting-tasks-for-parallel-work.
 - Never skip, delete or weaken a test to get green; test-integrity refuses it.
 - Human-only steps (secrets, settings, accounts, keys) go in the plan's `## Prerequisites`
-  (https://github.com/keelstackhq/bosun/blob/main/docs/prerequisites.md); the orchestrator runs
+  (https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/prerequisites.md); the orchestrator runs
   `bosun prereqs <plan> --post` once. Never wait for a human: `bosun hold <issue> "<step>"` and
   take other work. Never tick, edit or close the `bosun:prereqs` issue.
 - Owner approvals (D-012): ask with a chat form (`AskUserQuestion`: repo, PR, head SHA; approve
@@ -61,4 +61,4 @@ never work around a refusal.
   latest message (`data.message_pairs`) is answerable.
 - The PreToolUse hook refuses destructive commands (`rm -rf /` or `~`, `mkfs`, `dd` to a device,
   `terraform destroy`, `DROP DATABASE`) and the same Bash command 5 times in a row: change approach.
-- bosun's rules and reasons: https://github.com/keelstackhq/bosun/blob/main/docs/spec.md.
+- bosun's rules and reasons: https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec.md.

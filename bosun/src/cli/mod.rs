@@ -883,7 +883,7 @@ pub struct LessonAddArgs {
     /// The PR or issue that proved it (`#N`); required unless --upstream.
     #[arg(long = "evidence", value_name = "REF")]
     pub evidence: Vec<String>,
-    /// File the lesson on keelstackhq/bosun (it is about bosun itself); no local change.
+    /// File the lesson on keelstackhq/keelstack (it is about bosun itself); no local change.
     #[arg(long)]
     pub upstream: bool,
 }
@@ -1266,7 +1266,7 @@ pub struct InitArgs {
     #[arg(long, value_name = "LOGIN")]
     pub owner: Option<String>,
     /// The splice source of the channel.
-    #[arg(long, default_value = "gh:keelstackhq/bosun//channel")]
+    #[arg(long, default_value = "gh:keelstackhq/keelstack//bosun/channel")]
     pub source: String,
     /// The channel ref (default: v<this version>).
     #[arg(long = "ref", value_name = "REF")]

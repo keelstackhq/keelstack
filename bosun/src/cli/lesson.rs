@@ -102,9 +102,9 @@ fn add(dir: Option<&Path>, a: &LessonAddArgs) -> CmdResult {
 }
 
 /// Repository that owns bosun itself (`lesson add --upstream`).
-const UPSTREAM: (&str, &str) = ("keelstackhq", "bosun");
+const UPSTREAM: (&str, &str) = ("keelstackhq", "keelstack");
 
-/// `lesson add --upstream`: a lesson about bosun goes to keelstackhq/bosun as an issue; the
+/// `lesson add --upstream`: a lesson about bosun goes to keelstackhq/keelstack as an issue; the
 /// local store does not change (spec §6).
 fn upstream(dir: Option<&Path>, a: &LessonAddArgs) -> CmdResult {
     let app = App::load(dir)?;

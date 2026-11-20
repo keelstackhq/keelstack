@@ -2,7 +2,7 @@ id = "core"
 description = "bosun governance, CI that runs `bosun gate`, the risk and verdict workflows, hooks"
 
 [files]
-# Owned: the bosun channel replaces them on update. A change goes to keelstackhq/bosun.
+# Owned: the bosun channel replaces them on update. A change goes to keelstackhq/keelstack (bosun/).
 owned = [
   ".bosun/version",
   ".bosun/fold-fragments.sh",

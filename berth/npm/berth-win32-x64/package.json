@@ -5,8 +5,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keelstackhq/berth.git",
-    "directory": "npm/berth-win32-x64"
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "berth/npm/berth-win32-x64"
   },
   "os": [
     "win32"

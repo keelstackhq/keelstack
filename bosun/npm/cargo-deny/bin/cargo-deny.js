@@ -4,7 +4,7 @@
 // npm launcher for upstream cargo-deny (EmbarkStudios/cargo-deny, MIT OR Apache-2.0): runs the
 // prebuilt musl binary from the platform package npm installed through optionalDependencies,
 // with inherited stdio and the binary's exit code. Republished by
-// .github/workflows/cargo-deny-npm.yml in keelstackhq/bosun; the binary is upstream's release
+// .github/workflows/cargo-deny-npm.yml in keelstackhq/keelstack; the binary is upstream's release
 // asset, unchanged.
 
 const { spawnSync } = require("node:child_process");

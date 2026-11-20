@@ -5,8 +5,8 @@
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keelstackhq/bosun.git",
-    "directory": "npm/cargo-deny-linux-x64"
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "bosun/npm/cargo-deny-linux-x64"
   },
   "homepage": "https://github.com/EmbarkStudios/cargo-deny",
   "os": [
