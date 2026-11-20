@@ -1,0 +1,120 @@
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { fileURLToPath } from "node:url";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const read = (rel) => readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)), "utf8");
+const DOC = read("docs/adopt.md");
+const { ASSESS_SCHEMA, CLASH, DETECT, assess } = await import(
+  fileURLToPath(new URL("../template/pieces/base/files/scripts/ready.mjs", import.meta.url))
+);
+
+/** Detection table rows: | `id` | signal | template/piece | */
+const rows = () =>
+  [...DOC.split("\n## Output of")[0].matchAll(/^\| `([a-z-]+)` +\| ([^|]+) \| ([^|]+) \|$/gm)].map(
+    (m) => ({
+      id: m[1],
+      signal: m[2].trim(),
+      gives: m[3].trim(),
+    }),
+  );
+
+test("adopt.md's detection table lists DETECT in order, with the same signal and result", () => {
+  assert.deepEqual(
+    rows(),
+    DETECT.map((r) => ({
+      id: r.id,
+      signal: r.signal,
+      gives: r.template ? `\`${r.template}/\`` : r.piece ? `\`${r.piece}\`` : "where pieces go",
+    })),
+  );
+});
+
+test("adopt.md lists CLASH exactly, per class and template", () => {
+  for (const [t, classes] of Object.entries(CLASH)) {
+    for (const [cls, patterns] of Object.entries(classes)) {
+      const line = `  - \`${t}/\`: ${patterns
+        .split(" ")
+        .map((p) => `\`${p}\``)
+        .join(", ")}`;
+      assert.ok(DOC.includes(line), `${t} ${cls}: missing ${line}`);
+    }
+  }
+});
+
+test("adopt.md names every CLASH class and the flow steps in order", () => {
+  for (const cls of Object.keys(CLASH.template))
+    assert.match(DOC, new RegExp(`\\*\\*${cls}\\*\\*`), cls);
+  const steps = [...DOC.matchAll(/^\d+\. \*\*([a-z-]+)\*\*/gm)].map((m) => m[1]);
+  assert.deepEqual(steps, [
+    "assess",
+    "confirm",
+    "branch",
+    "dry-run",
+    "review",
+    "adopt",
+    "fix",
+    "ready",
+    "pr",
+    "channels",
+    "hoist",
+  ]);
+  assert.match(DOC, /node \/tmp\/assess\.mjs --assess --json/);
+  assert.match(DOC, /sha256sum -c/);
+  assert.match(DOC, /needs splice >= 0\.4\.0/);
+  assert.match(DOC, /--allow-dirty/);
+  assert.match(DOC, /`splice check` fails until/);
+});
+
+test("the start checklist sends existing repos to adopt.md", () => {
+  assert.match(read("docs/start-checklist.md"), /existing repo.*\(adopt\.md\)/i);
+});
+
+/** Newest released (dated) CHANGELOG version: adopt.md pins it, never an `unreleased` one. */
+const releasedTop = () => /^## v(\d+\.\d+\.\d+) — (\d{4}-\d{2}-\d{2})$/m.exec(read("CHANGELOG.md"));
+
+test("adopt.md's fetch URL is pinned to the newest released CHANGELOG version", () => {
+  const top = releasedTop();
+  assert.ok(top, "a dated CHANGELOG heading");
+  assert.match(
+    DOC,
+    new RegExp(`https://keelstack\\.dev/assess/v${top[1].replaceAll(".", "\\.")}\\.mjs`),
+  );
+  assert.doesNotMatch(DOC, /keelstack\.dev\/assess(\.mjs|\/latest)/, "never an unpinned URL");
+  assert.doesNotMatch(DOC, /ASSESS_SHA256/, "no placeholder: adopters would paste it");
+});
+
+test("adopt.md's sha256 check is the real sha256 of ready.mjs (once filled in)", async () => {
+  const { createHash } = await import("node:crypto");
+  const m = /^echo "([0-9a-f]{64}) {2}\/tmp\/assess\.mjs" \| sha256sum -c$/m.exec(DOC);
+  assert.ok(m, "the check-before-run line");
+  // The hosted copy is the released file: hash the tagged ready.mjs, not the working tree's.
+  const top = releasedTop();
+  let released;
+  try {
+    released = execFileSync(
+      "git",
+      ["show", `v${top[1]}:template/pieces/base/files/scripts/ready.mjs`],
+      { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] },
+    );
+  } catch {
+    return; // no tag in this clone (shallow or untagged): CI with full history checks it
+  }
+  assert.equal(m[1], createHash("sha256").update(released).digest("hex"));
+});
+
+test("adopt.md documents the --assess --json fields in order and names the schema", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "adopt-doc-"));
+  writeFileSync(join(dir, "package.json"), "{}");
+  const section = /^## Output of --assess --json$([\s\S]*?)(?=^## )/m.exec(DOC);
+  assert.ok(section, "the section");
+  const fields = [...section[1].matchAll(/^\| `([a-z]+)` +\|/gm)].map((m) => m[1]);
+  assert.deepEqual(fields, Object.keys(assess(dir)));
+  assert.ok(section[1].includes(ASSESS_SCHEMA));
+  assert.ok(DOC.includes("hull.assess/1"));
+});

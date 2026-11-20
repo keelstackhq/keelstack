@@ -1,0 +1,53 @@
+# Rust workspace
+
+Generated from {{ template.name }} {{ template.version }}: a Cargo workspace, no Node toolchain.
+Crates live in `crates/*`; versions, lints and profiles are set in the root `Cargo.toml`.
+
+## Commands
+
+The CI steps, in order (run them all before saying a change is done):
+
+```bash
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+node scripts/deny.mjs
+cargo nextest run --workspace --locked --profile ci
+cargo test --workspace --doc --locked
+```
+
+Also: `cargo fmt --all` (format), `cargo nextest run -p <crate>` (one crate),
+`node scripts/agents-index.mjs` (regenerate `docs/agents/index.md`; CI checks it),
+`node scripts/licenses.mjs` (regenerate `THIRD_PARTY_LICENSES.md` after dependency changes; CI checks it).
+`scripts/ci-extra.sh` (seed): repo checks, run last by CI; keep it fast.
+
+## Rules
+
+- Test first: failing test, then implement; verify with real output before saying a task is done.
+- One task per change; small focused files; no drive-by refactors; docs-only PRs need no changelog/progress fragment.
+- Dependencies are exact pins (`=x.y.z`); `--locked` everywhere; no `unsafe` (workspace lint).
+- Template-owned files (configs, workflows, `.claude/`) change via `splice update --all`; local changes go
+  in seed files, `docs/agents/project.md` or a crate's `AGENTS.md`.
+- Never print, read or commit secrets (`.env*`, keys). Releases are tag pushes by a human: never publish,
+  push tags or push the default branch; open a PR and `gh pr merge --auto`.
+- Guard hook: a rail, not a sandbox; real fix: a server-side branch ruleset. See `docs/agents/guard.md`.
+- A hook `ask` is a denial in unattended runs: use the alternative its reason names.
+- At most 2-3 parallel agents on barely overlapping files; note next steps in `docs/agents/project.md`
+  before a long task.
+
+## Crates
+
+- `crates/common`: shared library code (seed, unpublished). Template tests (crates/common, its test)
+  are removable in the bootstrap PR: `git rm -r crates/common`, then `cargo generate-lockfile`.
+{% if "rust-cli" in pieces %}- `crates/*` (rust-cli): distributable CLI skeleton with one JSON object on `--json`, fixed exit
+  codes and cargo-deny; see `crates/<name>/AGENTS.md`.
+{% endif %}{% if "rust-service" in pieces %}- `crates/*` (rust-service): HTTP service (axum) with env config and `GET /healthz`; see
+  `crates/<name>/AGENTS.md`.
+{% endif %}{% if "sqlite" in pieces %}- sqlite: `src/db/` in the service crate (pools, STRICT migrations, backups, `--restore`); restore guide
+  in `crates/<name>/docs/restore.md`.
+{% endif %}{% if "fly" in pieces %}- fly: `Dockerfile`, `fly.toml`, `scripts/fly-setup.sh`, deploy workflow; read `docs/fly.md` first.
+{% endif %}
+## Where to look
+
+- `docs/agents/project.md`: repo-specific notes; read first.
+- `docs/agents/index.md`: generated map of commands, crates and docs.
+- `<dir>/AGENTS.md`: notes for one crate.

@@ -1,0 +1,40 @@
+# {{ scope }}
+
+Generated from {{ template.name }} {{ template.version }}.
+
+## Measure CI time
+
+{% if "circleci-only" in pieces %}Budget for the CircleCI job `ci-ok`: 75 s on a typical PR, 30 s docs-only (the setup job adds a
+container start). CI runs on CircleCI only: read the duration of the `ci-ok` job in the CircleCI
+pipeline of recent PRs (the `ci-ok` status on GitHub mirrors it). Ignore cancelled and skipped runs.
+{% else %}Budget for job `ci`: 45 s on a typical PR, 15 s docs-only. Measure the last 20 runs:
+
+```bash
+gh run list -w ci.yml -L 20 --json databaseId
+gh run view <id> --json jobs   # completedAt - startedAt of job "ci"
+```
+
+Ignore cancelled and skipped runs. The job summary of each run also shows its duration.
+{% endif %}
+## PR previews
+
+`preview.yml` builds apps on every PR with no secrets; `preview-deploy.yml` (environment `preview`)
+uploads the result as version `pr-<n>` of `<app>-preview`. Store `CLOUDFLARE_API_TOKEN` and
+`CLOUDFLARE_ACCOUNT_ID` only as secrets of the `preview` environment (and of the prod deploy
+environment), with Deployment branches set to Selected, `main`; never as repository secrets, which
+every PR workflow could read.
+
+## Update bot
+
+`splice.yml` runs the weekly `splice update` in every CI mode. Create the environment `splice-bot`
+first (Deployment branches = Selected, `main`) and keep its credentials only there, never as
+repository secrets. It also refreshes `pnpm-lock.yaml`; after resolving a conflict PR run
+`pnpm install --lockfile-only` and push.
+
+A PR opened with `github.token` gets no CI and cannot change workflows. Pick a token, in order:
+
+1. GitHub App with Contents, Pull requests and Workflows write: variable `SPLICE_APP_CLIENT_ID`,
+   secret `SPLICE_APP_KEY` (in `splice-bot`).
+2. PAT (same permissions): environment secret `SPLICE_BOT_TOKEN`.
+3. Session mode: repository variable `SPLICE_BOT=off` skips the job; an agent runs
+   `splice update --all` on a branch and opens the PR (workflow files need the workflow scope).

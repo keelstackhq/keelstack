@@ -1,0 +1,10 @@
+@AGENTS.md
+@docs/agents/project.md
+@docs/agents/index.md
+
+## Claude Code
+
+- Subagents `Explore`, `implementer`, `reviewer`, `ci-fixer` in `.claude/agents/` (reports ≤ 15 lines).
+- Skills: `ready`, `verify`, `add-piece`. `/loop` runs `.claude/loop.md`.
+- Hooks: `guard.mjs` denies publish, force, tag and default-branch pushes, `gh pr merge` without `--auto` and secret reads, and asks before editing
+  template-owned files; `stop-checks.sh` is opt-in (`HULL_STOP_CHECKS=1`).

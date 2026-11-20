@@ -1,0 +1,454 @@
+# Changelog
+
+hull is a template: a version is a git tag `v<semver>` on this repo, and `splice update` moves a
+generated repo between versions (`docs/template-format.md` §7).
+
+Releases are automatic: merging a change to `main` whose top heading is a new dated version tags
+`v<version>` and publishes the GitHub release after the owner approves the `release` environment.
+Keep `unreleased` while changes accumulate.
+
+## v0.14.0 — unreleased
+
+- template-rust bootstrap friction (client feedback): `pins.toml` + `scripts/pins.mjs` are the one
+  source of tool versions (rust, nextest, cargo-deny, splice, bosun, hoist); CI and release.yml read
+  them, CI checks rust-toolchain.toml and Cargo.toml against them (hoist 0.5.0 → 0.5.1, latest per `npm view` on 2026-11-20). A shipped
+  `Cargo.lock` keeps `--locked` green on the first push; `crates/common` and its
+  test are documented as removable in the bootstrap PR. `scripts/proxy-ca.sh` trusts the cloud agent proxy CA for `docker build`.
+- guard.mjs (both templates): `cd`/`pushd` into a guarded dir is allowed when the rest of the
+  command only reads; `ls -d`, `grep -o`, `sort -t`-style flags of read-only tools are no longer
+  read as a target dir. New `docs/agents/guard.md` (safe patterns), linked from AGENTS.md.
+  A redirect glued to a word (`x>file`) is a write; `GIT_*=`/`PAGER=` prefixes deny in guarded
+  chains; `git push <remote> v1.2.3` (a version-shaped ref) is a tag push; `pins.toml` is a rail.
+  `pins.mjs` accepts only exact `X.Y.Z` pins, requires every key CI and release read, and quotes
+  `--shell` values. `<>` (read-write open) is a write; a quoted or escaped `>` is data.
+- ready.mjs: documents the non-interactive `--answer` form; stops early (exit 3) on Node < 24 or
+  without splice on PATH. start-checklist: the SPLICE_BOT_TOKEN PAT scopes with a pre-filled link,
+  `gh api` commands for the `splice-bot` environment, docker behind the proxy.
+- hull's dev renderer glob matcher: a `**` that is not a whole path segment (`a**b`, `**b`,
+  `a/b**`) stays within one segment like `*`, as picomatch did; only a whole-segment `**` crosses
+  segments (contract §9.1).
+- guard.mjs (both templates): any `/proc/**/environ` path is a secret read, and so are
+  whole-environment reads in more runtimes: PHP `getenv()`, `$_SERVER` and `$_ENV`, `Bun.env`,
+  `Deno.env.toObject()`, Python `os.environb`.
+- hull's dev renderer matches globs (contract §9.1: `*`, `**`, dotfiles) with a built-in matcher
+  and no longer depends on `picomatch` (ReDoS advisory GHSA-fc5q-39xc-vjpf, no patched version;
+  it turned main red through bosun's deps gate). Same results on every template path.
+- hull gets a root `pnpm-workspace.yaml` (`packages: []`): bosun 0.20.0's test gate reads it
+  (`pnpm -r --include-workspace-root run test`); the lockfile is unchanged.
+- guard.mjs (both templates) judges the commands that run, not text: interpreter heredocs and
+  `-c`/`-e` bodies are data only when every statement is inert (print a literal, read a
+  literal path); `gh api` with an explicit GET and
+  graphql queries are reads; `$(...)`, backticks and `<(...)` (also in unquoted heredocs) are now
+  checked as commands (`echo "$(git push -f)"` was allowed). A deny names its rule and the matched
+  command. Fixes false positives reported from a client repo.
+- Generated CI (both templates, GitHub and CircleCI): a `Workflows parse?` step runs
+  `node .github/scripts/workflows.mjs` before the affected/docs-only exit and fails on any
+  `.github/workflows/*.yml` that does not parse (an unquoted `:` once disabled a client repo's
+  workflow silently for a day). Uses the pinned, integrity-checked `yaml` 2.9.1 tarball; < 1 s; a
+  failed download fails the step.
+- `ready.mjs` (both templates): the stack comes from `.splice/lock.toml`'s source; a package.json
+  with no dependencies (helper scripts only) no longer makes `ready` require pnpm or `--assess`
+  answer `template/`/`ts-pnpm` in a template-rust repo. Reported from a client repo.
+- Rust (both templates): root `Cargo.toml` adds `[profile.dev.package."*"] debug = false`
+  (dependencies without debug info: `target/` and the CI cache about 27 % smaller, build time
+  unchanged); `template/`'s root also gets `[profile.dev] debug = "line-tables-only"`. Per-crate
+  `AGENTS.md` adds crate-graph guidance and local opt-in sccache. `template/` crates now get line
+  tables instead of full dev debug info (`CARGO_PROFILE_DEV_DEBUG=true` restores it). CircleCI's Rust
+  cache key also hashes the root `Cargo.toml`. Spec §15 "Build speed".
+
+## v0.13.0 — 2026-11-17
+
+- Base (both templates): `scripts/licenses.mjs` writes `THIRD_PARTY_LICENSES.md` and
+  `third-party-licenses.json` (license of every npm and cargo dependency, direct/dev flagged,
+  `UNKNOWN` reported; platform builds from the lockfile) on `new` and `update` (so splice bot
+  PRs carry it); CI step `licenses` fails when a lockfile or the script changed since
+  (`node scripts/licenses.mjs` fixes it; Renovate PRs need it run). Spec `2026-11-17-third-party-licenses-design.md`.
+
+## v0.12.1 — 2026-11-16
+
+- Contract: `docs/template-format.md` gains rule 29 "Kept keys" (the lock records the dotted key
+  paths a `json`/`yaml` merge kept as `kept`; `format` stays 1), byte-identical to
+  keelstackhq/splice dfd749c (D-003). The dev renderer writes no lock, so nothing else changes.
+- CircleCI: `ci-ok` passes `restore: false` to hoard's `step: start` on the default branch, so main
+  builds clean and only PRs restore main's turbo cache (hoard Trust rule; secrets spec §12 item 15).
+- Base: `session-start.sh` runs `install.js` for a pinned pnpm under `$PNPM_HOME/.tools` (default
+  `${XDG_DATA_HOME:-~/.local/share}/pnpm`) whose bin is still the shebang-less placeholder; an older
+  pnpm leaves it that way and turbo then fails every task with `Exec format error`.
+- Pins: `keelstackhq/hoard` v0.6.1 (SHA-pinned `4a6d185f` in the generated `ci.yml`, `docs/actions.md`
+  and the CI plan; CircleCI `version` + linux-x64 musl `sha256`). The vendored hoard CircleCI command is
+  unchanged.
+
+## v0.12.0 — 2026-11-15
+
+- Docs: `docs/adopt.md` lists what trips an existing repo after `splice adopt` (kept root keys, code
+  outside workspaces, lockfiles, CI clash). hull renders and CI-checks with splice 0.5.0.
+- Pins: `keelstackhq/hoard` v0.6.0, `keelstackhq/hoist/secrets` v0.5.0 and `keelstackhq/splice/action`
+  v0.5.0 (SHA-pinned in the generated workflows, `docs/actions.md` and the CI plan).
+- The vendored hoard CircleCI command (`.circleci/src/commands/hoard.yml`) gains a `restore` boolean
+  parameter (default `true`): pass `false` to skip restoring the fs cache on start (default branch;
+  see `docs/circleci.md`, Trust). Existing repos get it with `splice update` (owned file).
+- The Claude Code start checklist makes the janitor routine optional: curator (and notify with Slack)
+  are the default routines; enable `[routines] janitor = true` only if the owner wants it.
+
+## v0.11.0 — 2026-11-14
+
+- `AGENTS.md` (seed) gains a "Ready for a PR" section (branch, commit prefixes, `pnpm run ci`,
+  `gh pr create`, `gh pr merge --auto`) and the `workspace:*` rule. **Existing repos do not get it
+  (seed): copy those lines from a fresh render if you want them.**
+- `ready` prints manual items that share one note (gh not logged in) as one line.
+- Upgrade note v0.10.0 to here: `splice update` adds `.claude/agents/*`, a new `guard.mjs`
+  (denies default-branch push, tag push, `gh pr merge` without `--auto`) and the seed
+  `docs/agents/index.md`; the post step `agents-index` fills it. No shared file changes.
+- Guard hook (`.claude/hooks/guard.mjs`, both templates) hardened from an audit of v0.10.0; every deny
+  names the allowed alternative.
+  - Denies `gh pr merge` unless `--auto`, `gh release`/`secret`/`repo edit|delete`, branch-protection
+    and ruleset `gh api` writes, `gh workflow run release*`, `gh auth token`.
+  - `release` is a publish verb (`pnpm|npm|yarn|bun [run] release`, `cargo release`, `make release|publish`).
+  - Indirection is refused when the text mentions push, publish or release: `eval`, `sh`/interpreter fed
+    from a pipe, `-c`/`-e` bodies, `$VAR` or `$(...)` as the command, `git -c alias.x=`, and the wrappers
+    `setsid`, `ionice`, `stdbuf`, `watch`, `busybox`, `doas` are looked through.
+  - Pushing to the default branch (`main`, `master`, origin/HEAD) is denied in every spelling
+    (`HEAD:main`, `refs/heads/x:refs/heads/main`, bare `git push` while on it, `--prune`), as are
+    `git branch -D|-f|-m main`, `checkout -B`/`switch -C` on it and `reset --hard` while on it.
+  - Secrets: `*.env`, `.envrc`, `*.pem`, `id_*`, `keys.txt`, `.age/`, `~/.aws|.ssh|.config/gh`,
+    `/proc/*/environ`, bare `env`/`printenv`/`export -p`, `echo $…KEY…`, `sops -d`, `age -d`,
+    `hoist secrets exec -- env|printenv|sh`.
+  - Protected files (`.claude/hooks/*`, `.claude/settings*.json`, `release*.yml`, `.splice/lock.toml`,
+    `.bosun/*`) deny Edit/Write and Bash write verbs regardless of the lock; so do `git config
+    core.hooksPath` and `alias.*`.
+  - An internal error denies (retry) when the call mentions push, publish, release, gh or secret;
+    otherwise it still allows.
+- Guard, review round: protected paths match case-insensitively and with trailing slashes, symlinks
+  into them are resolved, here-strings (`bash <<< 'cmd'`) are evaluated, `rsync`, `awk -i inplace`,
+  `ex`/`vi`, `patch` count as writes.
+- Owned-file `ask` names the alternative (`ci.yml` → `scripts/ci-extra.sh`, else `docs/agents/project.md`).
+- `ready` never blocks work: unanswered onboarding questions take defaults (update bot = session,
+  secrets = none, bosun by `.bosun/`, approvals per D-012, ci = github, release = no); only `pieces`
+  and `apps` stay manual; a missing plan is `warn`; manual items print once as one checklist.
+- `base` ships the four subagents (`.claude/agents/*.md`, owned, identical to rigging's `claude`
+  piece) and a seed `docs/agents/index.md` stub, so a plain render has no manual `splice channel add`
+  and `CLAUDE.md`'s index import resolves. `CLAUDE.md` lists every skill, `ready` included. Rigging's `claude`
+  piece is emptied in the same release (same id, no files, "moved to base"), so a repo that added it has
+  no claim conflict: update the channel first (`splice update --channel rigging`), then the template.
+- `settings.json`: no `model` pin; allow `git push`, `git branch|switch|checkout|stash|rebase`,
+  `gh pr create|view|checks`, `gh pr merge --auto`, `gh api`, `node scripts/*` (the guard still denies
+  the dangerous forms).
+- `AGENTS.md` rules trimmed (every session pays for them) and one line says the server-side branch
+  ruleset is the real fix.
+- Renovate preset: the `TURBO_VERSION` regex manager is dropped (it would bump the version without its
+  pinned `TURBO_SHA256`); `splice update` carries version and sha together.
+- Generated `ci.yml`: the turbo tarball is verified with a pinned sha256 (no `curl | tar`) and the job
+  `timeout-minutes` is 10 (was 15).
+- Guard: `cd`/`pushd`/`git -C` into a guarded dir, a persisted `cwd` inside one, `patch` / `git apply`
+  of a diff that names a protected path (or piped, unreadable input) and `find -exec sh -c '<publish>'`
+  no longer bypass the rail. Allowed: `git apply` or `patch` from a readable diff that touches other files.
+- `scripts/ready.mjs`: one `details` line instead of a `see:` line per item (less output per session).
+- Guard: `env -C/--chdir`, `tar -C`, `make -C`, `git --work-tree=`, `--prefix` and a `cd` with glob
+  characters that expands to a guarded dir are treated like `cd`. `git diff > x.diff && git apply -R x.diff`
+  is allowed (a patch the chain generated from the repo); a patch file any other command of the chain wrote
+  is still refused. Protected-path denies say to use paths from the repo root.
+- Guard (review): a chain-made patch is allowed only from `git diff|show|format-patch -- <paths>` with
+  explicit paths that hold no protected file; plain `diff`, `--no-index`, prefixes and a missing pathspec
+  are refused. Clustered `-xC`/`-iC`, `cp -t`, `unzip -d`, `curl -o` and `cd "$(...)"`/`cd $X` into or
+  under a guarded dir are refused.
+
+## v0.10.0 — 2026-11-14
+
+- Docs-only CI skip: `changelog.d/**` counts as docs (`docs/progress.d/**` already did); on a pull
+  request the diff base is the first parent of the merge commit (`HEAD^1`) instead of the stale PR
+  base sha, in `template-rust`'s `docs-only.mjs` and the `template` affected step (`TURBO_SCM_BASE`).
+- `scripts/agents-index.mjs` skips `progress.d/` and `changelog.d/`: a fragment no longer changes
+  `docs/agents/index.md`.
+- License overlay: seed `deny.local.toml` (`[licenses] allow = [...]`, `template-rust` root and each
+  `rust-cli` crate) is merged by the new owned `scripts/deny.mjs`, which CI, `lint` and the verify
+  skill now call instead of `cargo deny`. Extra licenses survive `splice update`.
+- `ready` names an unanswered onboarding question, its options and the `--answer id=<value>`
+  command (e.g. a `release` question added by an update).
+- Repos on an older hull that fail bosun's `ci-minutes` gate: `splice update` clears the findings in
+  the owned workflows (current renders are compliant; `docs/updating.md`).
+- Tests of the Actions-minutes rules on every rendered workflow of every combo: D-007 and a port
+  of bosun's `ci-minutes` gate rules (draft guard, `ci-ok`, `ready_for_review`, concurrency, paths).
+- Pairing: repos governed by bosun need bosun ≥ 0.15.0 (it gates `deny.local.toml`).
+
+## v0.9.0 — 2026-11-12
+
+- `vite-plus` 1.5.1 (with the vite override `@voidzero-dev/vite-plus-core` 1.5.1; security): fixes
+  two high-severity issues (GHSA-5qr3-w62x-jmwx: package-manager downloads are checked against the
+  `packageManager` integrity hash; GHSA-p79r-mf8q-r78h: `vp env use` accepts only a valid semver).
+  Each pinned package-manager version gets its own cache dir, so a pinned project re-downloads
+  once after the upgrade. `postcss` 8.5.32 follows.
+
+## v0.8.0 — 2026-11-09
+
+- `preact` 11 (from 10.29): generated apps and Storybook move to Preact 11; `@astrojs/preact` 6.1.2
+  accepts it. Upgrade guide: https://preactjs.com/guide/v11/upgrade-guide
+- `happy-dom` 21: CSS-file and iframe loading are off by default in component tests; set
+  `enableCSSFileLoading` / `enableIframePageLoading` to opt in.
+- `astro` 7.4.7 (`@astrojs/preact` 6.1.2): `astro check` now exits 1 instead of skipping, invalid
+  tag names throw, minimum Node is 22.23.4.
+- `hono` 4.13.16 (security): `/assets*`-style routes and duplicate param names now throw; custom
+  patterns that match empty throw `UnsupportedPathError`; regenerate PreparedRegExpRouter data.
+- `wrangler` 4.158.0 (from 4.151): dotenv values expand `$`; `MINIFLARE_REGISTRY_PATH` is now
+  `CLOUDFLARE_DEV_REGISTRY_PATH`; a Workflow's jurisdiction is fixed at creation.
+- `@sentry/cloudflare` 11.11: `ignoreStaticAssets` is on by default.
+- `storybook` 10.6.6, `turbo` 2.11.10 (also the pinned `TURBO_SHA256` in the CircleCI mirror).
+
+## v0.7.0 — 2026-11-06
+
+- Generated CI skips draft PRs: `ci.yml` and `preview.yml` trigger on `ready_for_review` and skip
+  `ci` and `preview` while a PR is a draft. `ci-ok` still runs and fails on a draft
+  ("draft: CI not run"), so a draft is never green. A test covers every PR workflow.
+
+## v0.6.2 — 2026-11-05
+
+- Seeded `scripts/ci-pre.sh` (both templates, no-op): generated CI runs it right after the
+  affected check and before install and build, so a repo can free disk early. Updates never touch it.
+- `template-rust`: `[profile.dev] debug = "line-tables-only"` in the root `Cargo.toml` cuts the disk
+  linking tests uses.
+- The `guard` hook matches tag refs, executables and mutating `gh api` calls only, so read-only
+  commands that merely mention them pass.
+- Agents compact or start fresh, whichever fits, and tell the owner which (`AGENTS.md` in both
+  templates and the rigging `handoff` skill).
+- The three `.claude/settings.json` files (hull, `template`, `template-rust`) enable
+  `superpowers@keelstack` and `caveman@keelstack` from the keelstack plugin marketplace
+  (`keelstackhq/bosun`), which pins each plugin by sha.
+
+## v0.6.1 — 2026-11-02
+
+- `ready --assess --json` has a fixed, versioned output schema (`hull.assess/1`): `schema`, `stack`
+  and per-piece `name` and `unsure` (null when sure) are always present, documented in
+  `docs/adopt.md` for bosun's intake.
+
+## v0.6.0 — 2026-11-02
+
+- splice 0.4.0 (`splice adopt`) is pinned: `keelstackhq/splice/action@a3564c7` (v0.4.0) in hull's
+  and both templates' `splice.yml`, and `@keelstackhq/splice@0.4.0` in hull's CI.
+- `ready --assess [--json]`: a read-only look at an existing repo (signals, the template and
+  pieces that fit, with moves, and the files that would clash by class); works copied alone.
+  Without a lock, `render` is `ask` ("not adopted") and points at `splice adopt`.
+- `docs/adopt.md`: how an existing repo takes the template (or only the channels): the detection
+  table (tested against `DETECT`), clashes by class, and the order assess → … → hoist apply.
+  The start checklist sends existing repos there.
+
+## v0.5.2 — 2026-11-01
+
+- Start checklist targets bosun 0.4.0 (`@keelstackhq/bosun@0.4.0`, tag `v0.4.0` = `7eb2fa4`):
+  the first plan goes in through `bosun init --plan`, amendments with `bosun plan pr`; `allow:` is
+  optional; agents enable auto-merge at PR open, the owner merges by hand only when GitHub says
+  the PR is already clean.
+- template-rust ships `ready` too (skill, `scripts/ready.mjs`, seed `docs/agents/onboarding.toml`),
+  generated from template/ by `scripts/sync-shared.mjs`; its `cli` answer means `rust-cli` only.
+- New template-rust onboarding question `release` (default no): with no, the release environments
+  and App are not needed and `HOIST_RELEASE` must not be `enabled`. `release-tags` stays required
+  everywhere. Checklist: bosun Routines run hourly.
+
+## v0.5.1 — 2026-10-29
+
+- Start checklist matches bosun 0.3.0: `bosun init` needs `--stack` and `--plan`; the owner
+  merges the bosun setup PR before `hoist apply`. With bosun, `ready` wants the plan in
+  `plans/<name>.md`.
+
+## v0.5.0 — 2026-10-29
+
+- `docs/start-checklist.md` lists the human steps before autonomous work; base gets the `ready`
+  skill and `scripts/ready.mjs` (owned) to check them. New repos' `AGENTS.md` says run it first.
+- `ready` starts with onboarding questions (Claude Code forms); answers live in the new seed
+  `docs/agents/onboarding.toml`. Items an answer turns off are `skipped`; unanswered ones `ask`.
+  The answers are checked against the repo (lock pieces, `SPLICE_BOT`, the D-012 end date).
+
+## v0.4.0 — 2026-10-28
+
+**Upgrade: move `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` to the `preview` environment
+(Deployment branches → `main`), then delete the repository-level `CLOUDFLARE_*` secrets.**
+
+- **Upgrade: `min_splice` rises to 0.3.0 (raw blocks; contract rule 9.27, an empty re-render removes
+  owned files). Upgrade splice (CLI, `pnpm dlx` pin, the update-bot action) before updating. An
+  existing repo switches to CircleCI-only with `splice add circleci` then `splice add circleci-only`
+  (removes `ci.yml`).** `rigging` stays at 0.2.0.
+- Jobs that read a secret declare an `environment:` (Deployment branches → `main`): `splice.yml`
+  uses `splice-bot`; template-rust `release.yml` job `prepare` uses `release-pr`.
+  **Upgrade: first create the `splice-bot` (and, for Rust repos, `release-pr`) environment with
+  Deployment branches = Selected → `main` (a first run would auto-create an unprotected one), then
+  move `SPLICE_BOT_TOKEN` / `HOIST_RELEASE_TOKEN` there and delete the repository-level secrets.**
+- **Upgrade (TypeScript repos): `template/` now ships `.github/workflows/splice.yml`, the weekly
+  update bot (it also renders with `circleci-only`). Create the `splice-bot` environment first, as
+  in the bullet above.** The README section "Update bot" is
+  seed: existing repos do not get it.
+- Update bot and release PR token, in this order: GitHub App (variable `SPLICE_APP_CLIENT_ID` and
+  secret `SPLICE_APP_KEY` in `splice-bot`; the App needs Contents, Pull requests and Workflows
+  write), then PAT (`SPLICE_BOT_TOKEN`), then `github.token`. A PR opened with `github.token` gets
+  no CI and cannot change workflows. Session mode: set the repository variable `SPLICE_BOT=off`.
+  Nothing changes until one of these is set. template-rust `release.yml` `prepare` uses
+  `HOIST_RELEASE_APP_CLIENT_ID` (repository variable) and `HOIST_RELEASE_APP_KEY` (secret).
+- **Upgrade (template-rust with a `release-tags` ruleset): install the release App, add it to the
+  ruleset bypass list (mode always), set the repository variable `HOIST_RELEASE_APP_CLIENT_ID` and
+  the secret `HOIST_RELEASE_APP_KEY` in both `release-pr` and `release`.** `publish` then pushes the
+  tag with the App token (`contents: write` only); without the App it uses `github.token`.
+- **Upgrade: expect merge conflicts on `splice update`** in base `pnpm-workspace.yaml` when the repo
+  has its own `minimumReleaseAgeExclude` (contract §5: an array is one value), and in template-rust
+  `Cargo.toml` when `members` was edited locally.
+- Lockfiles refresh on update: `[[post]]` hooks run `pnpm install --lockfile-only --ignore-scripts`
+  (template/) and `cargo update --workspace` (template-rust). splice skips post hooks when a merge
+  conflicts, so after resolving a conflict PR run the command by hand. The update bot pins
+  splice 0.3.1, which strips token-like variables from post hooks, so they don't see the bot token.
+- Every GitHub Action in both templates is pinned by full commit SHA with a `# vX.Y.Z` comment;
+  `docs/actions.md` lists them for an org allowlist. Renovate keeps generated repos' pins current.
+  pnpm/action-setup moves to v4.4.0 (Node 24).
+- PR previews run in two phases: `preview.yml` builds with no secrets and uploads `preview-<pr>`;
+  `preview-deploy.yml` (environment `preview`, default-branch code only) deploys the Worker
+  `<app>-preview` with alias `pr-<n>`. Never create `<app>-preview` by hand; its secrets are
+  readable by every PR, so the `env.preview` IDs in `wrangler.jsonc` must be preview-only. The
+  `deploy:preview` scripts and turbo task are gone, and `deploy` no longer gets `PR_NUMBER`.
+- New piece `secrets` (opt-in, requires base; required var `context_prefix`): seed `secrets.toml`,
+  owned `deploy.yml` (push to `main`, environment `prod`, hoist secrets; not written with
+  `circleci-only`) and `docs/agents/secrets.md`. Uses hoist secrets v0.3.0.
+- New pieces `circleci` ("both" mode: a CircleCI `ci-ok` next to the unchanged GitHub `ci.yml`) and
+  `circleci-only` (no `ci.yml`, `desktop.yml` or `deploy.yml`; `circleci-status.yml` mirrors the
+  CircleCI `ci-ok` / `bosun-ok` as GitHub statuses), for `template/` and template-rust. Base
+  `.gitignore` gains `.rust-cache-key`. CircleCI desktop builds (circleci-only with tauri-app) need
+  a weekly scheduled trigger on `main` in CircleCI Project Settings → Triggers. The READMEs' CI
+  time section now covers CircleCI-only repos; README is seed, so existing repos do not get it. On CircleCI,
+  cargo-nextest 0.9.148 and cargo-deny 0.20.2 come from pinned, sha256-checked release binaries,
+  checked on every run.
+- New seed `scripts/ci-extra.sh` (no-op) in both templates and a last CI step `ci-extra` on GitHub
+  and CircleCI (skipped on docs-only and unaffected PRs). The base `ci` script is unchanged.
+- The docs piece pins the `keelstack` pack `@keelstackhq/docspack` 0.1.1 in `docs/packs.json`
+  (new optional exact `version` field); base `pnpm-workspace.yaml` excludes it from
+  `minimumReleaseAge` until 2026-10-31.
+- Fix: base `release.yml` job `npm` sets `package-manager-cache: false` (a rust-cli release failed
+  with "Unable to locate executable file: pnpm").
+- Fix: hono-worker `src/hull/logging.test.ts` (owned) uses a marker no request id can contain; the
+  old one failed about 2% of runs. Existing repos get it on `splice update`.
+- Fix: template-rust pins `keelstackhq/splice/action` to the v0.3.0 commit and installs hoist with
+  `--ignore-scripts`. `circleci-status.yml` also requires `sender.type == 'Bot'`.
+- Contract rule 9.28 (`--data` keys are bare variable names; dotted keys exit 2) is added to
+  `docs/template-format.md`. It documents existing splice behaviour; `format` stays 1.
+
+## v0.3.1 — 2026-10-27
+
+**Security: symlink-safe agent guard. Update with `splice update`.** In a repo opened through a
+symlink (for example `~/code` pointing at another disk), `.claude/hooks/guard.mjs` compared
+`process.argv[1]` with `import.meta.url`. Node resolves symlinks in only one of them, so the check
+failed and the hook exited 0 without checking anything: the agent safety guard denied nothing.
+
+- Both templates' `guard.mjs` now compare real paths and are fail-safe: when the check is unsure
+  (no `argv[1]`, or a path that cannot be resolved) the guard runs. It is skipped only when it is
+  imported by another module. Also covered: `node --preserve-symlinks-main` and `node -e import()`.
+- The other generated scripts with the same check now compare real paths too, so they no longer
+  silently do nothing in a symlinked checkout: `.github/scripts/{affected,preview,release-plan,
+  rust-affected}.mjs`, `scripts/agents-index.mjs`, docs `scripts/docs-packs.mjs`, npm-cli
+  `scripts/stage.mjs`, and template-rust `.github/scripts/{release-pending,docs-only}.mjs` and
+  `scripts/agents-index.mjs`.
+- `template/`'s generated `.github/workflows/ci.yml` gains `# step: <id>` comment lines. hull now
+  generates the file from one step list (`scripts/gen-ci.mjs`); the steps themselves are unchanged.
+- Contract rule 9.27 (empty re-render removes an owned or shared file) is added to
+  `docs/template-format.md`. It takes effect with splice 0.3.0; hull's templates do not rely on it
+  yet.
+
+## v0.3.0 — 2026-10-26
+
+**New: pure Rust repos.** A third template, `gh:keelstackhq/hull//template-rust` (spec §15). It
+has no Node, pnpm or Turborepo: measured, a Turborepo cache hit saved about 1 s over a warm cargo
+no-op, while Node setup cost about 10 s per PR.
+
+- `splice new gh:keelstackhq/hull//template-rust <dir> --piece rust-cli:cli`: a cargo virtual
+  workspace (`crates/*`, seed crate `crates/common`), Rust 1.99.1 in `rust-toolchain.toml`,
+  `rustfmt.toml`, a root `deny.toml`, a nextest `ci` profile.
+- One CI job + `ci-ok`: docs-only early exit, rust-cache, then fmt, clippy, cargo-deny, nextest and
+  doc tests. Measured on `keelstackhq/rust-canary`: docs-only PR 7 s, crate PR 34 s warm
+  (budgets 15 s and 45 s).
+- `release.yml` releases through hoist (as berth and bosun do); nothing releases until the
+  repository variable `HOIST_RELEASE` is `enabled`. `splice.yml` is the update bot.
+- The same AI layer as `template/`, with cargo commands; the generated README names the rigging
+  and decisions channel adds.
+- hull's tooling renders combos from either template (combo `rust`).
+- Both templates' `.claude/settings.json` run bosun's hooks (`bosun hook pre-tool-use`,
+  `bosun hook session-start`) when the repo uses bosun: each is a no-op unless `bosun` is on
+  `PATH` and `.bosun/bosun.toml` exists. bosun's channel cannot own that file in a hull repo.
+
+## v0.2.2 — 2026-10-22
+
+- PR previews no longer go red on a fresh Cloudflare account. `wrangler versions upload` refuses a
+  Worker that was never deployed, so `preview.yml` now runs `.github/scripts/preview.mjs` (new,
+  owned): it skips such an app, writes the one-time `pnpm turbo run deploy --filter=<pkg>` to the job
+  summary and a notice, and still fails on any other error. A PR never deploys production.
+- The `AGENTS.md` of preact-app, astro-site and hono-worker names that one-time deploy
+  (astro-site and hono-worker now render it from `AGENTS.md.jinja`, same path and class).
+
+## v0.2.1 — 2026-10-22
+
+Fixes found adopting v0.2.0 in a repo first rendered before v0.1.0.
+
+- `splice update` deletes a leftover `.claude/agents/explorer.md` (base shipped it before v0.1.0,
+  then renamed it `explore.md`). No splice lock tracks it, so `migrations/0.2.1.toml` uses a step,
+  not a `[[remove]]`: it deletes the file when it is the copy hull shipped and reports an edited
+  copy, which it keeps.
+- The generated `CLAUDE.md` no longer says to run `splice update` (it is owned, so whoever reads it
+  has already updated). It names `splice channel add gh:keelstackhq/hull//rigging --piece claude`
+  only for a repo whose `.claude/agents/` lacks the subagents. The upgrade order stays under
+  "Upgrading to 0.2.0" in the README.
+- `base` is implicit: the README and hull's notes no longer show `--piece base`, and the dev
+  renderer CLI refuses it (exit 2) with splice 0.2.0's messages.
+
+## v0.2.0 — 2026-10-22
+
+**Breaking for repos generated from v0.1.0:** the four subagents left `base`.
+
+- `base` no longer ships `.claude/agents/{explore,implementer,reviewer,ci-fixer}.md`. They are in
+  hull's `rigging` channel (piece `claude`). `migrations/0.2.0.toml` removes base's unedited
+  copies; edited ones are kept and reported. To upgrade, in this order:
+  `splice update`, then `splice channel add gh:keelstackhq/hull//rigging --piece claude`.
+- Generated CI uses [hoard](https://github.com/keelstackhq/hoard) (`keelstackhq/hoard@v0`) as the
+  Turborepo remote cache instead of `actions/cache` on `.turbo/cache`.
+- Hull's own CI renders its combos with splice 0.2.0 and tests the dev renderer against it
+  (identical trees for every combo) and `splice update` from the previous tag. A weekly splice
+  update bot (`.github/workflows/splice.yml`) keeps the org-decisions channel current once
+  splice's Action tag `v1` carries its channel-only fix.
+
+## v0.1.1 — 2026-10-22
+
+- splice 0.2.0 can render the template again: dropped `template/migrations/.gitkeep`, which
+  splice refuses ("migration files must be named <semver>.toml"). The dev renderer applies the
+  same check now. Otherwise identical to v0.1.0.
+
+## v0.1.0 — 2026-10-22
+
+First tag. splice 0.2.0 refuses this tag (`template/migrations/.gitkeep`); use v0.1.1, or render
+it with `scripts/render.mjs` (the dev renderer).
+
+**Pieces** (`base` is always included; the others are opt-in, some `multiple`):
+
+| Piece          | What it adds                                                                                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `base`         | pnpm 12 workspace with an exact catalog, Turborepo, TypeScript 7, Vite+ (one Vite per repo), one-job CI with an affected early exit, Renovate preset, release workflow, AI layer |
+| `preact-app`   | Preact app on Vite+ with cascivo components, deployed to Cloudflare static assets                                                                                                |
+| `ui-storybook` | Preact UI package on cascivo with Storybook 10.6                                                                                                                                 |
+| `astro-site`   | Astro 7 static site with Preact islands on the shared Vite+ core                                                                                                                 |
+| `hono-worker`  | Hono on Cloudflare Workers: JSON request logs without query strings, headers or bodies; optional scrubbed Sentry                                                                 |
+| `rust-tool`    | Rust crate in a root Cargo workspace, run by Turborepo (clippy, rustfmt, nextest)                                                                                                |
+| `rust-cli`     | Production Rust CLI: one JSON object per run, fixed exit codes, pinned toolchain, cargo-deny                                                                                     |
+| `npm-cli`      | npm launcher and per-platform packages that ship a `rust-cli` binary (requires `rust-cli`)                                                                                       |
+| `ts-lib`       | Publishable ESM TypeScript library with publint and attw                                                                                                                         |
+| `tauri-app`    | Tauri v2 desktop shell around a `preact-app`; Rust builds only in the scheduled `desktop.yml`                                                                                    |
+| `docs`         | docspack: local, version-locked docs for agents, with a packs manifest                                                                                                           |
+
+**AI layer.** A canonical `AGENTS.md` (≤ 60 lines) with a thin `CLAUDE.md` (≤ 20), the subagents
+`Explore` (haiku), `implementer`, `reviewer`, `ci-fixer`, the skills `verify` and `add-piece`, a
+PreToolUse guard hook (denies publish, force and tag pushes and secret reads; asks before editing
+template-owned files), a generated docs index with a CI check, and per-instance `AGENTS.md`.
+
+**CI budget.** A generated repo's CI is one job plus `ci-ok`, on `pull_request` and `merge_group`,
+running only affected tasks. Budget: ≤ 45 s for a typical PR, ≤ 15 s docs-only. Measured on
+`keelstackhq/cli-canary` (2026-10-21, warm): npm-cli-only PR 26 s, docs-only 9 s, crate worst case
+42 s (n = 3, p50 26 s). Tauri, Storybook builds and Playwright stay off the PR path.
+
+**Known limits.**
+
+- The Tauri `.deb` build (`desktop.yml`) and the Cloudflare preview deploy (`preview.yml`) have
+  not run against a real account or runner yet.
+- Whether an empty `vars.SENTRY_DSN` in `wrangler.jsonc` overrides a `wrangler secret put`
+  value is unverified.
+- The `@docspack-community/*` packs are not published, so `pnpm docs:packs --online` lists them
+  as missing.
+- The first real npm release of a generated tool (provenance, trusted publishing, the
+  cross-built macOS x86_64 binary) has not been run.
