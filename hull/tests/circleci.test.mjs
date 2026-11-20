@@ -97,12 +97,17 @@ test("every downloaded binary is pinned and checked with sha256sum -c", async ()
   assert.match(await read("config.yml"), /image: cimg\/base:[\d.]+@sha256:[0-9a-f]{64}/);
 });
 
-test("hoard command is the vendored v0.6.1 reference and is called with its pin", async () => {
+test("hoard command is the vendored hoard/circleci/hoard.yml reference and is called with its pin", async () => {
   const hoard = await read("src/commands/hoard.yml");
-  // reference copy from keelstackhq/hoard v0.6.1 (circleci/hoard.yml), byte-identical
+  // byte-identical copy of the monorepo's hoard/circleci/hoard.yml (routes <= 0.21.0 to
+  // keelstackhq/hoard, later versions to keelstackhq/keelstack)
+  const reference = await readFile(
+    fileURLToPath(new URL("../../hoard/circleci/hoard.yml", import.meta.url)),
+    "utf8",
+  );
   assert.equal(
     createHash("sha256").update(hoard).digest("hex"),
-    "a5cab6191933c45f062f28066373ee81fec4bd4cb9b332d86dd6aa101b710ffa",
+    createHash("sha256").update(reference).digest("hex"),
   );
   const cmd = YAML.parse(hoard);
   assert.deepEqual(cmd.parameters.storage.enum, ["fs", "r2"]);

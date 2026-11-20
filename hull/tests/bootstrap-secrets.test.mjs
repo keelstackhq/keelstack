@@ -33,9 +33,9 @@ const tools =
   version("jq", ["--version"]) !== "";
 const skip = tools ? false : "needs sops 3.13.3, age-keygen 1.3.x and jq on PATH";
 
-// hull's own CI workflow (.github/workflows/ci.yml, `name: ci`) installs the tools, so there a
-// missing tool must fail, not skip silently. Other CI jobs that run the suite (bosun's test gate in
-// bosun.yml) do not install them; there these tests skip, as they do locally.
+// The monorepo's CI workflow (root .github/workflows/ci.yml, `name: ci`, job ci-hull) installs the
+// tools, so there a missing tool must fail, not skip silently. Other workflows that run the suite do
+// not install them; there these tests skip, as they do locally.
 export const REQUIRED_WORKFLOW = "ci";
 export const toolsRequired = (env) => Boolean(env.CI) && env.GITHUB_WORKFLOW === REQUIRED_WORKFLOW;
 
@@ -43,7 +43,7 @@ test(
   "sops 3.13.3, age-keygen 1.3.x and jq are present in hull's ci workflow",
   { skip: toolsRequired(process.env) ? false : "not hull's ci workflow" },
   () => {
-    assert.ok(tools, "install pinned sops and age (see .github/workflows/ci.yml)");
+    assert.ok(tools, "install pinned sops and age (see the root .github/workflows/ci.yml)");
   },
 );
 
@@ -51,7 +51,7 @@ test("the tools assertion fires in hull's ci workflow only, and ci.yml still ins
   assert.equal(toolsRequired({ CI: "true", GITHUB_WORKFLOW: "ci" }), true);
   assert.equal(toolsRequired({ CI: "true", GITHUB_WORKFLOW: "bosun" }), false);
   assert.equal(toolsRequired({ GITHUB_WORKFLOW: "ci" }), false);
-  const ci = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+  const ci = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
   assert.match(
     ci,
     new RegExp(`^name: ${REQUIRED_WORKFLOW}$`, "m"),

@@ -18,6 +18,8 @@ The final re-sync merges each source repo's commits after the imported SHA below
 | keel | https://github.com/keelstackhq/keel | e34f177359f889b2482814f5b611ec90c8fe9339 |
 | decisions | https://github.com/keelstackhq/decisions | 5b05c178f0a27d93e06d93089afb330e97bb1243 |
 
+Re-sync check 2026-11-20: every source repo's main still equals its imported SHA (nothing to bring in).
+
 ## Changes made by the move
 
 - One Cargo workspace at the root (`Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`,

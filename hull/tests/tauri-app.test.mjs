@@ -168,9 +168,10 @@ test("desktop combo is scheduled and never selected by affected-combos", () => {
   assert.deepEqual(affectedCombos(everything, combos.combos).includes("web"), true);
 });
 
-test("hull desktop.yml derives its pieces from the scripts/combos/ fragments", async () => {
+test("root hull-desktop.yml derives its pieces from the scripts/combos/ fragments", async () => {
+  // hull's desktop build runs as the monorepo's root hull-desktop.yml (ported from hull's desktop.yml).
   const wf = YAML.parse(
-    await readFile(new URL("../.github/workflows/desktop.yml", import.meta.url), "utf8"),
+    await readFile(new URL("../../.github/workflows/hull-desktop.yml", import.meta.url), "utf8"),
   );
   assert.ok("workflow_dispatch" in wf.on);
   assert.ok(wf.on.schedule[0].cron);

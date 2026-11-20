@@ -5,25 +5,31 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
 
+// hull/.github/workflows/ is kept from the old keelstackhq/hull repo but does not run here; hull's
+// CI is the `ci-hull` job of the monorepo's root ci.yml and its release is the root release.yml.
 const DIR = fileURLToPath(new URL("../.github/workflows/", import.meta.url));
+const ROOT_DIR = fileURLToPath(new URL("../../.github/workflows/", import.meta.url));
 
-test("hull's own workflows are valid YAML with jobs", async () => {
-  const files = (await readdir(DIR)).filter((f) => /\.ya?ml$/.test(f));
-  assert.ok(files.length > 0);
-  for (const f of files) {
-    const doc = YAML.parseDocument(await readFile(DIR + f, "utf8"));
-    assert.deepEqual(doc.errors.map(String), [], f);
-    assert.ok(doc.toJS().jobs, `${f} has jobs`);
+test("hull's own and the root workflows are valid YAML with jobs", async () => {
+  for (const dir of [DIR, ROOT_DIR]) {
+    const files = (await readdir(dir)).filter((f) => /\.ya?ml$/.test(f));
+    assert.ok(files.length > 0, dir);
+    for (const f of files) {
+      const doc = YAML.parseDocument(await readFile(dir + f, "utf8"));
+      assert.deepEqual(doc.errors.map(String), [], f);
+      assert.ok(doc.toJS().jobs, `${f} has jobs`);
+    }
   }
 });
 
-const hullCi = async () => YAML.parse(await readFile(DIR + "ci.yml", "utf8")).jobs.ci.steps;
+const hullCi = async () =>
+  YAML.parse(await readFile(ROOT_DIR + "ci.yml", "utf8")).jobs["ci-hull"].steps;
 const combosJson = async () => {
   const { loadCombos } = await import("../scripts/lib/combos.mjs");
   return JSON.stringify(loadCombos());
 };
 
-test("hull ci.yml Rust condition matches rust-tool and rust-cli combos only", async () => {
+test("root ci.yml ci-hull Rust condition matches rust-tool and rust-cli combos only", async () => {
   const step = (await hullCi()).find((s) => s.id === "rust");
   const script = step.run.match(/node -e '([^']+)'/)[1];
   const exit = async (list) =>
@@ -35,28 +41,26 @@ test("hull ci.yml Rust condition matches rust-tool and rust-cli combos only", as
   assert.equal(await exit(["rust"]), 0);
 });
 
-test("hull ci.yml installs nextest@0.9.148 and cargo-deny@0.20.2, with rust-cache for the cli and rust combos", async () => {
+test("root ci.yml ci-hull installs nextest@0.9.148 and cargo-deny@0.20.2, with rust-cache for the cli and rust combos", async () => {
   const steps = await hullCi();
   const install = steps.find((s) => s.uses?.startsWith("taiki-e/install-action"));
   assert.equal(install.with.tool, "cargo-nextest@0.9.148,cargo-deny@0.20.2");
+  assert.equal(install.if, "steps.rust.outputs.needed == 'true'");
+  // One cache for the workspace's splice build (always) and the two Rust combos.
   const cache = steps.find((s) => s.uses?.startsWith("Swatinem/rust-cache@"));
-  assert.equal(cache.if, "steps.rust.outputs.needed == 'true'");
   assert.equal(
     cache.with.workspaces,
-    "${{ runner.temp }}/combos/cli -> target\n${{ runner.temp }}/combos/rust -> target\n",
+    ". -> target\n${{ runner.temp }}/combos/cli -> target\n${{ runner.temp }}/combos/rust -> target\n",
   );
 });
 
-test("hull ci.yml installs splice SPLICE_VERSION before Test and sets SPLICE_BIN", async () => {
-  const { SPLICE_VERSION } = await import("../scripts/lib/splice.mjs");
+// In the monorepo hull tests the workspace's splice (hull and splice change the contract together).
+test("root ci.yml ci-hull builds the workspace splice before Test and sets SPLICE_BIN", async () => {
   const steps = await hullCi();
-  const i = steps.findIndex((s) => s.name === "Install splice");
-  assert.ok(i >= 0, "Install splice step");
+  const i = steps.findIndex((s) => s.name === "Build splice (workspace)");
+  assert.ok(i >= 0, "Build splice (workspace) step");
   assert.ok(i < steps.findIndex((s) => s.name === "Test"), "before Test");
-  assert.match(
-    steps[i].run,
-    new RegExp(`@keelstackhq/splice@${SPLICE_VERSION.replaceAll(".", "\\.")}\\b`),
-  );
+  assert.match(steps[i].run, /cargo build [^\n]*--locked -p keel-splice --bin splice/);
   assert.match(steps[i].run, /SPLICE_BIN=.*>> "\$GITHUB_ENV"/);
 });
 
@@ -77,10 +81,17 @@ test("hull splice.yml runs the splice update bot on all sources", async () => {
   );
 });
 
-test("hull ci.yml uses hoard (v0.6.1, SHA-pinned) for the turbo cache before dogfood, without --cache-dir", async () => {
+test("root ci.yml ci-hull uses the in-repo hoard action for the turbo cache before dogfood, without --cache-dir", async () => {
   const steps = await hullCi();
-  const i = steps.findIndex((s) => s.uses?.startsWith("keelstackhq/hoard@"));
-  assert.ok(i >= 0, "uses keelstackhq/hoard (v0.6.1, SHA-pinned)");
+  // A workflow of this repository runs its own hoard (./hoard), never a remote pin of it.
+  assert.ok(
+    !steps.some((s) => (s.uses ?? "").startsWith("keelstackhq/")),
+    "no remote keelstackhq action",
+  );
+  const i = steps.findIndex((s) => s.uses === "./hoard");
+  assert.ok(i >= 0, "uses ./hoard");
+  const co = steps.findIndex((s) => s.uses?.startsWith("actions/checkout@"));
+  assert.ok(co >= 0 && co < i, "checkout before the local action");
   assert.equal(steps[i].if, "steps.combos.outputs.args != ''");
   const df = steps.findIndex((s) => s.name === "Dogfood combos");
   assert.ok(i < df, "before dogfood");
@@ -88,48 +99,44 @@ test("hull ci.yml uses hoard (v0.6.1, SHA-pinned) for the turbo cache before dog
   assert.ok(!steps.some((s) => s.uses?.startsWith("actions/cache")), "no actions/cache step");
 });
 
-test("hull release.yml plans on main pushes and releases behind the release environment", async () => {
-  const wf = YAML.parse(await readFile(DIR + "release.yml", "utf8"));
+// hull's per-folder release moved to the monorepo's lockstep release (root release.yml, D-023).
+test("root release.yml plans on merged PRs to main and releases behind the release environment", async () => {
+  const text = await readFile(ROOT_DIR + "release.yml", "utf8");
+  const wf = YAML.parse(text);
   assert.equal(wf.name, "release");
-  assert.deepEqual(wf.on.push.branches, ["main"]);
+  assert.deepEqual(wf.on.pull_request, { types: ["closed"], branches: ["main"] });
   assert.ok("workflow_dispatch" in wf.on);
   assert.deepEqual(wf.permissions, {});
-  assert.equal(wf.concurrency.group, "release-run-${{ github.run_id }}");
   assert.equal(wf.concurrency["cancel-in-progress"], false);
   // bosun's ci-minutes gate wants cancelling concurrency; its documented allow comment keeps a
   // release from ever being cancelled mid-publish.
-  assert.match(
-    await readFile(DIR + "release.yml", "utf8"),
-    /^ {2}# ci-minutes: allow concurrency \S/m,
-  );
+  assert.match(text, /^# ci-minutes: allow concurrency \S/m);
   const { plan, release } = wf.jobs;
-  assert.equal(
-    plan.if,
-    "github.repository == 'keelstackhq/hull' && github.ref == 'refs/heads/main'",
-  );
-  const publish = release.steps.find((s) => s.name === "Publish the GitHub release");
-  assert.equal(publish.if, "steps.tag.outputs.skip != 'true'");
+  // The repo guard names this repository, never an old per-tool one.
+  assert.match(plan.if, /^github\.repository == 'keelstackhq\/keelstack' &&/);
+  assert.doesNotMatch(text, /github\.repository == 'keelstackhq\/(?!keelstack')/);
   assert.deepEqual(plan.permissions, { contents: "read" });
-  assert.equal(release.needs, "plan");
-  assert.equal(release.if, "needs.plan.outputs.release == 'true'");
-  assert.equal(release.environment, "release");
-  assert.deepEqual(release.permissions, { contents: "write" });
-  assert.equal(release.concurrency.group, "release-tag-${{ needs.plan.outputs.tag }}");
-  assert.equal(release.concurrency["cancel-in-progress"], false);
+  // A PR run never publishes: everything that writes needs a workflow_dispatch run (on main).
   const writers = Object.entries(wf.jobs).filter(([, j]) => j.permissions?.contents === "write");
   assert.deepEqual(
     writers.map(([k]) => k),
-    ["release"],
+    ["release", "major"],
   );
+  for (const [name, job] of Object.entries(wf.jobs)) {
+    if (job.environment === undefined) continue;
+    assert.equal(job.environment, "release", name);
+    assert.match(job.if, /github\.event_name == 'workflow_dispatch'/, name);
+  }
+  for (const name of ["release", "crates", "npm", "major"])
+    assert.equal(wf.jobs[name].environment, "release", name);
+  assert.ok(release.needs.includes("plan"));
+  assert.match(release.if, /needs\.plan\.outputs\.release == 'true'/);
   const run = release.steps.map((s) => s.run ?? "").join("\n");
-  assert.match(run, /--verify-tag/);
   assert.match(run, /--notes-start-tag/);
   assert.match(run, /git push origin "refs\/tags\/\$TAG"/);
-  for (const job of [plan, release]) {
-    // Credentials stay in the checkout: ls-remote and the tag push need them on a private repo.
-    const co = job.steps.find((s) => s.uses?.startsWith("actions/checkout@"));
-    assert.equal(co.with.ref, "${{ github.sha }}");
-  }
+  const co = release.steps.find((s) => s.uses?.startsWith("actions/checkout@"));
+  assert.equal(co.with.ref, "${{ needs.plan.outputs.sha }}");
+  assert.equal(co.with["persist-credentials"], false);
 });
 
 // setup-node@v5 turns on the package-manager cache by itself when package.json has

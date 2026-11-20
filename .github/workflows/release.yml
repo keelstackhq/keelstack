@@ -36,16 +36,14 @@ name: release
 #   - Assets keep each tool's old name, now on release vX.Y.Z of keelstackhq/keelstack:
 #       bosun-<target>[.exe] hoist-<target>[.exe] berth-<target>[.exe] keel-<target>[.exe],
 #       splice-<target>.tar.gz|.zip, hoard-<target>.tar.gz, and one SHA256SUMS of all of them.
-#   - Code that still downloads from the old repositories (it gets nothing after their last
-#     release): hoard/scripts/install.sh, hoard/circleci/hoard.yml and
-#     hull/template/pieces/circleci/files/.circleci/src/commands/hoard.yml
-#     (github.com/keelstackhq/hoard/releases/download/v$V/hoard-<target>.tar.gz),
-#     hoard/action/src/binary.ts (DEFAULT_REPO; GITHUB_ACTION_REPOSITORY wins, so
-#     `uses: keelstackhq/keelstack/hoard@vX` already downloads from this repository),
-#     splice/npm/splice/lib/platform.js (message only), splice/src/source.rs and
-#     keel/src/tools/splice.rs (hull URLs), the package.json `repository` of every launcher
-#     (this workflow rewrites repository.url/directory when it publishes, npm provenance
-#     requires the url to be this repository).
+#     Consumers: hoist/release/action.yml (hoist-<target> + SHA256SUMS), hoard/action/src/binary.ts,
+#     hoard/scripts/install.sh, hoard/circleci/hoard.yml and its hull copy
+#     hull/template/pieces/circleci/files/.circleci/src/commands/hoard.yml (hoard-<target>.tar.gz,
+#     checksums from hoard/action/src/checksums.generated.ts at the tag), the npm job below.
+#   - Versions <= 0.21.0 are the old per-tool repositories' releases: the installers route them
+#     there, and `plan` refuses to release such a version from here.
+#   - The package.json `repository` of every launcher: this workflow rewrites
+#     repository.url/directory when it publishes (npm provenance requires this repository).
 
 on:
   pull_request:
@@ -137,6 +135,13 @@ jobs:
           if [ "$release" = true ]; then
             re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
             [[ $version =~ $re ]] || { echo "::error::Cargo.toml version '$version' is not X.Y.Z"; exit 1; }
+            # Fail closed: installers and launchers route versions <= 0.21.0 to the old per-tool
+            # repositories, so a monorepo release must be above 0.21.0.
+            IFS=. read -r major minor patch <<<"$version"
+            if [ "$major" -eq 0 ] && { [ "$minor" -lt 21 ] || { [ "$minor" -eq 21 ] && [ "$patch" -le 0 ]; }; }; then
+              echo "::error::refusing to release $version: monorepo releases must be > 0.21.0 (installers send <= 0.21.0 to the old keelstackhq/<tool> repositories); bump with scripts/bump-version.sh"
+              exit 1
+            fi
             # Every npm package of the lockstep carries the version, and pins its platform packages to it.
             bad=0
             while IFS= read -r f; do

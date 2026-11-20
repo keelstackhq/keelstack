@@ -92,9 +92,10 @@ test("every parsed workflow/action `uses` (plain files, hull's own, rendered com
 });
 
 test("dtolnay/rust-toolchain pinned by SHA sets toolchain: stable", async () => {
+  // hull's CI and desktop build run as the monorepo's root ci.yml (ci-hull) and hull-desktop.yml.
   const files = [
-    ".github/workflows/ci.yml",
-    ".github/workflows/desktop.yml",
+    "../.github/workflows/ci.yml",
+    "../.github/workflows/hull-desktop.yml",
     "template/pieces/base/files/.github/workflows/desktop.yml.jinja",
   ];
   for (const f of files) {

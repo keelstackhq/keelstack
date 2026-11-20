@@ -50,9 +50,10 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 
 ## Follow-ups (not done here)
 
-- Download URLs that still point at the old repos: `hoard/scripts/install.sh`,
-  `hoard/circleci/hoard.yml`, `hoard/action/src/binary.ts` (`DEFAULT_REPO`), the hull template's
-  `hoard.yml`, `splice/src/source.rs`, `keel/src/tools/splice.rs`, `repository.url` in each
-  launcher `package.json` (release.yml rewrites it at publish time).
+- Download URLs: installers (`hoard/scripts/install.sh`, `hoard/circleci/hoard.yml` and its hull
+  template copy, `hoard/action/src/binary.ts`, `hoist/release/action.yml`) send versions > 0.21.0 to
+  this repository and <= 0.21.0 to the old ones; release.yml refuses to release a version <= 0.21.0.
+  keel's default hull sources (`keel/src/tools/splice.rs`) stay on keelstackhq/hull until keel pins a
+  monorepo hull release; `repository.url` in each launcher `package.json` is rewritten at publish.
 - Not ported (inert, kept in their folders): hoard `bench.yml`, `r2-checks.yml`, `self-test.yml`;
   splice `action-selftest.yml`; the splice update-bot `splice.yml` copies (decisions are in-repo).
