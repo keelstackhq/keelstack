@@ -1,0 +1,6 @@
+id = "snapshot"
+description = "Org decisions snapshot (docs/agents/org-decisions.md)"
+multiple = false
+
+[files]
+owned = ["docs/agents/org-decisions.md"]
