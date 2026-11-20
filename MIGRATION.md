@@ -30,4 +30,24 @@ Re-sync check 2026-11-20: every source repo's main still equals its imported SHA
 - splice no longer needs serde_json `preserve_order`: workspace feature unification would have
   turned it on for every tool and changed their JSON key order. splice keeps key order with its
   own ordered value type (`splice/src/merge/value.rs`).
-- Per-folder `.github/` directories are kept but do not run here; root CI replaces them.
+- Root CI and governance workflows (`.github/workflows/`) replace the per-repo ones. The per-repo
+  ci, bosun, risk, verdict, main-open, main-health and splice workflows of splice, hoist and hoard
+  were deleted; the files still under `<folder>/.github/workflows/` (berth, bosun, hoard, hoist,
+  hull, splice) do not run here: some tests still read them, or they are not ported yet (below).
+- One root `.bosun/` (bosun's config, `[[folders]]` for every folder). The per-folder `.bosun/`
+  of hoard, hoist, hull and splice were deleted; their risk rules apply re-rooted under each folder
+  in the root `risk.toml`.
+- Tags were not imported. `hull/legacy-tags.txt` maps hull's old release tags to their commits
+  here (hull's update tests use it).
+
+## Follow-ups (not done by the move)
+
+- Not ported to root workflows: hoard `self-test.yml`, `r2-checks.yml`, `bench.yml`; splice
+  `action-selftest.yml`; the splice update bot (`splice.yml` in bosun and hull). main-health's
+  weekly job covers only the Rust workspace.
+- Tests that still check the old per-folder release workflows (splice `scripts/release-*.test.mjs`,
+  `check-version.test.mjs`, hoard `action/test/release-workflow.test.ts`, berth
+  `tests/release_config.rs`, bosun `src/core/checks.rs`): port their checks to the root
+  `release.yml`, then delete the old files.
+- Templates rendered into other repos (`hull/template/**`, `bosun/channel/**`) keep pins to the
+  old repos' last releases until the first monorepo release (> 0.21.0) exists.
