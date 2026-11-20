@@ -1,0 +1,193 @@
+# Risk rules (spec §8). risk-check reads this file from the PR's base branch, never from the
+# head, so a PR cannot change the rules that judge it. A rule only escalates.
+
+[[rule]]
+id = "R-gov"
+why = "Governance files decide who approves what."
+# REVIEW.md and docs/lessons.toml are read into every review pack; docs/setup-script.sh runs
+# as root wherever it is pasted. **/plans/** carry `allow:` and touch lists for test-integrity and
+# claims (spec §8).
+paths = [".bosun/**", "governance/**", "CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS", "**/codeowners", ".claude/**", "**/.claude/**", ".splice/**", "**/hoist.toml", "docs/setup-script.sh", "REVIEW.md", "docs/lessons.toml", "src/core/session_rules.rs", "src/core/session_rules/**", "src/hooks/session_rules.rs", "src/hooks/session_rules/**", ".claude-plugin/**", "docs/agents/**", "**/agents.md", "**/claude.md", "**/claude.local.md", "**/plans/**"]
+
+[[rule]]
+id = "R-ci"
+why = "CI decides what is verified."
+# Delegate-able (spec §8, delegated decisions): a delegate key with one clean verdict may
+# approve. The critical floor (every workflow, .bosun/**, governance/**, CODEOWNERS, hoist.toml,
+# all of src/** and the manifests, R-secrets, R-prod-write, R-unseen) always needs the owner,
+# so here a delegate decides deny.toml, the toolchain files, .config/** and profiles/**. Delete
+# the delegate key in .bosun/approvers.toml to turn delegation off. Needs .bosun/version 0.2.1+.
+approval = "delegate"
+paths = [".github/workflows/**", ".github/actions/**", ".github/dependabot.yml", "scripts/**", "Makefile", "**/Makefile", "justfile", "**/justfile", "Dockerfile", "**/Dockerfile", ".husky/**", "**/action.yml", "**/action.yaml", ".circleci/**", ".gitlab-ci.yml", ".gitlab/ci/**", ".buildkite/**", "**/jenkinsfile", "azure-pipelines.y*ml", "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml", "**/deny.toml", "**/.deny.toml", "**/deny.exceptions.toml", "**/.deny.exceptions.toml", "**/deny.local.toml", "**/.deny.local.toml", "scripts/deny.mjs", "rust-toolchain.toml", "rust-toolchain"]
+
+[[rule]]
+id = "R-gate"
+why = "The gate code decides what passes."
+approval = "delegate"
+# A file and its module directory: `x.rs` and `x/**`.
+paths = [
+    "src/core/risk.rs",
+    "src/core/weaken.rs",
+    "src/core/risk_default.toml",
+    "src/core/verdict.rs",
+    "src/core/verdict/**",
+    "src/core/records.rs",
+    "src/core/records/**",
+    "src/core/meta.rs",
+    "src/core/meta/**",
+    "src/core/glob.rs",
+    "src/core/glob/**",
+    "src/core/approve.rs",
+    "src/core/approve/**",
+    "src/core/mod.rs",
+    "src/cli/risk_check.rs",
+    "src/cli/risk_check/**",
+    "src/cli/verdict.rs",
+    "src/cli/verdict/**",
+    "src/cli/approve.rs",
+    "src/cli/approve/**",
+    "src/cli/test_integrity.rs",
+    "src/cli/test_integrity/**",
+    "src/cli/mod.rs",
+    "src/cli/gate.rs",
+    "src/cli/gate/**",
+    "src/cli/review_ci.rs",
+    "src/cli/review_ci/**",
+    "src/cli/review_pack.rs",
+    "src/cli/review_pack/**",
+    "src/core/review.rs",
+    "src/core/review/**",
+    "src/core/agreement.rs",
+    "src/core/agreement/**",
+    "src/core/state.rs",
+    "src/core/state/**",
+    "src/core/lease.rs",
+    "src/core/lease/**",
+    # The approval path (carry-over, bundles, touch, plans) and the hooks that enforce merge-lock
+    # and label-lock.
+    "src/core/carry.rs",
+    "src/core/carry/**",
+    "src/core/lockmerge.rs",
+    "src/core/lockmerge/**",
+    "src/core/touch.rs",
+    "src/core/touch/**",
+    "src/core/text.rs",
+    "src/core/text/**",
+    "src/core/shape.rs",
+    "src/core/shape/**",
+    "src/core/plan.rs",
+    "src/core/plan/**",
+    "src/core/guard.rs",
+    "src/core/guard/**",
+    "src/core/repeat.rs",
+    "src/core/repeat/**",
+    "src/cli/carry_over.rs",
+    "src/cli/carry_over/**",
+    "src/cli/pr_bundle.rs",
+    "src/cli/pr_bundle/**",
+    "src/cli/plan.rs",
+    "src/cli/plan/**",
+    "src/hooks/**",
+    # The gate stamps, their records and the CI-minutes gate.
+    "src/core/ci_minutes.rs",
+    "src/core/ci_minutes/**",
+    "src/cli/ci_minutes.rs",
+    "src/cli/ci_minutes/**",
+    "src/core/stamps.rs",
+    "src/core/stamps/**",
+    "src/cli/stamps.rs",
+    "src/cli/stamps/**",
+    "src/core/gate_record.rs",
+    "src/core/gate_record/**",
+    "src/config.rs",
+    "src/config/**",
+    "src/ctx.rs",
+    "src/ctx/**",
+    "src/registry.rs",
+    "src/registry/**",
+    # Code that acts without the owner (modes, spec §18): effective policy, digest answers,
+    # fixers and revert auto-merge, brake and curator targets, spawn decisions.
+    "src/core/mode.rs",
+    "src/core/mode/**",
+    "src/core/digest.rs",
+    "src/core/digest/**",
+    "src/cli/digest.rs",
+    "src/cli/digest/**",
+    "src/core/heal.rs",
+    "src/core/heal/**",
+    "src/cli/heal.rs",
+    "src/cli/heal/**",
+    "src/core/metrics.rs",
+    "src/core/metrics/**",
+    "src/cli/metrics.rs",
+    "src/cli/metrics/**",
+    "src/core/spawn.rs",
+    "src/core/spawn/**",
+    "src/cli/spawn.rs",
+    "src/cli/spawn/**",
+    "src/core/wave.rs",
+    "src/core/wave/**",
+    "src/cli/wave.rs",
+    "src/cli/wave/**",
+    "src/time.rs",
+    "src/time/**",
+    "Cargo.toml",
+    "build.rs",
+    "**/build.rs",
+    ".cargo/**",
+    ".config/**",
+    "Cargo.lock",
+    "src/anthropic.rs",
+    "src/anthropic/**",
+    "src/core/lessons.rs",
+    "src/core/lessons/**",
+    "src/core/budget.rs",
+    "src/core/budget/**",
+    "src/sessions/**",
+    "src/gates/**",
+    "src/github/**",
+    "src/app.rs",
+    "src/output.rs",
+    "src/lib.rs",
+    "src/main.rs",
+    "profiles/**",
+    "npm/**",
+]
+
+[[rule]]
+id = "R-ci-review"
+why = "Shipped CI for other repos; two independent reviews instead of the owner."
+approval = "two-verdicts"
+# channel/ is the CI and governance that `bosun init` ships to other repos.
+paths = ["channel/**"]
+
+[[rule]]
+id = "R-secrets"
+why = "A secret in the repo is a leak."
+paths = ["**/secrets.toml", "**/access.toml", "**/*.sops.*"]
+# A name, an optional quote, then `=` and a value, or `:` and a quoted literal (a type, a field or a
+# reference after `:` is no secret); a URL with user:password; strong formats always.
+content = '''(?i)(?:(api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?|token|passw(or)?d|private[_-]?key)["']?\s*:?=\s*(?:={1,2}\s*["'](?:[^"'$]|\$\w)|[^\s$="'>]|["'](?:[^"'$]|\$\w)|\$[\w"']|$|\$\s*(?:\|\||\?\?|\?:|or\b|\.\s*(?:ok\(\)\s*\.\s*)?unwrap_or(?:_else)?\(\s*(?:\|[^|]*\|\s*)?)\s*["'])|(?:^\s*|\b(?:const|let|var|val|static|mut|final|private|public|protected|readonly)\s+)[\w.-]*(api[_-]?key|secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?|token|passw(or)?d|private[_-]?key)["']?\s*:\s*[\w&<>\[\].' ]+=\s*(?:[^\s$="'>]|["'](?:[^"'$]|\$\w)|\$[\w"']|$|\$\s*(?:\|\||\?\?|\?:|or\b|\.\s*(?:ok\(\)\s*\.\s*)?unwrap_or(?:_else)?\(\s*(?:\|[^|]*\|\s*)?)\s*["'])|(?:^|[{,])\s*(?:-\s+)?["']?(?:[\w.-]*(api[_-]?key|token|passw(or)?d|private[_-]?key)|(?:[\w.]*[_.-])?secret(?:[_-]?(?:access[_-]?)?key|[_-]?token)?)["']?\s*:\s*["']([^"'$]|\$\w))|AGE-SECRET-KEY-1|SOPS_AGE_KEY\s*[:=]|://[^/\s:@]+:(?:[^/\s@$]|\$\w)[^/\s@]*@'''
+
+[[rule]]
+id = "R-deps"
+why = "A new dependency adds code that nobody reviewed."
+# Package-source config redirects where every dependency comes from: Cargo [source] and
+# [registries], npm, pnpm and yarn registry and scope lines, and the hooks and binaries that
+# rewrite or resolve every package (.pnpmfile.cjs, bunfig.toml, .yarn plugins and releases).
+# Any change counts.
+paths = ["**/.cargo/config.toml", "**/.cargo/config", "**/.npmrc", "**/.yarnrc", "**/.yarnrc.yml", "**/.pnpmfile.cjs", "**/bunfig.toml", "**/.yarn/plugins/**", "**/.yarn/releases/**"]
+new_dependency = true
+approval = "delegate"
+
+[[rule]]
+id = "R-prod-write"
+why = "A write to production cannot be undone by a revert."
+capability = "prod-write"
+
+[[rule]]
+id = "R-weaken"
+why = "A change that loosens a gate weakens what verifies every later change."
+# risk-check adds the `weaken` capability when a base/head compare finds a loosened gate
+# (spec §8); its findings are the evidence.
+capability = "weaken"
