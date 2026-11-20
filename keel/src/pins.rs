@@ -19,12 +19,26 @@ pub struct ToolPin {
     pub sha512: Option<Sha512Set>,
 }
 
+/// `[refs.<name>] tag, sha[, repo]`: the commit a pinned git tag must point at, and the GitHub
+/// repo (`owner/name`) whose tag it is. Entries without `repo` predate it (None).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefPin {
+    pub tag: String,
+    pub sha: String,
+    pub repo: Option<String>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Pins {
     versions: BTreeMap<String, String>,
     sha: BTreeMap<String, (String, Sha512Set)>,
-    /// `[refs.<name>] tag, sha`: the commit a pinned git tag must point at.
-    refs: BTreeMap<String, (String, String)>,
+    refs: BTreeMap<String, RefPin>,
+}
+
+/// `owner/name`: two non-empty parts, no whitespace.
+fn is_owner_name(r: &str) -> bool {
+    matches!(r.split_once('/'), Some((o, n))
+        if !o.is_empty() && !n.is_empty() && !n.contains('/') && !r.contains(char::is_whitespace))
 }
 
 fn pins_err(file: &str, message: impl Into<String>) -> KeelError {
@@ -99,7 +113,19 @@ impl Pins {
                         format!("[refs.{name}] needs `tag` and `sha`"),
                     ));
                 };
-                pins.refs.insert(name.clone(), (tag, sha));
+                let repo = match v.get("repo") {
+                    None => None,
+                    Some(r) => match r.as_str() {
+                        Some(r) if is_owner_name(r) => Some(r.to_string()),
+                        _ => {
+                            return Err(pins_err(
+                                base_name,
+                                format!("[refs.{name}] `repo` must be \"owner/name\""),
+                            ));
+                        }
+                    },
+                };
+                pins.refs.insert(name.clone(), RefPin { tag, sha, repo });
             }
         }
         if let Some(s) = t.get("sha512").and_then(|v| v.as_table()) {
@@ -133,12 +159,9 @@ impl Pins {
         self.versions.get(name).map(String::as_str)
     }
 
-    /// The commit pinned for git tag `tag` of `name` (e.g. `hull`), if that is the pinned tag.
-    pub fn ref_sha(&self, name: &str, tag: &str) -> Option<&str> {
-        self.refs
-            .get(name)
-            .filter(|(t, _)| t == tag)
-            .map(|(_, s)| s.as_str())
+    /// The pin of git tag `tag` of `name` (e.g. `hull`), if that is the pinned tag.
+    pub fn ref_pin(&self, name: &str, tag: &str) -> Option<&RefPin> {
+        self.refs.get(name).filter(|p| p.tag == tag)
     }
 
     pub fn tool(&self, name: &str) -> Option<ToolPin> {
@@ -217,11 +240,40 @@ mod tests {
     fn hull_ref_sha_is_pinned_for_the_pinned_tag_only() {
         let p = Pins::from_texts("e", EMBEDDED, None).unwrap();
         assert_eq!(
-            p.ref_sha("hull", "v0.13.0"),
-            Some("3f4a65fda568cdd20c76168ed156d25a28ba5630")
+            p.ref_pin("hull", "v0.13.0"),
+            Some(&RefPin {
+                tag: "v0.13.0".into(),
+                sha: "3f4a65fda568cdd20c76168ed156d25a28ba5630".into(),
+                repo: Some("keelstackhq/hull".into()),
+            })
         );
-        assert_eq!(p.ref_sha("hull", "v9"), None);
+        assert_eq!(p.ref_pin("hull", "v9"), None);
         assert!(Pins::from_texts("e", "[refs.hull]\ntag=\"v1\"\n", None).is_err());
+    }
+
+    #[test]
+    fn ref_repo_is_optional_and_must_be_owner_slash_name() {
+        let pin = |extra: &str| {
+            let text = format!("[refs.hull]\ntag=\"v1\"\nsha=\"a\"\n{extra}\n");
+            Pins::from_texts("e", &text, None)
+        };
+        // An entry from before `repo` existed still parses, with no repo.
+        assert_eq!(pin("").unwrap().ref_pin("hull", "v1").unwrap().repo, None);
+        let p = pin("repo=\"keelstackhq/keelstack\"").unwrap();
+        assert_eq!(
+            p.ref_pin("hull", "v1").unwrap().repo.as_deref(),
+            Some("keelstackhq/keelstack")
+        );
+        for bad in [
+            "repo=1",
+            "repo=\"keelstack\"",
+            "repo=\"a/b/c\"",
+            "repo=\"/b\"",
+            "repo=\"a/\"",
+            "repo=\"a /b\"",
+        ] {
+            assert!(pin(bad).is_err(), "{bad}");
+        }
     }
 
     #[test]

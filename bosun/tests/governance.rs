@@ -10,8 +10,11 @@ use serde_json::{Value, json};
 use std::fs;
 use std::path::Path;
 
+/// `path` relative to the monorepo root: bosun runs on the root's `.bosun/`, `.github/`,
+/// `governance/` and `.claude/` (bosun/ is a folder of it, D-023).
 fn read(path: &str) -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path))
+        .unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 /// The committed copy of `path` (HEAD), else the working-tree file. CI puts the base's `.bosun/`
@@ -19,7 +22,7 @@ fn read(path: &str) -> String {
 /// `.bosun/risk.toml` together is judged on what it commits.
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:./{path}")])
+        .args(["show", &format!("HEAD:{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()
@@ -31,7 +34,7 @@ fn committed(path: &str) -> String {
 #[test]
 fn bosun_toml_and_limits_parse() {
     let config = Config::parse(&read(".bosun/bosun.toml"), ".bosun/bosun.toml").unwrap();
-    assert_eq!(config.project, "bosun");
+    assert_eq!(config.project, "keelstack");
     let limits = Limits::parse(&read(".bosun/limits.toml"), ".bosun/limits.toml").unwrap();
     let defaults = Limits::parse("", "defaults").unwrap();
     assert_eq!(
@@ -123,7 +126,15 @@ fn builtin_rules_equal_the_repo_rules() {
                 .map(|g| g.as_str().to_string())
                 .collect::<Vec<_>>()
         };
-        assert_eq!(paths(a), paths(b), "{}", a.id);
+        // The monorepo file holds every built-in path, in order, and may add the folders' own
+        // old rules re-rooted under the folder (`hull/scripts/**`): a folder never loosens.
+        let (pa, pb) = (paths(a), paths(b));
+        assert_eq!(pa[..pb.len().min(pa.len())], pb[..], "{}", a.id);
+        assert!(
+            pa[pb.len()..].iter().all(|p| p.contains('/')),
+            "{}: extra paths are folder paths",
+            a.id
+        );
         assert_eq!(
             a.content.as_ref().map(|c| c.as_str()),
             b.content.as_ref().map(|c| c.as_str()),
@@ -204,17 +215,26 @@ fn stop_wrapper_passes_the_hook_output_through() {
     );
 }
 
-#[test]
-fn settings_hooks_run_bosun_hook_commands() {
-    let settings: Value = serde_json::from_str(&read(".claude/settings.json")).unwrap();
+/// The hook commands of a settings file that run bosun, in event order.
+fn bosun_hook_commands(settings: &Value) -> Vec<String> {
     let mut commands = Vec::new();
     for event in ["SessionStart", "Stop", "PreToolUse", "PreCompact"] {
         for group in settings["hooks"][event].as_array().unwrap() {
             for h in group["hooks"].as_array().unwrap() {
-                commands.push(h["command"].as_str().unwrap().to_string());
+                let c = h["command"].as_str().unwrap();
+                if c.contains("bosun") {
+                    commands.push(c.to_string());
+                }
             }
         }
     }
+    commands
+}
+
+#[test]
+fn settings_hooks_run_bosun_hook_commands() {
+    let settings: Value = serde_json::from_str(&read(".claude/settings.json")).unwrap();
+    let commands = bosun_hook_commands(&settings);
     assert_eq!(
         commands,
         vec![
@@ -224,10 +244,13 @@ fn settings_hooks_run_bosun_hook_commands() {
             PRE_COMPACT_WRAPPER
         ]
     );
-    assert_eq!(
-        read("channel/pieces/core/files/.claude/settings.json"),
-        read(".claude/settings.json")
-    );
+    // The monorepo's settings add folder hooks of its own (hull's deps); its bosun hooks are the
+    // ones the channel ships.
+    let channel: Value = serde_json::from_str(&read(
+        "bosun/channel/pieces/core/files/.claude/settings.json",
+    ))
+    .unwrap();
+    assert_eq!(bosun_hook_commands(&channel), commands);
     stop_wrapper_fails_open_on_an_old_binary();
     stop_wrapper_passes_the_hook_output_through();
     // A merge through Bash is refused by the configured PreToolUse command.

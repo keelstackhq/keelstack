@@ -98,7 +98,9 @@ fn lessons_block(dir: Option<&Path>) -> String {
     }
 }
 
-/// One line when the installed binary differs from the repo's `.bosun/version` pin.
+/// One line when the installed binary differs from the repo's `.bosun/version` pin. A pin that
+/// is not a release (`unreleased`: bosun is built from the repo, spec §11) has nothing to
+/// install, as in `bosun doctor`.
 fn skew_block(dir: Option<&Path>) -> String {
     let root = dir.map(|d| {
         crate::ctx::git_out(d, &["rev-parse", "--show-toplevel"])
@@ -106,7 +108,7 @@ fn skew_block(dir: Option<&Path>) -> String {
     });
     let pinned = root.and_then(|r| std::fs::read_to_string(r.join(".bosun/version")).ok());
     match pinned.as_deref().map(str::trim) {
-        Some(p) if !p.is_empty() && p != env!("CARGO_PKG_VERSION") => format!(
+        Some(p) if crate::cli::init::is_semver(p) && p != env!("CARGO_PKG_VERSION") => format!(
             "\ninstalled {}, repo pins {p}: run bash docs/setup-script.sh",
             env!("CARGO_PKG_VERSION")
         ),

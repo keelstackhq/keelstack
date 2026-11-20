@@ -215,7 +215,7 @@ fn changelog_has_the_cargo_version() {
 }
 
 fn workflow(name: &str) -> String {
-    fs::read_to_string(root().join(".github/workflows").join(name)).unwrap()
+    fs::read_to_string(root().join("../.github/workflows").join(name)).unwrap()
 }
 
 /// The text of one top-level job: from `  <name>:` up to the next two-space-indented key.
@@ -241,7 +241,11 @@ fn job(text: &str, name: &str) -> String {
 fn every_action_is_pinned_to_a_commit_sha() {
     // bosun's older workflows pin tags; the one that holds publish rights pins commits.
     for file in ["release.yml"] {
-        for line in workflow(file).lines().filter(|l| l.contains("uses:")) {
+        // A comment that names an action (`uses: x@v0` in prose) is not a step.
+        for line in workflow(file)
+            .lines()
+            .filter(|l| l.contains("uses:") && !l.trim_start().starts_with('#'))
+        {
             let spec = line.split("uses:").nth(1).unwrap().trim();
             let (reference, comment) = spec.split_once(" # ").unwrap_or((spec, ""));
             let sha = reference.rsplit('@').next().unwrap();
@@ -259,71 +263,93 @@ fn every_action_is_pinned_to_a_commit_sha() {
 
 #[test]
 fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
+    // The monorepo's lockstep release (D-023): a merge publishes only when it changed the
+    // workspace version; job `plan` decides, and every publishing job needs its verdict.
     let text = workflow("release.yml");
+    let plan = job(&text, "plan");
     assert!(
-        text.contains("vars.BOSUN_RELEASE"),
-        "the gate reads the repository variable"
+        plan.contains("if [ \"$version\" != \"$prev\" ]; then release=true; fi"),
+        "a merge releases only a changed workspace version:\n{plan}"
     );
-    assert!(text.contains("echo \"enabled=$enabled\" >> \"$GITHUB_OUTPUT\""));
-    let detect = job(&text, "detect");
-    assert!(!detect.contains("environment:") && !detect.contains("contents: write"));
-    for name in ["publish", "prepare"] {
+    assert!(plan.contains("echo \"release=$release\""));
+    assert!(!plan.contains("environment:") && !plan.contains(": write"));
+    // A manual run from a branch never publishes, even before the environment has a policy.
+    assert!(
+        plan.contains("if [ \"$REF\" != refs/heads/main ]; then"),
+        "{plan}"
+    );
+    for name in ["build", "release", "crates", "npm", "major"] {
         let j = job(&text, name);
         assert!(
-            j.contains("needs.detect.outputs.enabled == 'true'"),
-            "{name} must require the gate:\n{j}"
+            j.contains(
+                "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"
+            ),
+            "{name} must require the plan:\n{j}"
         );
     }
-    let publish = job(&text, "publish");
-    assert!(publish.contains("pending == 'true'") && publish.contains("environment: release"));
-    // A manual run from a branch never publishes or opens a release PR, even before the
-    // environment has a policy.
-    for name in ["publish", "prepare"] {
-        let j = job(&text, name);
+    for name in ["release", "crates", "npm", "major"] {
         assert!(
-            j.contains("github.ref == 'refs/heads/main'"),
-            "{name} runs only on main:\n{j}"
+            job(&text, name).contains("    environment: release\n"),
+            "{name} publishes from environment release"
         );
     }
-    let build = job(&text, "build");
-    assert!(build.contains("workflow_dispatch") && build.contains("enabled == 'true'"));
-    // Decision 3: hoist from npm, exact version, in both writing jobs; GH_TOKEN never meets cargo.
-    assert_eq!(
-        text.matches("npm install -g @keelstackhq/hoist@0.5.1")
-            .count(),
-        2
-    );
-    // hoist >= 0.5 reads the release PR token from HOIST_RELEASE_TOKEN (else exit 2 in Actions).
-    assert!(
-        job(&text, "prepare").contains("HOIST_RELEASE_TOKEN: ${{ secrets.HOIST_RELEASE_TOKEN }}")
-    );
     let code: String = text
         .lines()
         .filter(|l| !l.trim_start().starts_with('#'))
         .collect::<Vec<_>>()
         .join("\n");
-    for step in code.split("\n      - ").filter(|s| s.contains("GH_TOKEN")) {
+    // A step ends at the next step or at the next job (a line at job indent).
+    let steps = code.split("\n      - ").map(|s| {
+        let end = s
+            .match_indices("\n  ")
+            .find(|(i, _)| !s[i + 3..].starts_with(' '))
+            .map_or(s.len(), |(i, _)| i);
+        &s[..end]
+    });
+    for step in steps.filter(|s| s.contains("GH_TOKEN")) {
         assert!(
             !step.contains("cargo "),
             "a step with GH_TOKEN runs cargo:\n{step}"
         );
+    }
+    // A job-level GH_TOKEN reaches every step of the job.
+    for name in [
+        "plan", "dispatch", "build", "action", "release", "crates", "npm", "major",
+    ] {
+        let j = job(&text, name);
+        let head = &j[..j.find("\n    steps:\n").unwrap_or(j.len())];
+        if head.contains("GH_TOKEN") {
+            let code: Vec<&str> = j
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect();
+            assert!(
+                !code.iter().any(|l| l.contains("cargo ")),
+                "job {name} has GH_TOKEN and runs cargo"
+            );
+        }
     }
 }
 
 #[test]
 fn release_job_builds_the_bosun_binary_and_ci_runs_the_launcher_tests() {
     let text = workflow("release.yml");
+    let build = job(&text, "build");
     assert!(
-        text.contains("target/$TARGET/release/bosun$ext"),
+        build.contains("for pair in bosun:keel-bosun ")
+            && build.contains("cp \"$rel/$t$ext\" \"out/$t-$TARGET$ext\""),
         "build copies the bosun binary"
     );
     assert!(
-        text.contains("test \"$got\" = \"bosun $VERSION\""),
+        build.contains("for t in bosun berth; do")
+            && build.contains("test \"$got\" = \"$t $VERSION\""),
         "smoke test of --version"
     );
     let ci = workflow("ci.yml");
+    let bosun = &ci[ci.find("\n  ci-bosun:\n").expect("a ci-bosun job")..];
+    let bosun = &bosun[..bosun[1..].find("\n  ci-").map_or(bosun.len(), |i| i + 1)];
     assert!(
-        ci.contains("node --test npm/*/test/*.test.js"),
+        bosun.contains("node --test npm/*/test/*.test.js"),
         "ci.yml runs the launcher tests"
     );
 }

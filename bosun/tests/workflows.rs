@@ -29,7 +29,7 @@ fn job_ids(yaml: &str) -> Vec<String> {
 
 #[test]
 fn ci_ok_needs_every_job() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/ci.yml");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/ci.yml");
     let yaml = fs::read_to_string(path).unwrap();
     let ids = job_ids(&yaml);
     assert!(
@@ -51,12 +51,24 @@ fn ci_ok_needs_every_job() {
             needs_line.contains(id.as_str()),
             "ci-ok does not need job `{id}`: {needs_line}"
         );
-        let check = format!("test \"${{{{ needs.{id}.result }}}}\" = \"success\"");
-        assert!(
-            ci_ok.contains(&check),
-            "ci-ok does not check the result of `{id}`"
-        );
     }
+    // The monorepo's ci-ok checks every needed job's result at once: all of `needs` (as JSON)
+    // must be success, or skipped for a folder CI did not need to run (bosun spec §9); `detect`,
+    // which decides that, must succeed.
+    assert!(
+        ci_ok.contains("NEEDS: ${{ toJSON(needs) }}"),
+        "ci-ok does not read every needed job's result"
+    );
+    assert!(
+        ci_ok.contains(
+            r#"[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key]"#
+        ),
+        "ci-ok does not fail on a needed job that neither succeeded nor was skipped"
+    );
+    assert!(
+        ci_ok.contains(r#"test "$(echo "$NEEDS" | jq -r '.detect.result')" = success"#),
+        "ci-ok does not check the result of `detect`"
+    );
 }
 
 /// The `run:` scripts of a workflow: the `run:` line and its indented block.
@@ -85,7 +97,7 @@ fn run_scripts(yaml: &str) -> Vec<String> {
 
 #[test]
 fn risk_judges_from_the_base_and_never_runs_pr_code() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/risk.yml");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/risk.yml");
     let yaml = fs::read_to_string(path).unwrap();
     assert!(yaml.contains("\n  pull_request_target:\n"), "{yaml}");
     assert!(
@@ -156,34 +168,65 @@ fn risk_judges_from_the_base_and_never_runs_pr_code() {
     );
     // Other comments must not cancel the run that judges a new head.
     assert!(yaml.contains("&& github.run_id || 'judge'"), "{yaml}");
-    runs_the_pinned_release(&yaml);
+    builds_bosun_from_the_checkout(&yaml);
 }
 
-/// risk.yml and verdict.yml run the release pinned in the checkout's `.bosun/version` (as
-/// ci.yml's pinned-release steps) and build bosun only while the pin says `unreleased`, so a main that
-/// does not compile cannot block its own mainfix.
-fn runs_the_pinned_release(yaml: &str) {
-    assert!(
-        yaml.contains("npm install -g --ignore-scripts \"@keelstackhq/bosun@${VERSION}\""),
-        "{yaml}"
-    );
-    assert!(
-        yaml.contains("test \"$got\" = \"bosun ${VERSION}\""),
-        "{yaml}"
-    );
+/// The gate workflows (risk, verdict, review, main-open, main-health) build bosun from the
+/// workspace at the commit they checked out (the base or the default branch, never the PR head):
+/// no release reads the monorepo's `[[folders]]` config yet (`.bosun/version` is `unreleased`,
+/// tests/pinned_config.rs). One build, in a step `build bosun` that fails the job when the build
+/// fails (fail closed, no continue-on-error), and no fallback to a released bosun.
+fn builds_bosun_from_the_checkout(yaml: &str) {
     let builds: Vec<&str> = yaml.lines().filter(|l| l.contains("cargo build")).collect();
     assert_eq!(builds.len(), 1, "{yaml}");
-    let at = yaml.find(builds[0]).unwrap();
-    let step = &yaml[yaml[..at].rfind("      - ").unwrap()..at];
     assert!(
-        step.contains("if: steps.pin.outputs.version == ''"),
-        "cargo build must only run without a pin: {step}"
+        builds[0].contains("cargo build --release --locked -p keel-bosun --bin bosun"),
+        "{}",
+        builds[0]
     );
+    let step = build_step(yaml);
+    assert!(!step.contains("continue-on-error"), "{step}");
+    assert!(
+        step.contains("exit 1"),
+        "a failed build must fail the job: {step}"
+    );
+    for line in yaml.lines().map(code_of) {
+        for bad in [
+            ".bosun/version",
+            "@keelstackhq/bosun",
+            "npm install",
+            "releases/download",
+            "gh release download",
+        ] {
+            assert!(!line.contains(bad), "a released bosun ({bad}): {line}");
+        }
+    }
+    let runs: Vec<String> = run_scripts(yaml)
+        .into_iter()
+        .filter(|s| s.contains("bosun ") && !s.contains("cargo build"))
+        .collect();
+    assert!(!runs.is_empty(), "{yaml}");
+    for r in &runs {
+        assert!(r.contains("./target/release/bosun "), "{r}");
+    }
+}
+
+/// The text of the step named `build bosun`.
+fn build_step(yaml: &str) -> &str {
+    let at = yaml
+        .find("      - name: build bosun\n")
+        .unwrap_or_else(|| panic!("no build bosun step: {yaml}"));
+    let rest = &yaml[at..];
+    let end = rest[1..].find("\n      - ").map_or(rest.len(), |i| i + 2);
+    &rest[..end]
 }
 
 #[test]
 fn verdict_runs_main_code_on_verdict_comments_only() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/verdict.yml");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../.github/workflows/verdict.yml"
+    );
     let yaml = fs::read_to_string(path).unwrap();
     let triggers = &yaml[yaml.find("\non:\n").unwrap()..yaml.find("\npermissions:").unwrap()];
     assert!(
@@ -201,7 +244,7 @@ fn verdict_runs_main_code_on_verdict_comments_only() {
     // The fence keeps bosun's own record comments (App token, "head_sha", no fence) out of it.
     let bot = "(github.event.comment.user.type == 'Bot' && contains(github.event.comment.body, '\"head_sha\"') && contains(github.event.comment.body, '```json'))";
     assert_eq!(yaml.matches(bot).count(), 2, "{yaml}");
-    runs_the_pinned_release(&yaml);
+    builds_bosun_from_the_checkout(&yaml);
     let refs: Vec<&str> = yaml
         .lines()
         .filter(|l| l.trim_start().starts_with("ref:"))
@@ -261,67 +304,81 @@ fn verdict_runs_main_code_on_verdict_comments_only() {
 }
 
 #[test]
-fn release_runs_only_on_main_pushes_and_never_puts_event_data_in_a_script() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/release.yml");
+fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../.github/workflows/release.yml"
+    );
     let yaml = fs::read_to_string(path).unwrap();
-    // Only a push to main or a manual run: no pull request or comment reaches publish rights.
+    // Only a closed PR to main (the plan job goes on for a merged one only) or a manual run: no
+    // comment, push of another branch or pull_request_target reaches publish rights.
     let triggers = &yaml[yaml.find("\non:\n").unwrap()..yaml.find("\npermissions:").unwrap()];
-    assert_eq!(
-        triggers.trim(),
-        "on:\n  push:\n    branches: [main]\n  workflow_dispatch:",
+    assert!(
+        triggers
+            .trim()
+            .starts_with("on:\n  pull_request:\n    types: [closed]\n    branches: [main]\n  workflow_dispatch:\n"),
         "{triggers}"
     );
-    // Read-only by default; only the publish and prepare jobs widen it.
-    assert!(
-        yaml.contains("\npermissions:\n  contents: read\n\n"),
-        "{yaml}"
+    assert_eq!(
+        events(&yaml),
+        ["pull_request", "workflow_dispatch"],
+        "{triggers}"
     );
-    let jobs = &yaml[yaml.find("\njobs:\n").unwrap()..];
-    let mut job = String::new();
-    for line in jobs.lines() {
-        let line = line.split(" #").next().unwrap_or(line).trim_end();
-        if line.starts_with("  ") && !line.starts_with("   ") && line.ends_with(':') {
-            job = line.trim().trim_end_matches(':').to_string();
-        }
-        // `contents: write`, `permissions: write-all` and `{ contents: write }` all grant.
-        let tight: String = line.split_whitespace().collect();
-        let grants = tight.ends_with(":write")
-            || tight.contains("write-all")
-            || tight.contains(":write,")
-            || tight.contains(":write}");
-        if grants {
-            assert!(
-                job == "publish" || job == "prepare",
-                "job `{job}` grants {}",
-                line.trim()
-            );
-        }
-    }
-    // Without HOIST_RELEASE_TOKEN, prepare is skipped (GITHUB_TOKEN may not open the release PR,
-    // and its PR would run no CI). The secret lives in environment release-pr (main only), so
-    // detect (which a dry run on any branch runs) cannot see it: job release-token, in that
-    // environment, passes on only whether it is set.
-    let prepare = &yaml[yaml.find("\n  prepare:\n").unwrap()..];
-    let cond = prepare
-        .lines()
-        .find(|l| l.trim_start().starts_with("if:"))
-        .unwrap();
-    assert!(
-        cond.contains("needs.release-token.outputs.set == 'true'"),
-        "{cond}"
-    );
+    // Nothing by default; each job names what it needs.
+    assert!(yaml.contains("\npermissions: {}\n"), "{yaml}");
     let (jobs, _) = jobs_of(&yaml);
     let job = |id: &str| &jobs.iter().find(|(j, _)| j == id).unwrap().1;
-    assert!(!reads_a_secret(job("detect")), "{}", job("detect"));
-    let token = job("release-token");
-    assert!(token.contains("HAS_RELEASE_TOKEN: ${{ secrets.HOIST_RELEASE_TOKEN != '' }}"));
-    assert!(token.contains("set: ${{ steps.token.outputs.set }}"));
-    assert_eq!(environment_of(token).as_deref(), Some("release-pr"));
-    assert_eq!(
-        environment_of(job("prepare")).as_deref(),
-        Some("release-pr")
+    let plan_if = job("plan")
+        .lines()
+        .skip_while(|l| !l.trim_start().starts_with("if:"))
+        .take(3)
+        .collect::<String>();
+    assert!(
+        plan_if.contains(
+            "github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true"
+        ),
+        "{plan_if}"
     );
-    assert!(job("prepare").contains("needs: [detect, publish, release-token]"));
+    for (id, body) in &jobs {
+        let grants: Vec<String> = body
+            .lines()
+            .map(|l| {
+                l.split(" #")
+                    .next()
+                    .unwrap_or(l)
+                    .split_whitespace()
+                    .collect::<String>()
+            })
+            .filter(|t| {
+                t.ends_with(":write")
+                    || t.contains("write-all")
+                    || t.contains(":write,")
+                    || t.contains(":write}")
+            })
+            .collect();
+        if grants.is_empty() {
+            continue;
+        }
+        if id == "dispatch" {
+            // A PR run only starts the real run on main: actions: write and nothing else.
+            assert_eq!(grants, ["actions:write"], "{id}");
+            assert!(body.contains("if: github.event_name == 'pull_request' && needs.plan.outputs.release == 'true'"), "{body}");
+            assert!(environment_of(body).is_none(), "{body}");
+            continue;
+        }
+        assert!(
+            ["release", "crates", "npm", "major"].contains(&id.as_str()),
+            "job `{id}` grants {grants:?}"
+        );
+        assert_eq!(environment_of(body).as_deref(), Some("release"), "{id}");
+        assert!(
+            body.contains(
+                "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"
+            ),
+            "{id} must run on the dispatched run only: {body}"
+        );
+    }
+    assert!(!reads_a_secret(job("plan")), "{}", job("plan"));
     // Event data reaches scripts through env only.
     for s in run_scripts(&yaml) {
         for bad in ["github.event", "head_ref", "github.actor", "inputs."] {
@@ -332,7 +389,10 @@ fn release_runs_only_on_main_pushes_and_never_puts_event_data_in_a_script() {
 
 #[test]
 fn review_runs_base_code_with_the_secret_and_skips_without_review_ci() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/review.yml");
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../.github/workflows/review.yml"
+    );
     let yaml = fs::read_to_string(path).unwrap();
     let triggers = &yaml[yaml.find("\non:\n").unwrap()..yaml.find("\nconcurrency:").unwrap()];
     assert!(
@@ -372,9 +432,11 @@ fn review_runs_base_code_with_the_secret_and_skips_without_review_ci() {
         "/head",
         "git fetch",
     ] {
-        assert!(!yaml.contains(bad), "review.yml mentions {bad}");
+        // rust-cache's `save-if` names refs/heads/main, not a PR ref.
+        let text = yaml.replace("${{ github.ref == 'refs/heads/main' }}", "");
+        assert!(!text.contains(bad), "review.yml mentions {bad}");
     }
-    // Non-draft, same-repo PRs by the repo's own people: exactly these three conditions.
+    // With review CI on, non-draft, same-repo PRs by the repo's own people: exactly these.
     let cond = &yaml[yaml.find("    if: >-\n").unwrap()..yaml.find("    environment:").unwrap()];
     let terms: Vec<&str> = cond
         .lines()
@@ -385,6 +447,7 @@ fn review_runs_base_code_with_the_secret_and_skips_without_review_ci() {
     assert_eq!(
         terms,
         [
+            "vars.BOSUN_REVIEW_CI == 'true'",
             "github.event.pull_request.draft == false",
             "github.event.pull_request.head.repo.full_name == github.repository",
             "contains(fromJSON('[\"OWNER\",\"MEMBER\",\"COLLABORATOR\"]'), github.event.pull_request.author_association)",
@@ -418,81 +481,30 @@ fn review_runs_base_code_with_the_secret_and_skips_without_review_ci() {
     for s in &scripts {
         assert!(!s.contains("${{"), "expression in a run script: {s}");
     }
-    // Without review-ci in the pinned release: a warning, exit 0 and no status at all, never a
-    // success; with it, review-ci posts the status.
+    // Without review CI the job does not run: no status at all, never a success; with it,
+    // review-ci posts the status, and nothing else posts one.
     let review = scripts
         .iter()
         .find(|s| s.contains("review-ci \"$PR\""))
         .expect("a script runs review-ci");
-    let skip = &review[..review.find("fi\n").expect("an if block")];
-    assert!(review.contains("review-ci --help"), "{review}");
-    assert!(skip.contains("-eq 2"), "only exit 2 skips: {review}");
-    assert!(skip.contains("::warning::"), "{review}");
-    assert!(skip.contains("exit 0"), "{review}");
     for bad in ["statuses", "curl", "gh ", "verdict post", "verdict comment"] {
-        assert!(
-            !skip.contains(bad),
-            "the skip path must post nothing: {bad}"
-        );
+        assert!(!review.contains(bad), "only review-ci posts: {bad}");
     }
-    runs_the_pinned_release(&yaml);
-}
-
-/// The install step has the shape of ci.yml's pinned-release steps; the job builds nothing.
-fn assert_pinned_install_with_fallback(yaml: &str) {
-    assert!(yaml.contains("@keelstackhq/bosun@${VERSION}"), "{yaml}");
-    assert!(yaml.contains("npm install -g --ignore-scripts"));
-    assert!(yaml.contains("grep -Eqx '[0-9]+\\.[0-9]+\\.[0-9]+'"));
-    assert!(yaml.contains("test \"$got\" = \"bosun ${VERSION}\""));
-    assert!(yaml.contains("steps.has.outputs.supported != 'true'"));
-    assert!(!yaml.contains("cargo build"), "no build from main");
-    // A failed install must still reach the fallback.
-    assert!(yaml.contains("id: install\n        continue-on-error: true"));
-    assert!(yaml.contains("INSTALL: ${{ steps.install.outcome }}"));
-    assert!(yaml.contains("[ \"$INSTALL\" = success ] && [ -x target/release/bosun ]"));
-    assert!(
-        !yaml.contains("exit 4"),
-        "the fallback exits 0; the status carries the verdict"
-    );
-    for line in yaml.lines().filter(|l| l.contains("::warning::")) {
-        assert!(!line.contains('`'), "backtick in a shell string: {line}");
-    }
-    assert_eq!(
-        pin_script(yaml),
-        pin_script(&ci_yaml()),
-        "pin step differs from ci.yml"
-    );
+    builds_bosun_from_the_checkout(&yaml);
 }
 
 fn ci_yaml() -> String {
     fs::read_to_string(concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/.github/workflows/ci.yml"
+        "/../.github/workflows/ci.yml"
     ))
     .unwrap()
 }
 
-/// The dedented `run:` script of the step with `id: pin`.
-fn pin_script(yaml: &str) -> String {
-    let at = yaml
-        .find("        id: pin\n        run: |\n")
-        .expect("a step with id: pin");
-    let body = &yaml[at..];
-    let body = &body[body.find("run: |\n").unwrap() + "run: |\n".len()..];
-    let mut out = String::new();
-    for line in body.lines() {
-        if !line.is_empty() && !line.starts_with("          ") {
-            break;
-        }
-        out.push_str(line.get(10..).unwrap_or(""));
-        out.push('\n');
-    }
-    out
-}
-
-/// Run the pin script of each workflow under bash with a fake `.bosun/version`.
+/// The `build bosun` step of each gate workflow, run under bash: it fails when cargo fails and
+/// passes when cargo passes, so a base whose bosun does not build fails the gate closed.
 #[test]
-fn pin_step_accepts_exact_versions_only() {
+fn the_build_step_fails_closed() {
     if std::process::Command::new("bash")
         .arg("--version")
         .output()
@@ -501,34 +513,49 @@ fn pin_step_accepts_exact_versions_only() {
         eprintln!("bash is missing: skipped");
         return;
     }
-    let ci = ci_yaml();
-    let mut scripts = vec![pin_script(&ci)];
-    for f in ["main-open.yml", "main-health.yml"] {
-        let path = format!("{}/.github/workflows/{f}", env!("CARGO_MANIFEST_DIR"));
-        scripts.push(pin_script(&fs::read_to_string(path).unwrap()));
-    }
-    for script in &scripts {
-        for (version, ok, want) in [
-            ("1.2.3\n", true, "version=1.2.3"),
-            ("unreleased\n", true, "version="),
-            ("1.2\n", false, ""),
-            ("latest\n", false, ""),
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            fs::create_dir(dir.path().join(".bosun")).unwrap();
-            fs::write(dir.path().join(".bosun/version"), version).unwrap();
-            let out_file = dir.path().join("out");
-            let status = std::process::Command::new("bash")
-                .arg("-c")
-                .arg(script)
-                .current_dir(dir.path())
-                .env("GITHUB_OUTPUT", &out_file)
+    for f in [
+        "risk.yml",
+        "verdict.yml",
+        "review.yml",
+        "main-open.yml",
+        "main-health.yml",
+    ] {
+        let path = format!("{}/../.github/workflows/{f}", env!("CARGO_MANIFEST_DIR"));
+        let yaml = fs::read_to_string(path).unwrap();
+        let step = build_step(&yaml);
+        let script: String = run_scripts(step)
+            .remove(0)
+            .lines()
+            .skip(1)
+            .map(|l| format!("{}\n", l.get(10..).unwrap_or("")))
+            .collect();
+        for (cargo_ok, ok) in [(false, false), (true, true)] {
+            let bin = tempfile::tempdir().unwrap();
+            let cargo = bin.path().join("cargo");
+            let exit = if cargo_ok { 0 } else { 101 };
+            fs::write(&cargo, format!("#!/bin/sh\nexit {exit}\n")).unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&cargo, fs::Permissions::from_mode(0o755)).unwrap();
+            let path = format!(
+                "{}:{}",
+                bin.path().display(),
+                std::env::var("PATH").unwrap_or_default()
+            );
+            let out = std::process::Command::new("bash")
+                .args(["-e", "-c", &script])
+                .env("PATH", path)
                 .output()
                 .unwrap();
-            assert_eq!(status.status.success(), ok, "{version:?}: {status:?}");
-            if ok {
-                let out = fs::read_to_string(&out_file).unwrap();
-                assert_eq!(out.trim(), want, "{version:?}");
+            assert_eq!(
+                out.status.success(),
+                ok,
+                "{f}, cargo ok {cargo_ok}: {out:?}"
+            );
+            if !ok {
+                assert!(
+                    String::from_utf8_lossy(&out.stdout).contains("::error::"),
+                    "{f}: {out:?}"
+                );
             }
         }
     }
@@ -538,7 +565,7 @@ fn pin_step_accepts_exact_versions_only() {
 fn main_open_judges_from_the_base_and_never_runs_pr_code() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/.github/workflows/main-open.yml"
+        "/../.github/workflows/main-open.yml"
     );
     let yaml = fs::read_to_string(path).unwrap();
     assert!(yaml.contains("\n  pull_request_target:\n"), "{yaml}");
@@ -557,18 +584,13 @@ fn main_open_judges_from_the_base_and_never_runs_pr_code() {
     for bad in ["head.ref", "head_ref", "refs/pull", "merge_commit_sha"] {
         assert!(!yaml.contains(bad), "main-open.yml mentions {bad}");
     }
-    // The head sha appears once, read through the API, and is used only as the status target.
-    let heads: Vec<&str> = yaml.lines().filter(|l| l.contains("head.sha")).collect();
-    assert_eq!(heads.len(), 1, "{heads:?}");
-    assert!(heads[0].contains("sha=$(gh api \"repos/$GITHUB_REPOSITORY/pulls/$PR\""));
-    let uses: Vec<&str> = yaml.lines().filter(|l| l.contains("$sha")).collect();
-    assert_eq!(uses.len(), 1, "{uses:?}");
+    // The head sha never appears: bosun reads the PR through the API and posts the status.
     assert!(
-        uses[0].contains("repos/$GITHUB_REPOSITORY/statuses/$sha"),
-        "{uses:?}"
+        !yaml.contains("head.sha"),
+        "main-open.yml mentions head.sha"
     );
     assert!(job_ids(&yaml) == ["judge"], "{:?}", job_ids(&yaml));
-    assert_pinned_install_with_fallback(&yaml);
+    builds_bosun_from_the_checkout(&yaml);
     let scripts = run_scripts(&yaml);
     assert!(
         scripts
@@ -576,9 +598,11 @@ fn main_open_judges_from_the_base_and_never_runs_pr_code() {
             .any(|s| s.contains("bosun gate main-open --pr \"$PR\"")),
         "{scripts:?}"
     );
+    // No fallback status: a base whose bosun does not build fails the job, and main-open stays
+    // unset (a required check that is missing blocks the merge).
     assert!(
-        scripts.iter().any(|s| s.contains("context=main-open")),
-        "the fallback must post the main-open status"
+        !scripts.iter().any(|s| s.contains("statuses/")),
+        "only bosun posts the main-open status"
     );
     for s in &scripts {
         assert!(!s.contains("${{"), "expression in a run script: {s}");
@@ -606,7 +630,7 @@ fn main_open_judges_from_the_base_and_never_runs_pr_code() {
 fn main_health_reports_with_bosun_built_from_the_default_branch() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/.github/workflows/main-health.yml"
+        "/../.github/workflows/main-health.yml"
     );
     let yaml = fs::read_to_string(path).unwrap();
     let report = &yaml[yaml.find("\n  report:\n").unwrap()..];
@@ -624,12 +648,7 @@ fn main_health_reports_with_bosun_built_from_the_default_branch() {
     );
     assert!(report.contains("persist-credentials: false"));
     assert!(report.contains("ref: ${{ github.sha }}"));
-    assert_pinned_install_with_fallback(report);
-    assert!(
-        run_scripts(report)
-            .iter()
-            .any(|s| s.contains("gh issue create"))
-    );
+    builds_bosun_from_the_checkout(report);
     let scripts = run_scripts(report);
     assert!(
         scripts
@@ -655,8 +674,7 @@ fn main_health_reports_with_bosun_built_from_the_default_branch() {
             "  contents: read",
             "  issues: write",
             "  pull-requests: read",
-            "  statuses: write",
-            "  checks: read"
+            "  statuses: write"
         ]
     );
     // Weekly: a push to main already runs every gate on all of main (CI minutes).
@@ -665,9 +683,14 @@ fn main_health_reports_with_bosun_built_from_the_default_branch() {
 
 #[test]
 fn splice_pins_its_version() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/splice.yml");
-    let yaml = fs::read_to_string(path).unwrap();
-    assert!(yaml.contains("          version: \"0.6.0\"\n"), "{yaml}");
+    for (path, yaml) in all_workflows()
+        .iter()
+        .filter(|(p, _)| !p.contains("/channel/"))
+    {
+        if yaml.contains("uses: keelstackhq/splice/action@") {
+            assert!(yaml.contains("          version: \"0.6.0\"\n"), "{path}");
+        }
+    }
 }
 
 /// The text of ci.yml's step that starts at `from`, up to the next step.
@@ -683,49 +706,51 @@ fn step_text<'a>(yaml: &'a str, from: &str) -> &'a str {
     &rest[..end]
 }
 
-/// CI minutes (docs/ci-minutes.md): one job does the work, `ci-ok` aggregates it; a draft starts
-/// no job; an edit keeps the file checks of a passed head and reruns test-integrity, with the
-/// same edit step as the channel's bosun.yml; the pin check and the gates that run no PR code
-/// come before lint and test.
+/// CI minutes (docs/ci-minutes.md): `detect` decides which folder jobs run, `ci-ok` aggregates
+/// them; a draft starts no job. Job `ci-gates` (bosun's repo-wide gates) builds bosun from the
+/// base commit, after the base's config is in place and before anything runs rustc or cargo on
+/// the change's files, and runs no PR code: each gate checks the binary's hash first and a failed
+/// gate fails the job.
 #[test]
-fn ci_is_one_work_job_with_the_channels_edit_rule() {
+fn ci_gates_run_bosun_of_the_base_before_any_pr_code() {
     let yaml = ci_yaml();
-    assert_eq!(job_ids(&yaml), ["ci", "ci-ok"]);
-    let channel = fs::read_to_string(concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/channel/pieces/core/files/.github/workflows/bosun.yml.jinja"
-    ))
-    .unwrap();
-    let ours = step_text(&yaml, "      - if: github.event.action == 'edited'");
-    let theirs = step_text(&channel, "      - if: github.event.action == 'edited'");
-    assert_eq!(
-        ours,
-        // The channel names the required check: ci-ok, or bosun-ok beside a repo's own ci.
-        theirs.replace(
-            "{% endraw %}{% if own_ci %}          CHECK: bosun-ok\n{% else %}          CHECK: ci-ok\n{% endif %}{% raw %}",
-            "          CHECK: ci-ok\n"
-        ),
-        "the edit step differs from the channel's"
-    );
-    // Every step that runs PR code comes after the trusted ones (spec §11).
-    let at = |needle: &str| yaml.find(needle).unwrap_or_else(|| panic!("no {needle:?}"));
-    let pin_check = at("name: the pinned release installs and reports its version");
-    let gates = at("name: bosun gates");
-    let npm_tests = at("name: npm launcher tests");
-    assert!(pin_check < at("uses: dtolnay/rust-toolchain"));
-    assert!(pin_check < at("uses: Swatinem/rust-cache"));
-    assert!(
-        at("run: cargo build --release --locked --bin bosun") < at("uses: Swatinem/rust-cache")
-    );
-    assert!(at("name: bosun of the base") < pin_check && pin_check < gates && gates < npm_tests);
-    assert!(
-        yaml.contains("got=\"$(\"$dir/bin/bosun\" --version)\""),
-        "the pin check runs a resolved path"
-    );
-    assert!(yaml.contains("cache-bin: \"false\""));
-    assert!(yaml.contains("          persist-credentials: false\n"));
-    // Before lint, no PR code: no toolchain path, no cargo rustc swap, a checked bosun, and
-    // lint and test never run after a failed gate.
+    let (jobs, _) = jobs_of(&yaml);
+    let ids: Vec<&str> = jobs.iter().map(|(j, _)| j.as_str()).collect();
+    assert_eq!(ids.first(), Some(&"detect"), "{ids:?}");
+    assert_eq!(ids.last(), Some(&"ci-ok"), "{ids:?}");
+    for id in ["ci-repo", "ci-gates", "ci-bosun"] {
+        assert!(ids.contains(&id), "no job {id}: {ids:?}");
+    }
+    let gates = &jobs.iter().find(|(j, _)| j == "ci-gates").unwrap().1;
+    let at = |needle: &str| {
+        gates
+            .find(needle)
+            .unwrap_or_else(|| panic!("no {needle:?}"))
+    };
+    let order = [
+        "name: bosun of the base",
+        "name: the base's config for the gates",
+        "uses: dtolnay/rust-toolchain",
+        "uses: Swatinem/rust-cache",
+        "name: build bosun (base, workspace)",
+        "id: binhash",
+        "name: task allow list",
+        "name: bosun gates (test-integrity, ci-minutes)",
+    ];
+    for pair in order.windows(2) {
+        assert!(
+            at(pair[0]) < at(pair[1]),
+            "{} must come before {}",
+            pair[0],
+            pair[1]
+        );
+    }
+    assert!(gates.contains("        working-directory: ${{ runner.temp }}/base\n        run: cargo build --release --locked -p keel-bosun --bin bosun\n"));
+    assert!(gates.contains("git worktree add --detach \"$RUNNER_TEMP/base\" \"$sha\""));
+    assert!(gates.contains("cache-bin: \"false\""));
+    assert!(gates.contains("save-if: ${{ github.ref == 'refs/heads/main' }}"));
+    assert!(gates.contains("          persist-credentials: false\n"));
+    // No PR toolchain path, no cargo rustc swap.
     for k in [
         "  RUSTC: rustc\n",
         "  RUSTC_WRAPPER: \"\"\n",
@@ -733,7 +758,7 @@ fn ci_is_one_work_job_with_the_channels_edit_rule() {
         "  CARGO_BUILD_RUSTC_WRAPPER: \"\"\n",
         "  CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: \"\"\n",
     ] {
-        assert!(yaml.contains(k), "{k}");
+        assert!(gates.contains(k), "{k}");
     }
     // rustup's toolchain is pinned over the PR's rust-toolchain.toml, to the same channel.
     let file = fs::read_to_string(concat!(
@@ -744,74 +769,56 @@ fn ci_is_one_work_job_with_the_channels_edit_rule() {
     let channel: toml::Table = file.parse().unwrap();
     let channel = channel["toolchain"]["channel"].as_str().unwrap();
     assert!(
-        yaml.contains(&format!("  RUSTUP_TOOLCHAIN: \"{channel}\"\n")),
+        gates.contains(&format!("  RUSTUP_TOOLCHAIN: \"{channel}\"\n")),
         "RUSTUP_TOOLCHAIN must equal rust-toolchain.toml's channel {channel}"
     );
-    let base_config = at("name: the base's config for the gates");
-    for later in [
-        "uses: dtolnay/rust-toolchain",
-        "uses: Swatinem/rust-cache",
-        "run: cargo build --release --locked --bin bosun",
-        "uses: taiki-e/install-action",
-        "name: bosun gates",
-    ] {
-        assert!(
-            base_config < at(later),
-            "{later} runs before the base's config"
-        );
-    }
-    assert!(at("name: the pinned release installs and reports its version") < base_config);
-    assert!(at("id: binhash") < at("uses: Swatinem/rust-cache"));
-    assert!(yaml.contains("BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}"));
-    assert!(yaml.contains(
-        "\"$BOSUN\" gate \"$g\" $all || { echo \"::error::gate $g failed; later gates did not run\"; exit 1; }"
+    assert_eq!(
+        gates
+            .matches("BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}")
+            .count(),
+        2
+    );
+    assert!(gates.contains("echo \"$BOSUN_SHA256  $BOSUN\" | sha256sum -c --quiet || { echo \"::error::$BOSUN changed\"; exit 1; }"));
+    assert!(gates.contains("for g in test-integrity ci-minutes; do"));
+    assert!(gates.contains(
+        "\"$BOSUN\" gate \"$g\" \"${scope[@]}\" || { echo \"::error::gate $g failed\"; exit 1; }"
     ));
     assert!(
         !yaml.contains("!cancelled()"),
         "nothing runs after a failure"
     );
-    // Drafts: the work job `ci` skips them at job level (no runner starts); `ci-ok` keeps
+    // Drafts: every job but ci-ok skips them at job level (no runner starts); ci-ok keeps
     // always() and fails on a draft (a skipped required check counts as passed).
-    let skip = "github.event_name != 'pull_request' || github.event.pull_request.draft == false";
-    assert!(yaml.contains(&format!("  ci:\n    if: {skip}\n")));
-    assert!(yaml.contains("  ci-ok:\n    needs: [ci]\n    if: always()\n"));
+    let skip = "(github.event_name != 'pull_request' || github.event.pull_request.draft == false)";
+    for (id, body) in &jobs {
+        let cond = body
+            .lines()
+            .skip_while(|l| !l.starts_with("    if:"))
+            .take(2)
+            .collect::<String>();
+        if id == "ci-ok" {
+            assert!(cond.contains("if: always()"), "{cond}");
+        } else {
+            assert!(cond.contains(skip), "job {id} runs on a draft: {cond}");
+        }
+    }
     assert!(yaml.contains("DRAFT: ${{ github.event.pull_request.draft || false }}"));
     assert!(yaml.contains("::error::draft: CI not run, mark ready for review"));
-    assert!(yaml.contains("for g in ${ONLY:-test-integrity ci-minutes deps fmt lint test}; do"));
-    // The plan step under the runner's shell.
-    let plan = step_text(&yaml, "      - id: plan");
-    let script = run_scripts(plan).remove(0);
-    let script: String = script
-        .lines()
-        .skip(1)
-        .map(|l| format!("{}\n", l.get(10..).unwrap_or("")))
-        .collect();
-    let run = |mode: &str| {
-        let dir = tempfile::tempdir().unwrap();
-        let out = dir.path().join("out");
-        let ok = std::process::Command::new("bash")
-            .args(["-eo", "pipefail", "-c", &script])
-            .env("GITHUB_OUTPUT", &out)
-            .env("MODE", mode)
-            .status()
-            .unwrap()
-            .success();
-        ok.then(|| fs::read_to_string(out).unwrap())
-    };
-    assert_eq!(run("run").as_deref(), Some("work=true\nsetup=true\n"));
-    assert_eq!(
-        run("integrity").as_deref(),
-        Some("work=true\nsetup=false\nonly=test-integrity\n")
-    );
+    // No edit, comment or label trigger (D-007): an edit reruns nothing.
+    assert_eq!(events(&yaml), ["pull_request", "merge_group", "push"]);
+    assert!(yaml.contains("    types: [opened, synchronize, reopened, ready_for_review]\n"));
 }
 
-/// The script of the step that puts the base's config over the checkout, dedented.
+/// The script of the step that puts the base's config over the checkout, dedented, without its
+/// comment lines.
 fn base_config_script(yaml: &str, from: &str) -> String {
     let script = run_scripts(step_text(yaml, from)).remove(0);
     script
         .lines()
         .skip(1)
-        .map(|l| format!("{}\n", l.get(10..).unwrap_or("")))
+        .map(|l| l.get(10..).unwrap_or(""))
+        .filter(|l| !l.trim_start().starts_with('#'))
+        .map(|l| format!("{l}\n"))
         .collect()
 }
 
@@ -827,13 +834,20 @@ fn the_gates_use_the_bases_config() {
     ))
     .unwrap();
     let step = "      - if: steps.plan.outputs.work == 'true'\n        name: the base's config for the gates";
-    let script = base_config_script(&ours, step);
-    // The channel runs the same script after setting BASE for a push without one.
+    let script = base_config_script(&ours, "      - name: the base's config for the gates");
+    // The channel runs the same script after setting BASE for a push without one; its setup-PR
+    // test reads the base's .bosun/version, the monorepo's the base's .bosun/bosun.toml.
     let theirs = base_config_script(&channel, step);
     assert_eq!(
         theirs,
         format!(
-            "case \"$BASE\" in \"\"|0000000000000000000000000000000000000000) BASE=\"$GITHUB_SHA\";; esac\n{script}"
+            "case \"$BASE\" in \"\"|0000000000000000000000000000000000000000) BASE=\"$GITHUB_SHA\";; esac\n{}",
+            script
+                .replace("$BASE:.bosun/bosun.toml", "$BASE:.bosun/version")
+                .replace(
+                    "the base has no root .bosun yet",
+                    "the base has no .bosun yet"
+                )
         ),
         "the channel's step differs from ci.yml's"
     );
@@ -869,6 +883,7 @@ fn the_gates_use_the_bases_config() {
     };
     run("git init -q -b main && git config user.email a@b.c && git config user.name n");
     w(".bosun/version", "1.2.3\n");
+    w(".bosun/bosun.toml", "project = \"x\"\n");
     w(".bosun/profiles/rust.toml", "deps = \"cargo deny check\"\n");
     w(".cargo/config.toml", "[net]\nretry = 3\n");
     w("rust-toolchain.toml", "[toolchain]\nchannel = \"1.97\"\n");
@@ -1031,7 +1046,7 @@ fn events(yaml: &str) -> Vec<String> {
 /// Every workflow of bosun and of the channel: (path, text).
 fn all_workflows() -> Vec<(String, String)> {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut dirs = vec![root.join(".github/workflows")];
+    let mut dirs = vec![root.join("../.github/workflows")];
     for piece in fs::read_dir(root.join("channel/pieces")).unwrap() {
         let wf = piece.unwrap().path().join("files/.github/workflows");
         if wf.is_dir() {
@@ -1152,7 +1167,7 @@ fn the_pr_copy_scan_catches_jinja_events_and_workflow_run_head_code() {
 /// workflow instead. `/bosun approve` stays open: bosun checks the commenter against the owners.
 #[test]
 fn risk_rechecks_on_a_bosun_recheck_comment() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/risk.yml");
+    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/risk.yml");
     let yaml = fs::read_to_string(path).unwrap();
     let channel = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -1347,8 +1362,9 @@ fn every_job_that_reads_a_secret_declares_its_environment() {
         .flat_map(|(p, y)| secret_problems(p, y))
         .collect();
     assert!(problems.is_empty(), "{problems:#?}");
-    // Not vacuous: bosun's own workflows read each secret, the channel's splice.yml its token.
-    for (secret, _) in SECRET_ENVIRONMENTS {
+    // Not vacuous: the monorepo's workflows read the App and review keys, the channel's
+    // splice.yml its token.
+    for secret in ["BOSUN_APP_KEY", "ANTHROPIC_API_KEY"] {
         assert!(
             all.iter()
                 .any(|(p, y)| !p.contains("/channel/") && y.contains(&format!("secrets.{secret}"))),
@@ -1412,20 +1428,21 @@ fn the_secret_scan_catches_each_form_of_secret_use() {
 #[test]
 fn main_open_rejudges_when_a_draft_becomes_ready() {
     for rel in [
-        ".github/workflows/main-open.yml",
+        "../.github/workflows/main-open.yml",
         "channel/pieces/core/files/.github/workflows/main-open.yml.jinja",
     ] {
         let path = format!("{}/{rel}", env!("CARGO_MANIFEST_DIR"));
         let yaml = fs::read_to_string(path).unwrap();
         let types = yaml.lines().find(|l| l.contains("types:")).unwrap();
         assert!(types.contains("ready_for_review"), "{rel}: {types}");
-        // The label filter applies to label actions only; every other action reaches the job.
-        assert!(
-            yaml.contains(
-                "github.event.action != 'labeled' && github.event.action != 'unlabeled') ||"
-            ),
-            "{rel}"
-        );
+        // The label filter applies to label actions only (and, in the monorepo's copy, to an
+        // edit that does not change the base); every other action reaches the job.
+        let filter = if rel.starts_with("../") {
+            "github.event.action != 'labeled' && github.event.action != 'unlabeled' &&\n      (github.event.action != 'edited' || github.event.changes.base)) ||"
+        } else {
+            "github.event.action != 'labeled' && github.event.action != 'unlabeled') ||"
+        };
+        assert!(yaml.contains(filter), "{rel}");
         assert!(
             yaml.contains("github.event.pull_request.draft == false &&"),
             "{rel}"
@@ -1558,7 +1575,7 @@ fn app_job_problems(yaml: &str, job: &str) -> Vec<String> {
 /// token step and the token only to bosun. Jobs that run repo code never name it.
 #[test]
 fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
-    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/.github/workflows/");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../.github/workflows/");
     let want = [
         ("risk.yml", "risk"),
         ("verdict.yml", "verdict"),

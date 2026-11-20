@@ -258,7 +258,7 @@ const ACTIONS_READ: &str = "{% endraw %}{% if own_ci %}  actions: read\n{% endif
 /// those), check out at most the base once, and never put an expression in a script.
 #[test]
 fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
-    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows");
     let wf = channel().join("pieces/core/files/.github/workflows");
     for (f, theirs_name) in [
         ("risk.yml", "risk.yml.jinja"),
@@ -284,15 +284,33 @@ fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
         let theirs = theirs
             .replace(WATCH, "    workflows: [ci]\n")
             .replace(ACTIONS_READ, "");
+        // A consumer's weekly main-health calls bosun.yml, which reads check runs; the
+        // monorepo's runs its own checks (tests/workflows.rs), so it does not need `checks`.
+        let theirs = if f == "main-health.yml" {
+            assert!(
+                theirs.contains("uses: ./.github/workflows/bosun.yml"),
+                "{f}"
+            );
+            theirs.replacen("\n  checks: read\n", "\n", 1)
+        } else {
+            theirs
+        };
+        // Bosun's own copies are the monorepo root's (D-023): their comments say why they
+        // differ, and their concurrency groups also skip an edit that changes nothing judged, so
+        // the triggers (up to `concurrency:`) and the permissions are compared as code.
+        let code = |y: &str, a: &str, b: &str| -> Vec<String> {
+            let text = block(y, a, b);
+            let text = text.split("\nconcurrency:").next().unwrap_or(text);
+            text.lines()
+                .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('#'))
+                .map(str::to_string)
+                .collect()
+        };
         for (a, b) in [
             ("\non:\n", "\npermissions:"),
             ("\npermissions:\n", "\njobs:"),
         ] {
-            assert_eq!(
-                block(&theirs, a, b),
-                block(&mine, a, b),
-                "{f}: {a:?} differs"
-            );
+            assert_eq!(code(&theirs, a, b), code(&mine, a, b), "{f}: {a:?} differs");
         }
         assert_eq!(
             theirs.matches("permissions:").count(),
@@ -354,21 +372,23 @@ fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
     let min = m["min_splice"].as_str().unwrap();
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let own = fs::read_to_string(root.join("docs/setup-script.sh")).unwrap();
-    let own_bot = fs::read_to_string(root.join(".github/workflows/splice.yml")).unwrap();
+    // The monorepo has no splice update bot yet (MIGRATION.md, Follow-ups): a root workflow
+    // that runs the splice action counts as bosun's own bot.
+    let own_bots = root_splice_bots();
     let mut pins = vec![pinned.to_string()];
     pins.extend(
         own.lines()
             .filter_map(|l| l.strip_prefix("SPLICE_VERSION="))
             .map(str::to_string),
     );
-    for y in [&bot, &own_bot] {
+    for y in std::iter::once(&bot).chain(own_bots.iter().map(|(_, y)| y)) {
         let v = y
             .lines()
             .find_map(|l| l.trim().strip_prefix("version: "))
             .unwrap();
         pins.push(v.trim_matches('"').to_string());
     }
-    assert_eq!(pins.len(), 4, "{pins:?}");
+    assert_eq!(pins.len(), 3 + own_bots.len(), "{pins:?}");
     for v in &pins {
         assert!(
             ver(v) >= ver(min),
@@ -436,7 +456,7 @@ fn shipped_scripts_are_only_ever_called_through_bash() {
         texts.push(root.join(f));
     }
     files_under(&root.join("docs/spec"), &mut texts);
-    files_under(&root.join(".github/workflows"), &mut texts);
+    files_under(&root.join("../.github/workflows"), &mut texts);
     let mut found = 0;
     for path in &texts {
         let text = fs::read_to_string(path).unwrap();
@@ -595,13 +615,28 @@ fn setup_scripts_install_the_keelstackhq_tools_checked_against_their_pinned_inte
 }
 
 /// The splice update action runs with a write token: pinned by commit, never by a movable tag.
+/// The monorepo root's workflows that run the splice update action, with their paths.
+fn root_splice_bots() -> Vec<(std::path::PathBuf, String)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows");
+    let mut out: Vec<(std::path::PathBuf, String)> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .map(|p| {
+            let y = fs::read_to_string(&p).unwrap();
+            (p, y)
+        })
+        .filter(|(_, y)| y.contains("uses: keelstackhq/splice/action@"))
+        .collect();
+    out.sort();
+    out
+}
+
 #[test]
 fn the_splice_action_is_pinned_by_commit() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    for f in [
-        root.join(".github/workflows/splice.yml"),
-        channel().join("pieces/core/files/.github/workflows/splice.yml"),
-    ] {
+    let mut files: Vec<std::path::PathBuf> =
+        root_splice_bots().into_iter().map(|(p, _)| p).collect();
+    files.push(channel().join("pieces/core/files/.github/workflows/splice.yml"));
+    for f in files {
         let y = fs::read_to_string(&f).unwrap();
         let uses: Vec<&str> = y
             .lines()

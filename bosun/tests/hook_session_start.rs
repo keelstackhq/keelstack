@@ -75,6 +75,15 @@ fn a_matching_pin_is_silent() {
 }
 
 #[test]
+fn an_unreleased_pin_is_silent() {
+    // `unreleased` (spec §11): bosun is built from the workspace, no release to install.
+    let (fake, tmp) = (FakeGithub::start(), repo());
+    pin_file(tmp.path(), "unreleased");
+    let text = start(&fake.url(), tmp.path(), "2026-10-22T10:00:00Z");
+    assert!(!text.contains("repo pins"), "{text}");
+}
+
+#[test]
 fn a_config_parse_error_is_named_not_blamed_on_github() {
     let tmp = repo();
     std::fs::create_dir_all(tmp.path().join(".bosun")).unwrap();

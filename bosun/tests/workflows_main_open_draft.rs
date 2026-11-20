@@ -11,17 +11,20 @@ fn judge_if(path: &str) -> String {
 
 #[test]
 fn a_mainfix_label_judges_a_draft() {
-    for path in [
-        ".github/workflows/main-open.yml",
-        "channel/pieces/core/files/.github/workflows/main-open.yml.jinja",
+    // bosun's own main-open is the monorepo root's (D-023); it also skips an edit that does not
+    // change the base.
+    for (path, want) in [
+        (
+            "../.github/workflows/main-open.yml",
+            "(github.event.pull_request.draft == false && github.event.action != 'labeled' && github.event.action != 'unlabeled' && (github.event.action != 'edited' || github.event.changes.base)) || github.event.label.name == 'bosun:kind/mainfix'",
+        ),
+        (
+            "channel/pieces/core/files/.github/workflows/main-open.yml.jinja",
+            "(github.event.pull_request.draft == false && github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'bosun:kind/mainfix'",
+        ),
     ] {
         let cond = judge_if(path);
-        assert!(
-            cond.contains(
-                "(github.event.pull_request.draft == false && github.event.action != 'labeled' && github.event.action != 'unlabeled') || github.event.label.name == 'bosun:kind/mainfix'"
-            ),
-            "{path}: {cond}"
-        );
+        assert!(cond.contains(want), "{path}: {cond}");
         let text = std::fs::read_to_string(path).unwrap();
         assert_eq!(
             bosun::core::ci_minutes::check(path, &text),

@@ -13,11 +13,15 @@
 /Cargo.toml              @urbanisierung
 /Cargo.lock              @urbanisierung
 /scripts/                @urbanisierung
+/governance/             @urbanisierung
+/REVIEW.md               @urbanisierung
+/docs/lessons.toml       @urbanisierung
 /hoard/action.yml        @urbanisierung
 /hoard/action/           @urbanisierung
 
 # Org decisions are governance (the decisions folder was its own repo).
 /decisions/decisions/    @urbanisierung
+/decisions/DECISIONS.md  @urbanisierung
 
 # Per folder: the same governance paths bosun's own CODEOWNERS named.
 /bosun/.bosun/           @urbanisierung

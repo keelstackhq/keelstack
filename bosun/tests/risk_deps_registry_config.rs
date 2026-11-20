@@ -23,10 +23,11 @@ const CONFIGS: [&str; 12] = [
 
 /// The committed text: CI puts the base's `.bosun/` over the checkout before the gates, so the
 /// file on disk is the base's there (tests/governance.rs reads it the same way).
+/// `rel` is relative to the monorepo root (`HEAD:<rel>`), whose `.bosun/` bosun runs on.
 fn committed(rel: &str) -> String {
-    let root = env!("CARGO_MANIFEST_DIR");
+    let root = concat!(env!("CARGO_MANIFEST_DIR"), "/..");
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:./{rel}")])
+        .args(["show", &format!("HEAD:{rel}")])
         .current_dir(root)
         .output()
         .ok()
@@ -79,7 +80,7 @@ fn every_rule_set_counts_package_source_config_as_r_deps() {
     );
     assert_eq!(
         deps_paths(&rules_of(
-            "channel/pieces/core/files/.bosun/risk.toml.jinja"
+            "bosun/channel/pieces/core/files/.bosun/risk.toml.jinja"
         )),
         all,
         "the channel's rules"

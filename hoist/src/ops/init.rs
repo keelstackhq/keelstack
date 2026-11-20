@@ -146,6 +146,31 @@ fn valid_sha(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+/// The last lockstep version from before the monorepo (D-023): the monorepo's release workflow
+/// never tags it or anything lower, so `v<version>` of [`ACTION_REPO`] exists only above it.
+const LAST_PRE_MONOREPO: (u64, u64, u64) = (0, 21, 0);
+
+/// True when `version` (`X.Y.Z[-pre][+build]`) can have a monorepo release tag.
+fn monorepo_released(version: &str) -> bool {
+    let core = version.split(['-', '+']).next().unwrap_or(version);
+    let n: Vec<u64> = core.split('.').filter_map(|p| p.parse().ok()).collect();
+    match n[..] {
+        [a, b, c] => (a, b, c) > LAST_PRE_MONOREPO,
+        _ => false,
+    }
+}
+
+/// Why a hoist at or below v0.21.0 cannot pick the action commit by itself.
+fn unreleased(v: &str) -> HoistError {
+    HoistError::Usage(format!(
+        "hoist v{v} has no release of its action: {ACTION_REPO} tags only versions above v0.21.0 \
+         and none exists yet (the old keelstackhq/hoist repo's last release is v0.5.1, whose action \
+         is keelstackhq/hoist/release); pass --sha <full commit SHA of {ACTION_REPO}> to pin a \
+         commit of the monorepo, or run `hoist init` from hoist 0.5.1 \
+         (`npx @keelstackhq/hoist@0.5.1 init`) to pin that release"
+    ))
+}
+
 /// The commit of hoist's release tag `v<version>` (one GET), unless `--sha` gave it.
 fn action_sha(given: Option<&str>) -> Result<String, HoistError> {
     if let Some(s) = given {
@@ -159,6 +184,9 @@ fn action_sha(given: Option<&str>) -> Result<String, HoistError> {
         };
     }
     let v = env!("CARGO_PKG_VERSION");
+    if !monorepo_released(v) {
+        return Err(unreleased(v));
+    }
     let http = Http::new(Service::Github, github_token()?);
     let path = format!("/repos/{ACTION_REPO}/commits/v{v}");
     let fail = |why: &str| {
@@ -523,6 +551,40 @@ mod tests {
 #[cfg(test)]
 mod value_tests {
     use super::*;
+
+    #[test]
+    fn only_versions_above_0_21_0_have_a_monorepo_release() {
+        for v in [
+            "0.21.0",
+            "0.5.1",
+            "0.20.9",
+            "0.21.0-rc.1",
+            "0.21.0+b",
+            "0.21",
+            "x",
+        ] {
+            assert!(!monorepo_released(v), "{v}");
+        }
+        for v in ["0.21.1", "0.22.0", "1.0.0", "0.22.0-rc.1"] {
+            assert!(monorepo_released(v), "{v}");
+        }
+    }
+
+    #[test]
+    fn an_unreleased_version_without_sha_fails_naming_both_ways_out() {
+        let e = unreleased("0.21.0").to_string();
+        for want in [
+            "v0.21.0",
+            "--sha",
+            "keelstackhq/keelstack",
+            "keelstackhq/hoist",
+            "0.5.1",
+        ] {
+            assert!(e.contains(want), "{want}: {e}");
+        }
+        // --sha never needs a tag (and so works on an unreleased version).
+        assert_eq!(action_sha(Some(&"A".repeat(40))).unwrap(), "a".repeat(40));
+    }
 
     #[test]
     fn names_with_yaml_specials_are_refused() {

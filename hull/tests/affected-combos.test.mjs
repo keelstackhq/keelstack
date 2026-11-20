@@ -1,4 +1,7 @@
 import { execFileSync, spawnSync } from "node:child_process";
+import { cpSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -77,6 +80,38 @@ test("CLI with an unknown base warns and prints every combo", () => {
   assert.equal(r.status, 0);
   assert.deepEqual(JSON.parse(r.stdout), names);
   assert.match(r.stderr, /warning/);
+});
+
+test("CLI run from the monorepo root diffs hull-relative paths", () => {
+  // A throwaway monorepo: <root>/hull/scripts is a copy of hull's scripts.
+  const root = mkdtempSync(join(tmpdir(), "affected-"));
+  cpSync(fileURLToPath(new URL("../scripts/", import.meta.url)), join(root, "hull/scripts"), {
+    recursive: true,
+  });
+  const git = (...args) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      cwd: root,
+      encoding: "utf8",
+    });
+  git("init", "-q", "-b", "main");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  mkdirSync(join(root, "hull/template/pieces/astro-site/files"), { recursive: true });
+  writeFileSync(join(root, "hull/template/pieces/astro-site/files/x"), "x\n");
+  writeFileSync(join(root, "README.md"), "outside hull\n");
+  git("add", "-A");
+  git("commit", "-qm", "change");
+  const r = spawnSync(
+    "node",
+    [join(root, "hull/scripts/affected-combos.mjs"), "--base", "HEAD~1"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stderr, "");
+  assert.deepEqual(JSON.parse(r.stdout), ["site"]);
 });
 
 test("scheduled combos are never selected, even for base or all-changing files", () => {

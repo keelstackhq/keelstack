@@ -191,7 +191,7 @@ one `[pins]` table of exact string versions (`rust`, `nextest`, `cargo_deny`, `s
 same `[pins]` table for `splice`, `bosun`, `hoist`, `berth` and `hull` (the template tag, `v0.13.0` =
 commit `3f4a65fda568cdd20c76168ed156d25a28ba5630`, which has `template-rust/` and `template/`), plus `[sha512.<tool>]` tables
 (`version`, `launcher`, `linux_x64`, `linux_arm64`, …: npm `dist.integrity`, base64).
-`[refs.hull] tag, sha` records the commit that tag must peel to; keel checks it with `git ls-remote` before rendering a hull source (a tag with no pinned sha, e.g. a repo `pins.toml` moving `hull`, fails with a fix naming `KEEL_PINS` or updating keel). `KEEL_PINS=FILE` replaces the embedded file. The repo's `pins.toml` `[pins]` versions override the
+`[refs.hull] tag, sha, repo` records the commit that tag must peel to and the GitHub repo (`owner/name`) whose tag it is (`repo` is optional: an entry without it means `keelstackhq/hull`, the old repo, where hull tags up to v0.21.0 live); keel checks it with `git ls-remote` before rendering a hull source (a tag with no pinned sha, e.g. a repo `pins.toml` moving `hull`, fails with a fix naming `KEEL_PINS` or updating keel; a tag pinned for another repo than the source's, e.g. a monorepo source `gh:keelstackhq/keelstack//hull/...` with a pin of the old repo, fails naming both repos, with no `ls-remote`). `KEEL_PINS=FILE` replaces the embedded file. The repo's `pins.toml` `[pins]` versions override the
 embedded ones (other tables and keys are ignored). A version with no recorded sha512 (repo pins a
 version keel has no sha512s for) is a failed step: update keel or point `KEEL_PINS` at a file
 with that version's sha512s. keel never installs an unverified tool.

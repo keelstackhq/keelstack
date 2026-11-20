@@ -838,12 +838,15 @@ pub const CRITICAL_RULES: [&str; 3] = ["R-secrets", "R-prod-write", "R-unseen"];
 /// approving such a change: a same-repo PR's own `on: pull_request` copy can post a forged
 /// status on its head before anyone approves, so it is no owner gate (spec §8 residual; B2, a
 /// check run from a dedicated GitHub App pinned in the ruleset, closes it).
-pub const CRITICAL_PATHS: [&str; 19] = [
+pub const CRITICAL_PATHS: [&str; 21] = [
     ".bosun/**",
     "governance/**",
     "CODEOWNERS",
     ".github/CODEOWNERS",
     "docs/CODEOWNERS",
+    // The trust-root decisions (D-022): trust files, so on the floor too.
+    "decisions/DECISIONS.md",
+    "decisions/decisions/022-hands-off-approvals.md",
     // The required checks `hoist apply` puts in the ruleset: only the root file has `[github]`.
     "hoist.toml",
     ".github/workflows/**",
@@ -2808,5 +2811,32 @@ mod monorepo_tests {
             t,
             ["bosun/governance/owners.toml", "governance/owners.toml"]
         );
+    }
+
+    /// D-022: the decisions index and D-022 itself are the trust root, owner only: a trust file
+    /// (no signed approval counts) and on the critical floor (no delegate approves).
+    #[test]
+    fn trust_root_decisions_are_trust_files_and_critical() {
+        let paths = [
+            "decisions/DECISIONS.md",
+            "decisions/decisions/022-hands-off-approvals.md",
+        ];
+        let t = crate::core::approve::trust_files_changed_in(
+            paths
+                .iter()
+                .map(|p| (*p, None))
+                .chain([("decisions/decisions/021-gated-prs-no-line-cap.md", None)]),
+            &roots(),
+        );
+        assert_eq!(t, paths);
+        // A rename away counts too.
+        let t = crate::core::approve::trust_files_changed_in(
+            [("decisions/old.md", Some("decisions/DECISIONS.md"))],
+            &roots(),
+        );
+        assert_eq!(t, ["decisions/old.md"]);
+        for p in paths {
+            assert!(!critical_in(&[], &[file(p)], &roots()).is_empty(), "{p}");
+        }
     }
 }

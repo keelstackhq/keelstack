@@ -7,18 +7,39 @@ why = "Governance files decide who approves what."
 # REVIEW.md and docs/lessons.toml are read into every review pack; docs/setup-script.sh runs
 # as root wherever it is pasted. **/plans/** carry `allow:` and touch lists for test-integrity and
 # claims (spec §8).
-paths = [".bosun/**", "governance/**", "CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS", "**/codeowners", ".claude/**", "**/.claude/**", ".splice/**", "**/hoist.toml", "docs/setup-script.sh", "REVIEW.md", "docs/lessons.toml", "src/core/session_rules.rs", "src/core/session_rules/**", "src/hooks/session_rules.rs", "src/hooks/session_rules/**", ".claude-plugin/**", "docs/agents/**", "**/agents.md", "**/claude.md", "**/claude.local.md", "**/plans/**"]
+paths = [
+    ".bosun/**", "governance/**", "CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS", "**/codeowners", ".claude/**", "**/.claude/**", ".splice/**", "**/hoist.toml", "docs/setup-script.sh", "REVIEW.md", "docs/lessons.toml", "src/core/session_rules.rs", "src/core/session_rules/**", "src/hooks/session_rules.rs", "src/hooks/session_rules/**", ".claude-plugin/**", "docs/agents/**", "**/agents.md", "**/claude.md", "**/claude.local.md", "**/plans/**",
+    # Org decisions (D-002; D-022 names its own row as trust root).
+    "decisions/**",
+    # splice's own R-gov rule (its old .bosun/risk.toml), re-rooted under splice/.
+    "splice/.bosun/**", "splice/governance/**", "splice/CODEOWNERS", "splice/docs/CODEOWNERS", "splice/.github/CODEOWNERS", "splice/.claude/**", "splice/.splice/**", "splice/docs/setup-script.sh", "splice/REVIEW.md", "splice/src/core/session_rules.rs", "splice/src/core/session_rules/**", "splice/src/hooks/session_rules.rs", "splice/src/hooks/session_rules/**", "splice/.claude-plugin/**", "splice/docs/agents/**",
+    # hull's own R-gov rule (its old .bosun/risk.toml), re-rooted under hull/.
+    "hull/.bosun/**", "hull/governance/**", "hull/CODEOWNERS", "hull/docs/CODEOWNERS", "hull/.github/CODEOWNERS", "hull/.claude/**", "hull/.splice/**", "hull/docs/setup-script.sh", "hull/REVIEW.md", "hull/src/core/session_rules.rs", "hull/src/core/session_rules/**", "hull/src/hooks/session_rules.rs", "hull/src/hooks/session_rules/**", "hull/.claude-plugin/**", "hull/docs/agents/**",
+    # hoard's own R-gov rule (its old .bosun/risk.toml), re-rooted under hoard/.
+    "hoard/.bosun/**", "hoard/governance/**", "hoard/CODEOWNERS", "hoard/docs/CODEOWNERS", "hoard/.github/CODEOWNERS", "hoard/.claude/**", "hoard/.splice/**", "hoard/docs/setup-script.sh", "hoard/REVIEW.md", "hoard/src/core/session_rules.rs", "hoard/src/core/session_rules/**", "hoard/src/hooks/session_rules.rs", "hoard/src/hooks/session_rules/**", "hoard/.claude-plugin/**", "hoard/docs/agents/**",
+    # hoist's own R-gov rule (its old .bosun/risk.toml), re-rooted under hoist/.
+    "hoist/.bosun/**", "hoist/governance/**", "hoist/CODEOWNERS", "hoist/docs/CODEOWNERS", "hoist/.github/CODEOWNERS", "hoist/.claude/**", "hoist/.splice/**", "hoist/docs/setup-script.sh", "hoist/REVIEW.md", "hoist/src/core/session_rules.rs", "hoist/src/core/session_rules/**", "hoist/src/hooks/session_rules.rs", "hoist/src/hooks/session_rules/**", "hoist/.claude-plugin/**", "hoist/docs/agents/**",
+]
 
 [[rule]]
 id = "R-ci"
 why = "CI decides what is verified."
-# Delegate-able (spec §8, delegated decisions): a delegate key with one clean verdict may
-# approve. The critical floor (every workflow, .bosun/**, governance/**, CODEOWNERS, hoist.toml,
-# all of src/** and the manifests, R-secrets, R-prod-write, R-unseen) always needs the owner,
-# so here a delegate decides deny.toml, the toolchain files, .config/** and profiles/**. Delete
-# the delegate key in .bosun/approvers.toml to turn delegation off. Needs .bosun/version 0.2.1+.
-approval = "delegate"
-paths = [".github/workflows/**", ".github/actions/**", ".github/dependabot.yml", "scripts/**", "Makefile", "**/Makefile", "justfile", "**/justfile", "Dockerfile", "**/Dockerfile", ".husky/**", "**/action.yml", "**/action.yaml", ".circleci/**", ".gitlab-ci.yml", ".gitlab/ci/**", ".buildkite/**", "**/jenkinsfile", "azure-pipelines.y*ml", "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml", "**/deny.toml", "**/.deny.toml", "**/deny.exceptions.toml", "**/.deny.exceptions.toml", "**/deny.local.toml", "**/.deny.local.toml", "scripts/deny.mjs", "rust-toolchain.toml", "rust-toolchain"]
+# Owner (the default), not "delegate" as in bosun's one-repo file: splice, hull, hoard and hoist
+# had no delegate in their repos, so their CI paths below stay owner-only (a monorepo never
+# loosens a folder's old rule). One id per rule, so the same holds for bosun's paths here.
+paths = [
+    ".github/workflows/**", ".github/actions/**", ".github/dependabot.yml", "scripts/**", "Makefile", "**/Makefile", "justfile", "**/justfile", "Dockerfile", "**/Dockerfile", ".husky/**", "**/action.yml", "**/action.yaml", ".circleci/**", ".gitlab-ci.yml", ".gitlab/ci/**", ".buildkite/**", "**/jenkinsfile", "azure-pipelines.y*ml", "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml", "**/deny.toml", "**/.deny.toml", "**/deny.exceptions.toml", "**/.deny.exceptions.toml", "**/deny.local.toml", "**/.deny.local.toml", "scripts/deny.mjs", "rust-toolchain.toml", "rust-toolchain",
+    # affected.sh decides which folders CI builds and tests.
+    ".github/scripts/**",
+    # splice's own R-ci rule (its old .bosun/risk.toml), re-rooted under splice/.
+    "splice/.github/workflows/**", "splice/.github/actions/**", "splice/.github/dependabot.yml", "splice/scripts/**", "splice/Makefile", "splice/justfile", "splice/Dockerfile", "splice/.husky/**", "splice/.circleci/**", "splice/.gitlab-ci.yml", "splice/.gitlab/ci/**", "splice/.buildkite/**", "splice/azure-pipelines.y*ml", "splice/bitbucket-pipelines.yml", "splice/.travis.yml", "splice/.drone.yml", "splice/rust-toolchain.toml",
+    # hull's own R-ci rule (its old .bosun/risk.toml), re-rooted under hull/.
+    "hull/.github/workflows/**", "hull/.github/actions/**", "hull/.github/dependabot.yml", "hull/scripts/**", "hull/Makefile", "hull/justfile", "hull/Dockerfile", "hull/.husky/**", "hull/.circleci/**", "hull/.gitlab-ci.yml", "hull/.gitlab/ci/**", "hull/.buildkite/**", "hull/azure-pipelines.y*ml", "hull/bitbucket-pipelines.yml", "hull/.travis.yml", "hull/.drone.yml", "hull/.npmrc",
+    # hoard's own R-ci rule (its old .bosun/risk.toml), re-rooted under hoard/.
+    "hoard/.github/workflows/**", "hoard/.github/actions/**", "hoard/.github/dependabot.yml", "hoard/scripts/**", "hoard/Makefile", "hoard/justfile", "hoard/Dockerfile", "hoard/.husky/**", "hoard/.circleci/**", "hoard/.gitlab-ci.yml", "hoard/.gitlab/ci/**", "hoard/.buildkite/**", "hoard/azure-pipelines.y*ml", "hoard/bitbucket-pipelines.yml", "hoard/.travis.yml", "hoard/.drone.yml", "hoard/rust-toolchain.toml", "hoard/.npmrc",
+    # hoist's own R-ci rule (its old .bosun/risk.toml), re-rooted under hoist/.
+    "hoist/.github/workflows/**", "hoist/.github/actions/**", "hoist/.github/dependabot.yml", "hoist/scripts/**", "hoist/Makefile", "hoist/justfile", "hoist/Dockerfile", "hoist/.husky/**", "hoist/.circleci/**", "hoist/.gitlab-ci.yml", "hoist/.gitlab/ci/**", "hoist/.buildkite/**", "hoist/azure-pipelines.y*ml", "hoist/bitbucket-pipelines.yml", "hoist/.travis.yml", "hoist/.drone.yml", "hoist/rust-toolchain.toml",
+]
 
 [[rule]]
 id = "R-gate"
@@ -37,6 +58,8 @@ paths = [
     "src/core/meta/**",
     "src/core/glob.rs",
     "src/core/glob/**",
+    "src/core/folders.rs",
+    "src/core/folders/**",
     "src/core/approve.rs",
     "src/core/approve/**",
     "src/core/mod.rs",
@@ -178,7 +201,7 @@ why = "A new dependency adds code that nobody reviewed."
 # Any change counts.
 paths = ["**/.cargo/config.toml", "**/.cargo/config", "**/.npmrc", "**/.yarnrc", "**/.yarnrc.yml", "**/.pnpmfile.cjs", "**/bunfig.toml", "**/.yarn/plugins/**", "**/.yarn/releases/**"]
 new_dependency = true
-approval = "delegate"
+# Owner, as in splice, hull, hoard and hoist before (bosun's one-repo file had "delegate").
 
 [[rule]]
 id = "R-prod-write"

@@ -1,6 +1,12 @@
 //! The gate jobs run the bosun release pinned in `.bosun/version`, and its config parser rejects
 //! unknown keys. So bosun's own `.bosun/bosun.toml` may only use tables that release knows: a
 //! newer key breaks every gate on main until a release that reads it is pinned.
+//!
+//! In the keelstack monorepo (D-023) bosun runs on the root `.bosun/`, which uses `[[folders]]`.
+//! No release reads that yet (the first is 0.22.0), so the pin is `unreleased` (spec §11): every
+//! workflow builds bosun from the workspace and none reads the pin, and an `npx
+//! @keelstackhq/bosun@unreleased` fallback fails instead of running a release that cannot read
+//! the config. Pin a release only once it knows every key here; these tests then hold it to that.
 
 /// The top-level keys each pinned release accepts. Add a release only when it accepts new keys
 /// (see `known_for`).
@@ -143,6 +149,7 @@ const KNOWN: &[(&str, &[&str])] = &[
             "session",
             "mode",
             "ci",
+            "folders",
         ],
     ),
 ];
@@ -389,10 +396,11 @@ fn policy_known(version: &str, value: &str) -> Option<bool> {
     Some(values.contains(&value))
 }
 
-/// `path` as committed at HEAD: CI swaps the base branch's `.bosun/` into the checkout.
+/// `path` as committed at HEAD, relative to the monorepo root (whose `.bosun/` bosun runs on):
+/// CI swaps the base branch's `.bosun/` into the checkout.
 fn committed(path: &str) -> String {
     let out = std::process::Command::new("git")
-        .args(["show", &format!("HEAD:./{path}")])
+        .args(["show", &format!("HEAD:{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .expect("git show");
@@ -400,9 +408,124 @@ fn committed(path: &str) -> String {
     String::from_utf8(out.stdout).expect("utf-8")
 }
 
+/// The committed pin; `None` for `unreleased` (no release: bosun is built from the workspace).
+/// Anything else must be an exact x.y.z (`semver` panics otherwise).
+fn pin() -> Option<String> {
+    let v = committed(".bosun/version").trim().to_string();
+    if v == "unreleased" {
+        return None;
+    }
+    semver(&v);
+    Some(v)
+}
+
+/// The non-comment lines of the root workflows that would run a released bosun: read the pin,
+/// install it from npm, or download a bosun release asset (other tools' downloads are fine).
+fn release_fetches(files: &[(String, String)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, text) in files {
+        for line in text.lines() {
+            let code = line.trim_start();
+            if code.starts_with('#') || code.contains("::error::") {
+                continue;
+            }
+            let download = ["releases/download", "gh release download"]
+                .iter()
+                .any(|k| code.contains(k))
+                && code.contains("bosun");
+            if download
+                || [".bosun/version", "@keelstackhq/bosun"]
+                    .iter()
+                    .any(|k| code.contains(k))
+            {
+                out.push(format!("{name}: {}", line.trim()));
+            }
+        }
+    }
+    out
+}
+
+fn root_workflows() -> Vec<(String, String)> {
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows");
+    let mut files: Vec<(String, String)> = std::fs::read_dir(&dir)
+        .expect("root .github/workflows")
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|x| x == "yml" || x == "yaml"))
+        .map(|p| {
+            let name = p.file_name().unwrap().to_string_lossy().into_owned();
+            (name, std::fs::read_to_string(&p).unwrap())
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+/// The monorepo's workflows build bosun from the workspace; none reads the pin or runs a
+/// released bosun, which cannot read the root config (.github/scripts/gate-workflows.test.sh
+/// checks the build steps). Holds whatever the pin says: a pin is no reason to fetch a release.
+#[test]
+fn no_root_workflow_runs_a_released_bosun() {
+    let files = root_workflows();
+    assert!(files.len() >= 5, "{files:?}");
+    let found = release_fetches(&files);
+    assert!(
+        found.is_empty(),
+        "these run a released bosun, which cannot read .bosun/bosun.toml ([[folders]]): {found:?}"
+    );
+}
+
+#[test]
+fn an_unreleased_pin_needs_keys_a_listed_release_reads() {
+    // `unreleased`: no pinned release to check against, so each key must at least be one the
+    // newest entry of KNOWN (the first release that will read it) lists.
+    if pin().is_some() {
+        return;
+    }
+    // Every key is still one some future release lists: a key no entry of KNOWN has means the
+    // table (and this rule) is out of date.
+    let newest = KNOWN.last().unwrap().1;
+    let config: toml::Table = committed(".bosun/bosun.toml").parse().expect("bosun.toml");
+    for key in config.keys() {
+        assert!(
+            newest.contains(&key.as_str()),
+            "`{key}` in .bosun/bosun.toml is in no release of KNOWN: add the first release that reads it"
+        );
+    }
+}
+
+#[test]
+fn a_workflow_that_runs_a_release_is_caught() {
+    let f = |t: &str| vec![("x.yml".to_string(), t.to_string())];
+    assert!(release_fetches(&f("      - run: cargo build -p keel-bosun\n")).is_empty());
+    assert!(release_fetches(&f("  # reads .bosun/version\n")).is_empty());
+    let other =
+        "        run: curl -fsSLO https://github.com/rhysd/actionlint/releases/download/v1/a.tgz\n";
+    assert!(release_fetches(&f(other)).is_empty());
+    let asset = "        run: curl -fsSLO https://github.com/keelstackhq/bosun/releases/download/v0.21.0/bosun-x\n";
+    assert_eq!(release_fetches(&f(asset)).len(), 1);
+    assert_eq!(
+        release_fetches(&f("        run: v=\"$(cat .bosun/version)\"\n")).len(),
+        1
+    );
+    assert_eq!(
+        release_fetches(&f("      - run: npx -y @keelstackhq/bosun@0.21.0 gate\n")).len(),
+        1
+    );
+}
+
+#[test]
+fn folders_is_known_from_0_22_0() {
+    // The monorepo's root config needs it: a 0.21.0 pin (the release that is out) is refused.
+    let has = |v: &str| known_for(KNOWN, v).is_some_and(|k| k.contains(&"folders"));
+    assert!(!has("0.21.0"));
+    assert!(has("0.22.0"));
+}
+
 #[test]
 fn bosun_toml_uses_only_keys_the_pinned_release_knows() {
-    let version = committed(".bosun/version").trim().to_string();
+    let Some(version) = pin() else {
+        return; // `unreleased`: an_unreleased_pin_needs_keys_a_listed_release_reads
+    };
     let Some(keys) = known_for(KNOWN, &version) else {
         panic!(
             "add the top-level keys release {version} accepts to KNOWN in tests/pinned_config.rs"
@@ -419,7 +542,9 @@ fn bosun_toml_uses_only_keys_the_pinned_release_knows() {
 
 #[test]
 fn limits_toml_uses_only_keys_the_pinned_release_knows() {
-    let version = committed(".bosun/version").trim().to_string();
+    let Some(version) = pin() else {
+        return; // `unreleased`: bosun is built from the workspace (governance.rs parses it)
+    };
     let Some(keys) = known_for(KNOWN_LIMITS, &version) else {
         panic!(
             "add the limits keys release {version} accepts to KNOWN_LIMITS in tests/pinned_config.rs"
@@ -447,7 +572,9 @@ fn a_key_newer_than_the_pin_is_caught() {
 
 #[test]
 fn approvals_uses_only_keys_the_pinned_release_knows() {
-    let version = committed(".bosun/version").trim().to_string();
+    let Some(version) = pin() else {
+        return; // `unreleased`: bosun is built from the workspace (governance.rs parses it)
+    };
     let config: toml::Table = committed(".bosun/bosun.toml").parse().expect("bosun.toml");
     let Some(approvals) = config.get("approvals").and_then(|a| a.as_table()) else {
         return;
@@ -467,7 +594,9 @@ fn approvals_uses_only_keys_the_pinned_release_knows() {
 
 #[test]
 fn approvals_policy_uses_only_values_the_pinned_release_knows() {
-    let version = committed(".bosun/version").trim().to_string();
+    let Some(version) = pin() else {
+        return; // `unreleased`: bosun is built from the workspace (governance.rs parses it)
+    };
     let config: toml::Table = committed(".bosun/bosun.toml").parse().expect("bosun.toml");
     let Some(policy) = config
         .get("approvals")

@@ -14,7 +14,8 @@ const BASE: &str = "base0000";
 const OWNERS: &str = "[[owner]]\ngithub = \"ada\"\n";
 
 fn rules() -> String {
-    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(".bosun/risk.toml")).unwrap()
+    // The monorepo root's `.bosun/` (bosun/ is a folder of it).
+    fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.bosun/risk.toml")).unwrap()
 }
 
 fn pr_touching(path: &str, previous: Option<&str>) -> FakeGithub {
@@ -52,7 +53,7 @@ fn requirement(path: &str, previous: Option<&str>) -> String {
 fn a_local_composite_action_needs_the_owner_like_a_workflow() {
     // The committed rules: CI swaps the base's .bosun/ into the checkout, and this PR adds them.
     let out = std::process::Command::new("git")
-        .args(["show", "HEAD:./.bosun/risk.toml"])
+        .args(["show", "HEAD:.bosun/risk.toml"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap();
@@ -155,7 +156,7 @@ fn ordinary_code_is_normal_risk() {
 fn every_cargo_deny_file_is_r_ci() {
     // bosun's committed file: CI swaps the base branch's `.bosun/` into the checkout.
     let git = std::process::Command::new("git")
-        .args(["show", "HEAD:./.bosun/risk.toml"])
+        .args(["show", "HEAD:.bosun/risk.toml"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap();

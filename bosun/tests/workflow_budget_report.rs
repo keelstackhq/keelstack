@@ -6,7 +6,7 @@ use std::fs;
 fn wf() -> String {
     fs::read_to_string(
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(".github/workflows/budget-report.yml"),
+            .join("../.github/workflows/budget-report.yml"),
     )
     .unwrap()
 }

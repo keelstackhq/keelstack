@@ -11,7 +11,7 @@ fn read(rel: &str) -> String {
 }
 
 fn yaml() -> String {
-    read(".github/workflows/cargo-deny-npm.yml")
+    read("../.github/workflows/cargo-deny-npm.yml")
 }
 
 fn json(rel: &str) -> serde_json::Value {
@@ -201,6 +201,6 @@ fn the_packages_name_the_upstream_binary_and_agree() {
 
 #[test]
 fn ci_runs_every_npm_launcher_test() {
-    let ci = read(".github/workflows/ci.yml");
+    let ci = read("../.github/workflows/ci.yml");
     assert!(ci.contains("node --test npm/*/test/*.test.js"), "ci.yml");
 }

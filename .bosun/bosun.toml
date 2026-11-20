@@ -46,10 +46,12 @@ path = "bosun"
 [[folders]]
 path = "splice"
 
-# hull's tests run the splice binary (SPLICE_BIN).
+# hull's tests run the splice binary (SPLICE_BIN); its dogfood step runs the workspace's hoard
+# action (`uses: ./hoard`). .github/scripts/affected.sh reads these depends_on lines too (keep
+# each value on one line).
 [[folders]]
 path = "hull"
-depends_on = ["splice"]
+depends_on = ["splice", "hoard"]
 
 [[folders]]
 path = "hoist"
@@ -60,8 +62,10 @@ path = "hoard"
 [[folders]]
 path = "berth"
 
+# keel calls bosun, splice and hoist (AGENTS.md).
 [[folders]]
 path = "keel"
+depends_on = ["bosun", "splice", "hoist"]
 
 [[folders]]
 path = "decisions"

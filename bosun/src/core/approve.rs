@@ -527,13 +527,22 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 
 /// Files that decide who approves: a PR that changes one (or renames one away) never passes on a
 /// signed approval, owner or delegate key, so a compromised key cannot enroll keys or owners.
-pub const TRUST_FILES: [&str; 5] = [
+/// Also the org decisions index and D-022, which name the trust root and the quorum (D-022
+/// names its own row as trust root), as the keelstack monorepo keeps them in `decisions/`.
+pub const TRUST_FILES: [&str; 7] = [
     APPROVERS_PATH,
     "governance/owners.toml",
     "CODEOWNERS",
     ".github/CODEOWNERS",
     "docs/CODEOWNERS",
+    DECISIONS_INDEX,
+    DECISION_TRUST_ROOT,
 ];
+
+/// The org decisions index (D-002), read in place in the monorepo.
+pub const DECISIONS_INDEX: &str = "decisions/DECISIONS.md";
+/// D-022, whose row and file set the trust root and the merge quorum.
+pub const DECISION_TRUST_ROOT: &str = "decisions/decisions/022-hands-off-approvals.md";
 
 /// The changed trust files among `(path, previous path)` pairs.
 pub fn trust_files_changed<'a>(

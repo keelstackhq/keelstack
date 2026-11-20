@@ -13,6 +13,9 @@ hull = "v0.13.0"
 [refs.hull]
 tag = "v0.13.0"
 sha = "3f4a65fda568cdd20c76168ed156d25a28ba5630"
+# The repo whose tag this is (hull tags up to v0.21.0 are in the old repo). Without `repo`, an
+# entry means keelstackhq/hull.
+repo = "keelstackhq/hull"
 
 [sha512.splice]
 version = "0.6.0"

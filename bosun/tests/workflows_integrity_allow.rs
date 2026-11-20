@@ -19,13 +19,20 @@ fn step<'a>(yaml: &'a str, name: &str) -> &'a str {
 
 #[test]
 fn the_allow_list_is_read_before_the_gates_and_only_there() {
-    for rel in [
-        ".github/workflows/ci.yml",
-        "channel/pieces/core/files/.github/workflows/bosun.yml.jinja",
+    // The monorepo's ci.yml runs them in job ci-gates, whose gates step names the gates it runs.
+    for (rel, gates_step) in [
+        (
+            "../.github/workflows/ci.yml",
+            "bosun gates (test-integrity, ci-minutes)",
+        ),
+        (
+            "channel/pieces/core/files/.github/workflows/bosun.yml.jinja",
+            "bosun gates",
+        ),
     ] {
         let y = read(rel);
         let allow = step(&y, "task allow list");
-        let gates = step(&y, "bosun gates");
+        let gates = step(&y, gates_step);
         assert!(
             y.find(allow).unwrap() < y.find(gates).unwrap(),
             "{rel}: order"
@@ -50,8 +57,25 @@ fn the_allow_list_is_read_before_the_gates_and_only_there() {
         for leak in ["GITHUB_TOKEN", "GH_TOKEN", "github.token", "secrets."] {
             assert!(!gates.contains(leak), "{rel}: {leak} in the gates step");
         }
-        let perms = &y[y.find("\npermissions:\n").unwrap()..];
-        let perms = &perms[..perms[1..].find("\n\n").unwrap() + 1];
+        // The workflow's permissions, or (monorepo) those of the job that reads the allow list.
+        let perms = match y.find("\n  ci-gates:\n") {
+            Some(job) => {
+                let job = &y[job..];
+                let at = job
+                    .find("\n    permissions:\n")
+                    .expect("ci-gates permissions");
+                job[at + 1..]
+                    .lines()
+                    .skip(1)
+                    .take_while(|l| l.starts_with("      "))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+            None => {
+                let perms = &y[y.find("\npermissions:\n").unwrap()..];
+                perms[..perms[1..].find("\n\n").unwrap() + 1].to_string()
+            }
+        };
         for p in ["contents: read", "issues: read", "pull-requests: read"] {
             assert!(perms.contains(p), "{rel}: {p}");
         }

@@ -253,8 +253,16 @@ export function checklistUrl(root) {
     const lock = readFileSync(join(root, ".splice/lock.toml"), "utf8");
     const v = /^\[template\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(lock);
     if (v) ref = `v${v[1]}`;
-    // Hull releases up to v0.21.0 live in the old repo (docs/ at its root); later ones in the monorepo.
-    old = /^source\s*=\s*"[^"]*keelstackhq\/hull(\.git)?(\/|"|\/\/)/m.test(lock);
+    // Hull releases up to v0.21.0 live in the old repo (docs/ at its root); later ones in the
+    // monorepo. A source naming a repo wins; otherwise the version decides.
+    const repo = (name) =>
+      new RegExp(`^source\\s*=\\s*"[^"]*keelstackhq\\/${name}(\\.git)?(\\/|"|\\/\\/)`, "m").test(
+        lock,
+      );
+    const n = v ? v[1].split(/[.+-]/).slice(0, 3).map(Number) : null;
+    const upTo0210 =
+      !!n && n.every(Number.isInteger) && n[0] === 0 && (n[1] < 21 || (n[1] === 21 && n[2] === 0));
+    old = repo("hull") || (!repo("keelstack") && upTo0210);
   } catch {}
   return old
     ? `https://github.com/keelstackhq/hull/blob/${ref}/docs/start-checklist.md`

@@ -2,10 +2,12 @@ name: ci
 
 # One workflow for the monorepo (D-023). Job `detect` reads the diff and says which folders it
 # touches; each folder has one job `ci-<folder>` (bosun's main-open reads these names) that runs
-# that folder's old checks and is skipped when the folder is not affected (a skipped job counts as
-# passed). `ci-repo` runs the repo-wide checks (cargo-deny once, actionlint, pinned actions, the
-# version-bump test); `ci-gates` runs bosun's repo-wide gates (test-integrity, ci-minutes) with the
-# base's bosun. `ci-ok` is the one required check: it fails if any job failed or was
+# that folder's old checks and is skipped on a PR when the folder is not affected (a skipped job
+# counts as passed for ci-ok). A push to main and a merge queue run every folder job: bosun's
+# main health reads every folder's latest real result on the main head and counts a skipped
+# ci-<folder> as no result (bosun spec §9). `ci-repo` runs the repo-wide checks (cargo-deny
+# once, actionlint, pinned actions, the version-bump test); `ci-gates` runs bosun's repo-wide
+# gates (test-integrity, ci-minutes) with the base's bosun. `ci-ok` is the one required check: it fails if any job failed or was
 # cancelled, or on a draft PR.
 #
 # CI minutes (D-007, decisions/decisions/007-ci-minutes.md): Linux only (Windows and macOS run
@@ -82,9 +84,10 @@ jobs:
         env:
           BASE: ${{ needs.detect.outputs.base }}
         run: git diff --check "$BASE...HEAD"
+      # The workflows and every composite or JavaScript action of the repo (hoard, hoist/*, splice).
       - name: Fail on any action not pinned to a full SHA
         run: |
-          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github hoard/action.yml --include='*.yml' --include='*.yaml' \
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github hoard/action.yml hoist/*/action.yml splice/action/action.yml --include='*.yml' --include='*.yaml' \
             | grep -vE 'uses:[[:space:]]+(\./|[^@[:space:]]+@[0-9a-f]{40}([[:space:]]|$))' || true)
           if [ -n "$bad" ]; then
             echo "::error::pin these to a full commit SHA with a version comment:"
@@ -104,6 +107,8 @@ jobs:
           "$RUNNER_TEMP/actionlint"
       - name: affected-folder detection test
         run: bash .github/scripts/affected.test.sh
+      - name: gate workflows test (bosun build fails closed, rust-cache settings)
+        run: bash .github/scripts/gate-workflows.test.sh
       - name: version-bump script test
         run: bash scripts/bump-version.test.sh
       - if: needs.detect.outputs.rust == 'true'
@@ -420,7 +425,9 @@ jobs:
         if: steps.rust.outputs.needed == 'true'
         with:
           tool: cargo-nextest@0.9.148,cargo-deny@0.20.2
-      # The workspace's hoard action (hoard/action.yml), not a release.
+      # The workspace's hoard action (hoard/action.yml). It runs the hoard binary baked into
+      # hoard/action/src/checksums.generated.ts: 0.6.1 from keelstackhq/hoard until the first
+      # monorepo release rewrites it (binary.ts: <= 0.21.0 comes from the old repo).
       - uses: ./hoard
         if: steps.combos.outputs.args != ''
       - name: Dogfood combos

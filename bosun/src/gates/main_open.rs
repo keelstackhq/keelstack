@@ -86,8 +86,10 @@ pub fn main_state_with(gh: &dyn Github, red: Option<u64>) -> Result<MainState> {
     }
     let runs = gh.check_runs(&default_branch(gh)?)?;
     let red_folders = folders::red_folders(&folders, |name| {
+        // A skipped run is no result: only runs that ran count (none: the folder is red).
         let mine: Vec<_> = (runs.iter())
             .filter(|r| r.name == name && r.app == TRUSTED_APP)
+            .filter(|r| !folders::is_no_result(r.conclusion.as_deref()))
             .collect();
         // Any red run of that name keeps the folder red; else the conclusion of a run.
         let worst = mine

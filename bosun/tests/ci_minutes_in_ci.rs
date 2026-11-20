@@ -6,9 +6,13 @@ fn read(p: &str) -> String {
 
 #[test]
 fn bosun_ci_runs_ci_minutes_before_any_pr_code() {
-    let ci = read(".github/workflows/ci.yml");
+    // The monorepo's ci.yml (D-023): job ci-gates runs bosun of the base on the repo-wide
+    // gates, which run no PR code; the folder jobs run the checks that do.
+    let ci = read("../.github/workflows/ci.yml");
+    let gates = &ci[ci.find("\n  ci-gates:\n").expect("a ci-gates job")..];
+    let gates = &gates[..gates[1..].find("\n  ci-").map_or(gates.len(), |i| i + 1)];
     assert!(
-        ci.contains("for g in ${ONLY:-test-integrity ci-minutes deps fmt lint test}; do"),
+        gates.contains("for g in test-integrity ci-minutes; do"),
         "ci.yml gate loop"
     );
 }

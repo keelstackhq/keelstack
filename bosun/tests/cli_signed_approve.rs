@@ -324,7 +324,7 @@ fn approve_sign_key_errors() {
 
 #[test]
 fn this_repos_approvers_file_parses_with_32_byte_keys() {
-    let text = include_str!("../.bosun/approvers.toml");
+    let text = include_str!("../../.bosun/approvers.toml");
     let keys = bosun::core::approve::parse_approvers(text).unwrap();
     use bosun::core::approve::Role;
     let got: Vec<(&str, Role)> = keys.iter().map(|k| (k.id.as_str(), k.role)).collect();

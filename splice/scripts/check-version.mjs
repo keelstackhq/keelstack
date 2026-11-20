@@ -15,10 +15,18 @@ function cargoVersion(cargoToml) {
   throw new Error("Cargo.toml has no [package] or [workspace.package] version");
 }
 
-function actionPin(actionYml) {
+export function actionPin(actionYml) {
   const m = actionYml.match(/^ {2}version:\s*\n(?: {4}[^\n]*\n)*? {4}default:\s*"?([^"\n]+?)"?\s*$/m);
   if (!m) throw new Error("action/action.yml has no `version` input default");
   return m[1];
+}
+
+// a > b on the numeric X.Y.Z core.
+function newer(a, b) {
+  const x = a.split(/[.-]/).slice(0, 3).map(Number);
+  const y = b.split(/[.-]/).slice(0, 3).map(Number);
+  const i = x.findIndex((n, k) => n !== y[k]);
+  return i >= 0 && x[i] > y[i];
 }
 
 const PIN = /keelstackhq\/splice\/action@([0-9a-f]{40}) # v(\d+\.\d+\.\d+\S*)/g;
@@ -46,9 +54,15 @@ export function checkVersion({ tag, cargoToml, launcherPkg, platforms, actionYml
   const version = cargoVersion(cargoToml);
   if (docs) docPins(docs, version);
   if (actionYml !== undefined) {
-    // The Action installs this exact splice, so a release must bump the pin with the version.
+    // The Action installs this exact splice from npm, so its default must be a published release.
+    // Between releases it pins the last published splice and may lag Cargo.toml (never lead it);
+    // the version-bump PR (scripts/bump-version.sh) moves it to the new version, and a release
+    // (a tag) needs the two equal.
     const pin = actionPin(actionYml);
-    if (pin !== version) {
+    if (!SEMVER.test(pin)) {
+      throw new Error(`action/action.yml pins splice ${pin}, expected a released X.Y.Z (at most ${version})`);
+    }
+    if (tag !== null && tag !== undefined ? pin !== version : newer(pin, version)) {
       throw new Error(`action/action.yml pins splice ${pin}, expected ${version}`);
     }
   }

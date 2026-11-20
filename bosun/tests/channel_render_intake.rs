@@ -198,7 +198,7 @@ fn seed_is_listed_in_the_core_piece_and_bosun_does_not_use_the_key() {
             .any(|s| s.as_str() == Some(".bosun/intake.toml"))
     );
     // Release 0.4.0 is pinned and rejects the key: bosun's own config must not set it.
-    let own: toml::Table = fs::read_to_string(root.join(".bosun/bosun.toml"))
+    let own: toml::Table = fs::read_to_string(root.join("../.bosun/bosun.toml"))
         .unwrap()
         .parse()
         .unwrap();

@@ -123,10 +123,17 @@ pub fn blocked(folders: &[Folder], red: &BTreeSet<String>) -> BTreeSet<String> {
 }
 
 /// A conclusion of a `ci-<folder>` check run that keeps the folder green while main is red:
-/// `success`, `neutral` or `skipped`. Anything else, a pending run and no run at all make the
-/// folder red (fail closed: with no folder checks every folder is red, the one-repo behaviour).
+/// `success` or `neutral`. Anything else, `skipped` included (a skipped job tested nothing, so it
+/// is no result), a pending run and no run at all make the folder red (fail closed: with no
+/// folder checks every folder is red, the one-repo behaviour).
 pub fn is_green_conclusion(c: Option<&str>) -> bool {
-    matches!(c, Some("success" | "neutral" | "skipped"))
+    matches!(c, Some("success" | "neutral"))
+}
+
+/// A `ci-<folder>` conclusion that is no result at all: `skipped` (the job did not run). Such a
+/// run is ignored when reading a folder's latest real result.
+pub fn is_no_result(c: Option<&str>) -> bool {
+    c == Some("skipped")
 }
 
 /// The red folders while main is red: those whose `ci-<folder>` conclusion (by check name) is
@@ -281,11 +288,30 @@ mod tests {
             "ci-hull" => Some("skipped"),
             _ => None,
         });
-        assert_eq!(red, set(&["bosun", "hoist"]));
+        assert_eq!(red, set(&["bosun", "hoist", "hull"]));
         assert_eq!(red_folders(&m, |_| None).len(), 4);
-        for c in ["failure", "cancelled", "timed_out", "action_required"] {
+        for c in [
+            "failure",
+            "cancelled",
+            "timed_out",
+            "action_required",
+            "skipped",
+        ] {
             assert!(!is_green_conclusion(Some(c)));
         }
         assert!(!is_green_conclusion(None));
+        assert!(is_green_conclusion(Some("success")));
+        assert!(is_green_conclusion(Some("neutral")));
+    }
+
+    #[test]
+    fn skipped_is_not_green_but_no_result() {
+        assert!(!is_green_conclusion(Some("skipped")));
+        assert!(is_no_result(Some("skipped")));
+        for c in [Some("success"), Some("failure"), None] {
+            assert!(!is_no_result(c), "{c:?}");
+        }
+        // Every folder skipped on the head: every folder is red.
+        assert_eq!(red_folders(&mono(), |_| Some("skipped")).len(), 4);
     }
 }

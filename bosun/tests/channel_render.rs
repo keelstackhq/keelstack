@@ -831,11 +831,14 @@ fn a_body_edit_keeps_the_file_gates_of_a_passed_head_and_reruns_test_integrity()
 
 #[test]
 fn main_open_skips_label_events_but_the_mainfix_label_in_a_group_of_their_own() {
-    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/main-open.yml");
+    let ours = Path::new(env!("CARGO_MANIFEST_DIR")).join("../.github/workflows/main-open.yml");
     let files = variant(&["rust"], "");
-    for wf in [
-        file(&files, ".github/workflows/main-open.yml").to_string(),
-        fs::read_to_string(ours).unwrap(),
+    for (monorepo, wf) in [
+        (
+            false,
+            file(&files, ".github/workflows/main-open.yml").to_string(),
+        ),
+        (true, fs::read_to_string(ours).unwrap()),
     ] {
         let Some(j) = yaml_json(&wf) else { return };
         let cond = j["jobs"]["judge"]["if"].as_str().unwrap();
@@ -848,7 +851,13 @@ fn main_open_skips_label_events_but_the_mainfix_label_in_a_group_of_their_own() 
             "{cond}"
         );
         let g = j["concurrency"]["group"].as_str().unwrap();
-        assert!(g.contains("github.event.label.name != 'bosun:kind/mainfix' && format('-skip-{0}', github.run_id)"), "{g}");
+        // The monorepo's copy also gives an edit that does not change the base a skip group.
+        let skip = if monorepo {
+            "github.event.label.name != 'bosun:kind/mainfix') || (github.event.action == 'edited' && !github.event.changes.base)) && format('-skip-{0}', github.run_id)"
+        } else {
+            "github.event.label.name != 'bosun:kind/mainfix' && format('-skip-{0}', github.run_id)"
+        };
+        assert!(g.contains(skip), "{g}");
     }
 }
 

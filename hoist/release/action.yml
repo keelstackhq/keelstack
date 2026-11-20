@@ -64,9 +64,13 @@ runs:
           Linux/ARM64) target=aarch64-unknown-linux-musl ;;
           *) echo "::error::hoist release runs on Linux x64 or arm64 runners only"; exit 1 ;;
         esac
-        version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/../Cargo.toml" | head -n 1)
+        # `version = "X"` of one table of a Cargo.toml (as the root release.yml's cargo_version).
+        cargo_version() {
+          awk -F'"' -v t="$2" '/^\[/ { s = ($0 == t) } s && /^version *=/ { print $2; exit }' "$1"
+        }
+        version=$(cargo_version "$ACTION_PATH/../Cargo.toml" "[package]") || true
         if [ -z "$version" ]; then # monorepo: hoist/Cargo.toml inherits the lockstep version from the root
-          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' "$ACTION_PATH/../../Cargo.toml" | head -n 1)
+          version=$(cargo_version "$ACTION_PATH/../../Cargo.toml" "[workspace.package]") || true
         fi
         if ! [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
           echo "::error::cannot read hoist's version from the action's Cargo.toml"; exit 1

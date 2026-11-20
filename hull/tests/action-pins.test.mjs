@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { comboTemplate, loadCombos } from "../scripts/lib/combos.mjs";
 import {
@@ -16,11 +16,17 @@ const COMMENT = /^# v\d+\.\d+\.\d+$/;
 const BRANCH_COMMENT = /^# stable branch, \d{4}-\d{2}-\d{2}$/;
 const sha = "b".repeat(40);
 
+// The monorepo's root workflows (owned outside hull) name the toolchain branch their own way
+// (`# stable`, `# master (...)`): the SHA pin is still required, the comment only has to name a branch.
+const ROOT_BRANCH_COMMENT = /^# (stable|master)\b/;
+
 /** @returns {boolean} whether a pinned ref and its comment are acceptable */
-function okPin(ref, comment) {
+function okPin(ref, comment, live = false) {
   if (!PINNED.test(ref)) return false;
   return ref.startsWith("dtolnay/rust-toolchain@")
-    ? BRANCH_COMMENT.test(comment) || COMMENT.test(comment)
+    ? BRANCH_COMMENT.test(comment) ||
+        COMMENT.test(comment) ||
+        (live && ROOT_BRANCH_COMMENT.test(comment))
     : COMMENT.test(comment);
 }
 
@@ -29,6 +35,13 @@ test("the stable-branch comment is accepted only for dtolnay/rust-toolchain", ()
   assert.ok(okPin(`dtolnay/rust-toolchain@${sha}`, c));
   assert.ok(!okPin(`actions/checkout@${sha}`, c));
   assert.ok(okPin(`actions/checkout@${sha}`, "# v5.1.0"));
+  // A bare `# stable` only in the root workflows, still only for dtolnay/rust-toolchain.
+  assert.ok(!okPin(`dtolnay/rust-toolchain@${sha}`, "# stable"));
+  assert.ok(okPin(`dtolnay/rust-toolchain@${sha}`, "# stable", true));
+  assert.ok(okPin(`dtolnay/rust-toolchain@${sha}`, "# master (no version tags)", true));
+  assert.ok(!okPin(`dtolnay/rust-toolchain@${sha}`, "# whatever", true));
+  assert.ok(!okPin(`actions/checkout@${sha}`, "# stable", true));
+  assert.ok(!okPin("dtolnay/rust-toolchain@stable", "# stable", true));
 });
 
 /** Violations of the pin rule in a YAML string, as `ref` strings. */
@@ -79,6 +92,17 @@ test("every parsed workflow/action `uses` (plain files, hull's own, rendered com
   const uses = await allUses();
   assert.ok(uses.length > 60, `found ${uses.length} uses`);
   assert.ok(uses.some((u) => u.file.startsWith("rendered:")));
+  // The live workflows are the monorepo root's .github/workflows: every one of them is scanned.
+  const live = (await readdir(ROOT + "../.github/workflows")).filter((f) => /\.ya?ml$/.test(f));
+  assert.ok(live.length > 0);
+  for (const f of live) {
+    const file = `../.github/workflows/${f}`;
+    if (scanYaml(await readFile(ROOT + file, "utf8")).length)
+      assert.ok(
+        uses.some((u) => u.file === file),
+        `${file} is scanned`,
+      );
+  }
   for (const u of uses) {
     const at = `${u.file}:${u.line} ${u.ref}`;
     if (u.ref.startsWith("./")) continue;
@@ -87,7 +111,8 @@ test("every parsed workflow/action `uses` (plain files, hull's own, rendered com
       continue;
     }
     assert.match(u.ref, PINNED, `${at} must be pinned by 40-hex SHA`);
-    assert.ok(okPin(u.ref, u.comment), `${at} needs a "# vX.Y.Z" comment`);
+    const live = u.file.startsWith("../.github/");
+    assert.ok(okPin(u.ref, u.comment, live), `${at} needs a "# vX.Y.Z" comment`);
   }
 });
 

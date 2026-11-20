@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -64,22 +65,8 @@ test("root ci.yml ci-hull builds the workspace splice before Test and sets SPLIC
   assert.match(steps[i].run, /SPLICE_BIN=.*>> "\$GITHUB_ENV"/);
 });
 
-test("hull splice.yml runs the splice update bot on all sources", async () => {
-  const wf = YAML.parse(await readFile(DIR + "splice.yml", "utf8"));
-  assert.ok(wf.on.schedule?.length, "scheduled");
-  assert.ok("workflow_dispatch" in wf.on);
-  assert.deepEqual(wf.permissions, { contents: "write", "pull-requests": "write" });
-  const [checkout, , bot] = wf.jobs.update.steps;
-  assert.match(checkout.uses, /^actions\/checkout@/);
-  assert.equal(checkout.with["persist-credentials"], false);
-  // it receives a token with workflows: write, so it is pinned by commit SHA
-  assert.equal(bot.uses, "keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f");
-  assert.equal(bot.with.scope, "all");
-  assert.equal(
-    bot.with.token,
-    "${{ steps.app.outputs.token || secrets.SPLICE_BOT_TOKEN || github.token }}",
-  );
-});
+// The old hull repo's splice update bot (hull/.github/workflows/splice.yml) is not ported to the
+// monorepo: no live workflow runs it, so there is nothing live to test (MIGRATION.md follow-up).
 
 test("root ci.yml ci-hull uses the in-repo hoard action for the turbo cache before dogfood, without --cache-dir", async () => {
   const steps = await hullCi();
@@ -144,10 +131,17 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
 // setup-node v4 (bosun's workflows pin it) has no automatic cache, so its steps need no opt-out.
 const SETUP_NODE_V4 = "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020";
 test("every setup-node step disables the package-manager cache unless pnpm is set up first under the same condition", async () => {
-  const dirs = [
-    DIR,
-    fileURLToPath(new URL("../template/pieces/base/files/.github/workflows/", import.meta.url)),
-  ];
+  // The live workflows (the monorepo root's) and the template's; not the inert hull/.github copy.
+  const TEMPLATE_DIR = fileURLToPath(
+    new URL("../template/pieces/base/files/.github/workflows/", import.meta.url),
+  );
+  const dirs = [ROOT_DIR, TEMPLATE_DIR];
+  let steps = 0;
+  // setup-node reads `packageManager` from the workspace root's package.json. The monorepo root
+  // has none today, so its workflows need the opt-out only once one appears.
+  const rootPkg = fileURLToPath(new URL("../../package.json", import.meta.url));
+  const rootPm =
+    existsSync(rootPkg) && "packageManager" in JSON.parse(await readFile(rootPkg, "utf8"));
   const bad = [];
   for (const dir of dirs)
     for (const f of (await readdir(dir)).filter((n) => n.endsWith(".yml"))) {
@@ -157,12 +151,17 @@ test("every setup-node step disables the package-manager cache unless pnpm is se
         for (const step of job.steps ?? []) {
           if (String(step.uses).startsWith("pnpm/action-setup")) pnpm.add(step.if ?? "");
           if (!String(step.uses).startsWith("actions/setup-node")) continue;
+          if (dir === ROOT_DIR) {
+            steps++;
+            if (!rootPm) continue;
+          }
           if (step.uses === SETUP_NODE_V4 && !step.with?.cache) continue;
           const covered = pnpm.has("") || pnpm.has(step.if ?? "");
           if (!covered && step.with?.["package-manager-cache"] !== false)
-            bad.push(`${dir === DIR ? "hull" : "template"}/${f} ${name}`);
+            bad.push(`${dir === ROOT_DIR ? "root" : "template"}/${f} ${name}`);
         }
       }
     }
   assert.deepEqual(bad, []);
+  assert.ok(steps > 0, "the root workflows have setup-node steps to check");
 });

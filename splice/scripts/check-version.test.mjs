@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { checkVersion } from "./check-version.mjs";
+import { actionPin, checkVersion } from "./check-version.mjs";
 
 const cargo = (v) => `[package]\nname = "keel-splice"\nversion = "${v}"\n`;
 const platforms = JSON.parse(readFileSync(new URL("../npm/splice/platforms.json", import.meta.url), "utf8"));
@@ -57,33 +57,30 @@ test("consistent launcher passes", () => {
   assert.equal(checkVersion({ tag: "v0.2.0", cargoToml: cargo("0.2.0"), launcherPkg: launcher() }), "0.2.0");
 });
 
-test("release.yml tag filter is exactly the semver glob and skips v1", () => {
-  const yml = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-  const m = yml.match(/tags:\s*\n\s*-\s*['"]?([^'"\n]+)['"]?\s*\n/);
-  assert.ok(m, "tags list not found");
-  assert.equal(m[1], "v[0-9]+.[0-9]+.[0-9]+*");
-  // GitHub filter: `+` repeats the previous char/class, `*` matches any chars but `/`, `.` is literal.
-  const re = new RegExp(
-    "^" + m[1].replace(/\./g, "\\.").replace(/\]\+/g, "]+").replace(/\*/g, "[^/]*") + "$",
-  );
-  assert.ok(re.test("v0.2.0"));
-  assert.ok(re.test("v0.2.0-rc.1"));
-  assert.ok(!re.test("v1"));
-  assert.ok(!re.test("v1.0"));
-});
-
-test("release.yml build matrix covers exactly the platforms.json targets", () => {
-  const yml = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
-  const targets = [...yml.matchAll(/\{ target: ([a-z0-9_-]+),/g)].map((m) => m[1]).sort();
+// The monorepo's one release workflow (D-023) builds splice; it starts on the merge of a
+// version-bump PR, not on a tag push, so there is no tag filter to test here.
+test("the root release.yml build matrix covers exactly the platforms.json targets", () => {
+  const yml = readFileSync(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
+  const targets = [...yml.matchAll(/^\s+- target: ([a-z0-9_-]+)\s*$/gm)].map((m) => m[1]).sort();
   assert.deepEqual(targets, platforms.map((p) => p.target).sort());
 });
 
 test("the real npm/splice/package.json matches the workspace Cargo.toml", () => {
   const cargoToml = readFileSync(new URL("../../Cargo.toml", import.meta.url), "utf8");
   const launcherPkg = JSON.parse(readFileSync(new URL("../npm/splice/package.json", import.meta.url), "utf8"));
-  // action/action.yml keeps pinning the last published splice until scripts/bump-version.sh moves
-  // it with the lockstep version (the bump test checks that).
-  assert.equal(checkVersion({ tag: null, cargoToml, launcherPkg }), launcherPkg.version);
+  const actionYml = readFileSync(new URL("../action/action.yml", import.meta.url), "utf8");
+  // action/action.yml pins the last splice published on npm (0.6.0 until the first monorepo
+  // release), never an unreleased version: it may lag the workspace version, never lead it.
+  // scripts/bump-version.sh moves it to X.Y.Z in the version-bump PR whose merge releases X.Y.Z
+  // (scripts/bump-version.test.sh checks that), and with a tag the two must be equal.
+  assert.equal(checkVersion({ tag: null, cargoToml, launcherPkg, actionYml }), launcherPkg.version);
+  if (actionPin(actionYml) !== launcherPkg.version) {
+    assert.throws(
+      () => checkVersion({ tag: `v${launcherPkg.version}`, cargoToml, actionYml }),
+      /action\/action\.yml pins splice/,
+      "a release tag needs the action default bumped to the workspace version",
+    );
+  }
 });
 
 test("the version comes from [workspace.package] when there is no [package]", () => {
@@ -94,15 +91,25 @@ test("the version comes from [workspace.package] when there is no [package]", ()
 const action = (d) =>
   `inputs:\n  version:\n    description: "splice npm version"\n    default: ${d}\n  to:\n    default: ""\n`;
 
-test("action default must pin the Cargo version", () => {
+test("action default may lag the Cargo version between releases, never lead it", () => {
+  assert.equal(checkVersion({ tag: null, cargoToml: cargo("0.21.0"), actionYml: action("0.6.0") }), "0.21.0");
+  assert.throws(
+    () => checkVersion({ tag: null, cargoToml: cargo("0.2.0"), actionYml: action("0.3.0") }),
+    /pins splice 0\.3\.0, expected 0\.2\.0/,
+  );
+  // A release tag needs the default bumped to exactly the released version.
+  assert.throws(
+    () => checkVersion({ tag: "v0.2.0", cargoToml: cargo("0.2.0"), actionYml: action("0.1.9") }),
+    /pins splice 0\.1\.9, expected 0\.2\.0/,
+  );
+  assert.equal(checkVersion({ tag: "v0.2.0", cargoToml: cargo("0.2.0"), actionYml: action("0.2.0") }), "0.2.0");
+});
+
+test("action default must pin a released version", () => {
   assert.equal(checkVersion({ tag: null, cargoToml: cargo("0.2.0"), actionYml: action("0.2.0") }), "0.2.0");
   assert.throws(
     () => checkVersion({ tag: null, cargoToml: cargo("0.2.0"), actionYml: action("latest") }),
-    /action\/action\.yml pins splice latest, expected 0\.2\.0/,
-  );
-  assert.throws(
-    () => checkVersion({ tag: null, cargoToml: cargo("0.2.0"), actionYml: action("0.1.9") }),
-    /pins splice 0\.1\.9/,
+    /action\/action\.yml pins splice latest, expected a released X\.Y\.Z/,
   );
   assert.throws(
     () => checkVersion({ tag: null, cargoToml: cargo("0.2.0"), actionYml: "inputs: {}\n" }),

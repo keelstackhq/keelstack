@@ -9,17 +9,30 @@ import { setTimeout as delay } from "node:timers/promises";
 import * as tc from "@actions/tool-cache";
 import type { Target } from "./platform.js";
 
-// Downloads come from the action's repo at tag v<version>: use the action from a monorepo release
-// tag (> v0.21.0); older pins stay on the old repos.
-const DEFAULT_REPO = "keelstackhq/keelstack";
+// Downloads come from the action's repo at tag v<version>. The monorepo (keelstackhq/keelstack)
+// releases hoard from its first release after v0.21.0; every hoard release up to v0.21.0 lives
+// in the old repo keelstackhq/hoard (the last is v0.6.1), so such a version is fetched there
+// even from the monorepo (a workspace `uses: ./hoard` before the first monorepo release).
+const MONOREPO = "keelstackhq/keelstack";
+const OLD_REPO = "keelstackhq/hoard";
+const LAST_PRE_MONOREPO = [0, 21, 0];
 // owner/repo; "." and ".." segments would change the URL path, so they are refused too.
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;
 const isRepo = (s: string) => REPO_RE.test(s) && s.split("/").every((p) => p !== "." && p !== "..");
 
+/** True for a version released before the monorepo (<= 0.21.0, pre-releases of those too). */
+export function preMonorepo(version: string): boolean {
+  const v = version.split(/[.+-]/).slice(0, 3).map(Number);
+  if (v.length < 3 || v.some((n) => !Number.isInteger(n))) return false;
+  const i = v.findIndex((n, k) => n !== LAST_PRE_MONOREPO[k]);
+  return i < 0 || v[i] < LAST_PRE_MONOREPO[i];
+}
+
 /** Release asset URL, from the action's own repository when GitHub names it. */
 export function releaseUrl(target: Target, version: string, env: NodeJS.ProcessEnv): string {
   const fromEnv = env.GITHUB_ACTION_REPOSITORY ?? "";
-  const repo = isRepo(fromEnv) ? fromEnv : DEFAULT_REPO;
+  let repo = isRepo(fromEnv) ? fromEnv : MONOREPO;
+  if (repo.toLowerCase() === MONOREPO && preMonorepo(version)) repo = OLD_REPO;
   return `https://github.com/${repo}/releases/download/v${version}/hoard-${target}.tar.gz`;
 }
 

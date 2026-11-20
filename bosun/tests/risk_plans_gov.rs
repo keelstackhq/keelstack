@@ -9,16 +9,17 @@ fn read(path: &str) -> String {
 }
 
 /// The committed copy of `path` (HEAD), else the working-tree file: CI puts the base's `.bosun/`
-/// over the checkout before the gates (as in tests/governance.rs).
+/// over the checkout before the gates (as in tests/governance.rs). `path` is relative to the
+/// monorepo root, whose `.bosun/` bosun runs on.
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:./{path}")])
+        .args(["show", &format!("HEAD:{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
-        .unwrap_or_else(|| read(path))
+        .unwrap_or_else(|| read(&format!("../{path}")))
 }
 
 fn gov_matches(rules: &Rules, path: &str) -> bool {

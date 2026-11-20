@@ -64,8 +64,8 @@ fn hull_problem(cx: &Ctx, src: &str, git_ref: &str) -> Option<String> {
     if !splice::is_hull_source(src) {
         return None;
     }
-    let pinned = cx.pins.ref_sha("hull", git_ref);
-    splice::verify_hull_ref(cx.runner, &cx.dir, splice::hull_url(src), git_ref, pinned).err()
+    let pin = cx.pins.ref_pin("hull", git_ref);
+    splice::verify_hull_ref(cx.runner, &cx.dir, splice::hull_url(src), git_ref, pin).err()
 }
 
 impl Step for Render {
@@ -263,11 +263,15 @@ mod tests {
     }
 
     fn apply(r: &FakeRunner, dir: &std::path::Path, tpl: &str) -> Check {
+        apply_with(r, dir, tpl, PINS)
+    }
+
+    fn apply_with(r: &FakeRunner, dir: &std::path::Path, tpl: &str, pins: &str) -> Check {
         let mut cx = ctx(
             r,
             dir.to_path_buf(),
             manifest(tpl),
-            PINS,
+            pins,
             Opts::default(),
             &no_sleep,
             &no_stdin,
@@ -489,7 +493,18 @@ mod tests {
             let Check::Failed(m) = check(&r, d.path(), tpl) else {
                 panic!("{tpl}")
             };
-            assert!(m.contains("moved"), "{tpl}: {m}");
+            // PINS records v0.13.0 for the old hull repo: a monorepo source fails naming both
+            // repos, before any ls-remote.
+            if tpl.contains("keelstackhq/keelstack") {
+                assert!(
+                    m.contains("pinned for keelstackhq/hull")
+                        && m.contains("tags from keelstackhq/keelstack"),
+                    "{tpl}: {m}"
+                );
+                assert!(r.calls().is_empty(), "{tpl}");
+            } else {
+                assert!(m.contains("moved"), "{tpl}: {m}");
+            }
         }
         // Not hull: no ls-remote, plain Todo. Rendered already: not re-verified.
         let d = tempfile::tempdir().unwrap();
@@ -515,7 +530,10 @@ mod tests {
         ] {
             let d = tempfile::tempdir().unwrap();
             let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
-            let Check::Failed(m) = apply(&r, d.path(), tpl) else {
+            // The tag is pinned for the repo the source names.
+            let repo = url.strip_prefix("https://github.com/").unwrap();
+            let pins = format!("{PINS}repo = \"{repo}\"\n");
+            let Check::Failed(m) = apply_with(&r, d.path(), tpl, &pins) else {
                 panic!("{tpl}")
             };
             assert!(m.contains("moved"), "{tpl}: {m}");

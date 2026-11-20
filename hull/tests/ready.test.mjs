@@ -121,8 +121,20 @@ test("checklistUrl links to the rendered hull tag, else main", async () => {
   await put(d, ".splice/lock.toml", '[template]\nsource = "x"\nversion = "0.5.0"\n');
   assert.equal(
     checklistUrl(d),
-    "https://github.com/keelstackhq/keelstack/blob/v0.5.0/hull/docs/start-checklist.md",
+    "https://github.com/keelstackhq/hull/blob/v0.5.0/docs/start-checklist.md",
   );
+  // An unnamed source after v0.21.0 is a monorepo release; v0.21.0 itself is the old repo's last.
+  await put(d, ".splice/lock.toml", '[template]\nsource = "x"\nversion = "0.21.0"\n');
+  assert.match(checklistUrl(d), /keelstackhq\/hull\/blob\/v0\.21\.0\/docs\//);
+  await put(d, ".splice/lock.toml", '[template]\nsource = "x"\nversion = "0.21.1"\n');
+  assert.match(checklistUrl(d), /keelstackhq\/keelstack\/blob\/v0\.21\.1\/hull\/docs\//);
+  // A source naming the monorepo wins over the version.
+  await put(
+    d,
+    ".splice/lock.toml",
+    '[template]\nsource = "gh:keelstackhq/keelstack//hull/template"\nversion = "0.5.0"\n',
+  );
+  assert.match(checklistUrl(d), /keelstackhq\/keelstack\/blob\/v0\.5\.0\/hull\/docs\//);
   for (const source of [
     "gh:keelstackhq/hull//template",
     "https://github.com/keelstackhq/hull.git",

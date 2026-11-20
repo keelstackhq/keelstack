@@ -1,6 +1,7 @@
-name: action-selftest
-# Runs ./action against a throwaway consumer repo and a local bare "origin". `gh` is a stub, so
-# nothing leaves the runner and no secret is needed.
+name: splice-action-selftest
+# Runs ./splice/action (the splice update bot) against a throwaway consumer repo and a local bare
+# "origin". `gh` is a stub, so nothing leaves the runner and no secret is needed. Manual only
+# (D-007). Ported from splice/.github/workflows/action-selftest.yml (D-023).
 on:
   workflow_dispatch:
 permissions: {}
@@ -31,7 +32,7 @@ jobs:
       - name: Build splice and put it, and a gh stub, on PATH
         run: |
           set -euo pipefail
-          cargo build --locked
+          cargo build --locked -p keel-splice
           mkdir -p "$RUNNER_TEMP/bin"
           cp target/debug/splice "$RUNNER_TEMP/bin/splice"
           cat > "$RUNNER_TEMP/bin/gh" <<'STUB'
@@ -59,7 +60,7 @@ jobs:
           git -C "$tpl" init -q
           for v in v1 v2; do
             find "$tpl" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
-            cp -R "tests/fixtures/template/$v/." "$tpl/"
+            cp -R "splice/tests/fixtures/template/$v/." "$tpl/"
             git -C "$tpl" add -A
             git -C "$tpl" commit -q -m "$v"
             git -C "$tpl" tag "$v.0.0"
@@ -75,7 +76,7 @@ jobs:
           git push -q origin main
       - name: Bot, first run
         id: first
-        uses: ./action
+        uses: ./splice/action
         with:
           version: none
           working-directory: ${{ runner.temp }}/consumer
@@ -99,7 +100,7 @@ jobs:
           : > "$GH_STUB_DIR/calls.log"
       - name: Bot, second run (the bot branch exists on origin and is rewritten)
         id: second
-        uses: ./action
+        uses: ./splice/action
         with:
           version: none
           working-directory: ${{ runner.temp }}/consumer
@@ -123,7 +124,7 @@ jobs:
       - name: Bot, third run (drift must fail without pushing)
         id: third
         continue-on-error: true
-        uses: ./action
+        uses: ./splice/action
         with:
           version: none
           working-directory: ${{ runner.temp }}/consumer

@@ -40,6 +40,7 @@ pub fn run(dir: Option<&Path>, a: &MainHealthArgs) -> CmdResult {
     let mut gate_missed = Value::Null;
     let mut open = open_reds(gh)?;
     let mut red = open.first().copied();
+    let mut still_red = None;
     if is_red && open.is_empty() {
         gh.ensure_label(
             MAIN_RED_LABEL,
@@ -84,19 +85,30 @@ pub fn run(dir: Option<&Path>, a: &MainHealthArgs) -> CmdResult {
                 Err(e) => json!({"error": e.message}),
             };
         }
-    } else if result == "success" {
-        for n in open {
-            gh.add_comment(n, &format!("main is green again: {url}"))?;
-            close(gh, n)?;
-            closed = true;
+    } else if result == "success" && !open.is_empty() {
+        // Monorepo: a green run closes main-red only when every folder's latest real result on
+        // the default branch head is green (a skipped `ci-<folder>` is no result: fail closed),
+        // so a red folder stays red after a later push that did not test it.
+        let state = main_state_with(gh, red)?;
+        if state.red_folders.is_empty() {
+            for n in open {
+                gh.add_comment(n, &format!("main is green again: {url}"))?;
+                close(gh, n)?;
+                closed = true;
+            }
+            red = None;
+        } else {
+            still_red = Some(state);
         }
-        red = None;
     }
     let changed = opened || closed;
     let (mut rejudged, mut errors) = (0, Vec::new());
     let mut red_folders = Value::Null;
     if is_red || result == "success" {
-        let main = main_state_with(gh, red)?;
+        let main = match still_red {
+            Some(m) => m,
+            None => main_state_with(gh, red)?,
+        };
         if !main.folders.is_empty() && red.is_some() {
             red_folders = json!(main.red_folders);
         }

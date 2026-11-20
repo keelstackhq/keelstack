@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import * as tc from "@actions/tool-cache";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { BinaryDownloadError, ensureBinary, releaseUrl } from "../src/binary.js";
+import { BinaryDownloadError, ensureBinary, preMonorepo, releaseUrl } from "../src/binary.js";
 import { TARGETS, type Target } from "../src/platform.js";
 
 const CHECKSUMS_ZERO = Object.fromEntries(TARGETS.map((t) => [t, "0".repeat(64)])) as Record<
@@ -192,6 +192,33 @@ describe("releaseUrl", () => {
       );
     },
   );
+  test.each(["", "keelstackhq/keelstack", "KeelstackHQ/keelstack"])(
+    "a pre-monorepo version (<= 0.21.0) comes from keelstackhq/hoard for %j",
+    (repo) => {
+      for (const v of ["0.6.1", "0.21.0", "0.21.0-rc.1"]) {
+        expect(releaseUrl(LINUX, v, { GITHUB_ACTION_REPOSITORY: repo })).toBe(
+          `https://github.com/keelstackhq/hoard/releases/download/v${v}/hoard-x86_64-unknown-linux-musl.tar.gz`,
+        );
+      }
+      for (const v of ["0.21.1", "0.22.0", "1.0.0"]) {
+        expect(releaseUrl(LINUX, v, { GITHUB_ACTION_REPOSITORY: repo })).toBe(
+          `https://github.com/${repo || "keelstackhq/keelstack"}/releases/download/v${v}/hoard-x86_64-unknown-linux-musl.tar.gz`,
+        );
+      }
+    },
+  );
+  test("another repository keeps its own releases at any version", () => {
+    expect(releaseUrl(LINUX, "0.6.1", { GITHUB_ACTION_REPOSITORY: "me/hoard-fork" })).toBe(
+      "https://github.com/me/hoard-fork/releases/download/v0.6.1/hoard-x86_64-unknown-linux-musl.tar.gz",
+    );
+  });
+  test("preMonorepo", () => {
+    expect(preMonorepo("0.6.1")).toBe(true);
+    expect(preMonorepo("0.21.0")).toBe(true);
+    expect(preMonorepo("0.21.1")).toBe(false);
+    expect(preMonorepo("1.0.0")).toBe(false);
+    expect(preMonorepo("x")).toBe(false);
+  });
   test("ensureBinary downloads from GITHUB_ACTION_REPOSITORY", async () => {
     const archive = await writeTempTarGz("bin");
     const download = vi.fn(async (_url: string) => archive);

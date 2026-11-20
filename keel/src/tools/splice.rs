@@ -1,5 +1,6 @@
 use super::{failure, json, not_found};
 use crate::exec::{Cmd, Runner};
+use crate::pins::RefPin;
 use std::path::Path;
 
 // The defaults stay on the old hull repo: pins.toml pins a hull tag that exists only there. They move
@@ -205,20 +206,32 @@ pub fn hull_url(src: &str) -> &'static str {
     }
 }
 
-/// For a hull source: the tag must still point at the pinned commit. `pinned` is the sha
-/// recorded for `git_ref` in the pins (None: the ref is not one keel knows).
+/// The repo (`owner/name`) a pin without `repo` means: pins from before the monorepo.
+pub const LEGACY_HULL_REPO: &str = "keelstackhq/hull";
+
+/// For a hull source: the tag must still point at the pinned commit. `pin` is the `[refs.hull]`
+/// entry for `git_ref` (None: the ref is not one keel knows); it must be recorded for the repo
+/// `url` names, since a sha of the old hull repo says nothing about a monorepo tag (and back).
 pub fn verify_hull_ref(
     r: &dyn Runner,
     dir: &Path,
     url: &str,
     git_ref: &str,
-    pinned: Option<&str>,
+    pin: Option<&RefPin>,
 ) -> Result<(), String> {
-    let Some(pinned) = pinned else {
+    let repo = url.strip_prefix("https://github.com/").unwrap_or(url);
+    let Some(pin) = pin else {
         return Err(format!(
-            "hull ref {git_ref} has no pinned commit: point KEEL_PINS at a pins.toml with a [refs.hull] tag and sha for it, or update keel"
+            "hull ref {git_ref} has no pinned commit for {repo}: point KEEL_PINS at a pins.toml with a [refs.hull] tag, sha and repo = \"{repo}\" for it, or update keel"
         ));
     };
+    let pin_repo = pin.repo.as_deref().unwrap_or(LEGACY_HULL_REPO);
+    if pin_repo != repo {
+        return Err(format!(
+            "hull ref {git_ref} is pinned for {pin_repo}, but this source takes its tags from {repo}: use a {pin_repo} source for {git_ref}, or point KEEL_PINS at a pins.toml whose [refs.hull] has repo = \"{repo}\" and that repo's sha"
+        ));
+    }
+    let pinned = pin.sha.as_str();
     let tag = format!("refs/tags/{git_ref}");
     let peeled = format!("{tag}^{{}}");
     let c = Cmd::new("git", &["ls-remote", url, &tag, &peeled]).dir(dir);
@@ -383,8 +396,13 @@ mod tests {
     fn hull_ref_must_match_the_pinned_sha() {
         use crate::exec::{FakeRunner, Out};
         let ls = |o: Out| FakeRunner::new().on(&["git", "ls-remote"], o);
-        let v = |r: &FakeRunner, pin: Option<&str>| {
-            verify_hull_ref(r, Path::new("."), HULL_URL, "v1", pin)
+        let v = |r: &FakeRunner, sha: Option<&str>| {
+            let pin = sha.map(|s| RefPin {
+                tag: "v1".into(),
+                sha: s.into(),
+                repo: Some("keelstackhq/keelstack".into()),
+            });
+            verify_hull_ref(r, Path::new("."), HULL_URL, "v1", pin.as_ref())
         };
         let r = ls(Out::ok("aaa\trefs/tags/v1\nbbb\trefs/tags/v1^{}\n"));
         assert!(v(&r, Some("bbb")).is_ok(), "peeled wins");
@@ -398,6 +416,32 @@ mod tests {
         assert!(v(&r, None).unwrap_err().contains("KEEL_PINS"));
         assert!(v(&ls(Out::with(128, "", "no net")), Some("aaa")).is_err());
         assert!(v(&ls(Out::ok("")), Some("aaa")).is_err());
+    }
+
+    #[test]
+    fn hull_ref_pinned_for_another_repo_fails_naming_both_repos() {
+        use crate::exec::FakeRunner;
+        let pin = |repo: Option<&str>| RefPin {
+            tag: "v0.13.0".into(),
+            sha: "aaa".into(),
+            repo: repo.map(str::to_string),
+        };
+        // A pin without `repo` (old pins.toml) means the old hull repo.
+        for p in [pin(None), pin(Some("keelstackhq/hull"))] {
+            let r = FakeRunner::new();
+            let e = verify_hull_ref(&r, Path::new("."), HULL_URL, "v0.13.0", Some(&p)).unwrap_err();
+            assert_eq!(
+                e,
+                "hull ref v0.13.0 is pinned for keelstackhq/hull, but this source takes its tags from keelstackhq/keelstack: use a keelstackhq/hull source for v0.13.0, or point KEEL_PINS at a pins.toml whose [refs.hull] has repo = \"keelstackhq/keelstack\" and that repo's sha"
+            );
+            assert!(r.calls().is_empty(), "no ls-remote against the wrong repo");
+        }
+        let r = FakeRunner::new();
+        let p = pin(Some("keelstackhq/keelstack"));
+        let e = verify_hull_ref(&r, Path::new("."), LEGACY_HULL_URL, "v0.13.0", Some(&p));
+        assert!(e.unwrap_err().contains("pinned for keelstackhq/keelstack"));
+        let e = verify_hull_ref(&r, Path::new("."), HULL_URL, "v0.13.0", None).unwrap_err();
+        assert!(e.contains("for keelstackhq/keelstack"), "{e}");
     }
 
     #[test]

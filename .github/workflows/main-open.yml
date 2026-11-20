@@ -11,9 +11,8 @@ name: main-open
 #
 # The gate reads the main-red issue and the mainfix label only; it reads no check names, so the
 # per-folder `ci-<folder>` jobs and `ci-ok` need no wiring here (D-007: ONE copy for the repo).
-# Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`); there
-# is no env var or flag to point it elsewhere. Until a root `.bosun/` exists (the monorepo's
-# governance config, moved from bosun/.bosun), bosun runs on built-in defaults here.
+# Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`): the
+# monorepo's root .bosun/ of the checked-out commit (bosun.toml with [[folders]], risk.toml, ...).
 on:
   pull_request_target:
     branches: [main]
@@ -63,8 +62,18 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: bosun
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No pinned-release fallback yet: no monorepo release exists, and the old keelstackhq/bosun
+      # releases (<= 0.21.0, .bosun/version) cannot read [[folders]], so they would mis-judge. A
+      # base whose bosun does not build fails this gate closed (.github/SETUP.md, "Main does not
+      # build"); the fallback to the pinned release returns with the first monorepo release.
       - name: build bosun
-        run: cargo build --release --locked -p keel-bosun --bin bosun
+        run: |
+          if ! cargo build --release --locked -p keel-bosun --bin bosun; then
+            echo "::error::bosun does not build at the base commit: this gate cannot judge and fails closed (no pinned-release fallback until the first monorepo release). Fix: a bosun:kind/mainfix PR that makes bosun build on main, merged by the owner past the gates (.github/SETUP.md, Main does not build)."
+            exit 1
+          fi
       # The App token (spec §15): the key goes to this step only, the token only to bosun.
       - name: App token
         id: app

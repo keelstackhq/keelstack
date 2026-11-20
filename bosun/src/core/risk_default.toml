@@ -30,6 +30,8 @@ paths = [
     "src/core/meta/**",
     "src/core/glob.rs",
     "src/core/glob/**",
+    "src/core/folders.rs",
+    "src/core/folders/**",
     "src/core/approve.rs",
     "src/core/approve/**",
     "src/core/mod.rs",

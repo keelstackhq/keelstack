@@ -258,11 +258,12 @@ mod tests {
 
     #[test]
     fn workflow_environments_finds_bosuns_own() {
-        // Each file starts at indent 0, so the files read as one.
-        let all = include_str!("../../.github/workflows/release.yml").to_owned()
-            + include_str!("../../.github/workflows/review.yml")
-            + include_str!("../../.github/workflows/splice.yml");
-        let want = ["release-pr", "release", "review", "splice-bot"].map(|n| Ok(n.to_string()));
+        // bosun's workflows are the monorepo root's. Each file starts at indent 0, so the files
+        // read as one: release.yml names its environment plainly, main-open.yml as a mapping.
+        let all = include_str!("../../../.github/workflows/release.yml").to_owned()
+            + include_str!("../../../.github/workflows/review.yml")
+            + include_str!("../../../.github/workflows/main-open.yml");
+        let want = ["release", "review", "bosun-app"].map(|n| Ok(n.to_string()));
         assert_eq!(workflow_environments(&all), want);
     }
 }

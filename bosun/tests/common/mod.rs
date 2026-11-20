@@ -129,28 +129,16 @@ pub fn git_tempdir() -> tempfile::TempDir {
 
 /// bosun's tracked files copied into a fresh git repo on `main` with one commit: bosun/ is a
 /// folder of the monorepo, not a git toplevel, so tests that run bosun on "its own repo" (it
-/// needs .github/, .bosun/, governance/ at the repo root) run on this copy instead.
+/// needs .github/, .bosun/, governance/ at the repo root) run on this copy instead. The
+/// workflows and the `.bosun/` config bosun runs on are the monorepo root's (bosun/ has no
+/// copies of them), so the root's tracked `.github/` and `.bosun/` are copied in too.
 #[allow(dead_code)]
 pub fn self_copy() -> tempfile::TempDir {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
-    let listed = std::process::Command::new("git")
-        .args(["ls-files", "-z", "--cached"])
-        .current_dir(root)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .output()
-        .expect("git ls-files");
-    assert!(listed.status.success(), "git ls-files failed");
+    let bosun = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = bosun.join("..");
     let dir = tempfile::tempdir().expect("tempdir");
-    for rel in listed.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()) {
-        let rel = std::str::from_utf8(rel).expect("utf-8 path");
-        let from = root.join(rel);
-        if !from.is_file() {
-            continue; // deleted in the work tree but still in the index
-        }
-        let to = dir.path().join(rel);
-        std::fs::create_dir_all(to.parent().unwrap()).unwrap();
-        std::fs::copy(&from, &to).unwrap();
-    }
+    copy_tracked(bosun, &[], dir.path());
+    copy_tracked(&root, &[".github", ".bosun"], dir.path());
     let d = dir.path();
     let git = |args: &[&str]| {
         let st = std::process::Command::new("git")
@@ -174,4 +162,26 @@ pub fn self_copy() -> tempfile::TempDir {
         "chore: init",
     ]);
     dir
+}
+
+/// Copy the files git tracks under `from` (only those below `only`, when given) into `to`.
+fn copy_tracked(from: &std::path::Path, only: &[&str], to: &std::path::Path) {
+    let listed = std::process::Command::new("git")
+        .args(["ls-files", "-z", "--cached", "--"])
+        .args(only)
+        .current_dir(from)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .expect("git ls-files");
+    assert!(listed.status.success(), "git ls-files failed");
+    for rel in listed.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()) {
+        let rel = std::str::from_utf8(rel).expect("utf-8 path");
+        let src = from.join(rel);
+        if !src.is_file() {
+            continue; // deleted in the work tree but still in the index
+        }
+        let dst = to.join(rel);
+        std::fs::create_dir_all(dst.parent().unwrap()).unwrap();
+        std::fs::copy(&src, &dst).unwrap();
+    }
 }

@@ -119,7 +119,7 @@ fn code_that_acts_without_the_owner_is_r_gate_in_both_rule_files() {
     ];
     // CI puts the base's `.bosun/` over the checkout: read the committed copy (HEAD).
     let out = std::process::Command::new("git")
-        .args(["show", "HEAD:./.bosun/risk.toml"])
+        .args(["show", "HEAD:.bosun/risk.toml"])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .unwrap();

@@ -12,18 +12,23 @@ use common::fake::FakeGithub;
 use common::run;
 use serde_json::{Value, json};
 
-/// `path` as committed at HEAD (as tests/governance.rs reads it), else the working tree.
+/// `path` (relative to the monorepo root, whose `.bosun/` bosun runs on) as committed at HEAD
+/// (as tests/governance.rs reads it), else the working tree.
 fn committed(path: &str) -> String {
     std::process::Command::new("git")
-        .args(["show", &format!("HEAD:./{path}")])
+        .args(["show", &format!("HEAD:{path}")])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
         .output()
         .ok()
         .filter(|o| o.status.success())
         .and_then(|o| String::from_utf8(o.stdout).ok())
         .unwrap_or_else(|| {
-            std::fs::read_to_string(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(path))
-                .expect("read")
+            std::fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join(path),
+            )
+            .expect("read")
         })
 }
 

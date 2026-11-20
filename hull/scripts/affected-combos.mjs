@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { comboTemplate, loadCombos } from "./lib/combos.mjs";
 import { isMain } from "./lib/is-main.mjs";
@@ -63,11 +64,13 @@ if (isMain(import.meta.url)) {
   let list = everything;
   if (!values.all) {
     try {
-      // --relative: paths under hull/ as hull-relative (hull is a folder of the monorepo).
+      // --relative is relative to git's cwd: run in hull's folder so paths are hull-relative
+      // wherever the script is started from (hull is a folder of the monorepo).
       const out = execFileSync(
         "git",
         ["diff", "--relative", "--name-only", `${values.base}...HEAD`],
         {
+          cwd: fileURLToPath(new URL("..", import.meta.url)),
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         },

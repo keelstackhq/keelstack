@@ -154,13 +154,47 @@ fn the_sha_comes_from_the_release_tag_when_not_given() {
         env!("CARGO_PKG_VERSION")
     );
     let api = FakeApi::start(&[(route.as_str(), 200, &body, &[])]);
-    hoist()
+    let a = hoist()
         .args(["-C", d.to_str().unwrap(), "init"])
         .env("HOIST_GITHUB_API", api.url())
         .env("GITHUB_TOKEN", "t")
-        .assert()
-        .code(0);
+        .assert();
+    if unreleased_version() {
+        // No monorepo release tag can exist for this version: a clear failure, no request.
+        let out = String::from_utf8_lossy(&a.get_output().stderr).to_string()
+            + &String::from_utf8_lossy(&a.get_output().stdout);
+        a.code(3);
+        assert!(
+            out.contains("--sha") && out.contains("keelstackhq/hoist"),
+            "{out}"
+        );
+        assert!(!file(d).exists());
+        assert!(api.requests().is_empty(), "{:?}", api.requests());
+        return;
+    }
+    a.code(0);
     assert!(std::fs::read_to_string(file(d)).unwrap().contains(SHA));
+}
+
+/// True while the lockstep version is at or below v0.21.0 (no monorepo release can exist).
+fn unreleased_version() -> bool {
+    let v: Vec<u64> = env!("CARGO_PKG_VERSION")
+        .split(['-', '+'])
+        .next()
+        .unwrap()
+        .split('.')
+        .map(|p| p.parse().unwrap())
+        .collect();
+    (v[0], v[1], v[2]) <= (0, 21, 0)
+}
+
+#[test]
+fn an_unreleased_version_still_inits_with_sha() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    init(d, &["--sha", SHA]).code(0);
+    let text = std::fs::read_to_string(file(d)).unwrap();
+    assert!(text.contains(&format!("keelstackhq/keelstack/hoist/release@{SHA} # v")));
 }
 
 #[test]

@@ -26,28 +26,43 @@ Re-sync check 2026-11-20: every source repo's main still equals its imported SHA
   `deny.toml`, `.cargo/config.toml`); the per-folder copies were deleted.
 - All Rust crates share one lockstep version (`[workspace.package] version = "0.21.0"`, the
   highest tool version at the move). The npm launcher packages follow it. Nothing was released.
-- Release profiles moved to the root (cargo ignores member profiles).
+- Release profiles moved to the root (cargo ignores member profiles): one profile for every
+  binary (panic = "unwind", fat LTO, one codegen unit, stripped; dependencies at opt-level 3,
+  bosun, splice and berth code at "s"). This changes the berth and splice binaries, which used
+  panic = "abort" and thin LTO; nothing depended on the abort.
 - splice no longer needs serde_json `preserve_order`: workspace feature unification would have
   turned it on for every tool and changed their JSON key order. splice keeps key order with its
   own ordered value type (`splice/src/merge/value.rs`).
-- Root CI and governance workflows (`.github/workflows/`) replace the per-repo ones. The per-repo
-  ci, bosun, risk, verdict, main-open, main-health and splice workflows of splice, hoist and hoard
-  were deleted; the files still under `<folder>/.github/workflows/` (berth, bosun, hoard, hoist,
-  hull, splice) do not run here: some tests still read them, or they are not ported yet (below).
-- One root `.bosun/` (bosun's config, `[[folders]]` for every folder). The per-folder `.bosun/`
-  of hoard, hoist, hull and splice were deleted; their risk rules apply re-rooted under each folder
-  in the root `risk.toml`.
+- Root CI and governance workflows (`.github/workflows/`) replace the per-repo ones. bosun's,
+  splice's, keel's and decisions' `.github/` were deleted, and so were most per-repo workflows of
+  the others. The files still under `berth/`, `hoard/`, `hoist/` and `hull/` `.github/workflows/`
+  do not run here: tests still read them, or they are not ported yet (below).
+- One root `.bosun/` (bosun's config, `[[folders]]` for every folder) and root
+  `governance/owners.toml`, `REVIEW.md`, `docs/lessons.toml` and `.claude/settings.json` (bosun's
+  hooks and deny rules). Every per-folder `.bosun/` was deleted; the old risk rules of each folder
+  apply re-rooted under it in the root `risk.toml`. `bosun/governance/` stays: bosun's tests read it.
 - Tags were not imported. `hull/legacy-tags.txt` maps hull's old release tags to their commits
   here (hull's update tests use it).
 
 ## Follow-ups (not done by the move)
 
-- Not ported to root workflows: hoard `self-test.yml`, `r2-checks.yml`, `bench.yml`; splice
-  `action-selftest.yml`; the splice update bot (`splice.yml` in bosun and hull). main-health's
-  weekly job covers only the Rust workspace.
-- Tests that still check the old per-folder release workflows (splice `scripts/release-*.test.mjs`,
-  `check-version.test.mjs`, hoard `action/test/release-workflow.test.ts`, berth
-  `tests/release_config.rs`, bosun `src/core/checks.rs`): port their checks to the root
-  `release.yml`, then delete the old files.
+- Ported, manual runs only (hoard's also weekly; Linux only; not run yet): splice's action
+  self-test (`.github/workflows/splice-action-selftest.yml`) and hoard's self-test
+  (`.github/workflows/hoard-self-test.yml`; its R2 legs need environment `hoard-r2`). Deleted with
+  their tests, because the root `release.yml` does their job: splice's `release.yml` and its
+  `release-tag`/`release-major` scripts; hoard's `bench.yml` and `r2-checks.yml`.
+- Not ported: the splice update bot (hull's and bosun's `splice.yml`; its hull test is gone).
+  main-health's weekly job covers only the Rust workspace.
+- Tests that still read an old per-folder release workflow: hoard
+  `action/test/release-workflow.test.ts` (keeps `hoard/.github/workflows/release.yml`) and berth
+  `tests/release_config.rs` (keeps `berth/.github/`). Port them to the root `release.yml`, then
+  delete the old files.
+- `.bosun/version` is `unreleased`: bosun runs from the workspace. `[[folders]]` is known from
+  bosun 0.22.0; pin a release only once one > 0.21.0 exists. Until then a main that does not build
+  blocks its own fix (the gates fail closed; see `.github/SETUP.md`, "Main does not build").
+- `hoist init` without `--sha` fails until the first release > 0.21.0 exists. A keel pin of a
+  monorepo hull tag needs `repo = "keelstackhq/keelstack"` in `[refs.hull]`.
+- hull's `affected-combos.mjs` sees only hull's paths, so a root workflow change selects no combos.
+- bosun's channel templates and `bosun/CLAUDE.md` still describe a standalone bosun repo.
 - Templates rendered into other repos (`hull/template/**`, `bosun/channel/**`) keep pins to the
   old repos' last releases until the first monorepo release (> 0.21.0) exists.

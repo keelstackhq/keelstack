@@ -21,11 +21,14 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 | `bosun-app` | `main` only | none | risk.yml, verdict.yml, main-open.yml, main-health.yml |
 | `bosun-signer` | `main` only | none | signer.yml |
 | `review` | `main` only | none | review.yml |
+| `hoard-r2` | `main` only | none | hoard-self-test.yml (R2 storage legs) |
 
 ## Secrets
 
 - `BOSUN_APP_KEY` (environment `bosun-app`): private key of the GitHub App `keelstackhq-bosun-gate`.
 - `BOSUN_SIGNER_KEY` (environment `bosun-signer`).
+- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (environment `hoard-r2`):
+  the R2 bucket of hoard's self-test.
 - `ANTHROPIC_API_KEY` (environment `review`; only when `BOSUN_REVIEW_CI` is `true`).
 - Release: none. crates.io and npm use trusted publishing (OIDC).
 
@@ -48,6 +51,19 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 - Retired with the old repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the
   `release-pr` environment.
 
+## Main does not build
+
+The gate workflows (risk, verdict, review, signer, main-open, main-health) build bosun from the
+checked-out base (pull_request_target) or the default branch head. If that build fails, the gate
+fails closed with an `::error::` (no status is posted, so the required check stays missing) and
+`.github/scripts/gate-workflows.test.sh` (ci-repo) keeps it that way. There is no pinned-release
+fallback yet: no monorepo release exists, and the old `keelstackhq/bosun` releases (<= 0.21.0,
+the version in `.bosun/version`) predate `[[folders]]` and would judge the monorepo wrongly. The
+fix path: open a `bosun:kind/mainfix` PR that makes bosun build on main (usually `bosun revert
+<pr>` of the breaking merge); the owner merges it past the missing gate statuses (ruleset bypass),
+then the gates run again from the fixed main. Once a monorepo release (> 0.21.0) exists and
+`.bosun/version` names it, the workflows can fall back to that pinned release again.
+
 ## Follow-ups (not done here)
 
 - Download URLs: installers (`hoard/scripts/install.sh`, `hoard/circleci/hoard.yml` and its hull
@@ -55,5 +71,11 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
   this repository and <= 0.21.0 to the old ones; release.yml refuses to release a version <= 0.21.0.
   keel's default hull sources (`keel/src/tools/splice.rs`) stay on keelstackhq/hull until keel pins a
   monorepo hull release; `repository.url` in each launcher `package.json` is rewritten at publish.
-- Not ported (inert, kept in their folders): hoard `bench.yml`, `r2-checks.yml`, `self-test.yml`;
-  splice `action-selftest.yml`; the splice update-bot `splice.yml` copies (decisions are in-repo).
+- Ported to the root (manual, plus weekly for hoard; Linux only, D-007): splice `action-selftest.yml`
+  as `splice-action-selftest.yml`, hoard `self-test.yml` as `hoard-self-test.yml` (its R2 leg needs
+  the `R2_*` repository secrets, else it is skipped with a notice). Deleted, not ported (manual
+  tools, in git history): hoard `bench.yml` and `r2-checks.yml`; splice `release.yml` with
+  `scripts/release-tag.mjs` and `scripts/release-major.mjs` and their tests (the root release.yml
+  tags, releases and moves the major tag). Still inert in its folder: hoard `release.yml` (its
+  tests in `hoard/action/test/release-workflow.test.ts` read it). Not ported: the splice update-bot
+  `splice.yml` copies (decisions are in-repo).

@@ -1,66 +1,49 @@
-name: self-test
-# Runs the action (`uses: ./`) on real runners against tests/fixtures/turbo-repo:
+name: hoard-self-test
+# Runs the hoard action (`uses: ./hoard`) on real runners against hoard/tests/fixtures/turbo-repo:
 #   warm  builds the fixture with an empty cache (misses, uploads);
 #   hit   rebuilds it in a fresh checkout and must replay everything from the cache.
-# vp-warm / vp-hit do the same for Vite+ on tests/fixtures/vp-repo with storage: github: warm runs
+# vp-warm / vp-hit do the same for Vite+ on hoard/tests/fixtures/vp-repo with storage: github: warm runs
 #   the task and post saves the task cache; hit restores it in a fresh checkout and must print a
 #   Vite Task cache hit. The action only looks for Vite+ at the workspace root, so these jobs check
-#   hoard out into ./hoard (`uses: ./hoard`) and copy the fixture to the root.
+#   the monorepo out into ./keelstack (`uses: ./keelstack/hoard`) and copy the fixture to the root.
 # The cache-version is run-<run_id>-<os>-<storage>-<binary>: unique per run (runs never see each
 # other) and per matrix leg (task hashes are OS-independent here, so one leg's uploads must not
 # satisfy another leg's hit assertion). run_attempt is deliberately not part of it: re-running only the
 # failed `hit` jobs must find the entries `warm` wrote in the earlier attempt.
+#
+# Ported from hoard/.github/workflows/self-test.yml (D-023). CI minutes (D-007): Linux runners
+# only (x64 and arm64; macOS and Windows run only in release.yml), manual or weekly, never on a
+# push or a PR (ci.yml's ci-hoard runs the action's unit and integration tests on every change).
 on:
   workflow_dispatch:
   schedule: [{ cron: "41 5 * * 1" }] # weekly: catches runner and hosted-cache drift
-  push:
-    branches: [main]
-    paths:
-      - action.yml
-      - action/**
-      - src/**
-      - Cargo.toml
-      - Cargo.lock
-      - tests/fixtures/**
-      - .github/workflows/self-test.yml
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    paths:
-      - action.yml
-      - action/**
-      - src/**
-      - Cargo.toml
-      - Cargo.lock
-      - tests/fixtures/**
-      - .github/workflows/self-test.yml
 
 permissions:
   contents: read # the GitHub cache works with the runtime token; nothing else is needed
 
 concurrency:
-  group: self-test-${{ github.ref }}
+  group: hoard-self-test-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   warm:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     name: warm (${{ matrix.os }}, ${{ matrix.storage }}, ${{ matrix.binary }})
+    # The R2 credentials live in this environment, not as repository secrets.
+    environment: hoard-r2
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
         storage: [github]
         # `source`: build the binary from this checkout and hand it to the action through
         # HOARD_ACTION_BINARY_PATH. `release`: skip the build and the env var, so the action
         # downloads the published binary of its baked VERSION and verifies its SHA-256 (the
         # `if: matrix.binary == 'source'` steps below only run for `source`).
-        # Pull requests: the release binary on ubuntu only (its download and SHA-256 check is the
-        # same code on every OS; the per-OS release assets are checked on main and weekly).
-        binary: ${{ fromJSON(github.event_name == 'pull_request' && '["source"]' || '["source","release"]') }}
+        binary: [source, release]
         include:
           - { os: ubuntu-latest, storage: r2, binary: source }
-          - { os: ubuntu-latest, storage: github, binary: release }
     defaults:
       run:
         shell: bash
@@ -87,7 +70,7 @@ jobs:
       - if: steps.gate.outputs.run == 'true' && matrix.binary == 'source'
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
       - if: steps.gate.outputs.run == 'true' && matrix.binary == 'source'
-        run: cargo build --release
+        run: cargo build --release --locked -p keel-hoard
       - name: Locate the binary
         id: bin
         if: steps.gate.outputs.run == 'true' && matrix.binary == 'source'
@@ -114,12 +97,12 @@ jobs:
           node-version: 24
       - name: Install the fixture
         if: steps.gate.outputs.run == 'true'
-        working-directory: tests/fixtures/turbo-repo
+        working-directory: hoard/tests/fixtures/turbo-repo
         run: pnpm install --frozen-lockfile
       - name: hoard
         id: cache
         if: steps.gate.outputs.run == 'true'
-        uses: ./
+        uses: ./hoard
         env:
           HOARD_ACTION_BINARY_PATH: ${{ matrix.binary == 'source' && steps.bin.outputs.path || '' }}
         with:
@@ -131,23 +114,24 @@ jobs:
           r2-bucket: ${{ matrix.storage == 'r2' && secrets.R2_BUCKET || '' }}
       - name: Build (cold cache)
         if: steps.gate.outputs.run == 'true'
-        working-directory: tests/fixtures/turbo-repo
+        working-directory: hoard/tests/fixtures/turbo-repo
         run: pnpm turbo run build
 
   hit:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     name: hit (${{ matrix.os }}, ${{ matrix.storage }}, ${{ matrix.binary }})
+    # The R2 credentials live in this environment, not as repository secrets.
+    environment: hoard-r2
     needs: warm
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
+        os: [ubuntu-latest, ubuntu-24.04-arm]
         storage: [github]
-        binary: ${{ fromJSON(github.event_name == 'pull_request' && '["source"]' || '["source","release"]') }} # see `warm`
+        binary: [source, release] # see `warm`
         include:
           - { os: ubuntu-latest, storage: r2, binary: source }
-          - { os: ubuntu-latest, storage: github, binary: release }
     defaults:
       run:
         shell: bash
@@ -192,12 +176,12 @@ jobs:
           node-version: 24
       - name: Install the fixture
         if: steps.gate.outputs.run == 'true'
-        working-directory: tests/fixtures/turbo-repo
+        working-directory: hoard/tests/fixtures/turbo-repo
         run: pnpm install --frozen-lockfile
       - name: hoard
         id: cache
         if: steps.gate.outputs.run == 'true'
-        uses: ./
+        uses: ./hoard
         env:
           HOARD_ACTION_BINARY_PATH: ${{ matrix.binary == 'source' && steps.bin.outputs.path || '' }}
         with:
@@ -209,7 +193,7 @@ jobs:
           r2-bucket: ${{ matrix.storage == 'r2' && secrets.R2_BUCKET || '' }}
       - name: Build (warm cache)
         if: steps.gate.outputs.run == 'true'
-        working-directory: tests/fixtures/turbo-repo
+        working-directory: hoard/tests/fixtures/turbo-repo
         run: pnpm turbo run build 2>&1 | tee "$RUNNER_TEMP/turbo.log"
       - name: Assert full cache replay
         if: steps.gate.outputs.run == 'true'
@@ -234,7 +218,7 @@ jobs:
           }
 
   vp-warm:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     name: vp warm (ubuntu-latest, github, source)
     runs-on: ubuntu-latest
     defaults:
@@ -243,25 +227,25 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          path: hoard
+          path: keelstack
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master (no version tags; toolchain pinned via with:)
         with:
           toolchain: "1.97"
       - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
-          workspaces: hoard
-      - run: cargo build --release
-        working-directory: hoard
+          workspaces: keelstack
+      - run: cargo build --release --locked -p keel-hoard
+        working-directory: keelstack
       - name: Share the binary with the hit job
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: hoard-vp
-          path: hoard/target/release/hoard
+          path: keelstack/target/release/hoard
           if-no-files-found: error
           retention-days: 1
       - name: Put the fixture at the workspace root
-        run: cp -R hoard/tests/fixtures/vp-repo/. .
+        run: cp -R keelstack/hoard/tests/fixtures/vp-repo/. .
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 10.28.0
@@ -271,9 +255,9 @@ jobs:
       - name: Install the fixture
         run: pnpm install --no-frozen-lockfile # the fixture has no lockfile
       - name: hoard
-        uses: ./hoard
+        uses: ./keelstack/hoard
         env:
-          HOARD_ACTION_BINARY_PATH: ${{ github.workspace }}/hoard/target/release/hoard
+          HOARD_ACTION_BINARY_PATH: ${{ github.workspace }}/keelstack/target/release/hoard
         with:
           storage: github
           cache-version: run-${{ github.run_id }}-vp
@@ -281,7 +265,7 @@ jobs:
         run: pnpm exec vp run hello
 
   vp-hit:
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     name: vp hit (ubuntu-latest, github, source)
     needs: vp-warm
     runs-on: ubuntu-latest
@@ -291,7 +275,7 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          path: hoard
+          path: keelstack
           persist-credentials: false
       - name: Fetch the binary built in vp-warm
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -300,7 +284,7 @@ jobs:
           path: ${{ runner.temp }}/hoard-bin
       - run: chmod +x "$RUNNER_TEMP/hoard-bin/hoard"
       - name: Put the fixture at the workspace root
-        run: cp -R hoard/tests/fixtures/vp-repo/. .
+        run: cp -R keelstack/hoard/tests/fixtures/vp-repo/. .
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 10.28.0
@@ -310,7 +294,7 @@ jobs:
       - name: Install the fixture
         run: pnpm install --no-frozen-lockfile
       - name: hoard (restores the task cache)
-        uses: ./hoard
+        uses: ./keelstack/hoard
         env:
           HOARD_ACTION_BINARY_PATH: ${{ runner.temp }}/hoard-bin/hoard
         with:

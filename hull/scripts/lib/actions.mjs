@@ -68,10 +68,13 @@ export function scanYaml(text) {
   return out;
 }
 
-/** Workflow and action files in the source trees (plain and `.jinja`). */
+/**
+ * Workflow and action files in the source trees (plain and `.jinja`): the templates, rigging,
+ * hull's inert `.github` copy and the monorepo's root `.github` (the live workflows, `../.github/`).
+ */
 export async function sourceFiles() {
   const files = [];
-  for (const d of ["template", "template-rust", "rigging", ".github"])
+  for (const d of ["template", "template-rust", "rigging", ".github", "../.github"])
     for (const f of await walk(join(ROOT, d))) if (isUsesFile(f)) files.push(f);
   return files.sort();
 }
@@ -127,7 +130,7 @@ export async function uncoveredSources(combos) {
   const covered = new Set();
   for (const f of await sourceFiles()) {
     const src = relative(ROOT, f);
-    if (src.startsWith(".github/")) continue;
+    if (src.startsWith(".github/") || src.startsWith("../")) continue;
     const m = /^([^/]+)\/pieces\/([^/]+)\/files\/(.+?)(\.jinja)?$/.exec(src);
     if (!m) continue; // not a rendered piece file: reported below
     const [, tpl, piece, rel] = m;
@@ -141,6 +144,6 @@ export async function uncoveredSources(combos) {
   }
   const all = (await sourceFiles())
     .map((f) => relative(ROOT, f))
-    .filter((f) => !f.startsWith(".github/"));
+    .filter((f) => !f.startsWith(".github/") && !f.startsWith("../"));
   return all.filter((f) => !covered.has(f));
 }
