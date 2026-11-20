@@ -2,7 +2,7 @@
 
 - Date: 2026-10-15
 - Scope: hull, splice
-- Status: accepted
+- Status: superseded by D-023
 - Supersedes: —
 
 ## Context
