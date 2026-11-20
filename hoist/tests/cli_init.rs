@@ -30,7 +30,7 @@ fn writes_a_pinned_thin_workflow_then_is_idempotent() {
     let a = init(d, &["--sha", SHA]).code(0);
     assert_eq!(action(&a), "create");
     let text = std::fs::read_to_string(file(d)).unwrap();
-    assert!(text.contains(&format!("keelstackhq/hoist/release@{SHA} # v")));
+    assert!(text.contains(&format!("keelstackhq/keelstack/hoist/release@{SHA} # v")));
     assert!(text.contains("command: detect") && text.contains("command: publish"));
     assert!(text.contains("environment: \"release\""));
     let b = init(d, &["--sha", SHA]).code(0);
@@ -150,7 +150,7 @@ fn the_sha_comes_from_the_release_tag_when_not_given() {
     let d = repo.path();
     let body = format!("{{\"sha\":\"{SHA}\"}}");
     let route = format!(
-        "GET /repos/keelstackhq/hoist/commits/v{}",
+        "GET /repos/keelstackhq/keelstack/commits/v{}",
         env!("CARGO_PKG_VERSION")
     );
     let api = FakeApi::start(&[(route.as_str(), 200, &body, &[])]);

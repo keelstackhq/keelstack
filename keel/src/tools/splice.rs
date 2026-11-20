@@ -2,6 +2,9 @@ use super::{failure, json, not_found};
 use crate::exec::{Cmd, Runner};
 use std::path::Path;
 
+// The defaults stay on the old hull repo: pins.toml pins a hull tag that exists only there. They move
+// to the monorepo form (`gh:keelstackhq/keelstack//hull/template(-rust)`) when pins.toml pins a
+// monorepo hull release (> v0.21.0).
 pub const RUST_SOURCE: &str = "gh:keelstackhq/hull//template-rust";
 pub const TS_SOURCE: &str = "gh:keelstackhq/hull//template";
 
@@ -161,29 +164,53 @@ pub fn render_files(out: &serde_json::Value) -> Vec<String> {
     )
 }
 
-/// True for any form of the hull template source: `gh:keelstackhq/hull`, `https://github.com/
-/// keelstackhq/hull`, `git@github.com:keelstackhq/hull`, each with an optional `.git` and an
-/// optional `//subdir`. A longer repo name (`hullabaloo`) is not hull.
-pub fn is_hull_source(src: &str) -> bool {
+/// Split a source into its repo (`keelstackhq/keelstack`, no `.git`) and its optional `//subdir`.
+/// Accepts the `gh:`, `https://github.com/` and `git@github.com:` prefixes.
+fn repo_and_subdir(src: &str) -> Option<(&str, &str)> {
     let rest = ["gh:", "https://github.com/", "git@github.com:"]
         .iter()
-        .find_map(|p| src.strip_prefix(p));
-    let Some(rest) = rest else { return false };
-    let repo = rest
-        .split("//")
-        .next()
-        .unwrap_or(rest)
-        .trim_end_matches('/');
-    repo.strip_suffix(".git").unwrap_or(repo) == "keelstackhq/hull"
+        .find_map(|p| src.strip_prefix(p))?;
+    let (repo, sub) = rest.split_once("//").unwrap_or((rest, ""));
+    let repo = repo.trim_end_matches('/');
+    Some((repo.strip_suffix(".git").unwrap_or(repo), sub))
 }
 
-pub const HULL_URL: &str = "https://github.com/keelstackhq/hull";
+/// True for the old (`keelstackhq/hull`, any subdir) form of the hull template source.
+fn is_legacy_hull_source(src: &str) -> bool {
+    repo_and_subdir(src).is_some_and(|(repo, _)| repo == "keelstackhq/hull")
+}
+
+/// True for any form of the hull template source: the old repo (`gh:keelstackhq/hull`,
+/// `https://github.com/keelstackhq/hull`, `git@github.com:keelstackhq/hull`, each with an optional
+/// `.git` and an optional `//subdir`) or the monorepo with a `hull` subdir
+/// (`gh:keelstackhq/keelstack//hull/template`). A longer repo name (`hullabaloo`) is not hull, and
+/// neither is the monorepo without a `hull/...` subdir.
+pub fn is_hull_source(src: &str) -> bool {
+    is_legacy_hull_source(src)
+        || repo_and_subdir(src).is_some_and(|(repo, sub)| {
+            repo == "keelstackhq/keelstack" && (sub == "hull" || sub.starts_with("hull/"))
+        })
+}
+
+pub const HULL_URL: &str = "https://github.com/keelstackhq/keelstack";
+/// Where hull's tags lived before the monorepo; used for sources in the old form.
+pub const LEGACY_HULL_URL: &str = "https://github.com/keelstackhq/hull";
+
+/// The git URL whose tags back this hull source.
+pub fn hull_url(src: &str) -> &'static str {
+    if is_legacy_hull_source(src) {
+        LEGACY_HULL_URL
+    } else {
+        HULL_URL
+    }
+}
 
 /// For a hull source: the tag must still point at the pinned commit. `pinned` is the sha
 /// recorded for `git_ref` in the pins (None: the ref is not one keel knows).
 pub fn verify_hull_ref(
     r: &dyn Runner,
     dir: &Path,
+    url: &str,
     git_ref: &str,
     pinned: Option<&str>,
 ) -> Result<(), String> {
@@ -194,7 +221,7 @@ pub fn verify_hull_ref(
     };
     let tag = format!("refs/tags/{git_ref}");
     let peeled = format!("{tag}^{{}}");
-    let c = Cmd::new("git", &["ls-remote", HULL_URL, &tag, &peeled]).dir(dir);
+    let c = Cmd::new("git", &["ls-remote", url, &tag, &peeled]).dir(dir);
     let o = r.run(&c);
     if o.code != 0 {
         return Err(failure(&c, &o));
@@ -206,7 +233,7 @@ pub fn verify_hull_ref(
         })
     };
     let got = find(&peeled).or_else(|| find(&tag)).ok_or_else(|| {
-        format!("hull tag {git_ref} not found at {HULL_URL}: check the template_ref or network")
+        format!("hull tag {git_ref} not found at {url}: check the template_ref or network")
     })?;
     if got == pinned {
         Ok(())
@@ -356,12 +383,14 @@ mod tests {
     fn hull_ref_must_match_the_pinned_sha() {
         use crate::exec::{FakeRunner, Out};
         let ls = |o: Out| FakeRunner::new().on(&["git", "ls-remote"], o);
-        let v = |r: &FakeRunner, pin: Option<&str>| verify_hull_ref(r, Path::new("."), "v1", pin);
+        let v = |r: &FakeRunner, pin: Option<&str>| {
+            verify_hull_ref(r, Path::new("."), HULL_URL, "v1", pin)
+        };
         let r = ls(Out::ok("aaa\trefs/tags/v1\nbbb\trefs/tags/v1^{}\n"));
         assert!(v(&r, Some("bbb")).is_ok(), "peeled wins");
         assert_eq!(
             r.calls()[0].line(),
-            "git ls-remote https://github.com/keelstackhq/hull refs/tags/v1 refs/tags/v1^{}"
+            "git ls-remote https://github.com/keelstackhq/keelstack refs/tags/v1 refs/tags/v1^{}"
         );
         assert!(v(&ls(Out::ok("aaa\trefs/tags/v1\n")), Some("aaa")).is_ok());
         let e = v(&r, Some("aaa")).unwrap_err();
@@ -383,6 +412,12 @@ mod tests {
             "https://github.com/keelstackhq/hull.git//template-rust",
             "https://github.com/keelstackhq/hull/",
             "git@github.com:keelstackhq/hull.git",
+            "gh:keelstackhq/keelstack//hull/template",
+            "gh:keelstackhq/keelstack//hull/template-rust",
+            "gh:keelstackhq/keelstack.git//hull/template-secrets",
+            "https://github.com/keelstackhq/keelstack//hull/template",
+            "https://github.com/keelstackhq/keelstack.git//hull/template-rust",
+            "git@github.com:keelstackhq/keelstack.git//hull/template",
             RUST_SOURCE,
             TS_SOURCE,
         ] {
@@ -392,6 +427,11 @@ mod tests {
             "gh:keelstackhq/hullabaloo",
             "gh:keelstackhq/hull-extra//x",
             "gh:other/hull",
+            "gh:keelstackhq/keelstack",
+            "gh:keelstackhq/keelstack//bosun/channel",
+            "gh:keelstackhq/keelstack//hullabaloo/template",
+            "gh:keelstackhq/keelstack-extra//hull/template",
+            "gh:other/keelstack//hull/template",
             "https://github.com/other/keelstackhq/hull",
             "https://example.com/keelstackhq/hull",
             "rust",
@@ -399,6 +439,15 @@ mod tests {
         ] {
             assert!(!is_hull_source(no), "{no}");
         }
+    }
+
+    #[test]
+    fn hull_url_follows_the_source_form() {
+        assert_eq!(hull_url(RUST_SOURCE), "https://github.com/keelstackhq/hull");
+        assert_eq!(
+            hull_url("gh:keelstackhq/keelstack//hull/template"),
+            "https://github.com/keelstackhq/keelstack"
+        );
     }
 
     #[test]

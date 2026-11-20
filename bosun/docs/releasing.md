@@ -1,5 +1,7 @@
 # Releasing bosun
 
+> Release moved to the monorepo lockstep flow: one release tag `vX.Y.Z` in keelstackhq/keelstack, cut by the root release workflow. The steps below describe the former per-repo flow (releases up to 0.21.0).
+
 bosun releases through [hoist](https://github.com/keelstackhq/hoist) (`hoist release`), the way
 berth and hoist do (spec D13, D24). Agents never tag or publish. The tag and all uploads come
 from `.github/workflows/release.yml`. One release publishes these items from one tag

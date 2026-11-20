@@ -100,7 +100,7 @@ test("a verified archive is extracted, made executable and cached", async () => 
   expect((await stat(exe)).mode & 0o777).toBe(0o755);
   expect(download).toHaveBeenCalledOnce();
   expect(download).toHaveBeenCalledWith(
-    "https://github.com/keelstackhq/hoard/releases/download/v1.2.3/hoard-x86_64-unknown-linux-musl.tar.gz",
+    "https://github.com/keelstackhq/keelstack/releases/download/v1.2.3/hoard-x86_64-unknown-linux-musl.tar.gz",
   );
   expect(tc.find("hoard", "1.2.3", LINUX)).not.toBe("");
 
@@ -185,10 +185,10 @@ describe("releaseUrl", () => {
     );
   });
   test.each(["", "nope", "a/b/c", "../evil", "me/..", "a/b?x=1", "owner/re po"])(
-    "falls back to keelstackhq/hoard for %j",
+    "falls back to keelstackhq/keelstack for %j",
     (repo) => {
       expect(releaseUrl(LINUX, "1.2.3", { GITHUB_ACTION_REPOSITORY: repo })).toBe(
-        "https://github.com/keelstackhq/hoard/releases/download/v1.2.3/hoard-x86_64-unknown-linux-musl.tar.gz",
+        "https://github.com/keelstackhq/keelstack/releases/download/v1.2.3/hoard-x86_64-unknown-linux-musl.tar.gz",
       );
     },
   );

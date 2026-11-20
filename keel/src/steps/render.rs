@@ -65,7 +65,7 @@ fn hull_problem(cx: &Ctx, src: &str, git_ref: &str) -> Option<String> {
         return None;
     }
     let pinned = cx.pins.ref_sha("hull", git_ref);
-    splice::verify_hull_ref(cx.runner, &cx.dir, git_ref, pinned).err()
+    splice::verify_hull_ref(cx.runner, &cx.dir, splice::hull_url(src), git_ref, pinned).err()
 }
 
 impl Step for Render {
@@ -478,6 +478,8 @@ mod tests {
         for tpl in [
             "rust",
             "gh:keelstackhq/hull.git//template",
+            "gh:keelstackhq/keelstack.git//hull/template",
+            "https://github.com/keelstackhq/keelstack//hull/template",
             "https://github.com/keelstackhq/hull//template",
             "https://github.com/keelstackhq/hull.git",
         ] {
@@ -501,13 +503,31 @@ mod tests {
 
     #[test]
     fn apply_verifies_the_alternate_hull_forms_too() {
-        let d = tempfile::tempdir().unwrap();
-        let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
-        let Check::Failed(m) = apply(&r, d.path(), "gh:keelstackhq/hull.git//template") else {
-            panic!()
-        };
-        assert!(m.contains("moved"), "{m}");
-        assert!(!lines(&r).iter().any(|l| l.contains(" new ")));
+        for (tpl, url) in [
+            (
+                "gh:keelstackhq/hull.git//template",
+                "https://github.com/keelstackhq/hull",
+            ),
+            (
+                "gh:keelstackhq/keelstack.git//hull/template",
+                "https://github.com/keelstackhq/keelstack",
+            ),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
+            let Check::Failed(m) = apply(&r, d.path(), tpl) else {
+                panic!("{tpl}")
+            };
+            assert!(m.contains("moved"), "{tpl}: {m}");
+            assert!(
+                lines(&r)
+                    .iter()
+                    .any(|l| l.starts_with(&format!("git ls-remote {url} "))),
+                "{tpl}: {:?}",
+                lines(&r)
+            );
+            assert!(!lines(&r).iter().any(|l| l.contains(" new ")));
+        }
     }
 
     #[test]

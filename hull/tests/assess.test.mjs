@@ -71,7 +71,7 @@ test("a pnpm repo: template/, pieces with reasons, moves for off-layout code, cl
   assert.deepEqual(a.clashes.seed, ["README.md"]);
   assert.equal(
     a.next,
-    "on a branch: splice adopt gh:keelstackhq/hull//template --piece preact-app:web " +
+    "on a branch: splice adopt gh:keelstackhq/keelstack//hull/template --piece preact-app:web " +
       "--piece hono-worker:api --piece rust-tool:tool --dry-run --json; review, then run it " +
       "without --dry-run (needs splice >= 0.4.0; hull docs/adopt.md)",
   );
@@ -368,7 +368,7 @@ test("the CLI prints the same schema", async () => {
 test("--assess: the lock's source decides the template; a helper-only package.json is ignored", async () => {
   const helper = JSON.stringify({ private: true, scripts: { dev: "bash scripts/dev.sh" } });
   const locked = await repo({
-    ".splice/lock.toml": '[template]\nsource = "gh:keelstackhq/hull//template-rust"\n',
+    ".splice/lock.toml": '[template]\nsource = "gh:keelstackhq/keelstack//hull/template-rust"\n',
     "Cargo.toml": '[package]\nname = "tool"\n',
     "src/main.rs": "",
     "package.json": helper,

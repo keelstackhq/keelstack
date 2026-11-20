@@ -2,9 +2,10 @@
 
 Bootstrap a repo from versioned template pieces (`splice new`, `splice add`) and keep it current
 (`splice update`, `splice check`, `splice diff`). A Copier alternative in one static Rust binary;
-no Python. First consumer: `keelstackhq/hull` (`gh:keelstackhq/hull//template`).
+no Python. First consumer: `hull/` (`gh:keelstackhq/keelstack//hull/template`). Lives in the keelstack
+monorepo; run commands from the repo root.
 
-- Contract: `docs/template-format.md` — binding, shared with hull. **Never edit it here alone.**
+- Contract: `docs/template-format.md` — binding, one contract; hull and splice change it in the same PR.
 - Spec: `docs/superpowers/specs/2026-10-14-splice-design.md` — source of truth. Read only the
   section you touch; update it in the same commit when behaviour changes.
 - Plans: `docs/superpowers/plans/` (01 render-new, 02 update-check, 03 release-action).
@@ -31,12 +32,14 @@ npm/  action/  skills/splice/SKILL.md  .github/workflows/
 ## Commands
 
 ```bash
-cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings
-cargo nextest run                       # all tests; needs `git` on PATH
-cargo nextest run -E 'test(golden)'     # one group
+cargo fmt --all --check && cargo clippy -p keel-splice --all-targets --locked -- -D warnings
+cargo nextest run -p keel-splice        # all tests; needs `git` on PATH
+cargo nextest run -p keel-splice -E 'test(golden)'   # one group
 cargo insta review                      # inspect snapshot changes; never blind-accept
-node --test "npm/**/*.test.mjs" "action/**/*.test.mjs" "scripts/**/*.test.mjs"
+cd splice && node --test "npm/**/*.test.mjs" "action/**/*.test.mjs" "scripts/**/*.test.mjs"
 ```
+
+Rust commands run from the repo root (root toolchain, `Cargo.lock`, `deny.toml`). Release: lockstep, one version for all tools; see the root `AGENTS.md`.
 
 Run fmt, clippy and the tests you touched before every commit; the full suite before pushing.
 
@@ -82,11 +85,4 @@ Run fmt, clippy and the tests you touched before every commit; the full suite be
 - PRs opened with `GITHUB_TOKEN` do not trigger CI; the bot docs say to pass another token.
 - npm: no install scripts (pnpm 10 blocks them); the launcher resolves the platform package.
 
-<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
-<!-- splice:decisions:end -->
+Org decisions: read `../decisions/DECISIONS.md` in place; change one by a PR to `decisions/` (D-002).

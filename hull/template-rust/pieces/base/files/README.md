@@ -1,6 +1,6 @@
 # Rust workspace
 
-Generated from hull's `template-rust` (`splice new gh:keelstackhq/hull//template-rust`): a Cargo
+Generated from hull's `template-rust` (`splice new gh:keelstackhq/keelstack//hull/template-rust`): a Cargo
 workspace with a pinned toolchain, cargo-deny, cargo-nextest, one CI job, releases through hoist
 and an AI layer (`AGENTS.md`, `CLAUDE.md`, `.claude/`). No Node toolchain is needed to build.
 
@@ -9,7 +9,7 @@ and an AI layer (`AGENTS.md`, `CLAUDE.md`, `.claude/`). No Node toolchain is nee
 Add the org decisions as a splice channel (D-004), then refresh the index:
 
 ```bash
-splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project
+splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project
 node scripts/agents-index.mjs
 ```
 

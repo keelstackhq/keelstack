@@ -205,7 +205,7 @@ export async function runMain(d: MainDeps = mainDeps()): Promise<void> {
       // Spec §14: hoard does not cache cargo builds. A hint only, not a settings warning.
       core.notice(
         "hoard caches Turborepo and Vite+ tasks, not cargo builds. For this Rust repository " +
-          "add Swatinem/rust-cache@v2 (https://github.com/keelstackhq/hoard#pure-rust-cargo-only)",
+          "add Swatinem/rust-cache@v2 (https://github.com/keelstackhq/keelstack/tree/main/hoard#pure-rust-cargo-only)",
       );
     }
     if (tools.vp) {

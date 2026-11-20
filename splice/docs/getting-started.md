@@ -10,11 +10,11 @@ Outputs below are shortened captures from the real binary. Run `splice` as
 ## 1. Create
 
 ```bash
-splice new gh:keelstackhq/hull//template my-app --piece <piece-id> --data project=demo --yes
+splice new gh:keelstackhq/keelstack//hull/template my-app --piece <piece-id> --data project=demo --yes
 cd my-app && git add -A && git commit -m "chore: initial commit"
 ```
 
-`gh:keelstackhq/hull//template` = repo `keelstackhq/hull`, subdirectory `template`. The base piece
+`gh:keelstackhq/keelstack//hull/template` = repo `keelstackhq/keelstack`, subdirectory `hull/template`. The base piece
 is always rendered; `--piece ID` adds more (`ID:NAME` names one of several instances). `--ref`
 picks a tag or branch, `--pre` allows pre-releases. `splice new` runs `git init` if needed but
 **never commits**: make the first commit yourself (`--commit` does it for you), so later
@@ -100,7 +100,7 @@ A channel is a second template (shared agent rules, org decisions) with its own 
 `.splice/channels/NAME.toml`.
 
 ```bash
-splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project
+splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project
 splice update --all     # main template and every channel
 ```
 
@@ -108,7 +108,7 @@ Never edit inside a `<!-- splice:NAME:begin ... -->` block. Flags: reference "Ch
 
 ## 6. Automate updates
 
-The `keelstackhq/splice/action` Action runs `splice update`, opens or refreshes one PR from
+The `keelstackhq/keelstack/splice/action` Action runs `splice update`, opens or refreshes one PR from
 `splice/update` (`[conflicts]` prefix when conflicts were written), and closes it when you are
 current. Owned drift and template errors fail the job. Inputs: [reference](reference.md#update-bot).
 

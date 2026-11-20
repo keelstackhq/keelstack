@@ -132,7 +132,7 @@ pub fn secrets_repo_init(
         done.hint = Some(
             format!(
                 "next: render the secrets template and push it to {repo}:\n  splice new \
-                 gh:keelstackhq/hull//template-secrets\n"
+                 gh:keelstackhq/keelstack//hull/template-secrets\n"
             )
             .into(),
         );

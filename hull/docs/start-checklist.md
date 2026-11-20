@@ -63,7 +63,7 @@ Configure each App → add the new repo:
 
 - Claude.
 - Renovate: add the repo to the Renovate App. `renovate.json` extends
-  `github>keelstackhq/hull//renovate/default`. TODO(owner): which Renovate App installation.
+  `github>keelstackhq/keelstack//hull/renovate/default`. TODO(owner): which Renovate App installation.
 - Update bot (splice), pick one (the generated `README.md`, section "Update bot"; template-rust: "pick a token mode"):
   an App with Contents, Pull requests and Workflows write, with variable `SPLICE_APP_CLIENT_ID`
   and secret `SPLICE_APP_KEY` in environment `splice-bot`; or a PAT `SPLICE_BOT_TOKEN` in that
@@ -237,7 +237,7 @@ Check: with `bosun` = `yes`, `bosun doctor` passes (the owner also runs `bosun d
 ### 9. Render the hull template · phone · ready: auto · required
 
 Ask the first agent to render it, or do it on a computer:
-`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref vX.Y.Z --piece <id>[:<name>] ...`
+`pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template <repo> --ref vX.Y.Z --piece <id>[:<name>] ...`
 (base is always rendered), then commit `.splice/lock.toml` with the files and push.
 
 Check: `.splice/lock.toml` lists the pieces the `pieces` and `ci` answers need, and

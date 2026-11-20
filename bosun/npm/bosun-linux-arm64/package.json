@@ -5,8 +5,8 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/keelstackhq/bosun.git",
-    "directory": "npm/bosun-linux-arm64"
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "bosun/npm/bosun-linux-arm64"
   },
   "os": [
     "linux"

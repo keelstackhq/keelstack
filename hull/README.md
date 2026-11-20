@@ -12,7 +12,7 @@ stack, tool versions and config, and keeps them current. Your app code stays you
 Render with splice (needs Node 24 and pnpm 12; `base` is always included):
 
 ```bash
-pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template my-repo \
   --piece preact-app:web --piece hono-worker:api --data scope=acme
 cd my-repo && pnpm install && pnpm run ci
 ```
@@ -44,7 +44,7 @@ releases through hoist, and the same AI layer. It has no Node, pnpm or Turborepo
 add an HTTP service with SQLite and Fly.io deploys (combo `rust-service-full`).
 
 ```bash
-pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template-rust my-repo --piece rust-cli:cli
+pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template-rust my-repo --piece rust-cli:cli
 node scripts/dogfood.mjs --combo rust   # hull: render it and run its cargo CI steps
 ```
 
@@ -85,7 +85,7 @@ out of `base` into the `rigging` channel. In that order:
 
 ```bash
 pnpm dlx @keelstackhq/splice update      # removes base's unedited agent files (edited ones are kept and reported)
-pnpm dlx @keelstackhq/splice channel add gh:keelstackhq/hull//rigging --piece claude
+pnpm dlx @keelstackhq/splice channel add gh:keelstackhq/keelstack//hull/rigging --piece claude
 ```
 
 `channel add` refuses while base's copies are still there, so run `update` first. Delete or move

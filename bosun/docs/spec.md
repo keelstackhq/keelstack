@@ -2,7 +2,7 @@
 
 Date: 2026-10-22 · Author: Adam Urban (owner) · Status: accepted for the seed
 
-Names: repo `keelstackhq/bosun`, binary `bosun`, Cargo package `keel-bosun` (lib `bosun`), npm
+Names: repo `keelstackhq/keelstack` (folder `bosun/`), binary `bosun`, Cargo package `keel-bosun` (lib `bosun`), npm
 launcher `@keelstackhq/bosun`. Part of the keelstackhq family (splice, hull, hoard, hoist, berth).
 
 bosun is a stack-agnostic orchestration helper for repos where agents write all the code. It is

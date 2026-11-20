@@ -56,7 +56,7 @@ fn crates_token_exchange_then_revoke() {
             .user_agent
             .as_deref()
             .unwrap()
-            .contains("keelstackhq/hoist")
+            .contains("keelstackhq/keelstack")
     );
     assert_eq!(reqs[1].method, "DELETE");
     assert_eq!(reqs[1].path, "/api/v1/trusted_publishing/tokens");

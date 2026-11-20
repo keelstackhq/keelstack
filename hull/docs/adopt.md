@@ -107,7 +107,7 @@ Every other file the template writes is new (`create`). Pieces add more files un
    tree unless `--allow-dirty`); the default branch stays untouched until the PR merges.
 4. **dry-run**: move code into place as confirmed, then run the `next` command from `--assess`,
    which needs splice >= 0.4.0:
-   `splice adopt gh:keelstackhq/hull//<template> --piece <id>:<name> ... --dry-run --json`
+   `splice adopt gh:keelstackhq/keelstack//hull/<template> --piece <id>:<name> ... --dry-run --json`
    (syntax: `adopt <src> [--ref R] [--piece ID[:N]]... [--data K=V]... [--dry-run] [--force]
    [--allow-dirty] [--no-post] [--json]`; a repo that already has a lock is refused, exit 2).
 5. **review**: the owner reviews the change list: every `conflict` (refused owned files, merge
@@ -120,7 +120,7 @@ Every other file the template writes is new (`create`). Pieces add more files un
 8. **ready**: run the `ready` skill: the onboarding questions, then every check, as for a new repo.
 9. **pr**: open the PR with the change list and the owner's choices; it merges like any gated PR.
 10. **channels**: after the merge, add the org decisions channel
-    (`splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project`,
+    (`splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project`,
     D-004) and, if wanted, bosun (`bosun init --stack rust|ts-pnpm`, start checklist item 8;
     other stacks take the decisions channel only).
 11. **hoist**: `hoist apply` sets the `ci-ok` ruleset, the environments with branch policies and

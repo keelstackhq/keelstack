@@ -2,7 +2,7 @@
 
 Bootstraps a repo across the keelstackhq tools (splice, bosun, hoist, hull templates) from one
 manifest, `keel.toml`: `keel up|plan|doctor`. keel runs each tool as a subprocess, reads its JSON
-and stops at the first step only a human can do. One Rust binary. Part of the keelstackhq family.
+and stops at the first step only a human can do. One Rust binary; cargo commands run from the repo root.
 
 - Spec: `docs/superpowers/specs/2026-11-20-keel-design.md` — source of truth (§3 CLI, §3.2 JSON,
   §4 manifest, §5 steps, §6 pins, §7 PAT gate, §8 agent env). Read only the section you touch;
@@ -34,13 +34,13 @@ tests/           cli_*.rs integration tests with stub tool scripts on PATH
 
 ```bash
 export PATH=/root/.cargo/bin:$PATH
-cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings
-cargo test                          # unit + integration
-cargo test --test cli_up            # one file
-node --test npm/keel/test/*.test.js # launcher
+cargo fmt --all --check && cargo clippy -p keel-cli --all-targets --locked -- -D warnings
+cargo test -p keel-cli --locked     # unit + integration
+cargo test -p keel-cli --locked --test cli_up   # one file
+node --test keel/npm/keel/test/*.test.js        # launcher
 ```
 
-Run the fast checks (fmt, clippy, test) before every commit.
+Run the fast checks before every commit. Release: lockstep, one version for all tools; see the root `AGENTS.md`.
 
 ## Rules that must never break
 
@@ -60,16 +60,16 @@ Run the fast checks (fmt, clippy, test) before every commit.
 
 - Test first: failing test, watch it fail, implement, watch it pass; one task per commit,
   message as in the plan (`feat:`, `fix:`, `test:`, `ci:`, `docs:`).
-- Pin crates exactly (see the plan's Tech Stack). Ask before adding any other crate.
+- Pin crates exactly (see the plan's Tech Stack); ask before adding any other crate.
 - Read big files by section (offset/limit or grep), not whole.
-- Public behaviour (flags, JSON, exit codes) changes only with the spec and README.
-- Show real command output before claiming something works.
+- Public behaviour (flags, JSON, exit codes) changes only with the spec and README. Show real
+  command output before claiming something works.
 - Human-only items (tokens, repo settings, releases, npm scopes) go to Blocked in
   `docs/PROGRESS.md` with the exact action.
 
 ## Gotchas
 
-- `TMPDIR` is `/` in some containers; set it for `cargo` and for child processes in tests.
+- `TMPDIR` is `/` in some containers; the root `.cargo/config.toml` sets `/tmp` for `cargo test`.
 - clap exits 2 on usage errors by default; `main` keeps that (help/version exit 0).
 - keel itself needs Node 24+ only for the tools it installs; the launcher runs on Node 18+.
 - Tool features may be missing in old versions (splice/bosun exit 2): adapters degrade to a human

@@ -2,7 +2,7 @@
 
 Give each parallel coding agent an isolated, ready workspace in a git repo: `berth up <task>`
 makes a worktree, copies local env files, reserves a port block and runs setup. One static Rust
-binary. Part of the keelstackhq family (hull, splice, hoard, hoist, berth, bosun).
+binary. Lives in the `berth/` folder of the keelstack monorepo; run commands from the repo root.
 
 - Spec: `docs/superpowers/specs/2026-10-17-berth-design.md` — source of truth. Read only the
   section you touch (§3 CLI, §4 config, §6 manifest, §8 up, §9 ports); update it in the same
@@ -29,11 +29,11 @@ tests/cli_*.rs              integration tests; insta snapshots in tests/snapshot
 
 ```bash
 export PATH=/root/.cargo/bin:$PATH
-cargo fmt --check && cargo clippy --all-targets --locked -- -D warnings && cargo test --locked
-cargo test --test cli_up          # one file
+cargo fmt --all --check && cargo clippy -p keel-berth --all-targets --locked -- -D warnings && cargo test -p keel-berth --locked
+cargo test -p keel-berth --locked --test cli_up   # one file
 ```
 
-Run the fast checks before every commit.
+Run the fast checks before every commit. Release: lockstep, one version for all tools; see the root `AGENTS.md`.
 
 ## Rules that must never break
 
@@ -60,24 +60,17 @@ Run the fast checks before every commit.
 - Read big files by section (offset/limit or grep), not whole.
 - Show real command output before claiming something works.
 - Snapshots: run the test, read every `.snap.new`, then `cargo insta accept` (if installed) or
-  `INSTA_UPDATE=always cargo test --test <file>`. Never blind-accept.
+  `INSTA_UPDATE=always cargo test -p keel-berth --test <file>`. Never blind-accept.
 - Human-only items (releases, npm scopes, repo settings) go to Blocked in `docs/PROGRESS.md`.
 
 ## Gotchas
 
-- `TMPDIR` may be `/`; set it to a writable dir before `cargo test`.
-- `.cargo/config.toml` points git at an empty global config for `cargo test` and `cargo run`.
+- `TMPDIR` may be `/`; the root `.cargo/config.toml` sets `/tmp` for `cargo test`.
+- The root `.cargo/config.toml` points git at an empty global config for `cargo test` and `cargo run`.
 - `git check-ignore` exits 1 when nothing is ignored; that is not an error.
 - `info/exclude` lives in the common git dir and applies to every worktree.
 - flock conflicts across file descriptors even inside one process.
 - `kill -0` runs with `LC_ALL=C`: the EPERM text must stay English to count as alive.
 - The package is `keel-berth`; the binary and the lib are `berth`.
 
-<!-- splice:decisions:begin — managed by `splice update --channel decisions`; edit the source -->
-## Org decisions
-
-Cross-repo decisions from keelstackhq/decisions; follow them. To change one, open a PR there.
-`splice update --channel decisions` refreshes this snapshot; commit it alone as `chore: sync org decisions`.
-
-@docs/agents/org-decisions.md
-<!-- splice:decisions:end -->
+Org decisions: read `../decisions/DECISIONS.md` in place; change one by a PR to `decisions/` (D-002).

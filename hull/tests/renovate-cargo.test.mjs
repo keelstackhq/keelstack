@@ -79,7 +79,7 @@ test("renovate cargo preset reads pins.toml [crates] and groups the crates acros
 test("template-rust renovate.json extends both presets", async () => {
   const c = await read("../template-rust/pieces/base/files/renovate.json");
   assert.deepEqual(c.extends, [
-    "github>keelstackhq/hull//renovate/default",
-    "github>keelstackhq/hull//renovate/cargo",
+    "github>keelstackhq/keelstack//hull/renovate/default",
+    "github>keelstackhq/keelstack//hull/renovate/cargo",
   ]);
 });

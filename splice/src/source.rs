@@ -305,6 +305,18 @@ mod tests {
     }
 
     #[test]
+    fn parses_monorepo_subdir_source() {
+        let s = TemplateSource::parse("gh:keelstackhq/keelstack//hull/template").unwrap();
+        assert_eq!(
+            s.kind,
+            SourceKind::Git {
+                url: "https://github.com/keelstackhq/keelstack.git".into()
+            }
+        );
+        assert_eq!(s.subdir.as_deref(), Some("hull/template"));
+    }
+
+    #[test]
     fn parses_sources() {
         let s = TemplateSource::parse("gh:keelstackhq/hull//template").unwrap();
         assert_eq!(

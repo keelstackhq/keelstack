@@ -15,11 +15,11 @@ tools for bootstrapping projects.
 - **Release archives:** download `splice-<target>.tar.gz` (`.zip` on Windows) and `SHA256SUMS` from
   the GitHub release, check the sum, put `splice` on your `PATH`. Targets: Linux x86_64 and
   aarch64 (static musl), macOS x86_64 and aarch64, Windows x86_64.
-- **From source:** `cargo install --locked --git https://github.com/keelstackhq/splice keel-splice`
+- **From source:** `cargo install --locked --git https://github.com/keelstackhq/keelstack keel-splice`
   (the binary is `splice`).
 
 ```bash
-pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template my-app
+pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template my-app
 cd my-app
 pnpm dlx @keelstackhq/splice add preact-app --name web
 pnpm dlx @keelstackhq/splice update        # 3-way merge to the latest template version
@@ -65,8 +65,8 @@ repo moves only to a stable tag that descends from its commit, and `check` repor
 
 A template is a directory with `splice.toml` and pieces. The format (manifests, the Jinja subset,
 ownership classes, merges, migrations) is specified in
-[`docs/template-format.md`](docs/template-format.md). It is shared with
-[hull](https://github.com/keelstackhq/hull), the first template, and is binding for both repos.
+[`docs/template-format.md`](docs/template-format.md), the one binding contract for splice and
+[hull](../hull), the first template (same monorepo).
 
 ## Compared with Copier
 
@@ -111,8 +111,8 @@ that should update on their own schedule. The main `.splice/lock.toml` is never 
 channel. Details: `docs/superpowers/specs/2026-10-17-splice-channels-design.md`.
 
 ```bash
-splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project
-splice channel add gh:keelstackhq/decisions//channel --track main --piece portable --piece import-claude  # a repo in another org: only decisions scoped `all orgs`
+splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project
+splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece portable --piece import-claude  # a repo in another org: only decisions scoped `all orgs`
 splice channel add <source> --as rig --piece claude --only 'docs/**' --exclude '.claude/hooks/**'
 splice add skills --channel rig --name agents --data dir=agents   # another piece instance
 splice update --channel rig            # one channel; --only/--exclude replace the stored filters

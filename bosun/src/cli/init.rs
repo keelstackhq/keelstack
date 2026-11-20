@@ -723,7 +723,7 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     if args.source.starts_with('-') {
         return Err(BosunError::usage(
             format!("--source {:?} looks like a flag", args.source),
-            "pass a splice source, such as gh:keelstackhq/bosun//channel",
+            "pass a splice source, such as gh:keelstackhq/keelstack//bosun/channel",
         ));
     }
     let root =

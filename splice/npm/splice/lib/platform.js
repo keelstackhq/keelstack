@@ -32,7 +32,7 @@ export function binaryPath({
   const detail = pkg ? `package ${pkg.npm} is not installed` : "no package for this platform";
   throw new LauncherError(
     `splice: no prebuilt binary for ${platform}-${arch} (${detail}); ` +
-      `supported: ${supported}; download a release from https://github.com/keelstackhq/splice/releases ` +
-      "or run `cargo install --locked --git https://github.com/keelstackhq/splice keel-splice`",
+      `supported: ${supported}; download a release from https://github.com/keelstackhq/keelstack/releases ` +
+      "or run `cargo install --locked --git https://github.com/keelstackhq/keelstack keel-splice`",
   );
 }

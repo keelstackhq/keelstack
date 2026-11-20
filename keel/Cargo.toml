@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.97"
 description = "Bootstrap a repo with the keelstackhq tools: one manifest, one command, one human step at a time"
 license = "MIT"
-repository = "https://github.com/keelstackhq/keel"
+repository = "https://github.com/keelstackhq/keelstack"
 include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md"]
 
 [lib]

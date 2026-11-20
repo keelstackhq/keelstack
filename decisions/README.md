@@ -1,21 +1,21 @@
-# keelstackhq/decisions
+# decisions/
 
 Settled decisions that apply across keelstackhq repos, kept small enough for every agent to load
-at session start.
+at session start. This folder lives in the `keelstackhq/keelstack` monorepo.
 
 - **Read:** [`DECISIONS.md`](DECISIONS.md), one row per decision (at most 60 lines), each linking
-  its reasoning in [`decisions/`](decisions/).
-- **Use in a repo (also every new repo):** `splice channel add gh:keelstackhq/decisions//channel
---track main --piece import-project` (`--piece import-claude` without
-  `docs/agents/project.md`); see D-004.
+  its reasoning in [`decisions/`](decisions/). Agents inside the monorepo read it in place.
+- **Use in a repo outside the monorepo (also every new one):**
+  `splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project`
+  (`--piece import-claude` without `docs/agents/project.md`); see D-004.
 - **Change:** discuss an open topic in a shared doc, issue or PR in the repos concerned; once it is
-  settled, open a PR here adding `decisions/NNN-title.md` (from `decisions/000-template.md`) and
-  one index row, and run `bash scripts/gen-snapshot.sh` (it writes
-  `channel/pieces/snapshot/files/docs/agents/org-decisions.md.jinja`). `bash scripts/check-index.sh`
-  must pass; the owner merges.
+  settled, open a monorepo PR adding `decisions/decisions/NNN-title.md` (from `000-template.md`)
+  and one index row, and run `bash decisions/scripts/gen-snapshot.sh` (it writes
+  `channel/pieces/snapshot/files/docs/agents/org-decisions.md.jinja`).
+  `bash decisions/scripts/check-index.sh` must pass; merging follows D-002 and D-022.
 - **A repo in another org:** add `--piece portable` to take only the decisions scoped `all orgs`
   (the rest name keelstackhq's own repos and process):
-  `splice channel add gh:keelstackhq/decisions//channel --track main --piece portable --piece import-claude`.
+  `splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece portable --piece import-claude`.
 
 ## Your org's own decisions repo
 

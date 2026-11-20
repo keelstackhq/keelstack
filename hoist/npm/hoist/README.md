@@ -1,6 +1,6 @@
 # @keelstackhq/hoist
 
-npm launcher for [hoist](https://github.com/keelstackhq/hoist): provision and verify a repo's
+npm launcher for [hoist](https://github.com/keelstackhq/keelstack): provision and verify a repo's
 GitHub and Cloudflare setup from what the repo already says, and release it.
 
 ```bash

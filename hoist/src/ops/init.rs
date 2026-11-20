@@ -14,7 +14,8 @@ const CI_FILE: &str = ".github/workflows/ci.yml";
 const MARK: &str = "# hoist:managed sha256=";
 /// `actions/checkout` v4.4.0, the pin hoist's own CI uses.
 const CHECKOUT: &str = "actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0";
-const ACTION_REPO: &str = "keelstackhq/hoist";
+/// The monorepo that holds the release action and the `v<version>` tags.
+const ACTION_REPO: &str = "keelstackhq/keelstack";
 
 /// Refuse a branch or environment name that could break out of the YAML: letters, digits and
 /// `. _ - /` only (branch: also no `..`, no leading `-` or `/`, no trailing `/`; env: no `/`,
@@ -75,7 +76,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - id: hoist
-        uses: {ACTION_REPO}/release@{sha} # v{version}
+        uses: {ACTION_REPO}/hoist/release@{sha} # v{version}
         with:
           command: detect
   publish:
@@ -91,7 +92,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: {ACTION_REPO}/release@{sha} # v{version}
+      - uses: {ACTION_REPO}/hoist/release@{sha} # v{version}
         with:
           command: publish
   prepare:
@@ -105,7 +106,7 @@ jobs:
       - uses: {CHECKOUT}
         with:
           fetch-depth: 0
-      - uses: {ACTION_REPO}/release@{sha} # v{version}
+      - uses: {ACTION_REPO}/hoist/release@{sha} # v{version}
         with:
           command: prepare
           token: ${{{{ secrets.HOIST_RELEASE_TOKEN || github.token }}}}

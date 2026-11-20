@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { stage } from "./npm-stage.mjs";
 
 const platforms = JSON.parse(readFileSync(new URL("../npm/splice/platforms.json", import.meta.url), "utf8"));
-const REPO = "keelstackhq/splice";
+const REPO = "keelstackhq/keelstack";
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "npm-stage-"));
@@ -26,7 +26,7 @@ test("stage writes repository, license, no scripts, exact pins", () => {
   assert.equal(dirs.length, platforms.length + 1);
   for (const dir of dirs) {
     const pkg = readPkg(dir);
-    assert.equal(pkg.repository.url, "git+https://github.com/keelstackhq/splice.git");
+    assert.equal(pkg.repository.url, "git+https://github.com/keelstackhq/keelstack.git");
     assert.equal(pkg.repository.type, "git");
     assert.equal(pkg.license, "MIT");
     assert.equal(pkg.version, "0.2.0");

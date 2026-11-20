@@ -141,7 +141,7 @@ also: missing `createdb`/`dropdb`/`docker`, a failed database step). With `--jso
 `{version, command, ok, exit_code, items, worktrees}`; logs and hook output go to stderr.
 
 The cross-tool exit-code table is org decision
-[D-020](https://github.com/keelstackhq/decisions/blob/main/decisions/020-exit-codes.md).
+[D-020](https://github.com/keelstackhq/keelstack/blob/main/decisions/decisions/020-exit-codes.md).
 
 ## Environment variables
 

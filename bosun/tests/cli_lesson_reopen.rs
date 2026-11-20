@@ -127,7 +127,7 @@ fn upstream_files_the_lesson_on_keelstackhq_bosun() {
     assert!(
         fake.requests()
             .iter()
-            .any(|r| r.method == "POST" && r.path == "/repos/keelstackhq/bosun/issues")
+            .any(|r| r.method == "POST" && r.path == "/repos/keelstackhq/keelstack/issues")
     );
     assert!(!tmp.path().join("docs/lessons.toml").exists());
 }
@@ -216,7 +216,7 @@ fn upstream_while_halted_is_exit_4_and_files_nothing() {
         !fake
             .requests()
             .iter()
-            .any(|r| r.method == "POST" && r.path.starts_with("/repos/keelstackhq/bosun/"))
+            .any(|r| r.method == "POST" && r.path.starts_with("/repos/keelstackhq/keelstack/"))
     );
 }
 
