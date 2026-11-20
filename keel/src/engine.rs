@@ -77,12 +77,18 @@ pub fn run_steps(cx: &mut Ctx, steps: &[Box<dyn Step>], mode: Mode) -> Result<Re
     } else {
         (Status::Done, 0)
     };
+    let verify = cx.manifest.fly().map(|f| {
+        cx.verify
+            .clone()
+            .unwrap_or_else(|| crate::report::Verify::not_run(&f.host))
+    });
     Ok(Report {
         command: command.into(),
         status,
         steps: results,
         human_step: human,
         exit_code,
+        verify,
     })
 }
 
@@ -145,6 +151,7 @@ mod tests {
             manifest: Manifest::default(),
             pins: Pins::default(),
             opts: Opts::default(),
+            verify: None,
             sleep: &sleep,
             stdin: &stdin,
         };

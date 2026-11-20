@@ -98,9 +98,17 @@ pub fn check_pieces(wanted: &[String], list: &[PieceInfo]) -> Vec<String> {
     problems
 }
 
-/// `splice --json --yes new <source> . --ref <ref> --force --piece ID[:NAME]... [--data no_placeholder=true]`
-/// (`--force`: the checkout is never empty; keel commits `keel.toml` first so the tree is clean).
-pub fn new_cmd(dir: &Path, source: &str, git_ref: &str, pieces: &[String], rust: bool) -> Cmd {
+/// `splice --json --yes new <source> . --ref <ref> --force --piece ID[:NAME]... [--data no_placeholder=true]
+/// [--data app=APP]` (`--force`: the checkout is never empty; keel commits `keel.toml` first so the
+/// tree is clean). `fly_app` is `[deploy.fly] app`; it is passed only when a `fly` piece is listed.
+pub fn new_cmd(
+    dir: &Path,
+    source: &str,
+    git_ref: &str,
+    pieces: &[String],
+    rust: bool,
+    fly_app: Option<&str>,
+) -> Cmd {
     let mut args: Vec<&str> = vec![
         "--json", "--yes", "new", source, ".", "--ref", git_ref, "--force",
     ];
@@ -110,6 +118,13 @@ pub fn new_cmd(dir: &Path, source: &str, git_ref: &str, pieces: &[String], rust:
     }
     if rust {
         args.extend(["--data", "no_placeholder=true"]);
+    }
+    let data;
+    if let Some(app) = fly_app
+        && pieces.iter().any(|p| p == "fly" || p.starts_with("fly:"))
+    {
+        data = format!("app={app}");
+        args.extend(["--data", &data]);
     }
     Cmd::new("splice", &args).dir(dir)
 }
@@ -144,6 +159,22 @@ pub fn render_files(out: &serde_json::Value) -> Vec<String> {
             .filter(|c| c["action"].as_str() != Some("skip"))
             .filter_map(|c| c["path"].as_str().map(str::to_string)),
     )
+}
+
+/// True for any form of the hull template source: `gh:keelstackhq/hull`, `https://github.com/
+/// keelstackhq/hull`, `git@github.com:keelstackhq/hull`, each with an optional `.git` and an
+/// optional `//subdir`. A longer repo name (`hullabaloo`) is not hull.
+pub fn is_hull_source(src: &str) -> bool {
+    let rest = ["gh:", "https://github.com/", "git@github.com:"]
+        .iter()
+        .find_map(|p| src.strip_prefix(p));
+    let Some(rest) = rest else { return false };
+    let repo = rest
+        .split("//")
+        .next()
+        .unwrap_or(rest)
+        .trim_end_matches('/');
+    repo.strip_suffix(".git").unwrap_or(repo) == "keelstackhq/hull"
 }
 
 pub const HULL_URL: &str = "https://github.com/keelstackhq/hull";
@@ -278,11 +309,30 @@ mod tests {
 
     #[test]
     fn new_passes_the_ref() {
-        let c = new_cmd(Path::new("."), "gh:a/b", "v1", &["p:x".into()], true);
+        let c = new_cmd(Path::new("."), "gh:a/b", "v1", &["p:x".into()], true, None);
         assert_eq!(
             c.line(),
             "splice --json --yes new gh:a/b . --ref v1 --force --piece p:x --data no_placeholder=true"
         );
+        for fly in ["fly", "fly:web"] {
+            let p = ["rust-service".to_string(), fly.to_string()];
+            let c = new_cmd(Path::new("."), "gh:a/b", "v1", &p, false, Some("my-app"));
+            assert!(
+                c.line()
+                    .ends_with(&format!("--piece {fly} --data app=my-app")),
+                "{}",
+                c.line()
+            );
+        }
+        let c = new_cmd(
+            Path::new("."),
+            "gh:a/b",
+            "v1",
+            &["sqlite".into()],
+            false,
+            Some("x"),
+        );
+        assert!(!c.line().contains("app="));
     }
 
     #[test]
@@ -319,6 +369,36 @@ mod tests {
         assert!(v(&r, None).unwrap_err().contains("KEEL_PINS"));
         assert!(v(&ls(Out::with(128, "", "no net")), Some("aaa")).is_err());
         assert!(v(&ls(Out::ok("")), Some("aaa")).is_err());
+    }
+
+    #[test]
+    fn hull_source_forms() {
+        for yes in [
+            "gh:keelstackhq/hull",
+            "gh:keelstackhq/hull.git",
+            "gh:keelstackhq/hull//template-rust",
+            "gh:keelstackhq/hull.git//template",
+            "https://github.com/keelstackhq/hull",
+            "https://github.com/keelstackhq/hull.git",
+            "https://github.com/keelstackhq/hull.git//template-rust",
+            "https://github.com/keelstackhq/hull/",
+            "git@github.com:keelstackhq/hull.git",
+            RUST_SOURCE,
+            TS_SOURCE,
+        ] {
+            assert!(is_hull_source(yes), "{yes}");
+        }
+        for no in [
+            "gh:keelstackhq/hullabaloo",
+            "gh:keelstackhq/hull-extra//x",
+            "gh:other/hull",
+            "https://github.com/other/keelstackhq/hull",
+            "https://example.com/keelstackhq/hull",
+            "rust",
+            "",
+        ] {
+            assert!(!is_hull_source(no), "{no}");
+        }
     }
 
     #[test]

@@ -1,6 +1,7 @@
-use super::{repo, work_branch};
+use super::{hoist_lines, only_keel_lines, repo, work_branch};
 use crate::ctx::Ctx;
 use crate::error::KeelError;
+use crate::exec::Cmd;
 use crate::report::HumanStep;
 use crate::step::{Check, Step};
 use crate::tools::{bosun, failure, gh, git};
@@ -91,29 +92,60 @@ impl Step for Doctor {
             Err(e) => return Ok(Check::Failed(e)),
         };
         // Only keel's own files; bosun and splice commit or leave theirs. Nothing owned: no commit.
-        let owned: Vec<String> = ["keel.toml", ".gitignore", "Cargo.lock"]
-            .into_iter()
-            .filter(|p| cx.dir.join(p).exists())
-            .map(String::from)
-            .collect();
+        // `hoist.toml` goes in only when keel made it: it is untracked, or its changes since HEAD
+        // are lines keel's section generators write. A hand-edited file stays out of the commit.
+        let mut note = None;
+        let mut owned: Vec<String> = Vec::new();
+        for p in ["keel.toml", "hoist.toml", ".gitignore", "Cargo.lock"] {
+            if !cx.dir.join(p).exists() {
+                continue;
+            }
+            if p == "hoist.toml" && !hoist_is_keels(cx) {
+                note = Some(
+                    "hoist.toml has your own edits and was not committed: review and commit it yourself",
+                );
+                continue;
+            }
+            owned.push(p.to_string());
+        }
         if let Err(e) = git::commit_paths(r, &cx.dir, &owned, "keel: bootstrap") {
             return Ok(Check::Failed(e));
         }
-        let push = crate::exec::Cmd::new("git", &["push", "-u", "origin", &branch]).dir(&cx.dir);
+        let push = Cmd::new("git", &["push", "-u", "origin", &branch]).dir(&cx.dir);
         let o = r.run(&push);
         if o.code != 0 {
             return Ok(Check::Failed(failure(&push, &o)));
         }
         let open = gh::pr_view(r, &cx.dir, &repo, &branch).is_some_and(|p| p.state == "OPEN");
         if !open {
-            let c = gh::pr_create_cmd(&cx.dir, &repo, &branch, "keel: bootstrap", &body());
-            let o = r.run(&c);
-            if o.code != 0 {
-                return Ok(Check::Failed(failure(&c, &o)));
+            // bosun opens the PR (JSON); an old bosun without `pr --single` falls back to gh.
+            match bosun::pr(r, &cx.dir) {
+                bosun::Pr::Opened(_) => {}
+                bosun::Pr::Failed(e) => return Ok(Check::Failed(e)),
+                bosun::Pr::Unsupported => {
+                    let c = gh::pr_create_cmd(&cx.dir, &repo, &branch, "keel: bootstrap", &body());
+                    let o = r.run(&c);
+                    if o.code != 0 {
+                        return Ok(Check::Failed(failure(&c, &o)));
+                    }
+                }
             }
         }
-        self.check(cx)
+        match (self.check(cx)?, note) {
+            (Check::Done(m), Some(n)) => Ok(Check::Done(format!("{m}; {n}"))),
+            (c, _) => Ok(c),
+        }
     }
+}
+
+/// Whether committing `hoist.toml` commits only keel's own lines (see [`apply`]).
+fn hoist_is_keels(cx: &Ctx) -> bool {
+    if !git::is_tracked(cx.runner, &cx.dir, "hoist.toml") {
+        return true;
+    }
+    let c = Cmd::new("git", &["diff", "--unified=0", "HEAD", "--", "hoist.toml"]).dir(&cx.dir);
+    let o = cx.runner.run(&c);
+    o.code == 0 && only_keel_lines(&o.stdout, &hoist_lines(&cx.manifest))
 }
 
 #[cfg(test)]
@@ -144,6 +176,37 @@ mod tests {
             .on(&["git", "commit"], Out::ok(""))
             .on(&["git", "push"], Out::ok(""))
             .on(&["gh", "pr", "create"], Out::ok("https://x/pull/7\n"))
+            .on(
+                &["bosun", "--json", "pr", "--single", "--ready"],
+                Out::ok(r#"{"ok":true,"data":{"pr":{"url":"https://x/pull/7","number":7}}}"#),
+            )
+    }
+
+    /// An old bosun: no `pr --single`.
+    fn old_bosun() -> FakeRunner {
+        fake().on(
+            &["bosun", "--json", "pr", "--single", "--ready"],
+            Out::with(2, "", "unrecognized subcommand 'pr'"),
+        )
+    }
+
+    #[test]
+    fn bosun_opens_the_pr_after_the_push_and_gh_is_not_used() {
+        let r = fake().on(&["gh", "pr", "view"], Out::with(1, "", "none"));
+        let _ = go(&r, true);
+        let l = lines(&r);
+        let pos = |p: &str| l.iter().position(|x| x.starts_with(p)).unwrap();
+        assert!(pos("git push") < pos("bosun --json pr --single --ready"));
+        assert!(!l.iter().any(|x| x.starts_with("gh pr create")), "{l:?}");
+        assert!(!l.iter().any(|x| x.starts_with("gh pr merge")), "{l:?}");
+        // A bosun failure other than exit 2 fails the step.
+        let r = fake()
+            .on(&["gh", "pr", "view"], Out::with(1, "", "none"))
+            .on(
+                &["bosun", "--json", "pr", "--single", "--ready"],
+                Out::with(3, "", "no commits"),
+            );
+        assert!(matches!(go(&r, true), Check::Failed(m) if m.contains("no commits")));
     }
 
     /// A checkout holding keel.toml (and nothing else keel owns).
@@ -242,7 +305,7 @@ mod tests {
     #[test]
     fn apply_commits_pushes_without_force_and_opens_the_pr() {
         // No PR before the push, a PR after the create.
-        let r = fake().on(&["gh", "pr", "view"], Out::with(1, "", "none"));
+        let r = old_bosun().on(&["gh", "pr", "view"], Out::with(1, "", "none"));
         let _ = go(&r, true);
         let l = lines(&r);
         let pos = |p: &str| {
@@ -278,6 +341,93 @@ mod tests {
         assert!(c.args.contains(&"--head".to_string()));
     }
 
+    /// An apply run in a checkout that has `hoist.toml` with `text`; `tracked` says whether git
+    /// knows it, `diff` is what `git diff --unified=0 HEAD -- hoist.toml` prints.
+    fn hoist_run(tracked: bool, diff: &str) -> (Check, Vec<String>) {
+        let d = checkout();
+        std::fs::write(d.path().join("hoist.toml"), "x = 1\n").unwrap();
+        let mut m = super::super::deploy::tests::fly_manifest();
+        m.deploy.as_mut().unwrap().fly.as_mut().unwrap().dns = crate::manifest::Dns::Cloudflare;
+        m.backup = Some(crate::manifest::Backup {
+            provider: crate::manifest::Provider::R2,
+            retention_days: 14,
+            account_id: Some("0123456789abcdef0123456789abcdef".into()),
+        });
+        let mut r = fake().on(&["gh", "pr", "view"], Out::ok(PR));
+        if tracked {
+            r = r.on(&["git", "ls-files"], Out::ok("hoist.toml\n"));
+        }
+        r = r.on(&["git", "diff"], Out::ok(diff));
+        let mut cx = ctx(
+            &r,
+            d.path().into(),
+            m,
+            PINS,
+            Opts::default(),
+            &no_sleep,
+            &no_stdin,
+        );
+        let c = Doctor.apply(&mut cx).unwrap();
+        (c, lines(&r))
+    }
+
+    #[test]
+    fn an_untracked_hoist_toml_is_committed() {
+        let (c, l) = hoist_run(false, "");
+        assert!(matches!(c, Check::Done(m) if !m.contains("hoist.toml")));
+        assert!(
+            l.contains(&"git add -- keel.toml hoist.toml".to_string()),
+            "{l:?}"
+        );
+    }
+
+    #[test]
+    fn a_tracked_hoist_toml_is_committed_only_when_the_diff_is_keels_own_lines() {
+        let own = "diff --git a/hoist.toml b/hoist.toml\n--- a/hoist.toml\n+++ b/hoist.toml\n@@ -1,0 +2,9 @@\n+\n+[cloudflare]\n+account_id = \"0123456789abcdef0123456789abcdef\"\n+\n+[cloudflare.dns]\n+zone = \"example.com\"\n+host = \"app.example.com\"\n+targets = \"fly\"\n+fly_app = \"app\"\n+proxied = false\n+\n+[cloudflare.r2]\n+bucket = \"app-backup\"\n+retention_days = 14\n";
+        let (c, l) = hoist_run(true, own);
+        assert!(matches!(c, Check::Done(m) if !m.contains("hoist.toml")));
+        assert!(
+            l.contains(&"git diff --unified=0 HEAD -- hoist.toml".to_string()),
+            "{l:?}"
+        );
+        assert!(
+            l.contains(&"git add -- keel.toml hoist.toml".to_string()),
+            "{l:?}"
+        );
+        for (what, diff) in [
+            (
+                "removed line",
+                "--- a/hoist.toml\n+++ b/hoist.toml\n@@ -1 +1 @@\n-repo = \"x\"\n+zone = \"example.com\"\n",
+            ),
+            (
+                "foreign line",
+                "--- a/hoist.toml\n+++ b/hoist.toml\n@@ -1,0 +2 @@\n+[github]\n",
+            ),
+            (
+                "changed value",
+                "--- a/hoist.toml\n+++ b/hoist.toml\n@@ -1,0 +2 @@\n+host = \"evil.example.org\"\n",
+            ),
+        ] {
+            let (c, l) = hoist_run(true, diff);
+            let Check::Done(m) = c else {
+                panic!("{what}: {c:?}")
+            };
+            assert!(
+                m.contains("hoist.toml") && m.contains("not committed"),
+                "{what}: {m}"
+            );
+            assert!(
+                l.contains(&"git add -- keel.toml".to_string()),
+                "{what}: {l:?}"
+            );
+            assert!(
+                !l.iter()
+                    .any(|x| x.contains("hoist.toml") && x.starts_with("git add")),
+                "{what}: {l:?}"
+            );
+        }
+    }
+
     #[test]
     fn nothing_keel_owned_to_commit_commits_nothing() {
         let r = fake()
@@ -299,7 +449,7 @@ mod tests {
         let _ = go(&r, false);
         assert!(
             lines(&r).contains(
-                &"gh pr view keel/bootstrap --repo owner/name --json number,url,state,headRefOid"
+                &"gh pr view keel/bootstrap --repo owner/name --json number,url,state,headRefOid,mergeCommit"
                     .to_string()
             )
         );

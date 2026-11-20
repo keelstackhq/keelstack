@@ -23,9 +23,17 @@ pub const LABELS: [&str; 12] = [
     "bosun:state/needs-human",
 ];
 
-/// The fallback labels `bosun init` did not report (`data.labels_created`, or `data.labels`).
-/// With `--no-pr` bosun reports an empty list, so all of them are missing then.
-pub fn missing_labels(data: &Value) -> Vec<&'static str> {
+/// The labels keel must create after `bosun init`: exactly `data.labels_todo` (the ones bosun
+/// could not create) when bosun reports it; else the fallback labels `bosun init` did not report
+/// (`data.labels_created`, or `data.labels`; with `--no-pr` an empty list, so all of them).
+pub fn missing_labels(data: &Value) -> Vec<String> {
+    if let Some(todo) = data.get("labels_todo").and_then(Value::as_array) {
+        return todo
+            .iter()
+            .filter_map(|v| v.as_str().or_else(|| v["name"].as_str()))
+            .map(String::from)
+            .collect();
+    }
     let reported: Vec<&str> = ["labels_created", "labels"]
         .iter()
         .filter_map(|k| data.get(*k).and_then(Value::as_array))
@@ -36,7 +44,20 @@ pub fn missing_labels(data: &Value) -> Vec<&'static str> {
         .iter()
         .copied()
         .filter(|l| !reported.contains(l))
+        .map(String::from)
         .collect()
+}
+
+/// Short notes from `bosun init`'s data for the step detail: `branch_reused`, `owner`.
+pub fn init_notes(data: &Value) -> Vec<String> {
+    let mut n = Vec::new();
+    if data["branch_reused"] == true {
+        n.push("bosun reused the current branch".to_string());
+    }
+    if let Some(o) = data["owner"].as_str().filter(|o| !o.is_empty()) {
+        n.push(format!("owner {o}"));
+    }
+    n
 }
 
 pub enum Res {
@@ -124,12 +145,80 @@ pub fn init_cmd(dir: &Path, owner: &str, branch: &str, rust: bool) -> Cmd {
     Cmd::new("bosun", &a).dir(dir)
 }
 
-pub fn plan_import_cmd(dir: &Path, file: &str, dry_run: bool) -> Cmd {
-    let mut a = vec!["--json", "plan", "import", file];
+/// `bosun --json plan import [FILE] [--fix] [--dry-run]`. Without FILE bosun reads its default,
+/// `plans/*.md`. Flags are assumed until upstream relays them.
+pub fn plan_import_cmd(dir: &Path, file: Option<&str>, fix: bool, dry_run: bool) -> Cmd {
+    let mut a = vec!["--json", "plan", "import"];
+    a.extend(file);
+    if fix {
+        a.push("--fix");
+    }
     if dry_run {
         a.push("--dry-run");
     }
     Cmd::new("bosun", &a).dir(dir)
+}
+
+/// Run `plan import`; with `fix`, retried without `--fix` on exit 2 that mentions it (old bosun).
+pub fn plan_import(
+    r: &dyn Runner,
+    dir: &Path,
+    file: Option<&str>,
+    fix: bool,
+    dry_run: bool,
+    pin: &str,
+) -> Res {
+    let c = plan_import_cmd(dir, file, fix, dry_run);
+    let o = r.run(&c);
+    if fix && o.code == 2 && mentions_flag(&o, "--fix") {
+        return run(r, &plan_import_cmd(dir, file, false, dry_run), pin);
+    }
+    interpret(&c, &o, pin)
+}
+
+/// `data.prereqs_fixed`: a count or an array.
+pub fn prereqs_fixed(data: &Value) -> usize {
+    let v = &data["prereqs_fixed"];
+    v.as_array()
+        .map(Vec::len)
+        .or_else(|| v.as_u64().map(|n| n as usize))
+        .unwrap_or(0)
+}
+
+/// `bosun --json pr --single --ready`: open the PR for the current branch. Assumed until upstream
+/// relays flags.
+pub fn pr_cmd(dir: &Path) -> Cmd {
+    Cmd::new("bosun", &["--json", "pr", "--single", "--ready"]).dir(dir)
+}
+
+/// What `bosun pr` did.
+pub enum Pr {
+    /// Opened (`data.pr`: url or number, when reported).
+    Opened(String),
+    /// Exit 2: this bosun has no `pr --single`; the caller falls back to `gh pr create`.
+    Unsupported,
+    Failed(String),
+}
+
+pub fn pr(r: &dyn Runner, dir: &Path) -> Pr {
+    let c = pr_cmd(dir);
+    let o = r.run(&c);
+    match o.code {
+        0 => {
+            let p = &json(&o)
+                .map(|v| v["data"]["pr"].clone())
+                .unwrap_or(Value::Null);
+            let what = p["url"]
+                .as_str()
+                .map(String::from)
+                .or_else(|| p["number"].as_u64().map(|n| format!("#{n}")))
+                .or_else(|| p.as_str().map(String::from))
+                .unwrap_or_default();
+            Pr::Opened(what)
+        }
+        2 => Pr::Unsupported,
+        _ => Pr::Failed(failure(&c, &o)),
+    }
 }
 
 /// `bosun --json setup-snippet`
@@ -156,18 +245,18 @@ pub enum Doctor {
     Offline,
 }
 
-fn mentions_all(o: &Out) -> bool {
+fn mentions_flag(o: &Out, flag: &str) -> bool {
     let msg = json(o)
         .map(|v| v["error"]["message"].as_str().unwrap_or("").to_string())
         .unwrap_or_default();
-    format!("{} {} {msg}", o.stderr, o.stdout).contains("--all")
+    format!("{} {} {msg}", o.stderr, o.stdout).contains(flag)
 }
 
 /// `doctor --remote --all`, retried without `--all` only on exit 2 that mentions `--all`.
 pub fn doctor(r: &dyn Runner, dir: &Path) -> Result<Doctor, String> {
     let mut c = doctor_cmd(dir, true);
     let mut o = r.run(&c);
-    if o.code == 2 && mentions_all(&o) {
+    if o.code == 2 && mentions_flag(&o, "--all") {
         c = doctor_cmd(dir, false);
         o = r.run(&c);
     }
@@ -176,7 +265,7 @@ pub fn doctor(r: &dyn Runner, dir: &Path) -> Result<Doctor, String> {
         return Ok(Doctor::Offline);
     }
     let items = v.as_ref().and_then(|v| v["data"]["items"].as_array());
-    let missing: Vec<String> = items
+    let mut missing: Vec<String> = items
         .map(|a| {
             a.iter()
                 .filter(|i| i["status"] == "missing")
@@ -194,6 +283,28 @@ pub fn doctor(r: &dyn Runner, dir: &Path) -> Result<Doctor, String> {
         .as_ref()
         .and_then(|v| v["data"]["missing"].as_u64())
         .unwrap_or(missing.len() as u64);
+    // `--all` also reports `data.tools`: [{name, version, ok}]. Tools not ok are a summary line.
+    let bad: Vec<String> = v
+        .as_ref()
+        .and_then(|v| v["data"]["tools"].as_array())
+        .map(|a| {
+            a.iter()
+                .filter(|t| t["ok"] == false)
+                .map(|t| match t["version"].as_str() {
+                    Some(ver) if !ver.is_empty() => {
+                        format!("{} {ver}", t["name"].as_str().unwrap_or("tool"))
+                    }
+                    _ => t["name"].as_str().unwrap_or("tool").to_string(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let count = if bad.is_empty() {
+        count
+    } else {
+        missing.push(format!("tools not ok: {}", bad.join(", ")));
+        count.max(1)
+    };
     if count > 0 {
         return Ok(Doctor::Missing(if missing.is_empty() {
             vec![format!("{count} item(s)")]
@@ -292,6 +403,85 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn labels_todo_wins_over_the_fallback() {
+        let m = missing_labels(&json!({"labels_todo": ["bosun:halt", "x"], "labels_created": []}));
+        assert_eq!(m, ["bosun:halt", "x"]);
+        assert!(missing_labels(&json!({"labels_todo": []})).is_empty());
+    }
+
+    #[test]
+    fn init_notes_and_prereqs() {
+        assert_eq!(
+            init_notes(&json!({"branch_reused": true, "owner": "octo", "pr": null})),
+            ["bosun reused the current branch", "owner octo"]
+        );
+        assert!(init_notes(&json!({})).is_empty());
+        assert_eq!(prereqs_fixed(&json!({"prereqs_fixed": 2})), 2);
+        assert_eq!(prereqs_fixed(&json!({"prereqs_fixed": ["a"]})), 1);
+        assert_eq!(prereqs_fixed(&json!({})), 0);
+    }
+
+    #[test]
+    fn plan_import_argv_and_fix_retry() {
+        let d = Path::new(".");
+        assert_eq!(
+            plan_import_cmd(d, None, true, false).line(),
+            "bosun --json plan import --fix"
+        );
+        assert_eq!(
+            plan_import_cmd(d, Some("p.md"), true, true).line(),
+            "bosun --json plan import p.md --fix --dry-run"
+        );
+        let ok = Out::ok(r#"{"ok":true,"data":{"prereqs_fixed":1}}"#);
+        let r = FakeRunner::new()
+            .on(
+                &["bosun", "--json", "plan", "import", "p.md", "--fix"],
+                Out::with(2, "", "error: unexpected argument '--fix'"),
+            )
+            .on(&["bosun", "--json", "plan", "import", "p.md"], ok);
+        assert!(matches!(
+            plan_import(&r, d, Some("p.md"), true, false, "0.21.0"),
+            Res::Ok(_)
+        ));
+        assert_eq!(r.calls().len(), 2);
+        // Exit 2 about something else keeps the upgrade human step, with no retry.
+        let r = FakeRunner::new().on(&["bosun"], Out::with(2, "", "bad"));
+        assert!(matches!(
+            plan_import(&r, d, None, true, false, "0.21.0"),
+            Res::Human { .. }
+        ));
+        assert_eq!(r.calls().len(), 1);
+    }
+
+    #[test]
+    fn pr_outcomes() {
+        let d = Path::new(".");
+        let r = FakeRunner::new().on(
+            &["bosun", "--json", "pr", "--single", "--ready"],
+            Out::ok(r#"{"ok":true,"data":{"pr":{"url":"https://x/pull/7","number":7}}}"#),
+        );
+        assert!(matches!(pr(&r, d), Pr::Opened(u) if u == "https://x/pull/7"));
+        let r = FakeRunner::new().on(&["bosun"], Out::with(2, "", "unrecognized subcommand"));
+        assert!(matches!(pr(&r, d), Pr::Unsupported));
+        let r = FakeRunner::new().on(&["bosun"], Out::with(3, "", "boom"));
+        assert!(matches!(pr(&r, d), Pr::Failed(_)));
+    }
+
+    #[test]
+    fn doctor_all_summarises_tools_not_ok() {
+        let r = FakeRunner::new().on(
+            &["bosun"],
+            Out::ok(
+                r#"{"ok":true,"data":{"items":[],"missing":0,"tools":[{"name":"git","version":"2.4","ok":true},{"name":"gh","version":"1.0","ok":false}]}}"#,
+            ),
+        );
+        let Doctor::Missing(m) = doctor(&r, Path::new(".")).unwrap() else {
+            panic!()
+        };
+        assert_eq!(m, ["tools not ok: gh 1.0"]);
+    }
+
+    #[test]
     fn reported_labels_are_not_recreated() {
         assert_eq!(missing_labels(&json!({})).len(), 12);
         assert_eq!(missing_labels(&json!({"labels_created": []})).len(), 12);
@@ -300,7 +490,7 @@ mod tests {
         assert!(missing_labels(&json!({"labels": all})).is_empty());
         let m = missing_labels(&json!({"labels_created": ["bosun:halt"]}));
         assert_eq!(m.len(), 11);
-        assert!(!m.contains(&"bosun:halt"));
+        assert!(!m.iter().any(|l| l == "bosun:halt"));
     }
 
     /// bosun 0.21.0: `registry::LABEL` (src/registry.rs), `State::ALL` names (src/core/state.rs)

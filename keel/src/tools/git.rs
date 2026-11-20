@@ -123,6 +123,14 @@ pub fn ensure_ignored(dir: &Path, entry: &str) -> std::io::Result<bool> {
 
 /// Commit only `path` when it has uncommitted changes (or is untracked); other staged or
 /// modified files are left alone.
+/// Whether git tracks `path` (`git ls-files --error-unmatch`). Anything else, errors included,
+/// counts as untracked.
+pub fn is_tracked(r: &dyn Runner, dir: &Path, path: &str) -> bool {
+    r.run(&Cmd::new("git", &["ls-files", "--error-unmatch", "--", path]).dir(dir))
+        .code
+        == 0
+}
+
 pub fn commit_path(r: &dyn Runner, dir: &Path, path: &str, message: &str) -> Result<(), String> {
     commit_paths(r, dir, &[path.to_string()], message)
 }

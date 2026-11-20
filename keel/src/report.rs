@@ -48,6 +48,58 @@ pub struct HumanStep {
     pub command: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Healthz {
+    Ok,
+    Failed,
+    NotRun,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Smoke {
+    Passed,
+    Failed,
+    None,
+    NotRun,
+}
+
+/// What the verify step saw at the deployed site (spec §3.2 `verify`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Verify {
+    pub url: String,
+    pub healthz: Healthz,
+    pub http_status: Option<u16>,
+    pub smoke: Smoke,
+}
+
+impl Verify {
+    pub fn not_run(host: &str) -> Verify {
+        Verify {
+            url: format!("https://{host}"),
+            healthz: Healthz::NotRun,
+            http_status: None,
+            smoke: Smoke::NotRun,
+        }
+    }
+
+    fn line(&self) -> String {
+        let status = self
+            .http_status
+            .map(|c| format!(" ({c})"))
+            .unwrap_or_default();
+        let smoke = serde_json::to_value(self.smoke).unwrap();
+        let healthz = serde_json::to_value(self.healthz).unwrap();
+        format!(
+            "verify: {} healthz {}{status}, smoke {}",
+            self.url,
+            healthz.as_str().unwrap_or(""),
+            smoke.as_str().unwrap_or("")
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Report {
     pub command: String,
@@ -55,6 +107,9 @@ pub struct Report {
     pub steps: Vec<StepResult>,
     pub human_step: Option<HumanStep>,
     pub exit_code: i32,
+    /// Present only when the manifest has `[deploy.fly]`.
+    #[serde(skip)]
+    pub verify: Option<Verify>,
 }
 
 impl Report {
@@ -72,6 +127,8 @@ struct JsonReport<'a> {
     status: Status,
     steps: &'a [StepResult],
     human_step: &'a Option<HumanStep>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verify: &'a Option<Verify>,
 }
 
 /// The report as one JSON object (no trailing newline).
@@ -84,6 +141,7 @@ pub fn render_json(report: &Report) -> String {
         status: report.status,
         steps: &report.steps,
         human_step: &report.human_step,
+        verify: &report.verify,
     };
     serde_json::to_string(&view).expect("report serializes")
 }
@@ -141,6 +199,9 @@ pub fn render_text(report: &Report) -> String {
             s.detail
         ));
     }
+    if let Some(v) = &report.verify {
+        out.push_str(&format!("\n{}\n", v.line()));
+    }
     if let Some(h) = &report.human_step {
         out.push_str(&format!("\nnext: {}\n", h.title));
         if !h.url.is_empty() {
@@ -187,6 +248,7 @@ mod tests {
                 command: "keel up".into(),
             }),
             exit_code: 5,
+            verify: None,
         }
     }
 
@@ -238,5 +300,28 @@ mod tests {
         r.status = Status::Done;
         r.human_step = None;
         assert!(render_text(&r).ends_with("\ndone\n"));
+    }
+
+    #[test]
+    fn verify_is_in_json_and_text_only_when_present() {
+        let mut r = sample();
+        let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
+        assert!(v.get("verify").is_none());
+        assert!(!render_text(&r).contains("verify:"));
+        r.verify = Some(Verify {
+            url: "https://a.io".into(),
+            healthz: Healthz::Ok,
+            http_status: Some(200),
+            smoke: Smoke::NotRun,
+        });
+        let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
+        assert_eq!(
+            v["verify"],
+            serde_json::json!({"url":"https://a.io","healthz":"ok","http_status":200,"smoke":"not-run"})
+        );
+        assert!(render_text(&r).contains("verify: https://a.io healthz ok (200), smoke not-run"));
+        r.verify = Some(Verify::not_run("a.io"));
+        let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
+        assert_eq!(v["verify"]["http_status"], serde_json::Value::Null);
     }
 }

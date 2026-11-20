@@ -23,12 +23,15 @@ case "$name $*" in
   "gh api user/installations --paginate"*)
     echo '{"id":1,"app_slug":"claude","repository_selection":"all"}'
     [ "$KEEL_SCENARIO" = fresh ] || echo '{"id":2,"app_slug":"renovate","repository_selection":"all"}';;
+  "gh api repos/owner/name/environments/production/secrets/"*)
+    [ "$KEEL_SCENARIO" = done ] || [ -f "$KEEL_LOG/fly_setup" ] || exit 1;;
   "gh api repos/owner/name/environments/"*)
+    [ "$KEEL_SCENARIO" = deploy ] && exit 0;
     [ "$KEEL_SCENARIO" = done ] || [ -f "$KEEL_LOG/secret_set" ] || exit 1;;
   "gh repo view"*) echo '{"defaultBranchRef":{"name":"main"}}';;
   "gh pr view"*)
-    st=OPEN; [ "$KEEL_SCENARIO" = done ] && st=MERGED
-    echo '{"number":7,"url":"https://github.com/owner/name/pull/7","state":"'$st'","headRefOid":"abc123"}';;
+    st=OPEN; { [ "$KEEL_SCENARIO" = done ] || [ -f "$KEEL_LOG/merged" ]; } && st=MERGED
+    echo '{"number":7,"url":"https://github.com/owner/name/pull/7","state":"'$st'","headRefOid":"abc123","mergeCommit":{"oid":"c0ffee1"}}';;
   "git ls-remote"*) printf '3f4a65fda568cdd20c76168ed156d25a28ba5630\trefs/tags/v0.13.0\n';;
   "splice --version") echo "splice 0.6.0";;
   "splice --json pieces"*) echo "error: unrecognized subcommand 'pieces'" >&2; exit 2;;
@@ -42,16 +45,28 @@ case "$name $*" in
       printf '{"ok":false,"exit_code":5,"data":{"offline":true,"missing":0},"error":null}\n'; exit 5
     fi
     env '{"items":[],"missing":0}';;
+  "fly auth whoami"*) echo '{"email":"a@b.c"}';;
+  "fly status"*|"fly certs show"*)
+    [ "$KEEL_SCENARIO" = done ] || [ -f "$KEEL_LOG/fly_setup" ] || exit 1
+    echo '{}';;
+  "fly ips list"*) echo '[{"Address":"1.2.3.4","Type":"v4"},{"Address":"2a09::1","Type":"v6"}]';;
+  "gh run list"*) echo '[{"status":"completed","conclusion":"success","url":"https://github.com/owner/name/actions/runs/1","headSha":"c0ffee1"}]';;
+  curl*) printf 200;;
   "hoist --version") echo "hoist 0.5.1";;
+  "hoist --json check --area cloudflare"*) echo '{"ok":true,"exit_code":0,"items":[{"kind":"dns_record","key":"k","action":"ok"},{"kind":"r2_bucket","key":"b","action":"ok"},{"kind":"r2_lifecycle","key":"l","action":"ok"},{"kind":"r2_token","key":"t","action":"ok"}],"human_steps":[]}';;
   "hoist --json "*) echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "berth --version") echo "berth 0.2.1";;
 esac
 exit 0
 "#;
 
-const TOOLS: [&str; 9] = [
-    "gh", "git", "node", "npm", "splice", "bosun", "hoist", "berth", "cargo",
+const TOOLS: [&str; 11] = [
+    "gh", "git", "node", "npm", "splice", "bosun", "hoist", "berth", "cargo", "fly", "curl",
 ];
+
+/// The hull fly piece's script, as a stub: records its argv and that it ran.
+const FLY_SETUP: &str =
+    "#!/bin/sh\necho \"fly-setup.sh $*\" >> \"$KEEL_LOG/calls.log\"\n: > \"$KEEL_LOG/fly_setup\"\n";
 
 struct Env {
     _root: tempfile::TempDir,
@@ -80,7 +95,7 @@ impl Env {
         let pins = root.path().join("pins.toml");
         std::fs::write(
             &pins,
-            "[pins]\nsplice = \"0.6.0\"\nbosun = \"0.21.0\"\nhoist = \"0.5.1\"\nberth = \"0.2.1\"\nhull = \"v0.13.0\"\n",
+            "[pins]\nsplice = \"0.6.0\"\nbosun = \"0.21.0\"\nhoist = \"0.5.1\"\nberth = \"0.2.1\"\nhull = \"v0.13.0\"\n[refs.hull]\ntag = \"v0.13.0\"\nsha = \"3f4a65fda568cdd20c76168ed156d25a28ba5630\"\n",
         )
         .unwrap();
         Env {
@@ -161,7 +176,7 @@ fn first_run_stops_at_apps_with_one_json_object() {
     assert_eq!(v["status"], "human");
     assert_eq!(v["human_step"]["id"], "apps");
     let steps = v["steps"].as_array().unwrap();
-    assert_eq!(steps.len(), 9);
+    assert_eq!(steps.len(), 13);
     assert_eq!(steps[0]["action"], "ok");
     assert_eq!(steps[1]["action"], "pending");
     assert_eq!(steps[2]["action"], "not-reached");
@@ -337,5 +352,208 @@ fn doctor_offline_is_a_human_step_with_exit_5() {
     assert_eq!(
         v["human_step"]["command"],
         "export GH_TOKEN=$(gh auth token)"
+    );
+}
+
+const FLY_MANIFEST: &str = "repo = \"owner/name\"\ntemplate = \"rust\"\npieces = [\"rust-cli:my-cli\", \"fly\"]\n[confirmed]\nagent_env = true\n[deploy.fly]\napp = \"my-app\"\nregion = \"fra\"\nhost = \"app.example.com\"\n";
+
+fn fly_repo(env: &Env) {
+    env.rendered();
+    std::fs::write(env.repo.join("keel.toml"), FLY_MANIFEST).unwrap();
+    std::fs::create_dir(env.repo.join("scripts")).unwrap();
+    let s = env.repo.join("scripts/fly-setup.sh");
+    std::fs::write(&s, FLY_SETUP).unwrap();
+    std::fs::set_permissions(&s, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn deploy_fly_reaches_the_merge_gate() {
+    let env = Env::new();
+    fly_repo(&env);
+    let (code, out, err) = run(&env, "deploy", &["--json".into(), "up".into()], "");
+    assert_eq!(code, 5, "{out} {err}");
+    let v = one_json(&out);
+    assert_eq!(v["human_step"]["id"], "merge");
+    let by_id = |id: &str| {
+        v["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == id)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(by_id("deploy")["action"], "done");
+    assert_eq!(by_id("dns")["action"], "ok");
+    assert!(
+        by_id("dns")["detail"]
+            .as_str()
+            .unwrap()
+            .contains("A app.example.com 1.2.3.4")
+    );
+    assert_eq!(by_id("backup")["detail"], "no [backup]");
+    assert_eq!(by_id("verify")["action"], "not-reached");
+    assert_eq!(v["verify"]["healthz"], "not-run");
+    assert_eq!(v["verify"]["http_status"], serde_json::Value::Null);
+    let calls = env.read("calls.log");
+    assert!(
+        calls.contains("fly-setup.sh --app my-app --region fra --host app.example.com"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("fly-setup.sh --app my-app --region fra --host app.example.com --set-gh-secret production"),
+        "{calls}"
+    );
+    assert!(!calls.contains("--deploy"), "{calls}");
+}
+
+#[test]
+fn merged_deploy_is_verified_over_http() {
+    let env = Env::new();
+    fly_repo(&env);
+    let (code, out, err) = run(&env, "done", &["--json".into(), "up".into()], "");
+    assert_eq!(code, 0, "{out} {err}");
+    let v = one_json(&out);
+    assert_eq!(v["verify"]["url"], "https://app.example.com");
+    assert_eq!(v["verify"]["healthz"], "ok");
+    assert_eq!(v["verify"]["http_status"], 200);
+    assert_eq!(v["verify"]["smoke"], "none");
+    let calls = env.read("calls.log");
+    assert!(
+        calls.contains(
+            "curl -fsS -o /dev/null -w %{http_code} --max-time 10 https://app.example.com/healthz"
+        ),
+        "{calls}"
+    );
+    assert!(!calls.contains("fly-setup.sh"), "{calls}");
+    // Without [deploy.fly] the report has no verify key.
+    let env2 = Env::new();
+    env2.rendered();
+    std::fs::write(
+        env2.repo.join("keel.toml"),
+        FLY_MANIFEST.split("[deploy.fly]").next().unwrap(),
+    )
+    .unwrap();
+    let (_, out, _) = run(&env2, "done", &["--json".into(), "up".into()], "");
+    assert!(one_json(&out).get("verify").is_none());
+}
+
+/// The PAT and the Cloudflare token reach no argv log, stdout, stderr, hoist.toml, keel.toml or
+/// `.keel/`, through deploy, dns, backup, merge and verify (the PR is already merged).
+#[test]
+fn pat_and_cloudflare_token_never_leak_through_deploy_dns_backup_merge_verify() {
+    let env = Env::new();
+    fly_repo(&env);
+    std::fs::write(env.log.join("merged"), "").unwrap();
+    let manifest = format!(
+        "{FLY_MANIFEST}dns = \"cloudflare\"\n[backup]\nprovider = \"r2\"\naccount_id = \"0123456789abcdef0123456789abcdef\"\n"
+    );
+    std::fs::write(env.repo.join("keel.toml"), manifest).unwrap();
+    let (pat, cf) = ("ghp_CanaryPatValue456", "cf-canary-token-789");
+    let o = env
+        .keel("token", &["--json", "up", "--token-stdin"])
+        .env("CLOUDFLARE_API_TOKEN", cf)
+        .write_stdin(format!("{pat}\n"))
+        .output()
+        .unwrap();
+    let (out, err) = (
+        String::from_utf8(o.stdout).unwrap(),
+        String::from_utf8(o.stderr).unwrap(),
+    );
+    assert_eq!(o.status.code(), Some(0), "{out} {err}");
+    let v = one_json(&out);
+    let ids: Vec<(String, String)> = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| {
+            (
+                s["id"].as_str().unwrap().into(),
+                s["action"].as_str().unwrap().into(),
+            )
+        })
+        .collect();
+    for id in ["token", "deploy", "dns", "backup", "merge", "verify"] {
+        assert!(
+            ids.iter().any(|(i, a)| i == id && a != "not-reached"),
+            "{id}: {ids:?}"
+        );
+    }
+    assert!(
+        env.read("stdin.log").contains(pat),
+        "the PAT goes to gh stdin"
+    );
+    let calls = env.read("calls.log");
+    for want in ["fly-setup.sh", "--area cloudflare", "gh pr view", "curl "] {
+        assert!(calls.contains(want), "{want}: {calls}");
+    }
+    let mut texts = vec![
+        ("stdout".to_string(), out),
+        ("stderr".to_string(), err),
+        ("calls.log".to_string(), calls),
+        ("stdin.log (cf)".to_string(), env.read("stdin.log")),
+    ];
+    for f in ["keel.toml", "hoist.toml"] {
+        texts.push((f.into(), std::fs::read_to_string(env.repo.join(f)).unwrap()));
+    }
+    for e in std::fs::read_dir(env.repo.join(".keel"))
+        .into_iter()
+        .flatten()
+    {
+        let p = e.unwrap().path();
+        texts.push((
+            format!("{}", p.display()),
+            std::fs::read_to_string(&p).unwrap_or_default(),
+        ));
+    }
+    for (what, text) in &texts {
+        assert!(!text.contains(cf), "Cloudflare token leaked into {what}");
+        if what != "stdin.log (cf)" {
+            assert!(!text.contains(pat), "PAT leaked into {what}");
+        }
+    }
+}
+
+#[test]
+fn cloudflare_dns_and_backup_use_the_area_flag_and_the_fly_sink() {
+    let env = Env::new();
+    fly_repo(&env);
+    let manifest = format!(
+        "{FLY_MANIFEST}dns = \"cloudflare\"\n[backup]\nprovider = \"r2\"\naccount_id = \"0123456789abcdef0123456789abcdef\"\n"
+    );
+    std::fs::write(env.repo.join("keel.toml"), manifest).unwrap();
+    let mut cmd = env.keel("deploy", &["--json", "up"]);
+    let o = cmd
+        .env("CLOUDFLARE_API_TOKEN", "dummy-not-a-secret")
+        .output()
+        .unwrap();
+    let (out, err) = (
+        String::from_utf8(o.stdout).unwrap(),
+        String::from_utf8(o.stderr).unwrap(),
+    );
+    assert_eq!(o.status.code(), Some(5), "{out} {err}");
+    let calls = env.read("calls.log");
+    assert!(
+        calls.contains("hoist --json apply --yes --area cloudflare --secrets-to fly:my-app"),
+        "{calls}"
+    );
+    assert!(
+        calls.contains("hoist --json check --area github --area npm --area crates --area release"),
+        "{calls}"
+    );
+    assert!(
+        !calls.contains("--only") && !calls.contains("--skip"),
+        "{calls}"
+    );
+    assert!(!calls.contains("dummy-not-a-secret") && !out.contains("dummy-not-a-secret"));
+    let t = std::fs::read_to_string(env.repo.join("hoist.toml")).unwrap();
+    assert!(
+        t.contains("[cloudflare.dns]") && t.contains("targets = \"fly\""),
+        "{t}"
+    );
+    assert!(
+        t.contains("[cloudflare.r2]")
+            && t.contains("account_id = \"0123456789abcdef0123456789abcdef\""),
+        "{t}"
     );
 }

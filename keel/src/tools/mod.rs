@@ -3,6 +3,8 @@ use crate::exec::{Cmd, Out};
 use serde_json::Value;
 
 pub mod bosun;
+pub mod curl;
+pub mod fly;
 pub mod gh;
 pub mod git;
 pub mod hoist;

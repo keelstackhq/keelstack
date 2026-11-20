@@ -100,8 +100,17 @@ pub fn run_with(
             wait_secs: args.wait,
             poll_secs,
             token_stdin: args.token_stdin,
+            tool_timeout_secs: tool_timeout_secs(
+                std::env::var("KEEL_TOOL_TIMEOUT_SECS").ok().as_deref(),
+            ),
             dry_run: command == Mode::Plan,
+            cloudflare_token: std::env::var_os("CLOUDFLARE_API_TOKEN")
+                .is_some_and(|v| !v.is_empty()),
+            cloudflare_account_id: std::env::var("CLOUDFLARE_ACCOUNT_ID")
+                .ok()
+                .filter(|v| !v.trim().is_empty()),
         },
+        verify: None,
         sleep,
         stdin,
     };
@@ -115,4 +124,25 @@ pub fn run_with(
         report.command = "doctor".into();
     }
     Ok(report)
+}
+
+/// `KEEL_TOOL_TIMEOUT_SECS`: a positive number of seconds, else the default (600).
+fn tool_timeout_secs(v: Option<&str>) -> u64 {
+    v.and_then(|v| v.trim().parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(ctx::DEFAULT_TOOL_TIMEOUT_SECS)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_timeout_env_overrides_the_default_of_600_seconds() {
+        assert_eq!(tool_timeout_secs(None), 600);
+        assert_eq!(tool_timeout_secs(Some("45")), 45);
+        for bad in ["", "0", "-3", "soon"] {
+            assert_eq!(tool_timeout_secs(Some(bad)), 600, "{bad}");
+        }
+    }
 }

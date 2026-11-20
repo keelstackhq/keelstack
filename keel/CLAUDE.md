@@ -23,8 +23,8 @@ src/manifest.rs  keel.toml read/write, unknown keys are an error
 src/pins.rs      pins parser; src/pins.toml  embedded default pins (KEEL_PINS overrides)
 src/ctx.rs       run context (repo, branch, flags); src/step.rs Step trait, Outcome
 src/engine.rs    runs steps in order, stops at the first pending or failed one
-src/tools/       adapters: gh, npm, splice, bosun, hoist (argv builders, output parsers)
-src/steps/       preflight, apps, render, governance, settings, token, agent_env, doctor, merge
+src/tools/       adapters: gh, npm, splice, bosun, hoist, fly, curl (argv builders, output parsers)
+src/steps/       preflight, apps, render, governance, settings, token, agent_env, deploy, dns, backup, doctor, merge, verify
 src/proxy_ca.sh  proxy-CA prelude for the agent environment script (include_str!)
 npm/keel, npm/keel-<platform>   launcher (bin/keel.js, node:test) and 5 platform packages
 tests/           cli_*.rs integration tests with stub tool scripts on PATH

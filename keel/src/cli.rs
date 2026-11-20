@@ -54,7 +54,9 @@ pub struct UpArgs {
     /// Read the PAT for the token step from stdin.
     #[arg(long)]
     pub token_stdin: bool,
-    /// Record that a step is confirmed (agent-env).
+    /// Record a human step as done: `agent-env` (the cloud setup script is attached), `dns` (the
+    /// DNS records were added by hand; stores the host) or `backup` (the bucket was created by
+    /// hand; stores the fly app). Repeatable.
     #[arg(long = "confirm", value_name = "STEP")]
     pub confirm: Vec<String>,
 }

@@ -58,6 +58,16 @@ fn resume_uncommitted(cx: &Ctx, tpl: &str) -> Option<Check> {
     }
 }
 
+/// For any hull source form: the template tag must still point at the commit keel pinned
+/// (read-only `git ls-remote`). `Some(problem)` otherwise.
+fn hull_problem(cx: &Ctx, src: &str, git_ref: &str) -> Option<String> {
+    if !splice::is_hull_source(src) {
+        return None;
+    }
+    let pinned = cx.pins.ref_sha("hull", git_ref);
+    splice::verify_hull_ref(cx.runner, &cx.dir, git_ref, pinned).err()
+}
+
 impl Step for Render {
     fn id(&self) -> &'static str {
         "render"
@@ -68,6 +78,13 @@ impl Step for Render {
         // A saved list means a render whose commit has not happened yet (any template).
         if lock && cx.dir.join(LIST).is_file() {
             return Ok(Check::Todo("a previous render is not committed yet".into()));
+        }
+        // `keel plan` shows a moved hull tag as a failed render (read-only check).
+        let tag = cx.manifest.template_ref.clone();
+        if let (false, Ok(tpl), Some(git_ref)) = (lock, template(cx), tag)
+            && let Some(e) = hull_problem(cx, splice::source(&tpl), &git_ref)
+        {
+            return Ok(Check::Failed(e));
         }
         let needs_cargo_lock =
             cx.dir.join("Cargo.toml").is_file() && !cx.dir.join("Cargo.lock").is_file();
@@ -92,11 +109,8 @@ impl Step for Render {
 
         if !lock_before {
             // The template tag must still point at the commit keel pinned.
-            if src.starts_with("gh:keelstackhq/hull") {
-                let pinned = cx.pins.ref_sha("hull", &git_ref);
-                if let Err(e) = splice::verify_hull_ref(r, &cx.dir, &git_ref, pinned) {
-                    return Ok(Check::Failed(e));
-                }
+            if let Some(e) = hull_problem(cx, &src, &git_ref) {
+                return Ok(Check::Failed(e));
             }
             // Validate piece names before touching the checkout.
             match splice::pieces(r, &cx.dir, &src, &git_ref) {
@@ -131,7 +145,14 @@ impl Step for Render {
                 return Ok(Check::Failed(e));
             }
             let rust = src == splice::RUST_SOURCE;
-            let c = splice::new_cmd(&cx.dir, &src, &git_ref, &cx.manifest.pieces, rust);
+            let c = splice::new_cmd(
+                &cx.dir,
+                &src,
+                &git_ref,
+                &cx.manifest.pieces,
+                rust,
+                cx.manifest.fly().map(|f| f.app.as_str()),
+            );
             let o = r.run(&c);
             if o.code != 0 {
                 return Ok(Check::Failed(tools::failure(&c, &o)));
@@ -160,11 +181,23 @@ impl Step for Render {
         };
         let committed = if rendered {
             // Lockfile-only: commit just what keel changed, never the rest of the worktree.
+            // A crashed earlier run may have written both files without committing them, so
+            // commit whatever is dirty (`commit_path` is a no-op for a clean path).
+            // A tracked `Cargo.lock` or `.gitignore` may hold the user's own edits: commit
+            // them only when keel changed them now or they are not tracked yet (a crashed run).
             let mut res = Ok(());
-            if lockfile {
+            let toml = cx.dir.join("Cargo.toml").is_file();
+            if lockfile
+                || (toml
+                    && cx.dir.join("Cargo.lock").is_file()
+                    && !git::is_tracked(r, &cx.dir, "Cargo.lock"))
+            {
                 res = git::commit_path(r, &cx.dir, "Cargo.lock", "keel: add Cargo.lock");
             }
-            if res.is_ok() && ignored {
+            if res.is_ok()
+                && cx.dir.join(".gitignore").is_file()
+                && (ignored || !git::is_tracked(r, &cx.dir, ".gitignore"))
+            {
                 res = git::commit_path(r, &cx.dir, ".gitignore", "keel: ignore .keel");
             }
             res
@@ -249,7 +282,10 @@ mod tests {
     #[test]
     fn check_states() {
         let d = tempfile::tempdir().unwrap();
-        let r = FakeRunner::new();
+        let r = FakeRunner::new().on(
+            &["git", "ls-remote"],
+            Out::ok("3f4a65fda568cdd20c76168ed156d25a28ba5630\trefs/tags/v0.13.0\n"),
+        );
         let mut cx = ctx(
             &r,
             d.path().into(),
@@ -438,6 +474,43 @@ mod tests {
     }
 
     #[test]
+    fn check_fails_on_a_moved_hull_tag_for_every_source_form() {
+        for tpl in [
+            "rust",
+            "gh:keelstackhq/hull.git//template",
+            "https://github.com/keelstackhq/hull//template",
+            "https://github.com/keelstackhq/hull.git",
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let r =
+                FakeRunner::new().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
+            let Check::Failed(m) = check(&r, d.path(), tpl) else {
+                panic!("{tpl}")
+            };
+            assert!(m.contains("moved"), "{tpl}: {m}");
+        }
+        // Not hull: no ls-remote, plain Todo. Rendered already: not re-verified.
+        let d = tempfile::tempdir().unwrap();
+        let r = FakeRunner::new();
+        assert!(matches!(check(&r, d.path(), "gh:x/y"), Check::Todo(_)));
+        assert!(r.calls().is_empty());
+        lock(d.path());
+        assert!(matches!(check(&r, d.path(), "rust"), Check::Done(_)));
+        assert!(r.calls().is_empty());
+    }
+
+    #[test]
+    fn apply_verifies_the_alternate_hull_forms_too() {
+        let d = tempfile::tempdir().unwrap();
+        let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
+        let Check::Failed(m) = apply(&r, d.path(), "gh:keelstackhq/hull.git//template") else {
+            panic!()
+        };
+        assert!(m.contains("moved"), "{m}");
+        assert!(!lines(&r).iter().any(|l| l.contains(" new ")));
+    }
+
+    #[test]
     fn render_file_list_is_saved_and_removed_after_the_commit() {
         let d = tempfile::tempdir().unwrap();
         let r = fake();
@@ -514,6 +587,66 @@ mod tests {
                 "{tpl}"
             );
         }
+    }
+
+    #[test]
+    fn resume_also_commits_cargo_lock_and_gitignore() {
+        let d = tempfile::tempdir().unwrap();
+        lock(d.path());
+        std::fs::create_dir(d.path().join(".keel")).unwrap();
+        std::fs::write(d.path().join(LIST), "src/main.rs\n").unwrap();
+        std::fs::write(d.path().join("Cargo.toml"), "").unwrap();
+        std::fs::write(d.path().join("Cargo.lock"), "").unwrap();
+        // The crashed run already added `.keel/` to .gitignore (uncommitted).
+        std::fs::write(d.path().join(".gitignore"), ".keel/\n").unwrap();
+        let r = fake();
+        let _ = apply(&r, d.path(), "rust");
+        let l = lines(&r);
+        for p in ["Cargo.lock", ".gitignore"] {
+            assert!(
+                l.iter()
+                    .any(|x| x.starts_with("git commit") && x.ends_with(&format!("-- {p}"))),
+                "{p}: {l:?}"
+            );
+        }
+        assert!(!l.iter().any(|x| x.contains(" -A")), "{l:?}");
+    }
+
+    #[test]
+    fn resume_leaves_tracked_user_edits_to_cargo_lock_and_gitignore_alone() {
+        let d = tempfile::tempdir().unwrap();
+        lock(d.path());
+        std::fs::create_dir(d.path().join(".keel")).unwrap();
+        std::fs::write(d.path().join(LIST), "src/main.rs\n").unwrap();
+        std::fs::write(d.path().join("Cargo.toml"), "").unwrap();
+        std::fs::write(d.path().join("Cargo.lock"), "user edit").unwrap();
+        // `.keel/` is already ignored, so keel changes nothing in .gitignore.
+        std::fs::write(d.path().join(".gitignore"), "target\n.keel/\nmine\n").unwrap();
+        let r = fake().on(&["git", "ls-files", "--error-unmatch"], Out::ok(""));
+        let _ = apply(&r, d.path(), "rust");
+        let l = lines(&r);
+        for p in ["Cargo.lock", ".gitignore"] {
+            assert!(
+                !l.iter().any(|x| x.starts_with("git add") && x.contains(p)),
+                "{p}: {l:?}"
+            );
+        }
+        // When keel itself appends `.keel/`, the tracked .gitignore is committed.
+        std::fs::write(d.path().join(".gitignore"), "target\n").unwrap();
+        std::fs::write(d.path().join(LIST), "src/main.rs\n").unwrap();
+        let r = fake().on(&["git", "ls-files", "--error-unmatch"], Out::ok(""));
+        let _ = apply(&r, d.path(), "rust");
+        let l = lines(&r);
+        assert!(
+            l.iter()
+                .any(|x| x.starts_with("git commit") && x.ends_with("-- .gitignore")),
+            "{l:?}"
+        );
+        assert!(
+            !l.iter()
+                .any(|x| x.starts_with("git add") && x.ends_with("Cargo.lock")),
+            "{l:?}"
+        );
     }
 
     #[test]

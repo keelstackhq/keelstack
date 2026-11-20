@@ -96,6 +96,62 @@ pub fn secret_exists(r: &dyn Runner, repo: &str, env: &str, name: &str) -> bool 
         == 0
 }
 
+/// A run of a workflow.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Run {
+    pub status: String,
+    pub conclusion: String,
+    pub url: String,
+    pub head_sha: String,
+}
+
+/// The newest run of a workflow on a branch whose `headSha` is `sha`: `gh run list --repo R
+/// --workflow W --branch B --limit 20 --json status,conclusion,url,headSha`, filtered here.
+/// `None` when no such run exists (yet).
+pub fn run_for_commit(
+    r: &dyn Runner,
+    repo: &str,
+    workflow: &str,
+    branch: &str,
+    sha: &str,
+) -> Result<Option<Run>, String> {
+    let c = Cmd::new(
+        "gh",
+        &[
+            "run",
+            "list",
+            "--repo",
+            repo,
+            "--workflow",
+            workflow,
+            "--branch",
+            branch,
+            "--limit",
+            "20",
+            "--json",
+            "status,conclusion,url,headSha",
+        ],
+    );
+    let o = r.run(&c);
+    if o.code != 0 {
+        return Err(failure(&c, &o));
+    }
+    let v = json(&o).ok_or_else(|| super::not_json(&c))?;
+    let Some(runs) = v.as_array() else {
+        return Err(super::not_json(&c));
+    };
+    let s = |r: &serde_json::Value, k: &str| r[k].as_str().unwrap_or("").to_string();
+    Ok(runs
+        .iter()
+        .find(|r| !sha.is_empty() && r["headSha"].as_str() == Some(sha))
+        .map(|r| Run {
+            status: s(r, "status"),
+            conclusion: s(r, "conclusion"),
+            url: s(r, "url"),
+            head_sha: s(r, "headSha"),
+        }))
+}
+
 pub fn label_create(r: &dyn Runner, repo: &str, name: &str) -> Result<(), String> {
     let c = Cmd::new("gh", &["label", "create", name, "--repo", repo, "--force"]);
     let o = r.run(&c);
@@ -118,9 +174,11 @@ pub struct Pr {
     /// `OPEN`, `MERGED` or `CLOSED`.
     pub state: String,
     pub head: String,
+    /// The merge commit's sha (`mergeCommit.oid`); empty until the PR is merged.
+    pub merge_commit: String,
 }
 
-/// The PR of `branch`, if any: `gh pr view <branch> --repo R --json number,url,state,headRefOid`.
+/// The PR of `branch`, if any: `gh pr view <branch> --repo R --json number,url,state,headRefOid,mergeCommit`.
 pub fn pr_view(r: &dyn Runner, dir: &std::path::Path, repo: &str, branch: &str) -> Option<Pr> {
     let o = r.run(
         &Cmd::new(
@@ -132,7 +190,7 @@ pub fn pr_view(r: &dyn Runner, dir: &std::path::Path, repo: &str, branch: &str) 
                 "--repo",
                 repo,
                 "--json",
-                "number,url,state,headRefOid",
+                "number,url,state,headRefOid,mergeCommit",
             ],
         )
         .dir(dir),
@@ -146,6 +204,7 @@ pub fn pr_view(r: &dyn Runner, dir: &std::path::Path, repo: &str, branch: &str) 
         url: v["url"].as_str()?.to_string(),
         state: v["state"].as_str()?.to_string(),
         head: v["headRefOid"].as_str().unwrap_or("").to_string(),
+        merge_commit: v["mergeCommit"]["oid"].as_str().unwrap_or("").to_string(),
     })
 }
 

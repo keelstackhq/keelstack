@@ -1,7 +1,8 @@
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, mpsc};
+use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
 /// One subprocess call. `stdin` carries secrets: it is never printed (see the `Debug` impl).
@@ -12,6 +13,8 @@ pub struct Cmd {
     pub dir: Option<PathBuf>,
     pub env: Vec<(String, String)>,
     pub stdin: Option<Zeroizing<Vec<u8>>>,
+    /// The real runner kills the child after this long.
+    pub timeout: Option<Duration>,
 }
 
 impl Cmd {
@@ -22,7 +25,14 @@ impl Cmd {
             dir: None,
             env: Vec::new(),
             stdin: None,
+            timeout: None,
         }
+    }
+
+    /// Kill the child and report "timed out after N s" when it runs longer than `t`.
+    pub fn timeout(mut self, t: Duration) -> Cmd {
+        self.timeout = Some(t);
+        self
     }
 
     pub fn dir(mut self, dir: impl Into<PathBuf>) -> Cmd {
@@ -111,11 +121,72 @@ impl Runner for SystemRunner {
             // A child that exits early closes the pipe: not an error here.
             let _ = pipe.write_all(data);
         }
-        match child.wait_with_output() {
-            Ok(o) => Out {
-                code: o.status.code().unwrap_or(-1),
-                stdout: String::from_utf8_lossy(&o.stdout).into_owned(),
-                stderr: String::from_utf8_lossy(&o.stderr).into_owned(),
+        // Both pipes are drained on threads so a chatty child never blocks on a full pipe.
+        let reader = |pipe: Option<Box<dyn Read + Send>>| {
+            let (tx, rx) = mpsc::channel();
+            std::thread::spawn(move || {
+                let mut buf = Vec::new();
+                if let Some(mut p) = pipe {
+                    let _ = p.read_to_end(&mut buf);
+                }
+                let _ = tx.send(buf);
+            });
+            rx
+        };
+        let out_rx = reader(
+            child
+                .stdout
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let err_rx = reader(
+            child
+                .stderr
+                .take()
+                .map(|p| Box::new(p) as Box<dyn Read + Send>),
+        );
+        let deadline = cmd.timeout.map(|t| Instant::now() + t);
+        let mut timed_out = false;
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(st)) => break Ok(st),
+                Ok(None) => {}
+                Err(e) => break Err(e),
+            }
+            if deadline.is_some_and(|d| Instant::now() >= d) {
+                timed_out = true;
+                let _ = child.kill();
+                break child.wait();
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        // After a kill a grandchild may still hold the pipes: wait only briefly for them.
+        let grace = if timed_out {
+            Duration::from_secs(1)
+        } else {
+            Duration::from_secs(3600)
+        };
+        let got = |rx: mpsc::Receiver<Vec<u8>>| {
+            String::from_utf8_lossy(&rx.recv_timeout(grace).unwrap_or_default()).into_owned()
+        };
+        let (stdout, mut stderr) = (got(out_rx), got(err_rx));
+        match status {
+            Ok(_) if timed_out => {
+                let secs = cmd.timeout.map_or(0, |t| t.as_secs());
+                if !stderr.is_empty() && !stderr.ends_with('\n') {
+                    stderr.push('\n');
+                }
+                stderr.insert_str(0, &format!("timed out after {secs} s\n"));
+                Out {
+                    code: 124,
+                    stdout,
+                    stderr,
+                }
+            }
+            Ok(st) => Out {
+                code: st.code().unwrap_or(-1),
+                stdout,
+                stderr,
             },
             Err(e) => Out::with(-1, "", &e.to_string()),
         }
@@ -194,6 +265,36 @@ mod tests {
     fn system_runner_not_found_is_minus_one() {
         let out = SystemRunner.run(&Cmd::new("keel-no-such-program-xyz", &[]));
         assert_eq!(out.code, -1);
+    }
+
+    #[test]
+    fn system_runner_kills_a_child_after_the_timeout() {
+        let t = Instant::now();
+        let c = Cmd::new("sleep", &["5"]).timeout(Duration::from_secs(1));
+        let out = SystemRunner.run(&c);
+        assert!(t.elapsed() < Duration::from_secs(4), "{:?}", t.elapsed());
+        assert_ne!(out.code, 0);
+        assert!(out.stderr.contains("timed out after 1 s"), "{}", out.stderr);
+        let line = crate::tools::failure(&c, &out);
+        assert!(line.contains("timed out after 1 s"), "{line}");
+        // A call that finishes in time is untouched, output and all.
+        let c = Cmd::new("sh", &["-c", "echo hi; echo err >&2; exit 3"])
+            .timeout(Duration::from_secs(5));
+        let out = SystemRunner.run(&c);
+        assert_eq!(
+            (out.code, out.stdout.as_str(), out.stderr.as_str()),
+            (3, "hi\n", "err\n")
+        );
+    }
+
+    #[test]
+    fn fake_runner_records_the_timeout() {
+        let r = FakeRunner::new().on(&["x"], Out::ok(""));
+        r.run(&Cmd::new("x", &[]).timeout(Duration::from_secs(7)));
+        r.run(&Cmd::new("x", &[]));
+        let c = r.calls();
+        assert_eq!(c[0].timeout, Some(Duration::from_secs(7)));
+        assert_eq!(c[1].timeout, None);
     }
 
     #[test]

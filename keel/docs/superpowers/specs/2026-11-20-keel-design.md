@@ -20,8 +20,8 @@ its JSON, and stops at the first step only a human can do. keel never reimplemen
 - **Idempotent.** Each step checks first and skips what is done. A re-run resumes.
 - **One answer.** `--json` prints exactly one object: done, the single human step left (with the
   exact link or command), a failed step, or an error.
-- **Subprocesses only.** keel calls `gh`, `git`, `npm`, `node`, `cargo`, `splice`, `bosun` and
-  `hoist`. It has no HTTP client of its own (so no TLS stack: the "rustls only" family rule holds
+- **Subprocesses only.** keel calls `gh`, `git`, `npm`, `node`, `cargo`, `splice`, `bosun`,
+  `hoist`, `fly` and `curl`. It has no HTTP client of its own (so no TLS stack: the "rustls only" family rule holds
   trivially). GitHub reads and writes go through `gh api` / `gh secret` / `gh pr`.
 - **Adapters.** Each tool has one small module (`src/tools/<tool>.rs`) that builds argv and
   parses output. When a tool lacks a feature keel needs (old version), the adapter degrades to a
@@ -56,9 +56,11 @@ keel [-C DIR] [--json] [-v] doctor
   anything else is passed to `splice new` as the source.
 - `--wait SECS` (default 300): how long a GitHub-App gate polls before it returns exit 5. `0` = check
   once. Poll interval: `KEEL_POLL_SECS` (default 10).
+- Tool timeout: every `hoist` call and `scripts/fly-setup.sh` and `scripts/smoke.sh` are killed after `KEEL_TOOL_TIMEOUT_SECS` (default 600; a value that is not a positive integer is ignored). A timed-out call fails with "timed out after N s" (exit 124 internally).
 - `--token-stdin`: read the PAT for step 6 from stdin (one line, trailing newline trimmed).
-- `--confirm agent-env`: record that the cloud environment setup script is attached (step 7);
-  stored in `keel.toml` `[confirmed]`.
+- `--confirm agent-env|dns|backup`: record that the cloud environment setup script is attached
+  (step 7), that the DNS records were added by hand (step 9) or that the backup bucket was created
+  by hand (step 10); stored in `keel.toml` `[confirmed]`. A confirmed step is done. `agent_env` is a boolean; `dns` and `backup` store what was confirmed, `dns = "<host>"` and `backup = "<fly app>"` (`--confirm dns|backup` needs `[deploy.fly]`, `backup` also `[backup]`). The confirmation is void (the step runs as if unconfirmed) when the value differs from the manifest's current `[deploy.fly] host` or `app`; an old `dns = true` or `backup = true` is void too, and is dropped the next time keel writes `keel.toml`.
 - Example: `npx @keelstackhq/keel up --repo owner/name --template rust --pieces rust-cli:my-cli`.
 
 ### 3.1 Exit codes
@@ -82,6 +84,9 @@ pending (D-020; 5 matches bosun's needs-human). Help and version exit 0. With `-
 - `status`: `done` | `human` | `failed` | `planned` | `error`.
 - `steps[].action`: `ok` (already done, skipped) · `done` (keel did it now) · `would-run` (`plan`)
   · `pending` (human gate) · `failed` · `not-reached`.
+- `verify`: present only when the manifest has `[deploy.fly]`:
+  `{"url":"https://HOST","healthz":"ok"|"failed"|"not-run","http_status":200|null,"smoke":"passed"|"failed"|"none"|"not-run"}`.
+  `not-run` until the `verify` step has reached that check. Text output adds a `verify:` line.
 - `human_step`: null, or `{id, title, url, command}` (`url`/`command` may be `""`). At most one.
 - On exit 2 or 3: same envelope, `status:"error"`, `steps:[]`, `human_step:null`, plus
   `error:{message, fix}`.
@@ -103,7 +108,28 @@ environment = "splice-bot"
 
 [confirmed]                       # written by --confirm
 agent_env = true
+dns = "app.example.com"            # DNS records added by hand, for this host
+backup = "my-app"                   # backup bucket created by hand, for this app
+
+[deploy.fly]                      # optional; written by hand
+app = "my-app"                    # fly app name
+region = "fra"
+host = "app.example.com"          # public hostname, no scheme
+dns = "cloudflare"                # "cloudflare" | "none" (default "none")
+zone = "example.com"              # optional Cloudflare zone; HOST or a parent domain of it
+                                  # (default: the last two labels of HOST; set it for example.co.uk)
+no_mail = false                   # true: hoist also adds SPF and DMARC records for HOST
+
+[backup]                          # optional; needs [deploy.fly]
+provider = "r2"                   # "r2" | "s3"
+retention_days = 30               # >= 1; default 30
+account_id = "..."                # optional Cloudflare account id for r2; written to hoist.toml [cloudflare]; env CLOUDFLARE_ACCOUNT_ID wins (hoist reads it)
 ```
+
+The pieces may include `sqlite` and `fly` (hull: `rust-service` needs `base`; `sqlite` and `fly` need `rust-service`; each has the var `service`, default `server`); splice validates them. With `[deploy.fly]` and a `fly` or `fly:NAME` piece, keel passes `--data app=<app>` to `splice new`. A bad enum value, an empty
+`app`/`region`/`host`, a `host` or `zone` that is not a DNS name (lowercase labels of a-z, 0-9 and `-`, 1-63 characters, no leading or trailing `-`, single dots, at least two labels, at most 253 characters: no scheme, path, port, `@`, `?`, `#`, whitespace or uppercase), an `app` outside `^[a-z0-9-]{1,63}$`, a `[backup] account_id` outside `^[0-9a-f]{32}$` (the env `CLOUDFLARE_ACCOUNT_ID` has the same rule: the backup step fails naming the variable), a `zone` that is neither `host` nor a parent domain of it at a label boundary, `retention_days = 0`, `[backup]` without `[deploy.fly]` or, with `provider = "r2"`, an `app` whose
+lowercased `<app>-backup` is not 3-63 characters of `a-z0-9-` (an R2 bucket name) is a manifest error
+(exit 3, names the key).
 
 Unknown keys are an error (exit 3, names the key). keel writes the file atomically (a temp file in the same directory, then a rename) on the first run (before
 any other write) and commits it with the render.
@@ -118,13 +144,17 @@ every `check` only and marks work `would-run`; it stops after the first human ga
 |---|----|-------------------|-------|
 | 1 | `preflight` | `node --version` ≥ 24, `gh auth status`, `gh api user` (login), `git --version`; repo exists (`gh repo view`; if not, a human step: request the repo from the provisioner, never `gh repo create`); `-C` is a git checkout whose `origin` is the repo; each tool's `--version` equals its pin | install each tool not at its pin (§6) |
 | 2 | `apps` | Claude and Renovate apps installed on the repo (`gh api user/installations`, then the installation's repositories when `repository_selection` is `selected`) | none: human gate; prints the install link and polls up to `--wait` |
-| 3 | `render` | `.splice/lock.toml` exists, no `.keel/render-files` is left (an uncommitted render), and `Cargo.lock` exists when `Cargo.toml` does | branch (§5.1, switched before any commit); commit `keel.toml` alone (splice refuses a dirty tree); `splice --json pieces <source> --ref <template_ref>` validates piece names (unknown id, or a `multiple` piece with no `default_name` given without `:NAME`, fails before any write; an old splice without the command only warns; malformed or missing JSON, exit 1 or 3 fail); for a hull source `git ls-remote https://github.com/keelstackhq/hull refs/tags/<ref> refs/tags/<ref>^{}` must give (peeled, else plain) the sha pinned in `[refs.hull]` (§6), else failed ("hull tag <ref> moved: expected …, got …"; an unpinned ref or a failing ls-remote also fail); `splice --json --yes new <source> . --ref <template_ref> --force --piece …` (rust: `--data no_placeholder=true`); `cargo generate-lockfile` when needed; ensure `.keel/` is in `.gitignore`; commit only the render's files (`changes[].path` of the `splice new --json` output whose action is not `skip`, plus `.splice/lock.toml`) and what keel itself wrote (`.gitignore`, `Cargo.lock`); a lockfile-only re-run commits just `Cargo.lock`. Right after `splice new` the file list is saved to `.keel/render-files`; if the lock exists but the render was never committed (crash in between), the next run commits that list (re-filtered) plus `.splice/lock.toml` via explicit paths and removes the list; with no list it commits only the lock and fails telling the user to commit the files `git status` shows |
-| 4 | `governance` | `.bosun/version` exists; with `plan`, `bosun plan import FILE --dry-run` has no `data.epics[]`/`data.tasks[]` item with `action: "would-create"` | `bosun init --owner <gh login> --branch <work branch> --no-pr` (+ `--stack rust` for the rust template); labels fallback (§10); then `bosun plan import FILE` |
-| 5 | `settings` | `hoist --json check` exits 0 | `hoist --json apply --yes`; hoist human steps become keel's human step |
+| 3 | `render` | `.splice/lock.toml` exists, no `.keel/render-files` is left (an uncommitted render), and `Cargo.lock` exists when `Cargo.toml` does | branch (§5.1, switched before any commit); commit `keel.toml` alone (splice refuses a dirty tree); `splice --json pieces <source> --ref <template_ref>` validates piece names (unknown id, or a `multiple` piece with no `default_name` given without `:NAME`, fails before any write; an old splice without the command only warns; malformed or missing JSON, exit 1 or 3 fail); for a hull source (`splice::is_hull_source`: `gh:keelstackhq/hull`, `https://github.com/keelstackhq/hull` and `git@github.com:keelstackhq/hull`, each with or without `.git`, any `//subdir`; `keel plan` runs this read-only check too and shows a moved tag as `render` `failed`) `git ls-remote https://github.com/keelstackhq/hull refs/tags/<ref> refs/tags/<ref>^{}` must give (peeled, else plain) the sha pinned in `[refs.hull]` (§6), else failed ("hull tag <ref> moved: expected …, got …"; an unpinned ref or a failing ls-remote also fail); `splice --json --yes new <source> . --ref <template_ref> --force --piece …` (rust: `--data no_placeholder=true`); `cargo generate-lockfile` when needed; ensure `.keel/` is in `.gitignore`; commit only the render's files (`changes[].path` of the `splice new --json` output whose action is not `skip`, plus `.splice/lock.toml`) and what keel itself wrote (`.gitignore`, `Cargo.lock`); a lockfile-only re-run commits just `Cargo.lock`. A resume (below) also commits `Cargo.lock` (when `Cargo.toml` exists) and `.gitignore`, but only when keel changed them in this run or they are untracked (`git ls-files --error-unmatch` fails): a tracked file with the user's own uncommitted edits is left alone. Right after `splice new` the file list is saved to `.keel/render-files`; if the lock exists but the render was never committed (crash in between), the next run commits that list (re-filtered) plus `.splice/lock.toml` via explicit paths and removes the list; with no list it commits only the lock and fails telling the user to commit the files `git status` shows |
+| 4 | `governance` | `.bosun/version` exists; with `plan` (or, when `plan` is unset and `plans/*.md` exist, bosun's default with no FILE), `bosun plan import [FILE] --dry-run` has no `data.epics[]`/`data.tasks[]` item with `action: "would-create"` | `bosun init --owner <gh login> --branch <work branch> --no-pr` (+ `--stack rust` for the rust template); labels: exactly `data.labels_todo` when bosun reports it, else the fallback (§10); then `bosun plan import [FILE] --fix` (retried without `--fix` on exit 2 mentioning it; `data.prereqs_fixed` goes to the step detail, as do `data.branch_reused` and `data.owner` of init) |
+| 5 | `settings` | `hoist --json check --area github --area npm --area crates --area release` exits 0 (everything but `cloudflare`, which steps 9 and 10 own; hoist has no sub-areas. A hoist that rejects `--area`, exit 2 without hoist JSON, gets the plain command) | `hoist --json apply --yes` with the same `--area` flags (same fallback); hoist human steps become keel's human step |
 | 6 | `token` | `gh api repos/R/environments/ENV/secrets/NAME` succeeds | with `--token-stdin`: read stdin, `gh secret set NAME --env ENV --repo R` (value on stdin). Without: human gate with the PAT link (§7) |
 | 7 | `agent-env` | `keel.toml` `[confirmed] agent_env = true` | write `.keel/cloud-setup.sh` (§8); human gate: attach it, then `keel up --confirm agent-env` |
-| 8 | `doctor` | `bosun doctor --remote` (`--all` tried first, §10) has no `missing` item (any missing item is a failed step, never a push or PR); a PR from the work branch exists. Offline doctor (exit 5, `data.offline`) is a human step: `export GH_TOKEN=$(gh auth token)`, then `keel up` | commit keel's own files only (`keel.toml`, `.gitignore`, `Cargo.lock`; nothing keel-owned changed means no commit), `git push -u origin <branch>` (never force), `gh pr create` |
-| 9 | `merge` | the PR is merged (`gh pr view --json state,headRefOid`) | none: human gate "approve head SHA `<sha>` and merge PR #N" |
+| 8 | `deploy` | no `[deploy.fly]`: done. Else `scripts/fly-setup.sh` exists (no: failed, "add the `fly` piece"); `fly auth whoami --json` exits 0 (no: human "Log in to Fly.io"); `fly status --app APP --json`, `fly certs show HOST --app APP --json` exit 0; `gh api repos/R/environments/production/secrets/FLY_API_TOKEN` succeeds | `scripts/fly-setup.sh --app APP --region R --host H` (app, volume, secrets, IPs, certificate), then the same call plus `--set-gh-secret production` (the script pipes the deploy token into `gh secret set`; keel never sees it). Never `--deploy`: the first merge deploys. Both calls get an empty stdin (the script takes secrets as `KEY=VALUE` lines there; keel has none). Script exit 2 (old script) is a human step: upgrade the hull fly piece; exit 3 (missing tool or auth) is the human step "Log in to Fly.io and install flyctl/gh"; exit 4 (a fly/gh step failed) is failed |
+| 9 | `dns` | no `[deploy.fly]`: done. `dns = "none"` (or no token, to print the records): `fly ips list --app APP --json` gives the `v4`/`v6` addresses (the A target is a dedicated `v4` when present, else the `shared_v4`, Fly's default); records `A HOST v4`, `AAAA HOST v6`. `dns = "none"`: always done, never failed; the detail lists the records to add by hand, or, when the IPs cannot be read (no app yet, no v4), says to run `fly ips list --app APP` and add A/AAAA for HOST. `dns = "cloudflare"` without `CLOUDFLARE_API_TOKEN` (presence only): human "Set CLOUDFLARE_API_TOKEN or add these DNS records" (command mentions `keel up --confirm dns`; `[confirmed] dns = "HOST"` equal to the current host makes the step done, checked first). With it (no `fly ips` call; the token needs Zone Read + DNS Write): `hoist.toml` has `[cloudflare.dns]` and `hoist --json check --area cloudflare` is read for items of kind `dns_record`: exit 0 or 1 is done only when at least one `dns_record` item exists and every one has `action` "ok" (`action` is create|update|ok|drift|pending|unknown; any other value, or no `dns_record` item at all, is drift); exit 2 (check or apply) is never done: `human_steps[0]` ({id,title,url}) becomes the human step (id `dns`, command `keel up`, whatever hoist's step id) | append `[cloudflare.dns]` (`zone` = `[deploy.fly] zone`, default the last two labels of HOST; `host`; `targets = "fly"`; `fly_app = "APP"`; `proxied = false`; `no_mail = true` when `[deploy.fly] no_mail = true`) to `hoist.toml` when absent; `hoist --json apply --yes --area cloudflare --secrets-to fly:APP` (the sink is always passed: the area also mints the R2 key when `[cloudflare.r2]` exists, and minting without a sink exits 3). keel never passes `--prune`: a `dns_record` still in drift after apply (a stray A/AAAA record) is a human step "Remove the old A/AAAA records for HOST in Cloudflare, or rerun with `hoist apply --prune`". A hoist that rejects `--area` is a human step: `npm install -g @keelstackhq/hoist@latest` |
+| 10 | `backup` | no `[backup]`: done. `s3`: done with a warning (not automated: create the bucket and set the secrets on the fly app by hand). `[confirmed] backup = "APP"` equal to the current app (`keel up --confirm backup`, for a bucket made by hand): done. `r2`: needs `CLOUDFLARE_API_TOKEN` (else human, command mentions `keel up --confirm backup`); an account id: env `CLOUDFLARE_ACCOUNT_ID` (hoist reads it itself), else `[backup] account_id`, else `[cloudflare] account_id` already in `hoist.toml` (else human "Set [backup] account_id (Cloudflare account id) in keel.toml", command `keel up`); `hoist.toml` has `[cloudflare.r2]`; `hoist --json check --area cloudflare` read as for dns, for items of kind `r2_bucket`, `r2_lifecycle`, `r2_token`; exit 2 is `human_steps[0]` as human step id `backup` | when env `CLOUDFLARE_ACCOUNT_ID` is unset and `[backup] account_id` is set, ensure top-level `[cloudflare] account_id = "ID"` in `hoist.toml` (no `[cloudflare]` header: append the table; header without the key: insert the line right after the header; key present: leave it; text edits only; every value keel writes into `hoist.toml` is a TOML string made by the `toml` crate, never spliced in by hand; `account_id` is not a key of `[cloudflare.r2]`); append `[cloudflare.r2]` (`bucket = "<lowercased APP>-backup"`, `retention_days = N`); `hoist --json apply --yes --area cloudflare --secrets-to fly:APP` (exit 3 is a failed step; exit 1 with `human_steps[0]` in the JSON, as when key delivery failed and the revoke failed too (`cloudflare:revoke`), is that human step instead of a failure). hoist mints the key (fixed scope) and delivers `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_ENDPOINT` to the fly app; keel does no name mapping and the key never passes through keel. hull's service will read those names |
+| 11 | `doctor` | `bosun doctor --remote` (`--all` tried first, §10; `data.tools` entries with `ok: false` are summarised as a missing item) has no `missing` item (any missing item is a failed step, never a push or PR); a PR from the work branch exists. Offline doctor (exit 5, `data.offline`) is a human step: `export GH_TOKEN=$(gh auth token)`, then `keel up` | commit keel's own files only (`keel.toml`, `hoist.toml`, `.gitignore`, `Cargo.lock`; nothing keel-owned changed means no commit); `hoist.toml` goes in only when it is untracked, or when `git diff --unified=0 HEAD -- hoist.toml` removes no line and adds only blank lines and lines keel's section generators write for the current manifest (else it stays out and the detail says so), `git push -u origin <branch>` (never force), `bosun --json pr --single --ready` (exit 2, an old bosun: `gh pr create`) |
+| 12 | `merge` | the PR is merged (`gh pr view --json state,headRefOid`) | none: human gate "approve head SHA `<sha>` and merge PR #N" |
+| 13 | `verify` | no `[deploy.fly]`: done. After the merge: the `deploy.yml` run of the merged commit is `completed`: keel reads the merge commit (`gh pr view WORKBRANCH --repo R --json mergeCommit`, `mergeCommit.oid`; unreadable is failed), lists `gh run list --repo R --workflow deploy.yml --branch B --limit 20 --json status,conclusion,url,headSha` and takes the run whose `headSha` equals it (runs of other commits are ignored), polled every `KEEL_POLL_SECS` up to `--wait`; a conclusion other than `success` is failed (with the run URL); no run of that commit yet (after `--wait`) is a human step "wait for the first deploy". Then `curl -fsS -o /dev/null -w %{http_code} --max-time 10 https://HOST/healthz` gives 200 (polled the same way; else failed). Then `scripts/smoke.sh` with `SMOKE_URL=https://HOST` (the base URL; `SMOKE_TIMEOUT_SECS` is left at the script default, 60) when it exists (`keel plan` never runs it: `smoke` is `not-run`). The outcome is the report's `verify` key | none: read-only |
 
 ### 5.1 Branch
 
@@ -229,11 +259,22 @@ rust template gets `--data no_placeholder=true` (skips `crates/common`). Answere
   and relies on `splice new` rejecting a bad name. Validation starts working with a splice that
   has `pieces`.
 
-Pending upstream:
+Answered (hull `fly` piece, relayed): `scripts/fly-setup.sh --app A --region R --host H [--dry-run]
+[--deploy] [--set-gh-secret ENV]`, secrets on stdin as `KEY=VALUE`; exit 0 ok, 2 usage, 3 missing tool
+or auth, 4 a fly/gh step failed. `scripts/smoke.sh` reads `SMOKE_URL` and `SMOKE_TIMEOUT_SECS`
+(default 60). The deploy workflow is `.github/workflows/deploy.yml` and uses `FLY_API_TOKEN` in the
+`production` environment.
 
-- bosun 0.21.0 `init --branch B` exits 3 when `B` already exists, and keel has created the work
-  branch by then. The upstream bosun change makes init reuse the current branch. keel keeps
-  `--branch <work branch>` and maps that exit 3 to a human step: "bosun <version> cannot init on
+Answered (upstream bosun, flags assumed until relayed; each argv is built in one adapter fn in
+`src/tools/bosun.rs`):
+
+- `bosun init --branch B` reuses the current branch (`data.branch_reused`), reports `data.owner`,
+  `data.pr` (null with `--no-pr`) and `data.labels_todo` (labels it could not create; keel creates
+  exactly those). `doctor --remote --all` adds `data.tools` (`[{name, version, ok}]`).
+  `plan import --fix` reports `data.prereqs_fixed`; `plan import` with no FILE reads `plans/*.md`.
+  `bosun pr --single --ready` opens the PR (`data.pr`). An old bosun (exit 2) falls back as above.
+- For a bosun without branch reuse, keel keeps `--branch <work branch>` and maps the exit 3
+  (branch exists) to a human step: "bosun <version> cannot init on
   an existing branch; upgrade bosun to a release where init reuses the current branch", command
   `npm install -g @keelstackhq/bosun@latest`. keel's pin moves once that release exists.
 
@@ -241,3 +282,16 @@ Still assumed, behind adapters:
 
 1. `splice pieces --json` shape (splice#54, not merged yet): `{ok, command:"pieces", changes, messages, pieces:[{id, description, base, multiple, default_name, requires, vars}], template}`; exit 0 ok, 2 bad source or usage, 3 template/env error. keel tells an old splice (exit 2 without a `pieces` object) from a bad source (exit 2 with one)
    (not available at pin 0.6.0, see above).
+
+Answered (hoist, relayed; each argv is built in one adapter fn in `src/tools/hoist.rs`): hoist has no
+`--only`/`--skip`. `--area <github|cloudflare|npm|crates|release>` (repeatable) is on `plan`,
+`check`, `apply` and `import`; there are no sub-areas, so `--area cloudflare` covers pages, workers,
+the deploy token, dns and r2. `[cloudflare.dns]`: `zone`, `host`, `targets = ["ip", ...] | "fly"`,
+`fly_app` (only with "fly"), `proxied = false` (true exits 3), `no_mail = true` adds SPF and DMARC.
+`[cloudflare.r2]`: `bucket`, `retention_days`, optional `prefix`; unknown keys exit 3. The account id is top-level `[cloudflare] account_id = "ID"`, or env `CLOUDFLARE_ACCOUNT_ID`, which hoist reads itself. The secret sink
+is an apply flag (`--secrets-to fly:APP`); minting an r2 key without it exits 3. JSON items (area
+`cloudflare`): `dns_record` key `<name> <TYPE> <content>`, `r2_bucket` and `r2_lifecycle` key
+`<bucket>`, `r2_token` key `hoist:<owner>/<repo>:r2:<bucket>`; human step ids `dns:<name> <TYPE>`
+(check and apply exit 2) and `dns-cname:<host>`. Each item has `action` in
+create|update|ok|drift|pending|unknown; only "ok" is done (no per-item `ok`, no "noop"). Exit 2
+(check or apply) means `human_steps[]` are pending, never done; keel surfaces `human_steps[0]`.

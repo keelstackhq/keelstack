@@ -21,6 +21,21 @@ fn pin(cx: &Ctx) -> String {
     cx.pins.tool("bosun").map(|p| p.version).unwrap_or_default()
 }
 
+/// What `plan import` reads: the manifest `plan` file, else bosun's default (`plans/*.md`, when
+/// any exist). `None`: no plan to import.
+fn plan_target(cx: &Ctx) -> Option<Option<String>> {
+    if let Some(p) = &cx.manifest.plan {
+        return Some(Some(p.clone()));
+    }
+    let any = std::fs::read_dir(cx.dir.join("plans"))
+        .map(|d| {
+            d.flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "md"))
+        })
+        .unwrap_or(false);
+    any.then_some(None)
+}
+
 impl Step for Governance {
     fn id(&self) -> &'static str {
         "governance"
@@ -30,27 +45,30 @@ impl Step for Governance {
         if !cx.dir.join(".bosun/version").is_file() {
             return Ok(Check::Todo("bosun init".into()));
         }
-        let Some(plan) = cx.manifest.plan.clone() else {
+        let Some(target) = plan_target(cx) else {
             return Ok(Check::Done("bosun initialised (.bosun/version)".into()));
         };
-        if !cx.dir.join(&plan).is_file() {
+        if let Some(plan) = target.as_ref().filter(|p| !cx.dir.join(p).is_file()) {
             return Ok(Check::Failed(format!(
                 "plan file {plan} not found; fix `plan` in keel.toml or add the file"
             )));
         }
-        let c = bosun::plan_import_cmd(&cx.dir, &plan, true);
-        Ok(match bosun::run(cx.runner, &c, &pin(cx)) {
-            Res::Ok(data) => {
-                let n = bosun::would_create(&data);
-                if n == 0 {
-                    Check::Done(format!("bosun initialised, plan {plan} imported"))
-                } else {
-                    Check::Todo(format!("bosun plan import {plan} ({n} to create)"))
+        let plan = target.unwrap_or_else(|| "plans/*.md".into());
+        let file = cx.manifest.plan.as_deref();
+        Ok(
+            match bosun::plan_import(cx.runner, &cx.dir, file, false, true, &pin(cx)) {
+                Res::Ok(data) => {
+                    let n = bosun::would_create(&data);
+                    if n == 0 {
+                        Check::Done(format!("bosun initialised, plan {plan} imported"))
+                    } else {
+                        Check::Todo(format!("bosun plan import {plan} ({n} to create)"))
+                    }
                 }
-            }
-            Res::Human { title, command } => human(title, command),
-            Res::Failed(e) => Check::Failed(e),
-        })
+                Res::Human { title, command } => human(title, command),
+                Res::Failed(e) => Check::Failed(e),
+            },
+        )
     }
 
     fn apply(&self, cx: &mut Ctx) -> Result<Check, KeelError> {
@@ -66,6 +84,7 @@ impl Step for Governance {
             Ok(b) => b,
             Err(e) => return Ok(Check::Failed(e)),
         };
+        let mut notes: Vec<String> = Vec::new();
         if !cx.dir.join(".bosun/version").is_file() {
             let Some(owner) = gh::login(r) else {
                 return Ok(Check::Failed(
@@ -77,26 +96,36 @@ impl Step for Governance {
             let c = bosun::init_cmd(&cx.dir, &owner, &branch, rust);
             match bosun::run(r, &c, &bosun_pin) {
                 Res::Ok(data) => {
-                    // Prefer the labels bosun reports; create the fallback ones it did not.
+                    // Create exactly the labels bosun could not (`labels_todo`), else the fallback.
                     for name in bosun::missing_labels(&data) {
-                        if let Err(e) = gh::label_create(r, &repo, name) {
+                        if let Err(e) = gh::label_create(r, &repo, &name) {
                             return Ok(Check::Failed(e));
                         }
+                    }
+                    notes.extend(bosun::init_notes(&data));
+                }
+                Res::Human { title, command } => return Ok(human(title, command)),
+                Res::Failed(e) => return Ok(Check::Failed(e)),
+            }
+        }
+        if let Some(file) = plan_target(cx) {
+            match bosun::plan_import(r, &cx.dir, file.as_deref(), true, false, &bosun_pin) {
+                Res::Ok(data) => {
+                    let n = bosun::prereqs_fixed(&data);
+                    if n > 0 {
+                        notes.push(format!("{n} plan prerequisite(s) fixed"));
                     }
                 }
                 Res::Human { title, command } => return Ok(human(title, command)),
                 Res::Failed(e) => return Ok(Check::Failed(e)),
             }
         }
-        if let Some(plan) = cx.manifest.plan.clone() {
-            let c = bosun::plan_import_cmd(&cx.dir, &plan, false);
-            match bosun::run(r, &c, &bosun_pin) {
-                Res::Ok(_) => {}
-                Res::Human { title, command } => return Ok(human(title, command)),
-                Res::Failed(e) => return Ok(Check::Failed(e)),
+        Ok(match self.check(cx)? {
+            Check::Done(d) if !notes.is_empty() => {
+                Check::Done(format!("{d} ({})", notes.join(", ")))
             }
-        }
-        self.check(cx)
+            c => c,
+        })
     }
 }
 
@@ -200,7 +229,59 @@ mod tests {
         assert!(!lines(&r).iter().any(|l| l.contains("plan import")));
         let r = fake();
         let _ = apply(&r, d.path(), "rust", Some("docs/plan.md"));
-        assert!(lines(&r).contains(&"bosun --json plan import docs/plan.md".into()));
+        assert!(lines(&r).contains(&"bosun --json plan import docs/plan.md --fix".into()));
+    }
+
+    #[test]
+    fn plans_dir_is_imported_with_bosuns_default_and_fix() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("plans")).unwrap();
+        std::fs::write(d.path().join("plans/a.md"), "# a").unwrap();
+        std::fs::create_dir(d.path().join(".bosun")).unwrap();
+        std::fs::write(d.path().join(".bosun/version"), "0.21.0").unwrap();
+        let r = fake().on(
+            &["bosun", "--json", "plan", "import"],
+            Out::ok(r#"{"ok":true,"data":{"epics":[],"tasks":[],"prereqs_fixed":2}}"#),
+        );
+        let Check::Done(m) = apply(&r, d.path(), "rust", None) else {
+            panic!()
+        };
+        assert!(lines(&r).contains(&"bosun --json plan import --fix".into()));
+        assert!(m.contains("2 plan prerequisite(s) fixed"), "{m}");
+        // The dry-run check uses the default too.
+        let r = fake();
+        let mut cx = ctx(
+            &r,
+            d.path().into(),
+            manifest("rust"),
+            PINS,
+            Opts::default(),
+            &no_sleep,
+            &no_stdin,
+        );
+        assert!(matches!(Governance.check(&mut cx).unwrap(), Check::Done(_)));
+        assert!(lines(&r).contains(&"bosun --json plan import --dry-run".into()));
+    }
+
+    #[test]
+    fn labels_todo_creates_exactly_those_and_notes_reuse() {
+        let d = tempfile::tempdir().unwrap();
+        let r = fake().on(
+            &["bosun", "--json", "init"],
+            Out::ok(
+                r#"{"ok":true,"data":{"branch_reused":true,"owner":"octo","pr":null,"labels_todo":["bosun:halt"]}}"#,
+            ),
+        );
+        let _ = apply(&r, d.path(), "rust", None);
+        let l = lines(&r);
+        let made: Vec<_> = l
+            .iter()
+            .filter(|x| x.starts_with("gh label create"))
+            .collect();
+        assert_eq!(
+            made,
+            ["gh label create bosun:halt --repo owner/name --force"]
+        );
     }
 
     #[test]

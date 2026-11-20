@@ -7,6 +7,10 @@ their tool adapters) and the npm launcher with five platform packages (0.1.0). S
 `docs/superpowers/specs/2026-11-20-keel-design.md`. Plan: `docs/superpowers/plans/2026-11-20-keel-m1.md`.
 Nothing is released or published yet.
 
+Deploy, DNS, backup and verify (`[deploy.fly]`, `[backup]`; steps deploy, dns, backup, verify) and
+issue #2 land on `claude/keel-deploy-backup-dns`. The fly-setup.sh, hoist `--area`/`--secrets-to` flags (relayed) and
+bosun `pr --single` flags are assumed behind adapters until upstream relays the exact ones.
+
 ## Blocked
 
 Human-only items, with the exact action:

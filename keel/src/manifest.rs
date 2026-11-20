@@ -31,11 +31,104 @@ impl Default for Token {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Dns {
+    Cloudflare,
+    #[default]
+    None,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fly {
+    pub app: String,
+    pub region: String,
+    /// Public hostname, no scheme.
+    pub host: String,
+    #[serde(default)]
+    pub dns: Dns,
+    /// The Cloudflare zone of `host`: `host` itself or a suffix of it at a label boundary.
+    /// Default: the last two labels of `host`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    /// The host sends no mail: hoist adds SPF and DMARC records for it (`no_mail = true`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_mail: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Deploy {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fly: Option<Fly>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    R2,
+    S3,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Backup {
+    pub provider: Provider,
+    #[serde(default = "default_retention")]
+    pub retention_days: u32,
+    /// The Cloudflare account id for the R2 bucket; default: env `CLOUDFLARE_ACCOUNT_ID`
+    /// (not a secret).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub account_id: Option<String>,
+}
+
+impl Backup {
+    /// The R2 bucket name for the fly app: `<lowercased app>-backup`.
+    pub fn bucket(app: &str) -> String {
+        format!("{}-backup", app.to_lowercase())
+    }
+}
+
+fn default_retention() -> u32 {
+    30
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Confirmed {
     #[serde(default)]
     pub agent_env: bool,
+    /// The host whose DNS records were added by hand (`--confirm dns`). Counts only while it
+    /// equals `[deploy.fly] host`. An old `dns = true` reads as unset.
+    #[serde(
+        default,
+        deserialize_with = "confirmed_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub dns: Option<String>,
+    /// The fly app whose backup bucket was created by hand (`--confirm backup`). Counts only
+    /// while it equals `[deploy.fly] app`. An old `backup = true` reads as unset.
+    #[serde(
+        default,
+        deserialize_with = "confirmed_value",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub backup: Option<String>,
+}
+
+/// A string is the confirmed value; a boolean (the old format) is void.
+fn confirmed_value<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<String>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum V {
+        Str(String),
+        Bool(#[allow(dead_code)] bool),
+    }
+    Ok(match V::deserialize(d)? {
+        V::Str(s) => Some(s),
+        V::Bool(_) => None,
+    })
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -57,6 +150,10 @@ pub struct Manifest {
     pub token: Token,
     #[serde(default)]
     pub confirmed: Confirmed,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deploy: Option<Deploy>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backup: Option<Backup>,
 }
 
 fn manifest_err(message: impl Into<String>) -> KeelError {
@@ -80,7 +177,74 @@ impl Manifest {
     }
 
     pub fn parse(text: &str) -> Result<Manifest, KeelError> {
-        toml::from_str(text).map_err(|e| manifest_err(e.message().trim().to_string()))
+        let m: Manifest =
+            toml::from_str(text).map_err(|e| manifest_err(e.message().trim().to_string()))?;
+        m.validate()?;
+        Ok(m)
+    }
+
+    fn validate(&self) -> Result<(), KeelError> {
+        if let Some(f) = self.fly() {
+            for (key, v) in [("app", &f.app), ("region", &f.region), ("host", &f.host)] {
+                if v.trim().is_empty() {
+                    return Err(manifest_err(format!(
+                        "[deploy.fly] `{key}` must not be empty"
+                    )));
+                }
+            }
+            dns_name("host", &f.host)?;
+            if !valid_app(&f.app) {
+                return Err(manifest_err(format!(
+                    "[deploy.fly] `app` {:?} must be 1-63 characters of lowercase a-z, 0-9 and `-`",
+                    f.app
+                )));
+            }
+            if let Some(z) = &f.zone {
+                dns_name("zone", z)?;
+            }
+            if let Some(z) = &f.zone
+                && !(f.host == *z || f.host.ends_with(&format!(".{z}")))
+            {
+                return Err(manifest_err(format!(
+                    "[deploy.fly] `zone` {z:?} must be `host` {:?} or a parent domain of it, e.g. example.co.uk for app.example.co.uk",
+                    f.host
+                )));
+            }
+        }
+        if let Some(b) = &self.backup {
+            if self.fly().is_none() {
+                return Err(manifest_err(
+                    "[backup] needs [deploy.fly] (the backup secrets go to the fly app): add a [deploy.fly] table or remove [backup]",
+                ));
+            }
+            if b.retention_days < 1 {
+                return Err(manifest_err("[backup] `retention_days` must be at least 1"));
+            }
+            if let Some(id) = &b.account_id
+                && !valid_account_id(id)
+            {
+                return Err(manifest_err(
+                    "[backup] `account_id` must be the 32-character lowercase hex Cloudflare account id",
+                ));
+            }
+            let bucket = Backup::bucket(&self.fly().expect("checked above").app);
+            if b.provider == Provider::R2
+                && !((3..=63).contains(&bucket.len())
+                    && bucket
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-'))
+            {
+                return Err(manifest_err(format!(
+                    "[deploy.fly] `app` gives the R2 bucket name {bucket:?}; a bucket name is 3-63 characters of a-z, 0-9 and `-`: rename the app or use provider = \"s3\""
+                )));
+            }
+        }
+        Ok(())
+    }
+
+    /// The `[deploy.fly]` table, if any.
+    pub fn fly(&self) -> Option<&Fly> {
+        self.deploy.as_ref().and_then(|d| d.fly.as_ref())
     }
 
     pub fn exists(dir: &Path) -> bool {
@@ -153,15 +317,70 @@ impl Manifest {
                     changed |= !self.confirmed.agent_env;
                     self.confirmed.agent_env = true;
                 }
+                "dns" => {
+                    let Some(f) = self.fly() else {
+                        return Err(needs_table("dns", "[deploy.fly]"));
+                    };
+                    let host = f.host.clone();
+                    changed |= self.confirmed.dns.as_deref() != Some(&host);
+                    self.confirmed.dns = Some(host);
+                }
+                "backup" => {
+                    if self.backup.is_none() {
+                        return Err(needs_table("backup", "[backup]"));
+                    }
+                    let app = self.fly().map(|f| f.app.clone());
+                    let Some(app) = app else {
+                        return Err(needs_table("backup", "[deploy.fly]"));
+                    };
+                    changed |= self.confirmed.backup.as_deref() != Some(&app);
+                    self.confirmed.backup = Some(app);
+                }
                 other => {
                     return Err(KeelError::Usage(format!(
-                        "--confirm {other}: unknown step; the only step that takes it is `agent-env`"
+                        "--confirm {other}: unknown step; the steps that take it are `agent-env`, `dns` and `backup`"
                     )));
                 }
             }
         }
         Ok(changed)
     }
+}
+
+/// A fly app name: `^[a-z0-9-]+$`, at most 63 characters.
+pub fn valid_app(s: &str) -> bool {
+    (1..=63).contains(&s.len())
+        && s.bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+}
+
+/// A Cloudflare account id: `^[0-9a-f]{32}$`.
+pub fn valid_account_id(s: &str) -> bool {
+    s.len() == 32 && s.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// A DNS name for the manifest key `key`: lowercase labels of a-z, 0-9 and `-` (1-63 characters,
+/// not starting or ending with `-`) separated by single dots, at least two labels, at most 253
+/// characters in all.
+fn dns_name(key: &str, v: &str) -> Result<(), KeelError> {
+    let label_ok = |l: &str| {
+        (1..=63).contains(&l.len())
+            && !l.starts_with('-')
+            && !l.ends_with('-')
+            && l.bytes()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    };
+    if v.len() <= 253 && v.split('.').count() >= 2 && v.split('.').all(label_ok) {
+        return Ok(());
+    }
+    let hint = if v.bytes().any(|c| c.is_ascii_uppercase()) {
+        " (use lowercase)"
+    } else {
+        ""
+    };
+    Err(manifest_err(format!(
+        "[deploy.fly] `{key}` {v:?} is not a DNS name: expected lowercase labels of a-z, 0-9 and `-` separated by dots, at least two, e.g. app.example.com (no scheme, path, port, `@`, `?` or `#`){hint}"
+    )))
 }
 
 /// `OWNER/NAME`: `^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$` and no `..`.
@@ -182,6 +401,12 @@ pub fn validate_repo(repo: &str) -> Result<(), KeelError> {
             "--repo {repo:?}: expected OWNER/NAME (letters, digits, `-`; the name may also have `.` and `_`), e.g. keelstackhq/my-app"
         )))
     }
+}
+
+fn needs_table(step: &str, table: &str) -> KeelError {
+    KeelError::Usage(format!(
+        "--confirm {step} needs {table} in {FILE}: it records the host or app it was done for"
+    ))
 }
 
 fn conflict(key: &str, have: &str, flag: &str) -> KeelError {
@@ -241,6 +466,135 @@ mod tests {
         assert!(e.to_string().contains("reop"), "{e}");
         let e = Manifest::parse("[token]\nsecrt = \"x\"\n").unwrap_err();
         assert!(e.to_string().contains("secrt"), "{e}");
+    }
+
+    const FLY: &str = "[deploy.fly]\napp = \"a\"\nregion = \"fra\"\nhost = \"app.example.com\"\n";
+
+    #[test]
+    fn deploy_and_backup_tables_parse_with_defaults_and_round_trip() {
+        let m = Manifest::parse(&format!("{FLY}[backup]\nprovider = \"r2\"\n")).unwrap();
+        let f = m.fly().unwrap();
+        assert_eq!((f.app.as_str(), f.dns), ("a", Dns::None));
+        let b = m.backup.as_ref().unwrap();
+        assert_eq!((b.provider, b.retention_days), (Provider::R2, 30));
+        assert_eq!((f.no_mail, b.account_id.as_deref()), (false, None));
+        let m2 = Manifest::parse(&format!(
+            "{FLY}no_mail = true\n[backup]\nprovider = \"r2\"\naccount_id = \"0123456789abcdef0123456789abcdef\"\n"
+        ))
+        .unwrap();
+        assert!(m2.fly().unwrap().no_mail);
+        assert_eq!(
+            m2.backup.unwrap().account_id.as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+        let dir = tempfile::tempdir().unwrap();
+        m.write(dir.path()).unwrap();
+        assert_eq!(Manifest::load(dir.path()).unwrap(), m);
+        assert!(Manifest::parse("").unwrap().fly().is_none());
+    }
+
+    #[test]
+    fn deploy_and_backup_errors_name_the_key() {
+        for (text, want) in [
+            (format!("{FLY}dns = \"route53\"\n"), "route53"),
+            (format!("{FLY}bogus = \"x\"\n"), "bogus"),
+            (format!("{FLY}zone = \"x.com\"\n"), "zone"),
+            (format!("{FLY}zone = \"ample.com\"\n"), "zone"),
+            (format!("{FLY}[backup]\nprovider = \"gcs\"\n"), "gcs"),
+            (
+                format!("{FLY}[backup]\nprovider = \"r2\"\nretention = 3\n"),
+                "retention",
+            ),
+            (
+                format!("{FLY}[backup]\nprovider = \"r2\"\nretention_days = 0\n"),
+                "retention_days",
+            ),
+            ("[backup]\nprovider = \"r2\"\n".to_string(), "[deploy.fly]"),
+            (
+                format!(
+                    "{}[backup]\nprovider = \"r2\"\n",
+                    FLY.replace("\"a\"", "\"my_app\"")
+                ),
+                "deploy.fly",
+            ),
+            (format!("{FLY}no_mails = true\n"), "no_mails"),
+            (
+                format!("{FLY}[backup]\nprovider = \"r2\"\naccount_ids = \"x\"\n"),
+                "account_ids",
+            ),
+            (
+                "[deploy.fly]\napp = \"a\"\nregion = \"fra\"\n".to_string(),
+                "host",
+            ),
+            (FLY.replace("app.example.com", "https://x.io"), "host"),
+        ] {
+            let e = Manifest::parse(&text).unwrap_err();
+            assert!(matches!(e, KeelError::Manifest { .. }), "{text}");
+            assert_eq!(e.exit_code(), 3);
+            assert!(e.to_string().contains(want), "{text}: {e}");
+        }
+    }
+
+    #[test]
+    fn host_zone_app_and_account_id_are_validated_shapes() {
+        let bad_names = [
+            "app.example.com@evil.io",
+            "app.example.com?x=1",
+            "app.example.com#x",
+            "app.example.com:443",
+            "app.example.com/x",
+            "app. example.com",
+            "App.example.com",
+            "app..example.com",
+            "-app.example.com",
+            "app-.example.com",
+            "app.example.com.",
+            "localhost",
+        ];
+        for h in bad_names {
+            let e = Manifest::parse(&FLY.replace("app.example.com", h)).unwrap_err();
+            assert_eq!(e.exit_code(), 3, "{h}");
+            assert!(e.to_string().contains("host"), "{h}: {e}");
+        }
+        assert!(Manifest::parse(&FLY.replace("app.example.com", "a\\\"b.example.com")).is_err());
+        let long = format!("{}.com", "a".repeat(64));
+        assert!(Manifest::parse(&FLY.replace("app.example.com", &long)).is_err());
+        let e = Manifest::parse(&FLY.replace("app.example.com", "App.example.com")).unwrap_err();
+        assert!(e.to_string().contains("lowercase"), "{e}");
+        for z in ["EXAMPLE.com", "example.com@x", "example com"] {
+            let e = Manifest::parse(&format!("{FLY}zone = {z:?}\n")).unwrap_err();
+            assert!(e.to_string().contains("zone"), "{z}: {e}");
+        }
+        for a in ["A", "a\"b", "a b", "a_b", "My-App"] {
+            let t = FLY.replace("app = \"a\"", &format!("app = {a:?}"));
+            let e = Manifest::parse(&t).unwrap_err();
+            assert!(e.to_string().contains("`app`"), "{a}: {e}");
+        }
+        assert!(
+            Manifest::parse(&FLY.replace("\"a\"", &format!("\"{}\"", "a".repeat(64)))).is_err()
+        );
+        for id in [
+            "abc",
+            "ABCDEF0123456789ABCDEF0123456789",
+            "\\\"x",
+            &"g".repeat(32),
+        ] {
+            let t = format!("{FLY}[backup]\nprovider = \"r2\"\naccount_id = {id:?}\n");
+            let e = Manifest::parse(&t).unwrap_err();
+            assert!(e.to_string().contains("account_id"), "{id}: {e}");
+        }
+        let id = "0123456789abcdef0123456789abcdef";
+        let t = format!("{FLY}[backup]\nprovider = \"r2\"\naccount_id = \"{id}\"\n");
+        assert!(Manifest::parse(&t).is_ok());
+    }
+
+    #[test]
+    fn zone_is_the_host_or_a_parent_domain_at_a_label_boundary() {
+        for ok in ["app.example.com", "example.com"] {
+            let m = Manifest::parse(&format!("{FLY}zone = \"{ok}\"\n")).unwrap();
+            assert_eq!(m.fly().unwrap().zone.as_deref(), Some(ok));
+        }
+        assert_eq!(Manifest::parse(FLY).unwrap().fly().unwrap().zone, None);
     }
 
     #[test]
@@ -305,6 +659,53 @@ mod tests {
             .unwrap()
         );
         assert!(m.confirmed.agent_env);
+        // dns and backup need the table they confirm.
+        for what in ["dns", "backup"] {
+            let e = m
+                .merge_flags(&UpArgs {
+                    confirm: vec![what.into()],
+                    ..args()
+                })
+                .unwrap_err();
+            assert!(
+                e.to_string().contains(&format!("--confirm {what} needs")),
+                "{what}: {e}"
+            );
+        }
+        let mut m = Manifest::parse(&format!("{FLY}[backup]\nprovider = \"r2\"\n")).unwrap();
+        assert!(
+            m.merge_flags(&UpArgs {
+                confirm: vec!["dns".into(), "backup".into()],
+                ..args()
+            })
+            .unwrap()
+        );
+        assert_eq!(m.confirmed.dns.as_deref(), Some("app.example.com"));
+        assert_eq!(m.confirmed.backup.as_deref(), Some("a"));
+        // Same again: nothing changes; the value round-trips as a string.
+        assert!(
+            !m.merge_flags(&UpArgs {
+                confirm: vec!["dns".into()],
+                ..args()
+            })
+            .unwrap()
+        );
+        let t = toml::to_string(&m).unwrap();
+        assert!(
+            t.contains("dns = \"app.example.com\"") && t.contains("backup = \"a\""),
+            "{t}"
+        );
+        assert_eq!(Manifest::parse(&t).unwrap(), m);
+        // A new host is a new confirmation.
+        m.deploy.as_mut().unwrap().fly.as_mut().unwrap().host = "b.example.com".into();
+        assert!(
+            m.merge_flags(&UpArgs {
+                confirm: vec!["dns".into()],
+                ..args()
+            })
+            .unwrap()
+        );
+        assert_eq!(m.confirmed.dns.as_deref(), Some("b.example.com"));
         assert!(
             m.merge_flags(&UpArgs {
                 confirm: vec!["merge".into()],
@@ -312,6 +713,14 @@ mod tests {
             })
             .is_err()
         );
+    }
+
+    #[test]
+    fn an_old_boolean_confirmation_is_void() {
+        let m =
+            Manifest::parse("[confirmed]\nagent_env = true\ndns = true\nbackup = false\n").unwrap();
+        assert!(m.confirmed.agent_env);
+        assert_eq!((m.confirmed.dns, m.confirmed.backup), (None, None));
     }
 
     #[test]
