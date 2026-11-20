@@ -248,12 +248,17 @@ function writeAnswers(root, answers) {
 /** The checklist for the hull version this repo was rendered from (main when unknown). */
 export function checklistUrl(root) {
   let ref = "main";
+  let old = false;
   try {
     const lock = readFileSync(join(root, ".splice/lock.toml"), "utf8");
     const v = /^\[template\][^[]*?^version\s*=\s*"([^"]+)"/ms.exec(lock);
     if (v) ref = `v${v[1]}`;
+    // Hull releases up to v0.21.0 live in the old repo (docs/ at its root); later ones in the monorepo.
+    old = /^source\s*=\s*"[^"]*keelstackhq\/hull(\.git)?(\/|"|\/\/)/m.test(lock);
   } catch {}
-  return `https://github.com/keelstackhq/keelstack/blob/${ref}/hull/docs/start-checklist.md`;
+  return old
+    ? `https://github.com/keelstackhq/hull/blob/${ref}/docs/start-checklist.md`
+    : `https://github.com/keelstackhq/keelstack/blob/${ref}/hull/docs/start-checklist.md`;
 }
 
 /** Environment names the workflows use, sorted. */

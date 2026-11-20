@@ -2,8 +2,11 @@ use super::{failure, json, not_found};
 use crate::exec::{Cmd, Runner};
 use std::path::Path;
 
-pub const RUST_SOURCE: &str = "gh:keelstackhq/keelstack//hull/template-rust";
-pub const TS_SOURCE: &str = "gh:keelstackhq/keelstack//hull/template";
+// The defaults stay on the old hull repo: pins.toml pins a hull tag that exists only there. They move
+// to the monorepo form (`gh:keelstackhq/keelstack//hull/template(-rust)`) when pins.toml pins a
+// monorepo hull release (> v0.21.0).
+pub const RUST_SOURCE: &str = "gh:keelstackhq/hull//template-rust";
+pub const TS_SOURCE: &str = "gh:keelstackhq/hull//template";
 
 /// `rust`/`ts` map to hull's templates; anything else is passed through as the source.
 pub fn source(template: &str) -> &str {
@@ -440,23 +443,17 @@ mod tests {
 
     #[test]
     fn hull_url_follows_the_source_form() {
+        assert_eq!(hull_url(RUST_SOURCE), "https://github.com/keelstackhq/hull");
         assert_eq!(
-            hull_url(RUST_SOURCE),
+            hull_url("gh:keelstackhq/keelstack//hull/template"),
             "https://github.com/keelstackhq/keelstack"
-        );
-        assert_eq!(
-            hull_url("gh:keelstackhq/hull//template"),
-            "https://github.com/keelstackhq/hull"
         );
     }
 
     #[test]
     fn sources() {
-        assert_eq!(
-            source("rust"),
-            "gh:keelstackhq/keelstack//hull/template-rust"
-        );
-        assert_eq!(source("ts"), "gh:keelstackhq/keelstack//hull/template");
+        assert_eq!(source("rust"), "gh:keelstackhq/hull//template-rust");
+        assert_eq!(source("ts"), "gh:keelstackhq/hull//template");
         assert_eq!(source("gh:x/y"), "gh:x/y");
     }
 }

@@ -9,6 +9,8 @@ import { setTimeout as delay } from "node:timers/promises";
 import * as tc from "@actions/tool-cache";
 import type { Target } from "./platform.js";
 
+// Downloads come from the action's repo at tag v<version>: use the action from a monorepo release
+// tag (> v0.21.0); older pins stay on the old repos.
 const DEFAULT_REPO = "keelstackhq/keelstack";
 // owner/repo; "." and ".." segments would change the URL path, so they are refused too.
 const REPO_RE = /^[\w.-]+\/[\w.-]+$/;

@@ -3,6 +3,8 @@
 # It installs the hoist release named by the version in this commit's Cargo.toml from its GitHub
 # Release asset, checked against the release's SHA256SUMS (and `sha256`, when you pin it). It
 # needs no npm, Node or Rust; Linux x64 and arm64 runners only.
+# The binary comes from this action's own repo at tag v<version>: use the action from a monorepo
+# release tag (> v0.21.0); older pins keep downloading from the old repos.
 name: hoist release
 description: Run hoist release detect, prepare or publish.
 inputs:

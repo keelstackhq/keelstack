@@ -317,7 +317,7 @@ mod tests {
                 .position(|x| x == s)
                 .unwrap_or_else(|| panic!("{s} in {l:?}"))
         };
-        let new = "splice --json --yes new gh:keelstackhq/keelstack//hull/template-rust . --ref v0.13.0 --force --piece rust-cli:my-cli --data no_placeholder=true";
+        let new = "splice --json --yes new gh:keelstackhq/hull//template-rust . --ref v0.13.0 --force --piece rust-cli:my-cli --data no_placeholder=true";
         let kc = "git commit -m keel: add keel.toml -- keel.toml";
         assert!(pos("git checkout -b keel/bootstrap") < pos("git add -- keel.toml"));
         assert!(pos("git add -- keel.toml") < pos(kc));
@@ -367,7 +367,7 @@ mod tests {
         let _ = apply(&r, d.path(), "ts");
         assert!(
             lines(&r).contains(
-                &"splice --json --yes new gh:keelstackhq/keelstack//hull/template . --ref v0.13.0 --force --piece rust-cli:my-cli"
+                &"splice --json --yes new gh:keelstackhq/hull//template . --ref v0.13.0 --force --piece rust-cli:my-cli"
                     .to_string()
             )
         );
@@ -503,14 +503,31 @@ mod tests {
 
     #[test]
     fn apply_verifies_the_alternate_hull_forms_too() {
-        let d = tempfile::tempdir().unwrap();
-        let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
-        let Check::Failed(m) = apply(&r, d.path(), "gh:keelstackhq/keelstack.git//hull/template")
-        else {
-            panic!()
-        };
-        assert!(m.contains("moved"), "{m}");
-        assert!(!lines(&r).iter().any(|l| l.contains(" new ")));
+        for (tpl, url) in [
+            (
+                "gh:keelstackhq/hull.git//template",
+                "https://github.com/keelstackhq/hull",
+            ),
+            (
+                "gh:keelstackhq/keelstack.git//hull/template",
+                "https://github.com/keelstackhq/keelstack",
+            ),
+        ] {
+            let d = tempfile::tempdir().unwrap();
+            let r = fake().on(&["git", "ls-remote"], Out::ok("bad\trefs/tags/v0.13.0\n"));
+            let Check::Failed(m) = apply(&r, d.path(), tpl) else {
+                panic!("{tpl}")
+            };
+            assert!(m.contains("moved"), "{tpl}: {m}");
+            assert!(
+                lines(&r)
+                    .iter()
+                    .any(|l| l.starts_with(&format!("git ls-remote {url} "))),
+                "{tpl}: {:?}",
+                lines(&r)
+            );
+            assert!(!lines(&r).iter().any(|l| l.contains(" new ")));
+        }
     }
 
     #[test]
@@ -747,7 +764,7 @@ mod tests {
         let p = |s: &str| l.iter().position(|x| x == s).unwrap();
         assert!(
             p(
-                "splice --json --yes new gh:keelstackhq/keelstack//hull/template-rust . --ref v0.13.0 --force --piece rust-cli:my-cli --data no_placeholder=true"
+                "splice --json --yes new gh:keelstackhq/hull//template-rust . --ref v0.13.0 --force --piece rust-cli:my-cli --data no_placeholder=true"
             ) < p("git add -- .splice/lock.toml src/main.rs .gitignore")
         );
     }
@@ -756,7 +773,7 @@ mod tests {
     fn full_source_of_the_rust_template_gets_the_rust_flags() {
         let d = tempfile::tempdir().unwrap();
         let r = fake();
-        let _ = apply(&r, d.path(), "gh:keelstackhq/keelstack//hull/template-rust");
+        let _ = apply(&r, d.path(), "gh:keelstackhq/hull//template-rust");
         assert!(
             lines(&r)
                 .iter()
