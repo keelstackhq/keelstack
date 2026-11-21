@@ -2,6 +2,7 @@
 
 mod config;
 mod file;
+pub mod plan;
 pub mod range;
 pub mod words;
 

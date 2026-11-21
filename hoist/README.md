@@ -42,7 +42,7 @@ hoist import [--write] [--area ...]  # hoist.toml overrides that match the live 
 hoist init [--sha SHA] [--force] [--dry-run]  # write release.yml (thin call of the release action) and, if the repo has no `ci-ok` job, ci.yml; never commits
 hoist changeset add my-crate:minor -m "what changed"  # write .changeset/<branch>.md (or --empty); no HTTP
 hoist changeset init          # write .changeset/config.json and README.md; no HTTP
-hoist release plan            # next versions from conventional commits, read-only (exit 0)
+hoist release plan            # next versions from .changeset/ (if config.json) or conventional commits, read-only (exit 0)
 hoist release prepare         # open/update the release PR on branch hoist/release, or close it
 hoist release publish [--assets DIR] [--dry-run]  # tags, GitHub Releases, npm, crates.io, deploys (CI only)
 hoist release bootstrap [--dry-run] [--yes]  # first publish + trusted publishers, locally with your logins
