@@ -298,6 +298,12 @@ importers:
         specifier: 'catalog:'
         version: 4.151.0(@types/node@26.6.5)
 
+  packages/deploy:
+    dependencies:
+      wrangler:
+        specifier: 'catalog:'
+        version: 4.151.0(@types/node@26.6.5)
+
   packages/docspack:
     devDependencies:
       '@keelstackhq/site':

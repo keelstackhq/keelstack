@@ -1,0 +1,9 @@
+{
+  "name": "@keelstackhq/deploy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Only wrangler, for deploy-site.yml: `pnpm deploy --prod` packs its locked closure into the hashed artifact.",
+  "dependencies": {
+    "wrangler": "catalog:"
+  }
+}
