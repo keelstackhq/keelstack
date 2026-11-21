@@ -1,0 +1,161 @@
+import { versions } from "./versions";
+import { expect, test } from "vite-plus/test";
+import * as content from "./content";
+import { org, tools } from "./tools";
+
+const { agentRows, current, footerLinks, hero, nav, sections, split, stats, terminal } = content;
+
+function strings(v: unknown): string[] {
+  if (typeof v === "string") return [v];
+  if (Array.isArray(v)) return v.flatMap(strings);
+  if (v && typeof v === "object") return Object.values(v).flatMap(strings);
+  return [];
+}
+
+test("section labels run 01..05 in order", () => {
+  const keys = ["split", "tools", "agents", "current", "start"] as const;
+  keys.forEach((k, i) => {
+    expect(sections[k].label).toMatch(new RegExp(`^0${i + 1} · `));
+  });
+});
+
+test("hero has three variants and seconds is active", () => {
+  expect(Object.keys(hero.variants)).toEqual(["seconds", "skip", "agent"]);
+  expect(hero.active).toBe("seconds");
+});
+
+test("terminal shows the default command, real create lines and file counts", () => {
+  expect(terminal.title).toContain(`splice ${versions.splice}`);
+  expect(terminal.title).not.toMatch(/preview/i);
+  // The command that was run to record the output below.
+  expect(terminal.command).toEqual([
+    `pnpm dlx @keelstackhq/splice@${versions.splice} new \\`,
+    `gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\`,
+    "--piece preact-app:web --piece hono-worker:api",
+  ]);
+  // Lines copied from `splice new` output (the run recorded in content.ts), in output order.
+  expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
+    "create  .github/workflows/ci.yml  owned",
+    "create  AGENTS.md  seed",
+    "create  CLAUDE.md  owned",
+    "create  apps/api/src/index.ts  seed",
+    "create  apps/web/src/app.tsx  seed",
+  ]);
+  expect(terminal.summary).toBe("# … 67 files: 41 owned, 8 shared, 18 seed; then pnpm install");
+});
+
+test("stats shapes", () => {
+  expect(stats).toHaveLength(4);
+  for (const s of stats) expect(s.value.startsWith("1 ")).toBe(true);
+});
+
+test("split has 12 chips", () => {
+  expect(split.handles).toHaveLength(12);
+});
+
+test("agent rows and current cards", () => {
+  expect(agentRows.map((r) => r.key)).toEqual([
+    "CLAUDE.md",
+    "ready",
+    "bosun",
+    "--json --yes",
+    "ci-ok",
+    "update bot",
+    "Manifest",
+  ]);
+  expect(current.map((c) => c.title)).toEqual(["Replaced", "3-way merged", "Stay yours"]);
+  expect(current.map((c) => !!c.accent)).toEqual([false, false, true]);
+});
+
+test("CLAUDE.md row: hull ships the subagents, no rigging step since hull v0.11.0", () => {
+  const row = agentRows.find((r) => r.key === "CLAUDE.md");
+  expect(row?.text).toContain("hull ships the subagents");
+  expect(row?.text).not.toContain("rigging");
+  expect(row?.text).not.toMatch(/Subagents, skills/);
+});
+
+test("links stay in the keelstackhq org or on the page", () => {
+  for (const l of [...footerLinks, ...nav]) {
+    expect(
+      l.href.startsWith("#") ||
+        l.href.startsWith("/") ||
+        l.href.startsWith("https://github.com/keelstackhq"),
+    ).toBe(true);
+  }
+  expect(footerLinks.map((l) => l.label)).toEqual([
+    "hull",
+    "splice",
+    "hoard",
+    "bosun",
+    "hoist",
+    "berth",
+    "decisions",
+    "Migrate to booster",
+  ]);
+  expect(footerLinks[6]?.href).toBe(`${org.url}/decisions`);
+});
+
+test("get started copy no longer says splice is unreleased", () => {
+  expect(sections.start.body).not.toMatch(/not released|dev renderer/);
+  expect(sections.start.body).toContain("pnpm install");
+});
+
+test("no old org names and no empty strings", () => {
+  const all = [...strings(content), ...strings(tools)];
+  const text = JSON.stringify(all);
+  expect(text).not.toMatch(/@keelstack\//);
+  expect(text).not.toMatch(/github\.com\/keelstack\//);
+  expect(text).not.toMatch(/gh:keelstack\//);
+  expect(all.every((s) => s.length > 0)).toBe(true);
+});
+
+test("get started links Start a project and the greenfield bosun page", () => {
+  expect(sections.start.links?.map((l) => l.href)).toEqual([
+    "/docs/start-project/",
+    "/docs/greenfield-bosun/",
+    "/docs/adopt/",
+    "/migrate/",
+  ]);
+});
+
+test("nav links the manifest before Docs", () => {
+  const labels = nav.map((l) => l.label);
+  expect(labels.indexOf("Manifest")).toBe(labels.indexOf("Docs") - 1);
+  expect(nav.find((l) => l.label === "Manifest")?.href).toBe("/docs/operating-model/");
+  expect(agentRows.find((r) => r.key === "Manifest")?.href).toBe("/docs/operating-model/");
+});
+
+test("start in 5 minutes: the nine human steps in order, and the agent contract", () => {
+  const { quickstart } = content;
+  expect(quickstart.steps).toHaveLength(9);
+  expect(quickstart.steps.map((s) => s.cmd ?? null)).toEqual([
+    "npm i -g @keelstackhq/bosun",
+    "export GITHUB_TOKEN=$(gh auth token)",
+    "bosun adopt --owner <you>",
+    "bosun keygen --enroll",
+    null,
+    null,
+    "bosun setup-snippet",
+    "bosun doctor",
+    null,
+  ]);
+  expect(quickstart.more.href).toBe("/docs/start/");
+  expect(quickstart.agents.fields).toEqual(["ok", "exit_code", "data", "error.fix", "next"]);
+  expect(quickstart.agents.exitCodes).toEqual([
+    [0, "ok"],
+    [1, "error"],
+    [2, "usage"],
+    [3, "conflict"],
+    [4, "halted"],
+    [5, "needs-human"],
+    [6, "limit"],
+  ]);
+});
+
+test("nav links the 5-minute start first", () => {
+  expect(nav[0]).toEqual({ label: "Start", href: "#quickstart" });
+});
+
+test("start in 5 minutes runs on released bosun: no unreleased note", () => {
+  expect("unreleased" in content.quickstart).toBe(false);
+});

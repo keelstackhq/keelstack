@@ -1,0 +1,62 @@
+import { readFileSync } from "node:fs";
+import { expect, test } from "vite-plus/test";
+import { org, tools } from "./tools";
+import { versions } from "./versions";
+
+test("lists all six tools, the original three first", () => {
+  expect(tools.map((t) => t.name)).toEqual(["hull", "splice", "hoard", "bosun", "hoist", "berth"]);
+});
+
+test("every tool links to its repo in the keelstackhq org (D-001)", () => {
+  for (const tool of tools) {
+    expect(tool.repo).toBe(`${org.url}/${tool.name}`);
+  }
+  expect(org.url).toBe("https://github.com/keelstackhq");
+});
+
+test("statuses and styles follow the design", () => {
+  expect(tools.map((t) => t.status)).toEqual([
+    versions.hull,
+    `v${versions.splice}`,
+    versions.hoard,
+    `v${versions.bosun}`,
+    `v${versions.hoist}`,
+    `v${versions.berth}`,
+  ]);
+  expect(tools.map((t) => t.statusStyle)).toEqual([
+    "filled",
+    "outline",
+    "dashed",
+    "outline",
+    "outline",
+    "outline",
+  ]);
+  expect(tools.map((t) => t.detailMono)).toEqual([false, true, true, true, true, true]);
+});
+
+test("hoard detail is the pinned Action from its README", () => {
+  expect(tools[2]?.detail).toBe(
+    "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
+  );
+});
+
+test("no copy uses the old keelstack org or npm scope", () => {
+  const text = JSON.stringify({ tools });
+  expect(text).not.toMatch(/@keelstack\//);
+  expect(text).not.toMatch(/github\.com\/keelstack\//);
+  expect(text).not.toMatch(/gh:keelstack\//);
+});
+
+test("docs index tools table Released column equals versions.ts", () => {
+  const page = readFileSync(new URL("../pages/docs/index.md", import.meta.url), "utf8");
+  const cell = (name: string): string => {
+    const row = page.split("\n").find((l) => l.startsWith(`| [${name}](`));
+    return (row?.split("|")[3] ?? "").trim();
+  };
+  expect(cell("hull")).toBe(versions.hull);
+  expect(cell("splice")).toBe(versions.splice);
+  expect(cell("bosun")).toBe(versions.bosun);
+  expect(cell("hoist")).toBe(versions.hoist);
+  expect(cell("hoard")).toBe(`${versions.hoard} (pin \`@v0\`)`);
+  expect(cell("berth")).toBe(versions.berth);
+});

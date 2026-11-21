@@ -1,0 +1,31 @@
+---
+import Agents from "../components/Agents.astro";
+import Footer from "../components/Footer.astro";
+import GetStarted from "../components/GetStarted.astro";
+import Hero from "../components/Hero.astro";
+import Nav from "../components/Nav.astro";
+import PickPath from "../components/PickPath.astro";
+import Quickstart from "../components/Quickstart.astro";
+import Split from "../components/Split.astro";
+import StatStrip from "../components/StatStrip.astro";
+import StaysCurrent from "../components/StaysCurrent.astro";
+import Tools from "../components/Tools.astro";
+import { hero } from "../data/content";
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="keelstack: seconds to a repo, then it's all your logic" description={hero.body}>
+  <Nav />
+  <main id="main">
+    <Hero />
+    <StatStrip />
+    <PickPath />
+    <Quickstart />
+    <Split />
+    <Tools />
+    <Agents />
+    <StaysCurrent />
+    <GetStarted />
+  </main>
+  <Footer />
+</Base>

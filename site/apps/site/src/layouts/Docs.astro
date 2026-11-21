@@ -1,0 +1,124 @@
+---
+import Nav from "../components/Nav.astro";
+import { docHref, docs, readyDocs, sourceUrl } from "../data/docs";
+import { org } from "../data/tools";
+import Base from "./Base.astro";
+import "../styles/docs.css";
+
+const path = Astro.url.pathname.replace(/\/+$/, "") + "/";
+const page = docs.find((d) => docHref(d.slug) === path);
+if (!page) throw new Error(`Docs layout: no entry in src/data/docs.ts for ${Astro.url.pathname}`);
+
+const ready = readyDocs();
+// Markdown pages pass their headings; the h2s make the "On this page" list.
+const { headings = [] } = Astro.props as { headings?: { depth: number; slug: string; text: string }[] };
+const onPage = headings.filter((h) => h.depth === 2);
+const showOnPage = onPage.length >= 3;
+// Wide tables scroll inside their own box; tabindex lets keyboard users scroll them.
+const body = (await Astro.slots.render("default")).replaceAll("<table>", '<table tabindex="0">');
+const i = ready.findIndex((d) => d.slug === page.slug);
+const prev = i > 0 ? ready[i - 1] : undefined;
+const next = i >= 0 ? ready[i + 1] : undefined;
+---
+
+<Base title={`${page.title} · keelstack docs`} description={page.summary}>
+  <Nav />
+  <div class:list={["docs", { "has-onpage": showOnPage }]}>
+    <details class="toc-mobile">
+      <summary>Docs pages</summary>
+      <ul>
+        {ready.map((d) => (
+          <li>
+            <a href={docHref(d.slug)} aria-current={d.slug === page.slug ? "page" : undefined}>{d.title}</a>
+          </li>
+        ))}
+      </ul>
+    </details>
+    <nav class="toc" aria-label="Docs">
+      <ul>
+        {ready.map((d) => (
+          <li>
+            <a href={docHref(d.slug)} aria-current={d.slug === page.slug ? "page" : undefined}>{d.title}</a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+    <main id="main" class="prose">
+      <h1>{page.title}</h1>
+      {showOnPage && (
+        <details class="onpage-mobile">
+          <summary>On this page</summary>
+          <ul>
+            {onPage.map((h) => (
+              <li><a href={`#${h.slug}`}>{h.text}</a></li>
+            ))}
+          </ul>
+        </details>
+      )}
+      <Fragment set:html={body} />
+      {page.sources.length > 0 && (
+        <section class="sources">
+          <h2>Sources</h2>
+          <ul>
+            {page.sources.map((s) => (
+              <li><a href={sourceUrl(s)}><code>{s}</code></a></li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <div class="pager">
+        {prev ? <a rel="prev" href={docHref(prev.slug)}>← {prev.title}</a> : <span></span>}
+        {next ? <a rel="next" href={docHref(next.slug)}>{next.title} →</a> : <span></span>}
+      </div>
+      <p class="docs-foot"><a href="/">keelstack</a> · <a href={org.url}>GitHub</a></p>
+    </main>
+    {showOnPage && (
+      <nav class="onpage" aria-label="On this page">
+        <p class="onpage-h">On this page</p>
+        <ul>
+          {onPage.map((h) => (
+            <li><a href={`#${h.slug}`}>{h.text}</a></li>
+          ))}
+        </ul>
+      </nav>
+    )}
+  </div>
+  {showOnPage && (
+    <script>
+      // Scroll-spy: mark the "On this page" link of the section being read.
+      import { pickCurrent } from "../lib/scroll-spy";
+      {
+        const links = [...document.querySelectorAll<HTMLAnchorElement>(".onpage a, .onpage-mobile a")];
+        const heads = [...new Set(links.map((a) => a.getAttribute("href")!.slice(1)))]
+          .map((id) => document.getElementById(id))
+          .filter((h): h is HTMLElement => h !== null);
+        let shown: string | null = null;
+        const spy = () => {
+          const i = pickCurrent(
+            heads.map((h) => h.getBoundingClientRect().top),
+            { offset: 120, viewport: innerHeight, scrollY, scrollHeight: document.documentElement.scrollHeight },
+          );
+          const cur = i < 0 ? "" : heads[i]!.id;
+          if (cur === shown) return;
+          shown = cur;
+          for (const a of links) {
+            if (a.getAttribute("href") === "#" + cur) a.setAttribute("aria-current", "location");
+            else a.removeAttribute("aria-current");
+          }
+        };
+        let queued = false;
+        const onScroll = () => {
+          if (queued) return;
+          queued = true;
+          requestAnimationFrame(() => {
+            queued = false;
+            spy();
+          });
+        };
+        spy();
+        addEventListener("scroll", onScroll, { passive: true });
+        addEventListener("resize", onScroll, { passive: true });
+      }
+    </script>
+  )}
+</Base>

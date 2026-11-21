@@ -1,0 +1,19 @@
+---
+import { verifiedLine } from "../data/versions";
+---
+
+<aside class="verified" aria-label="Verification">
+  <p>{verifiedLine()}</p>
+</aside>
+
+<style>
+  .verified p {
+    margin: 0;
+  }
+  .verified {
+    padding: 12px 24px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted);
+  }
+</style>
