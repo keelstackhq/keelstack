@@ -20,6 +20,7 @@ Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.
 
 - 2026-11-21 Changesets CS-1 (ported, opt-in): `src/changeset/` reads and writes `.changeset/<id>.md` and `config.json` (2.31.1 key set); library only, no CLI or release change yet.
 - 2026-11-21 Changesets CS-2 (ported, opt-in): `hoist changeset add|init` (ids from branch or words, names checked against the release model), `status` stub exit 3; CS-1 follow-ups (skip AGENTS/CLAUDE/GEMINI.md, tuple `changelog`). No HTTP, no release change.
+- 2026-11-21 Changesets CS-3a (ported, opt-in): the release model keeps every internal dependency edge with its kind (normal, build, dev, peer) and range; `src/changeset/range.rs` checks npm ranges and Cargo requirements (0.x caret rules) and rewrites them keeping the operator. `deps` is unchanged (release plan output the same).
 
 ## Blocked
 

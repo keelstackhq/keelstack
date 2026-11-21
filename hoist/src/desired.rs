@@ -479,6 +479,7 @@ fn desired_release(
                     source: format!("hoist.toml:registry.{section}.\"{name}\""),
                 },
                 deps: Vec::new(),
+                edges: Vec::new(),
                 publish: PublishCfg::default(),
                 launcher: None,
             },

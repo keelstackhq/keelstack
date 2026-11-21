@@ -2,6 +2,7 @@
 
 mod config;
 mod file;
+pub mod range;
 pub mod words;
 
 pub use config::{CsConfig, read_config};
