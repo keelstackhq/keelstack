@@ -4,7 +4,8 @@ name: deploy-site
 # page is generated at build time from the tool folders, the root Cargo.toml and hull's pieces, so
 # the site is rebuilt and deployed when:
 #   - a push to main touches site/ or a folder it depends on (folder `site` in .bosun/bosun.toml),
-#   - release.yml finishes (the tag now exists; this redeploys with the new released version),
+#   - release.yml finishes (the tag now exists; deploy-site-release.yml dispatches this workflow, so
+#     the new released version reaches the page),
 #   - someone runs it by hand on main.
 # Pull requests are checked and built by ci.yml (job ci-site), not here.
 #
@@ -19,7 +20,7 @@ name: deploy-site
 # deploys the new ones.
 #
 # Three jobs, so no secret meets installed code:
-#   decide  resolves the commit (this run's, or the release run's head_sha) and the release tag.
+#   decide  resolves the commit (this run's: main's head) and the release tag.
 #   build   checks out that commit, installs, runs `ci` (build, lint, tests) and uploads one
 #           archive (dist + wrangler, installed from the lockfile) with its sha256. No secrets, no
 #           environment.
@@ -44,10 +45,6 @@ on:
       - keel/**
       - Cargo.toml
       - .github/workflows/deploy-site.yml
-  workflow_run:
-    workflows: [release]
-    types: [completed]
-    branches: [main]
   workflow_dispatch:
 
 # ci-minutes: allow concurrency deploys queue in one group and never cancel one half-way
@@ -59,24 +56,17 @@ permissions:
   contents: read
 
 jobs:
-  # The commit to build and the latest release tag reachable from it (read-only API). A release run
-  # counts only when it is this repository's dispatched run (the one that publishes; a PR's `plan`
-  # run and a fork's run never count) and it succeeded.
+  # The commit to build (this run's: main's head) and the latest release tag reachable from it
+  # (read-only API). A manual run deploys only from main.
   decide:
-    if: >-
-      (github.event_name != 'workflow_run' ||
-      (github.event.workflow_run.conclusion == 'success' &&
-      github.event.workflow_run.event == 'workflow_dispatch' &&
-      github.event.workflow_run.head_repository.full_name == github.repository)) &&
-      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    if: github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       released: ${{ steps.release.outputs.released }}
     env:
-      # The release run's commit after a release, else this run's commit.
-      SITE_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || github.sha }}
+      SITE_SHA: ${{ github.sha }}
     steps:
       - name: Latest release tag reachable from the commit
         id: release
@@ -84,15 +74,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           [[ "$SITE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'$SITE_SHA' is not a commit sha"; exit 1; }
-          # A release run can finish after newer pushes were deployed: never roll the site back.
-          if [ "$GITHUB_EVENT_NAME" = workflow_run ]; then
-            head="$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)"
-            [[ "$head" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::main does not resolve to a commit"; exit 1; }
-            if [ "$head" != "$SITE_SHA" ] && [ "$(gh api "repos/$GITHUB_REPOSITORY/compare/$SITE_SHA...$head" --jq .status)" = ahead ]; then
-              echo "::notice::main moved past the release run's commit; building main's head $head"
-              SITE_SHA="$head"
-            fi
-          fi
           echo "sha=$SITE_SHA" >> "$GITHUB_OUTPUT"
           refs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref')"
           # Release tags only: vX.Y.Z, highest first (version order, not text order).
@@ -164,7 +145,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # main (push, a successful release run, a manual run on main): deploy the verified build.
+  # main (push, a manual run on main): deploy the verified build.
   deploy:
     needs: [decide, build]
     runs-on: ubuntu-latest

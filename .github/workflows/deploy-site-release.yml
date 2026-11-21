@@ -1,0 +1,42 @@
+name: deploy-site-release
+
+# Redeploys keelstack.dev when a release finishes (D-024), so the page picks up the new release
+# tag. It only dispatches deploy-site.yml on main; it checks out nothing, downloads nothing and
+# reads no secret. The deploy itself (build, artifact, secrets) stays in deploy-site.yml, which has
+# no workflow_run trigger: bosun forbids naming a workflow_run head or downloading an artifact in a
+# workflow that runs on workflow_run (bosun/tests/workflows.rs), and a dispatched run's github.sha
+# is main's head, which already contains the release's merge commit.
+#
+# Only this repository's dispatched release run counts, and only when it succeeded (a PR's `plan`
+# run and a fork's run never do).
+#
+# D-007: Linux only, no comment/label/edit triggers, job-level `if:`.
+on:
+  workflow_run:
+    workflows: [release]
+    types: [completed]
+    branches: [main]
+
+# ci-minutes: allow concurrency a dispatch is one API call; a later release run queues behind it
+concurrency:
+  group: deploy-site-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Run deploy-site on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run deploy-site.yml --repo "$GITHUB_REPOSITORY" --ref main

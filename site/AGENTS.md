@@ -27,7 +27,7 @@ pnpm --dir site --filter @keelstackhq/site dev
 
 `site` is a `[[folders]]` entry in `.bosun/bosun.toml` that depends on every tool folder, so any
 change in one runs `ci-site`. `.github/workflows/deploy-site.yml` deploys on pushes to main that
-touch `site/` or a dependency and after `release.yml`, so the site is always main's state. Version facts
+touch `site/` or a dependency and after `release.yml` (`deploy-site-release.yml` dispatches it), so the site is always main's state. Version facts
 (version, install commands, `@vX` sources) come from the latest `vX.Y.Z` tag reachable from the built
 commit, never from an untagged Cargo version: job `decide` resolves it, the build reads it as
 `RELEASED_VERSION` (`loadFacts(root, released)`; `""` = nothing released, so the legacy pins; unset =

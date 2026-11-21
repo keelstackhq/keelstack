@@ -27,8 +27,10 @@ always up to date, with no excuses.
 - `site` is a folder in `.bosun/bosun.toml` that `depends_on` every tool folder it reads, so a
   change to any of them runs `ci-site` (build, lint, tests, link check) and `ci-ok` waits for it.
 - The site is always current: `deploy-site.yml` deploys main's site on every push to main that
-  touches `site/` or a folder it depends on, and again when `release.yml` finishes (built at that
-  run's `head_sha`), from the environment `site` (main only). What the page says about releases
+  touches `site/` or a folder it depends on, and again when `release.yml` finishes
+  (`deploy-site-release.yml` dispatches it; bosun forbids naming a `workflow_run` head or downloading
+  an artifact in a workflow that runs on `workflow_run`), from the environment `site` (main only),
+  always building main's head. What the page says about releases
   never comes from an untagged Cargo version: the version, install commands and sources (`@vX`)
   come from the latest release tag `vX.Y.Z` reachable from the built commit, which job `decide`
   resolves and the build reads as `RELEASED_VERSION`. A version-bump push deploys the previous

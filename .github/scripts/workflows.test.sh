@@ -92,15 +92,24 @@ ds="$wf/deploy-site.yml"
 decide_job="$(job_text "$ds" decide)"
 build_job="$(job_text "$ds" build)"
 deploy="$(job_text "$ds" deploy)"
-decide_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$decide_job")"
+# deploy-site.yml has no workflow_run trigger (bosun forbids naming a workflow_run head or
+# downloading an artifact there); deploy-site-release.yml dispatches it after a release, for this
+# repository's dispatched, successful release runs only.
+! grep -q 'workflow_run' "$ds" || bad "deploy-site.yml: names workflow_run (bosun forbids head_sha and artifacts there)"
+grep -qF 'SITE_SHA: ${{ github.sha }}' <<<"$decide_job" || bad "deploy-site.yml: decide does not resolve github.sha"
+! grep -q 'default_branch' "$ds" || bad "deploy-site.yml: resolves main's moving head by branch name"
+dsr="$wf/deploy-site-release.yml"
+rel_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$(job_text "$dsr" dispatch)")"
 for want in "github.event.workflow_run.event == 'workflow_dispatch'" \
   "github.event.workflow_run.head_repository.full_name == github.repository" \
   "github.event.workflow_run.conclusion == 'success'"; do
-  grep -qF "$want" <<<"$decide_if" || bad "deploy-site.yml decide if: lacks $want"
+  grep -qF "$want" <<<"$rel_if" || bad "deploy-site-release.yml dispatch if: lacks $want"
 done
-# The commit built is main's: this run's, or the release run's head (not main's moving head).
-grep -qF 'github.event.workflow_run.head_sha' <<<"$decide_job" || bad "deploy-site.yml: decide does not resolve workflow_run.head_sha"
-! grep -q 'default_branch' "$ds" || bad "deploy-site.yml: still resolves main's moving head by branch name"
+grep -qF 'gh workflow run deploy-site.yml' "$dsr" || bad "deploy-site-release.yml: does not dispatch deploy-site.yml"
+! grep -v '^ *#' "$dsr" | grep -qE 'secrets\.|checkout|download|head_sha' || bad "deploy-site-release.yml: reads secrets, code, artifacts or a run head"
+grep -q '^# ci-minutes: allow concurrency [a-z]' "$dsr" || bad "deploy-site-release.yml: no ci-minutes allow comment with a reason"
+dd_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$decide_job")"
+grep -qF "github.ref == 'refs/heads/main'" <<<"$dd_if" || bad "deploy-site.yml: a manual run is not limited to main"
 grep -qF 'sha: ${{ steps.release.outputs.sha }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no sha output"
 grep -qF 'released: ${{ steps.release.outputs.released }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no released output"
 grep -qF 'ref: ${{ needs.decide.outputs.sha }}' <<<"$build_job" || bad "deploy-site.yml: build does not check out decide's sha"
@@ -118,7 +127,7 @@ grep -qF 'needs.build.outputs.digest' <<<"$deploy" || bad "deploy-site.yml: depl
 before_deploy="$(awk '/^      - name: Deploy to Cloudflare/ { exit } { print }' <<<"$deploy")"
 ! grep -qE 'secrets\.' <<<"$(grep -v 'name: Check secrets' <<<"$(awk '/^      - name: Check secrets/ { skip = 1; next } skip && /^      - / { skip = 0 } !skip' <<<"$before_deploy")")" ||
   bad "deploy-site.yml: a deploy step before 'Deploy to Cloudflare Pages' (other than Check secrets) sees secrets"
-unpinned="$(grep -E '^\s*-?\s*uses:' "$ds" | grep -vE '@[0-9a-f]{40}( |$)' || true)"
+unpinned="$(grep -hE '^\s*-?\s*uses:' "$ds" "$dsr" | grep -vE '@[0-9a-f]{40}( |$)' || true)"
 [ -z "$unpinned" ] || bad "deploy-site.yml: actions not pinned by SHA: $unpinned"
 
 rel_step="$(step_run "$ds" decide 'Latest release tag reachable from the commit')"
@@ -158,7 +167,6 @@ esac
 FAKEGH
 chmod +x "$tmp/ghbin/gh"
 SHA_OK=0123456789abcdef0123456789abcdef01234567
-SHA_NEW=89abcdef0123456789abcdef0123456789abcdef
 # release_case <name> <tag refs> <want: a version, "none" or "error"> [sha] [want sha]
 release_case() {
   local d="$tmp/rel-$1" out="$tmp/rel-$1.out" want="$3" sha="${4-$SHA_OK}" wantsha="${5-${4-$SHA_OK}}"
@@ -186,12 +194,6 @@ FAKE_UNREACHABLE="v0.23.0" release_case unreachable-skipped $'refs/tags/v0.22.0\
 FAKE_UNREACHABLE="v0.23.0" release_case all-unreachable "refs/tags/v0.23.0" none
 FAKE_GH_FAIL=1 release_case gh-fails "refs/tags/v0.22.0" error
 release_case bad-sha "" error notasha
-# A release run's head_sha: main's head when it did not move, else main's head when it is ahead
-# (never roll the site back); a main that is not ahead keeps head_sha.
-EVENT=workflow_run release_case run-same-head "refs/tags/v0.22.0" 0.22.0
-EVENT=workflow_run FAKE_MAIN="$SHA_NEW" release_case run-main-ahead "refs/tags/v0.22.0" 0.22.0 "$SHA_OK" "$SHA_NEW"
-EVENT=workflow_run FAKE_MAIN="$SHA_NEW" FAKE_MAIN_STATUS=diverged release_case run-main-not-ahead "refs/tags/v0.22.0" 0.22.0
-EVENT=push FAKE_MAIN="$SHA_NEW" release_case push-ignores-main "refs/tags/v0.22.0" 0.22.0
 [ "$fail" = 1 ] || ok "deploy-site: latest reachable release tag, main's sha, guards; build (no secrets) and deploy split"
 
 # --- 4. release.yml plan: the first parent's version --------------------------------------
