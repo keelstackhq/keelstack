@@ -45,7 +45,7 @@ creates the labels and the registry issue. It commits nothing; you commit and op
 ```bash
 bosun adopt --dry-run                          # see what would change; writes nothing
 bosun adopt --owner <your-github-login>        # stacks are detected; or --stack rust|ts-pnpm|other
-bosun adopt --owner <login> --policy autonomous   # also write [approvals] policy (section 9, item 4)
+bosun adopt --ci none --policy autonomous --owner <login>   # no CI, full autonomy (section 9, item 5)
 ```
 
 The JSON gives the exact commands in `data.commands`: `git switch bosun-setup 2>/dev/null || git switch -c bosun-setup`, a `git add`
@@ -275,7 +275,12 @@ Design: [spec.md](spec.md). Defaults: [defaults.md](defaults.md). Plans:
    Deployment branches → Selected branches, only the default branch (the real barrier: any other branch's copy of `signer.yml` could
    otherwise read the key). Verify there or with `gh api repos/<owner>/<repo>/environments/bosun-signer/deployment-branch-policies`;
    `bosun doctor --remote` checks it.
-5. **Permission checks (Claude Code behaviour, not bosun's).** Each cloud session asks for its
+5. **Fresh repo, no CI.** Paste `bosun setup-snippet` once, then
+   `bosun adopt --ci none --policy autonomous --owner <login>` (writes `[ci] provider = "none"` and
+   `[approvals] policy`), commit and merge the setup PR. With `none`, `bosun pr --ready` judges risk,
+   verdict and approval locally and the orchestrator merges with `bosun merge <pr>` (D-019); a moved
+   head is exit 3.
+6. **Permission checks (Claude Code behaviour, not bosun's).** Each cloud session asks for its
    own permissions. An orchestrator's go
    does not carry over to a child it spawns: a child that pushes or opens a PR can wait for your
    go in that child's own session. Open the child in the Claude app when it blocks.
