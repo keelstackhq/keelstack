@@ -286,9 +286,11 @@ fn effective_publish(raw: &Raw, configured: Option<PublishCfg>) -> PublishCfg {
         PkgKind::Npm => {
             cfg.npm.get_or_insert_with(NpmPublish::default);
         }
-        PkgKind::Crate => {
+        // `crates = false` (hoard ships binaries only) opts out of the default `crates = {}`.
+        PkgKind::Crate if !cfg.no_crates => {
             cfg.crates.get_or_insert(CratesPublish {});
         }
+        PkgKind::Crate => {}
     }
     if !raw.targets.is_empty() {
         let gr = cfg

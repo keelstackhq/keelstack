@@ -46,6 +46,152 @@ impl Step for Settings {
     }
 }
 
+/// `settings` for `template = "none"` (an existing repo): hoist over all its areas. With
+/// `CLOUDFLARE_API_TOKEN` set (presence only) no `--area`; without it, when `hoist explain` lists
+/// cloudflare items, every area but `cloudflare` plus the `cloudflare-token` checklist entry.
+/// Every hoist human step goes to the checklist, not only the first.
+pub struct SettingsAll;
+
+impl SettingsAll {
+    /// Run hoist, record its items and the pending human steps in `cx`; the decision is `Parsed`.
+    fn read(cx: &mut Ctx, apply: bool) -> Result<Result<hoist::Parsed, String>, KeelError> {
+        let t = cx.opts.tool_timeout();
+        let mut skipped: Vec<hoist::Item> = Vec::new();
+        if !cx.opts.cloudflare_token {
+            match hoist::explain_cloudflare(cx.runner, &cx.dir, t) {
+                Ok(i) => skipped = i,
+                Err(e) => return Ok(Err(e)),
+            }
+        }
+        let all = cx.opts.cloudflare_token || skipped.is_empty();
+        let p = match hoist::run_all(cx.runner, &cx.dir, apply, all, t) {
+            Ok(p) => p,
+            Err(e) => return Ok(Err(e)),
+        };
+        cx.items = p
+            .items
+            .iter()
+            .chain(skipped.iter())
+            .map(|i| crate::report::ReportItem {
+                step: "settings".into(),
+                area: i.area.clone(),
+                kind: i.kind.clone(),
+                key: i.key.clone(),
+                action: i.action.clone(),
+                reason: i.reason.clone(),
+            })
+            .collect();
+        cx.pending.clear();
+        if !skipped.is_empty() {
+            cx.pending.push(cloudflare_token_entry(&skipped));
+        }
+        // Only trust steps (hoist cannot read them back) are filtered by confirmations.
+        let confirmed = &cx.manifest.confirmed.steps;
+        cx.pending.extend(
+            p.humans
+                .iter()
+                .filter(|h| !(is_trust(&h.id) && confirmed.contains(&h.id)))
+                .cloned(),
+        );
+        Ok(Ok(p))
+    }
+
+    fn decide(cx: &Ctx, p: &hoist::Parsed) -> Check {
+        if let Some(first) = cx.pending.first()
+            && p.code != 1
+        {
+            return Check::Human(first.clone());
+        }
+        match p.code {
+            0 => Check::Done("hoist check: no drift".into()),
+            1 => {
+                let why = drift_reasons(p);
+                Check::Todo(if why.is_empty() {
+                    "hoist check reports drift".into()
+                } else {
+                    format!("hoist check reports drift: {why}")
+                })
+            }
+            _ if p.humans.is_empty() => Check::Failed(
+                "`hoist` exited 2 without a human step; run it by hand to see why".into(),
+            ),
+            _ => Check::Done("hoist: only confirmed human steps remain".into()),
+        }
+    }
+}
+
+fn is_trust(id: &str) -> bool {
+    id.starts_with("npm-trust:") || id.starts_with("crates-trust:")
+}
+
+/// "kind/key: reason" for the first few items that are not in sync.
+fn drift_reasons(p: &hoist::Parsed) -> String {
+    let lines: Vec<String> = p
+        .items
+        .iter()
+        .filter(|i| !matches!(i.action.as_str(), "ok" | "unknown"))
+        .take(3)
+        .map(|i| {
+            let k = if i.key.is_empty() {
+                i.kind.clone()
+            } else {
+                format!("{}/{}", i.kind, i.key)
+            };
+            format!("{k}: {}", i.reason)
+        })
+        .collect();
+    lines.join("; ")
+}
+
+/// The checklist entry for the cloudflare items hoist would handle with the token.
+fn cloudflare_token_entry(items: &[hoist::Item]) -> HumanStep {
+    let mut keys: Vec<&str> = Vec::new();
+    for i in items {
+        let k = if i.key.is_empty() { &i.kind } else { &i.key };
+        if !keys.contains(&k.as_str()) {
+            keys.push(k);
+        }
+    }
+    HumanStep {
+        id: "cloudflare-token".into(),
+        title: format!(
+            "Export CLOUDFLARE_API_TOKEN (Pages Write + Account API Tokens Write) and CLOUDFLARE_ACCOUNT_ID for the Cloudflare items: {}",
+            keys.join(", ")
+        ),
+        url: "https://dash.cloudflare.com/profile/api-tokens".into(),
+        command: "export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=... then keel up".into(),
+    }
+}
+
+impl Step for SettingsAll {
+    fn id(&self) -> &'static str {
+        "settings"
+    }
+
+    fn check(&self, cx: &mut Ctx) -> Result<Check, KeelError> {
+        Ok(match SettingsAll::read(cx, false)? {
+            Ok(p) => SettingsAll::decide(cx, &p),
+            Err(e) => Check::Failed(e),
+        })
+    }
+
+    fn apply(&self, cx: &mut Ctx) -> Result<Check, KeelError> {
+        match SettingsAll::read(cx, true)? {
+            Err(e) => Ok(Check::Failed(e)),
+            Ok(p) if p.code == 0 => self.check(cx),
+            Ok(p) if p.code == 2 => Ok(SettingsAll::decide(cx, &p)),
+            Ok(p) => {
+                let why = drift_reasons(&p);
+                Ok(Check::Failed(if why.is_empty() {
+                    "`hoist --json apply --yes` exited 1; run it by hand to see why".into()
+                } else {
+                    format!("`hoist --json apply --yes` exited 1: {why}")
+                }))
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::testutil::*;
@@ -161,5 +307,93 @@ mod tests {
         );
         assert_eq!(h.title, "Set SPLICE_BOT");
         assert_eq!(h.url, "https://github.com/o/r/settings/variables/actions");
+    }
+
+    fn none_ctx<'a>(r: &'a FakeRunner, token: bool, confirmed: &[&str]) -> crate::ctx::Ctx<'a> {
+        let mut m = manifest("none");
+        m.pieces.clear();
+        m.confirmed.steps = confirmed.iter().map(|s| s.to_string()).collect();
+        let mut cx = ctx(
+            r,
+            ".".into(),
+            m,
+            PINS,
+            Opts::default(),
+            &no_sleep,
+            &no_stdin,
+        );
+        cx.opts.cloudflare_token = token;
+        cx
+    }
+
+    const BODY: &str = r#"{"items":[{"area":"cloudflare","kind":"pages_project","key":"site-x","action":"create","reason":"r"},{"area":"github","kind":"secret","key":"K","action":"pending","reason":"r"}],"human_steps":[{"id":"secret:K","title":"Set K: `hoist secrets set K`","url":"u"},{"id":"npm-trust:p","title":"Trust p","url":"v"}]}"#;
+
+    #[test]
+    fn none_mode_collects_every_human_step_and_skips_cloudflare_without_a_token() {
+        let r = FakeRunner::new()
+            .on(&["hoist", "--json", "explain"], Out::ok(BODY))
+            .on(&["hoist", "--json", "check"], Out::with(2, BODY, ""));
+        let mut cx = none_ctx(&r, false, &["npm-trust:p"]);
+        let Check::Human(h) = SettingsAll.check(&mut cx).unwrap() else {
+            panic!()
+        };
+        assert_eq!(h.id, "cloudflare-token");
+        assert!(h.title.contains("site-x"), "{}", h.title);
+        let ids: Vec<&str> = cx.pending.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["cloudflare-token", "secret:K"]);
+        assert_eq!(cx.pending[1].command, "hoist secrets set K");
+        assert_eq!(cx.items.len(), 3);
+        assert_eq!(cx.items[0].step, "settings");
+        assert_eq!(
+            r.calls()[1].line(),
+            "hoist --json check --area github --area npm --area crates --area release"
+        );
+        // With the token: no --area, no explain call.
+        let r = FakeRunner::new().on(&["hoist", "--json", "check"], Out::with(2, BODY, ""));
+        let mut cx = none_ctx(&r, true, &[]);
+        SettingsAll.check(&mut cx).unwrap();
+        assert_eq!(r.calls().len(), 1);
+        assert_eq!(r.calls()[0].line(), "hoist --json check");
+        assert_eq!(cx.pending.len(), 2);
+    }
+
+    #[test]
+    fn confirmations_filter_only_trust_steps_and_never_keels_own_ids() {
+        let r = FakeRunner::new()
+            .on(&["hoist", "--json", "explain"], Out::ok(BODY))
+            .on(&["hoist", "--json", "check"], Out::with(2, BODY, ""));
+        let mut cx = none_ctx(&r, false, &["secret:K", "npm-trust:p", "cloudflare-token"]);
+        SettingsAll.check(&mut cx).unwrap();
+        let ids: Vec<&str> = cx.pending.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["cloudflare-token", "secret:K"]);
+    }
+
+    #[test]
+    fn apply_exit_1_lists_the_drift_reasons() {
+        let body = r#"{"items":[{"area":"github","kind":"ruleset","key":"main","action":"drift","reason":"bypass differs"},{"area":"github","kind":"x","key":"","action":"ok","reason":"fine"}],"human_steps":[]}"#;
+        let r = FakeRunner::new().on(&["hoist"], Out::with(1, body, ""));
+        let mut cx = none_ctx(&r, true, &[]);
+        let Check::Failed(m) = SettingsAll.apply(&mut cx).unwrap() else {
+            panic!()
+        };
+        assert!(m.contains("ruleset/main: bypass differs"), "{m}");
+        assert!(!m.contains("fine"), "{m}");
+    }
+
+    #[test]
+    fn none_mode_exit_codes() {
+        let run = |code: i32, body: &str, confirmed: &[&str]| {
+            let r = FakeRunner::new().on(&["hoist"], Out::with(code, body, ""));
+            let mut cx = none_ctx(&r, true, confirmed);
+            SettingsAll.check(&mut cx).unwrap()
+        };
+        let none = r#"{"items":[],"human_steps":[]}"#;
+        assert!(matches!(run(0, none, &[]), Check::Done(_)));
+        assert!(matches!(run(1, BODY, &[]), Check::Todo(_)));
+        assert!(matches!(run(0, BODY, &[]), Check::Human(_)));
+        assert!(matches!(run(2, none, &[]), Check::Failed(_)));
+        assert!(matches!(run(0, BODY, &["npm-trust:p"]), Check::Human(_)));
+        assert!(matches!(run(2, BODY, &["npm-trust:p"]), Check::Human(_)));
+        assert!(matches!(run(3, "", &[]), Check::Failed(_)));
     }
 }

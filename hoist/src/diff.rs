@@ -199,6 +199,93 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     }
 }
 
+/// The `hoist: tags` ruleset: release tags only the GitHub Actions app may create, move or
+/// delete. Other rulesets are never read into this item.
+fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
+    let Some(want) = &d.github.tag_ruleset else {
+        return;
+    };
+    let (name, source, refs) = (&want.name, &want.source, want.refs());
+    let in_sync = format!(
+        "tags {} may be created, moved and deleted only by github-actions",
+        quoted(&refs)
+    );
+    let rulesets = match l.rulesets.as_got() {
+        Ok(r) => r,
+        Err(why) if crate::github::plan_limited(why) => {
+            return cx.push(
+                "tag_ruleset",
+                name,
+                Action::Drift,
+                free_plan_tag_reason(&refs),
+                source,
+            );
+        }
+        Err(why) => return cx.unknown("tag_ruleset", name, why, source),
+    };
+    let Some(live) = rulesets.iter().find(|r| &r.name == name) else {
+        return cx.push(
+            "tag_ruleset",
+            name,
+            Action::Create,
+            format!("missing; would protect tags {}", quoted(&refs)),
+            source,
+        );
+    };
+    let mut problems = Vec::new();
+    if let Some(mode) = live.enforcement.as_deref().filter(|m| *m != "active") {
+        problems.push(format!("enforcement `{mode}`, want `active`"));
+    }
+    if live.target.as_deref().is_some_and(|t| t != "tag") {
+        problems.push("target is not tags".to_string());
+    }
+    let mut have = live.include.clone();
+    have.sort();
+    if have != refs {
+        problems.push(format!(
+            "tags: live {}, want {}",
+            quoted(&have),
+            quoted(&refs)
+        ));
+    }
+    if !live.exclude.is_empty() {
+        problems.push(format!("excludes {}", quoted(&live.exclude)));
+    }
+    if live.rule_types != ["creation", "deletion", "update"] {
+        problems.push(format!(
+            "rules: live {}, want `creation`, `deletion`, `update`",
+            quoted(&live.rule_types)
+        ));
+    }
+    let bypass = format!("Integration:{}:always", crate::desired::ACTIONS_APP_ID);
+    if live.bypass != [bypass.as_str()] {
+        problems.push(format!(
+            "bypass actors: live {}, want only the GitHub Actions app",
+            quoted(&live.bypass)
+        ));
+    }
+    if problems.is_empty() {
+        cx.push("tag_ruleset", name, Action::Ok, in_sync, source);
+    } else {
+        cx.push(
+            "tag_ruleset",
+            name,
+            Action::Update,
+            problems.join("; "),
+            source,
+        );
+    }
+}
+
+/// The tag ruleset item's reason when the GitHub plan refuses rulesets (Free, private repo).
+pub fn free_plan_tag_reason(refs: &[String]) -> String {
+    format!(
+        "NOT enforced: tags {}; GitHub Free: private repos get no rulesets; upgrade the plan \
+         (GitHub Pro for a personal repo, Team for an organization) or make the repo public",
+        quoted(refs)
+    )
+}
+
 fn wanted_checks(d: &Desired) -> Vec<String> {
     d.github
         .ruleset
@@ -670,6 +757,7 @@ pub fn diff_github(
     }
 
     ruleset(&mut cx, d, l);
+    tag_ruleset(&mut cx, d, l);
 
     let want = &g.actions_permissions;
     match l.actions_permissions.as_got() {
@@ -919,7 +1007,13 @@ pub fn diff_github(
                         "install the {slug} GitHub App on {}/{}",
                         d.repo.owner, d.repo.name
                     ),
-                    url: format!("https://github.com/apps/{slug}"),
+                    // An app named in hoist.toml has its own install page; Renovate's is its
+                    // public page.
+                    url: if app.source.starts_with("hoist.toml") {
+                        format!("https://github.com/apps/{slug}/installations/new")
+                    } else {
+                        format!("https://github.com/apps/{slug}")
+                    },
                     status: "pending".to_string(),
                 });
             }

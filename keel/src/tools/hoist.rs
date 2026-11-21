@@ -216,6 +216,134 @@ fn apply_res(c: &Cmd, o: &Out) -> Res {
     }
 }
 
+/// One hoist item (`items[]` of its JSON).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Item {
+    pub area: String,
+    pub kind: String,
+    pub key: String,
+    pub action: String,
+    pub reason: String,
+}
+
+/// What `hoist --json check|apply` said, for a setup of an existing repo: every item and every
+/// human step (id, title, url), not only the first.
+#[derive(Debug, Clone, Default)]
+pub struct Parsed {
+    pub code: i32,
+    pub items: Vec<Item>,
+    /// `human_steps[]` as keel steps; `command` is what the human runs.
+    pub humans: Vec<crate::report::HumanStep>,
+}
+
+/// Every `items[]` entry of a hoist JSON object.
+pub fn items_of(v: &Value) -> Vec<Item> {
+    let s = |i: &Value, k: &str| i[k].as_str().unwrap_or("").to_string();
+    v["items"].as_array().map_or_else(Vec::new, |a| {
+        a.iter()
+            .map(|i| Item {
+                area: s(i, "area"),
+                kind: s(i, "kind"),
+                key: s(i, "key"),
+                action: s(i, "action"),
+                reason: s(i, "reason"),
+            })
+            .collect()
+    })
+}
+
+/// The text of the first `` `...` `` span of `title` that starts with `prefix`.
+fn backticked<'a>(title: &'a str, prefixes: &[&str]) -> Option<&'a str> {
+    title
+        .split('`')
+        .skip(1)
+        .step_by(2)
+        .find(|s| prefixes.iter().any(|p| s.starts_with(p)))
+}
+
+/// What the human runs for hoist human step `h`: a `hoist ...` or `gh ...` command in its title
+/// (`hoist secrets set NAME` reads the value from env NAME or a hidden prompt: keel never
+/// handles values), the `gh variable set` text of its item, else `hoist secrets set NAME` /
+/// `hoist release bootstrap` by id, else "".
+fn human_command(v: &Value, h: &Value) -> String {
+    let title = h["title"].as_str().unwrap_or("");
+    let id = h["id"].as_str().unwrap_or("");
+    if let Some(c) = backticked(title, &["hoist ", "gh "]) {
+        return c.trim().to_string();
+    }
+    if let Some(c) = variable_command(v, h) {
+        return c;
+    }
+    if let Some(name) = id.strip_prefix("secret:") {
+        return format!("hoist secrets set {name}");
+    }
+    if id.starts_with("first-publish:") {
+        return "hoist release bootstrap".into();
+    }
+    String::new()
+}
+
+fn parse(o: &Out, v: &Value) -> Parsed {
+    let humans = v["human_steps"].as_array().map_or_else(Vec::new, |a| {
+        a.iter()
+            .filter_map(|h| {
+                Some(crate::report::HumanStep {
+                    id: h["id"].as_str()?.to_string(),
+                    title: h["title"].as_str()?.to_string(),
+                    url: h["url"].as_str().unwrap_or("").to_string(),
+                    command: human_command(v, h),
+                })
+            })
+            .collect()
+    });
+    Parsed {
+        code: o.code,
+        items: items_of(v),
+        humans,
+    }
+}
+
+/// `hoist --json check` (or `apply --yes`) for an existing repo: all areas when `all_areas`,
+/// else everything but `cloudflare`. Exit 0, 1 and 2 need hoist JSON; anything else is an `Err`.
+pub fn run_all(
+    r: &dyn Runner,
+    dir: &Path,
+    apply: bool,
+    all_areas: bool,
+    t: Duration,
+) -> Result<Parsed, String> {
+    let base: &[&str] = if apply {
+        &["--json", "apply", "--yes"]
+    } else {
+        &["--json", "check"]
+    };
+    let extra = if all_areas {
+        Vec::new()
+    } else {
+        area_args(&SETTINGS_AREAS)
+    };
+    let c = cmd(base, extra, dir, t);
+    let o = r.run(&c);
+    match o.code {
+        0..=2 => Ok(parse(&o, &envelope(&c, &o)?)),
+        _ => Err(failure(&c, &o)),
+    }
+}
+
+/// The items of `hoist --json explain` with area `cloudflare`.
+pub fn explain_cloudflare(r: &dyn Runner, dir: &Path, t: Duration) -> Result<Vec<Item>, String> {
+    let c = cmd(&["--json", "explain"], Vec::new(), dir, t);
+    let o = r.run(&c);
+    if o.code != 0 {
+        return Err(failure(&c, &o));
+    }
+    let v = envelope(&c, &o)?;
+    Ok(items_of(&v)
+        .into_iter()
+        .filter(|i| i.area == CLOUDFLARE)
+        .collect())
+}
+
 pub const FILE: &str = "hoist.toml";
 
 /// A TOML basic string for `s` (quoted and escaped). The one way keel writes a value into

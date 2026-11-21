@@ -1,17 +1,22 @@
 //! The desired GitHub and Cloudflare state, joined from config and repo inference (spec §4, §6).
 
+use crate::config::PublishCfg;
 use crate::config::{EnvCfg, Managed, SecretScope, load_root};
 use crate::error::HoistError;
-use crate::release::{Package, read_release_model};
+use crate::release::{Package, PkgKind, read_release_model};
 use crate::repo::Sourced;
 use crate::repo::git::{GithubRepo, read_repo};
-use crate::repo::targets::{Packages, TargetKind, read_targets};
+use crate::repo::targets::{Packages, Target, TargetKind, read_targets};
 use crate::repo::workflows::{JobEnv, Workflows, read_workflows};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub const RULESET_NAME: &str = "hoist: default branch";
+pub const TAG_RULESET_NAME: &str = "hoist: tags";
+/// The GitHub Actions app (github-actions[bot]): the only tag-ruleset bypass actor.
+pub const ACTIONS_APP_ID: u64 = 15368;
 const ACCOUNT_ENV: &str = "CLOUDFLARE_ACCOUNT_ID";
+const DEPLOY_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesiredSettings {
@@ -29,6 +34,30 @@ pub struct DesiredRuleset {
     pub merge_queue: Sourced<bool>,
 }
 
+/// `[github.tag_ruleset]`: the `hoist: tags` ruleset.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DesiredTagRuleset {
+    pub name: String,
+    /// Tag name patterns (`v*`).
+    pub patterns: Vec<String>,
+    /// `hoist.toml:github.tag_ruleset`
+    pub source: String,
+}
+
+impl DesiredTagRuleset {
+    /// `conditions.ref_name.include` of the ruleset, sorted.
+    pub fn refs(&self) -> Vec<String> {
+        let mut refs: Vec<String> = self
+            .patterns
+            .iter()
+            .map(|p| format!("refs/tags/{p}"))
+            .collect();
+        refs.sort();
+        refs.dedup();
+        refs
+    }
+}
+
 /// `[github.environments.<name>]` for one environment.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnvSettings {
@@ -43,6 +72,8 @@ pub struct EnvSettings {
 pub struct DesiredGithub {
     pub settings: DesiredSettings,
     pub ruleset: DesiredRuleset,
+    /// `[github.tag_ruleset]`; `None` leaves tags alone.
+    pub tag_ruleset: Option<DesiredTagRuleset>,
     pub actions_permissions: Sourced<String>,
     pub environments: Vec<Sourced<String>>,
     /// `environment:` expressions in workflows (`${{ … }}`): reported `unknown`, never created.
@@ -113,11 +144,37 @@ pub struct DesiredCloudflare {
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesiredRelease {
     pub environment: Sourced<String>,
-    /// `[release] reviewers`: logins that approve the environment (empty: the token's user).
-    pub reviewers: Vec<String>,
-    /// The first workflow job that declares `environment: <environment>`.
+    /// `[release] reviewers`: logins that approve the environment. `None`: the token's user;
+    /// `Some([])`: no required reviewer (D-022).
+    pub reviewers: Option<Vec<String>>,
+    /// `[release] workflow`: the workflow file that publishes, when named.
+    pub workflow_name: Option<String>,
+    /// The workflow job that declares `environment: <environment>`: in `workflow_name` when
+    /// named, else the first one found.
     pub workflow: Option<JobEnv>,
     pub packages: Vec<Package>,
+    /// `[registry.npm."<name>"]` and `[registry.crates."<name>"]`: packages published outside
+    /// the release model, each by its own workflow.
+    pub registry: Vec<RegistryPackage>,
+}
+
+/// A registry package published outside the release model (spec §5 `[registry]`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RegistryPackage {
+    /// Name, kind and `hoist.toml:registry.<kind>.<name>` as its version source.
+    pub pkg: Package,
+    /// The workflow file its trusted publisher names.
+    pub workflow: String,
+}
+
+impl DesiredRelease {
+    /// The workflow file trusted publishers name for model packages.
+    pub fn workflow_file(&self) -> &str {
+        self.workflow_name
+            .as_deref()
+            .or(self.workflow.as_ref().map(|w| w.file.as_str()))
+            .unwrap_or("release.yml")
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -180,8 +237,23 @@ fn environments(w: &Workflows, cfg: &BTreeMap<String, EnvCfg>) -> Vec<Sourced<St
 }
 
 /// The variables the workflows read, then the ones only `hoist.toml` lists.
-fn variables(w: &Workflows, cfg: &BTreeMap<String, String>) -> Vec<Sourced<String>> {
+/// A name in `[github] optional_variables` is listed too: a job `if:` reads it without `${{ }}`,
+/// which the scan does not see.
+fn variables(
+    w: &Workflows,
+    cfg: &BTreeMap<String, String>,
+    optional: &[String],
+) -> Vec<Sourced<String>> {
     let mut out = w.variables.clone();
+    for name in optional {
+        let upper = name.to_ascii_uppercase();
+        if !out.iter().any(|v| v.value == upper) {
+            out.push(Sourced {
+                value: upper,
+                source: "hoist.toml:github.optional_variables".to_string(),
+            });
+        }
+    }
     for name in cfg.keys() {
         let upper = name.to_ascii_uppercase();
         // A name a workflow reads keeps the workflow line as its source.
@@ -193,6 +265,80 @@ fn variables(w: &Workflows, cfg: &BTreeMap<String, String>) -> Vec<Sourced<Strin
         }
     }
     out
+}
+
+/// The apps that must be installed: Renovate when `renovate.json` exists, then `[github] apps`.
+fn apps(renovate: bool, configured: &[String]) -> Vec<Sourced<String>> {
+    let mut out = Vec::new();
+    if renovate {
+        out.push(Sourced {
+            value: "renovate".to_string(),
+            source: "renovate.json:1".to_string(),
+        });
+    }
+    for slug in configured {
+        if !out.iter().any(|a| &a.value == slug) {
+            out.push(Sourced {
+                value: slug.clone(),
+                source: "hoist.toml:github.apps".to_string(),
+            });
+        }
+    }
+    out
+}
+
+/// `[deploy] environment` of a Cloudflare target under `secret_scope = "environment"`: the
+/// secrets hoist writes for the deploy (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) belong
+/// to that environment, even when no workflow job reads them yet; the jobs that do read them
+/// add theirs.
+fn deploy_environments(
+    g: &mut DesiredGithub,
+    root: &Path,
+    targets: &[Target],
+) -> Result<(), HoistError> {
+    for t in targets {
+        let Some(env) = t.config.deploy.as_ref().and_then(|d| d.environment.clone()) else {
+            continue;
+        };
+        let rel = rel_dir(root, &t.dir, &t.name);
+        if !g.env_scope {
+            return Err(HoistError::Config {
+                file: format!("{rel}/hoist.toml"),
+                message: "`deploy.environment` needs `[github] secret_scope = \"environment\"` in \
+                          the root hoist.toml; set it, or remove `deploy.environment`"
+                    .to_string(),
+            });
+        }
+        let source = format!("{rel}/hoist.toml:deploy.environment");
+        if !g.environments.iter().any(|e| e.value == env) {
+            g.environments.push(Sourced {
+                value: env.clone(),
+                source: source.clone(),
+            });
+        }
+        for name in [DEPLOY_TOKEN, ACCOUNT_ENV] {
+            if !g.secrets.iter().any(|s| s.value == name) {
+                g.secrets.push(Sourced {
+                    value: name.to_string(),
+                    source: source.clone(),
+                });
+            }
+            let i = match g.secret_homes.iter().position(|h| h.name == name) {
+                Some(i) => i,
+                None => {
+                    g.secret_homes.push(SecretHomes {
+                        name: name.to_string(),
+                        ..SecretHomes::default()
+                    });
+                    g.secret_homes.len() - 1
+                }
+            };
+            if !g.secret_homes[i].envs.contains(&env) {
+                g.secret_homes[i].envs.push(env.clone());
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Each referenced variable's job environments and environment-less jobs.
@@ -274,10 +420,15 @@ fn desired_release(
         return Ok(None);
     }
     let environment = pick(raw, "release", "environment", model.environment);
+    let root = load_root(dir)?;
+    let workflow_name = root.release.workflow.clone();
     let workflow = workflows
         .job_environments
         .iter()
-        .find(|j| j.environment == environment.value)
+        .find(|j| {
+            j.environment == environment.value
+                && workflow_name.as_ref().is_none_or(|n| &j.file == n)
+        })
         .cloned();
     let reviewers = raw
         .get("release")
@@ -287,13 +438,37 @@ fn desired_release(
             a.iter()
                 .filter_map(|v| v.as_str().map(str::to_string))
                 .collect()
+        });
+    let registry = [
+        (PkgKind::Npm, "npm", &root.registry.npm),
+        (PkgKind::Crate, "crates", &root.registry.crates),
+    ]
+    .into_iter()
+    .flat_map(|(kind, section, map)| {
+        map.iter().map(move |(name, cfg)| RegistryPackage {
+            pkg: Package {
+                name: name.clone(),
+                kind,
+                dir: PathBuf::new(),
+                version: Sourced {
+                    value: String::new(),
+                    source: format!("hoist.toml:registry.{section}.\"{name}\""),
+                },
+                deps: Vec::new(),
+                publish: PublishCfg::default(),
+                launcher: None,
+            },
+            workflow: cfg.workflow.clone(),
         })
-        .unwrap_or_default();
+    })
+    .collect();
     Ok(Some(DesiredRelease {
         environment,
         reviewers,
+        workflow_name,
         workflow,
         packages: model.packages.into_iter().filter(publishes).collect(),
+        registry,
     }))
 }
 
@@ -420,7 +595,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             .collect(),
     };
 
-    let github = DesiredGithub {
+    let mut github = DesiredGithub {
         settings: DesiredSettings {
             visibility: root.github.visibility.clone().map(|value| Sourced {
                 value,
@@ -449,6 +624,11 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             required_checks,
             merge_queue: merge_queue(&raw, root.github.merge_queue, &workflows),
         },
+        tag_ruleset: root.github.tag_ruleset.as_ref().map(|t| DesiredTagRuleset {
+            name: TAG_RULESET_NAME.to_string(),
+            patterns: t.patterns.clone(),
+            source: "hoist.toml:github.tag_ruleset".to_string(),
+        }),
         actions_permissions: pick(
             &raw,
             "github",
@@ -464,7 +644,11 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             .collect(),
         unresolved_environments: workflows.unresolved_environments.clone(),
         secrets: workflows.secrets.clone(),
-        variables: variables(&workflows, &root.github.variables),
+        variables: variables(
+            &workflows,
+            &root.github.variables,
+            &root.github.optional_variables,
+        ),
         variable_homes: variable_homes(&workflows),
         variable_values: root
             .github
@@ -493,14 +677,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             .map(|s| s.to_ascii_uppercase())
             .collect(),
         statuses: root.github.statuses.clone(),
-        apps: if renovate {
-            vec![Sourced {
-                value: "renovate".to_string(),
-                source: "renovate.json:1".to_string(),
-            }]
-        } else {
-            Vec::new()
-        },
+        apps: apps(renovate, &root.github.apps),
         managed: root.github.managed,
         env_scope: root.github.secret_scope == SecretScope::Environment,
         secret_homes: secret_homes(&workflows),
@@ -542,6 +719,8 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             }),
         }
     }
+
+    deploy_environments(&mut github, dir, &targets)?;
 
     let account_id = match &root.cloudflare.account_id {
         Some(value) => Some(Sourced {

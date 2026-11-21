@@ -43,7 +43,9 @@ pub(super) fn write_all(
     for (index, change) in changes.iter().enumerate() {
         match execute(gh, cf, d, change, groups, r2) {
             // Not a stop: the other writes still apply, and the report names the gap.
-            Err(HoistError::PlanLimited(_)) if matches!(change, Change::Ruleset { .. }) => {
+            Err(HoistError::PlanLimited(_))
+                if matches!(change, Change::Ruleset { .. } | Change::TagRuleset { .. }) =>
+            {
                 plan_limited = true;
             }
             Err(HoistError::PlanLimited(_)) if matches!(change, Change::Environment { .. }) => {
@@ -94,6 +96,13 @@ pub(super) fn mark_plan_limited(report: &mut Report, d: &Desired) {
         item.action = Action::Drift;
         item.reason = crate::diff::free_plan_reason(d);
         item.verify = None;
+    }
+    if let Some(t) = &d.github.tag_ruleset {
+        for item in report.items.iter_mut().filter(|i| i.kind == "tag_ruleset") {
+            item.action = Action::Drift;
+            item.reason = crate::diff::free_plan_tag_reason(&t.refs());
+            item.verify = None;
+        }
     }
     // Drift exits 1, before a pending human step (2).
     report.exit_code = 1;

@@ -27,8 +27,6 @@ const MIN_NPM: Version = Version {
     minor: 15,
     patch: 0,
 };
-/// The workflow file when no job uses the release environment yet (as `plan` reports it).
-const DEFAULT_WORKFLOW: &str = "release.yml";
 const NO_TAG: &str = "run the release first; bootstrap publishes the tagged version";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -527,11 +525,7 @@ pub fn release_bootstrap_with(
     };
     let t = Trust {
         repo,
-        workflow: release
-            .workflow
-            .as_ref()
-            .map_or(DEFAULT_WORKFLOW, |w| w.file.as_str())
-            .to_string(),
+        workflow: release.workflow_file().to_string(),
         env: release.environment.value.clone(),
     };
     let regs = registries(verbose);

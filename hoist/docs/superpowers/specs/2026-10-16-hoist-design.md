@@ -180,6 +180,12 @@ delete_branch_on_merge = true
 managed = "hoist"                 # hoist | external (verify only)
 secret_scope = "repo"             # repo | environment: where hoist keeps its secrets (§8.6)
 
+# apps = ["my-app"]               # GitHub Apps that must be installed on the repo (§6)
+
+[github.tag_ruleset]              # optional: the `hoist: tags` ruleset (§6)
+# patterns = ["v*"]               # tag name patterns (required, non-empty)
+bypass = ["github-actions"]     # required, exactly this (the GitHub Actions app); empty or missing = exit 3 naming the key
+
 [github.variables]                # repository variables hoist sets (§6); names are upper-cased
 # API_URL = "https://api.example.com"   # names: [A-Za-z_][A-Za-z0-9_]*, no GITHUB_ prefix, no case-only duplicates (else exit 3)
 
@@ -195,8 +201,23 @@ managed = "hoist"
 versioning = "per-package"        # per-package | fixed
 tag_format = "{name}@{version}"   # single-package repos default to "v{version}"
 environment = "release"
-# reviewers = ["alice", "bob"]    # GitHub logins that approve the release environment; default: the token's user
+# reviewers = ["alice", "bob"]    # GitHub logins that approve the release environment; default: the token's user; [] = none
+# workflow = "release.yml"        # the workflow file trusted publishers name and `release/workflow` checks
+
+# Root only: workspace members beside pnpm-workspace.yaml (a Cargo-only monorepo has none).
+# [workspace]
+# members = ["tools/npm/tool", "site", "libs/*"]   # dirs or a trailing `/*`, read like pnpm packages
+
+# Root only: registry packages published outside the release model (their own workflow).
+# [registry.npm."@scope/other"]
+# workflow = "other-npm.yml"
+# [registry.crates."other-crate"]
+# workflow = "other-crates.yml"
 ```
+
+`[workspace] members` (root `hoist.toml` only; in a target file it is an unknown key, exit 3) lists extra directories, literal or with a trailing `/*`, that hoist reads like `pnpm-workspace.yaml` packages: as Pages/Workers targets (§4) and as npm packages (§9). They come after the pnpm ones, deduped. A launcher's platform packages are found next to its directory as always (§9.3).
+
+`[github] apps` adds GitHub App slugs to the desired apps (source `hoist.toml:github.apps`), checked like Renovate's (§6). `[release] reviewers = []`, written explicitly, means the release environment has no required reviewer (D-022): no `release-reviewer` step, an existing release environment without a reviewer rule is `ok`, one that still has a required reviewer is `update` (the reason names the live reviewers to drop; `apply` PUTs it with `reviewers: []` and the live wait timer, self-review rule and branch policy kept), `apply` creates it with no reviewers (and never calls `GET /user`). `[github] optional_variables` names are always listed as `optional_variable` items, even when no workflow reads them. `[release] workflow` names the workflow file used in the npm and crates trust commands and checked by `release/workflow` (that file must have a job with `environment: <env>`), instead of the first job found. `[registry.npm."<name>"]` and `[registry.crates."<name>"]` (root only, `workflow` required) name packages published outside the release model; each gets the `trusted_publisher` and `first_publish` items and steps of §6, with that workflow and the release environment. A crate whose own `[publish]` says `crates = false` (hoard) is not published to crates.io: it has no crates item and no trust step.
 
 `[github.environments.<name>]` (keys `branches`, `manage`; anything else is exit 3 naming the dotted key and the file) overrides how one GitHub environment is treated. A name listed only there is created too (source `hoist.toml:github.environments.<name>`). `manage = false` makes the item `ok` ("not managed"): nothing is read, planned or written for it. `branches` lists the deployment branch policies the environment must have (default: the default branch); `[]` means no branch restriction (`deployment_branch_policy: null`). The release environment (§6) takes `branches` too but is never unmanaged.
 
@@ -212,6 +233,7 @@ provider = "cloudflare-pages"     # cloudflare-pages | cloudflare-workers
 project = "keelstack-landing"
 dir = "dist"
 domain = ""                       # optional custom domain
+environment = ""                  # GitHub environment holding the deploy secrets (secret_scope = "environment", §8.6)
 on = "push"                       # push (main) | release
 
 [publish]
@@ -245,11 +267,12 @@ A fixed set of typed resources. Each has a natural key, a read, a diff, a write 
 |---|---|---|---|---|
 | github | repo settings | owner/repo | PATCH repo | settings read back |
 | github | branch ruleset | name `hoist: default branch` | create/update ruleset (only this one: other rulesets, such as `hoist: secrets repo`, are never touched) | required check is a job name in a workflow on the default branch |
+| github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]); read from the rulesets list hoist already reads (details by id, GET-only); enforcement, tags, rules or bypass actors that differ are `update`; GitHub Free's 403 is `drift` like the default-branch ruleset; no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
 | github | Actions permissions | repo | PUT default workflow permissions | read back |
 | github | environment | name | create the environment with its deployment branch policies (default: the default branch; `[github.environments.<name>] branches`, §5; `[]` = none). An existing one is read GET-only: the list entry's `deployment_branch_policy` (absent: not judged; `null`: any branch; `protected_branches`; `custom_branch_policies`: then `GET .../environments/<name>/deployment-branch-policies`, unreadable: `unknown`). A wanted branch the environment lacks is `update` (reason names the missing and the extra live policies); `apply` POSTs the missing policies only when custom policies are already on (no PUT: reviewers stay), else, for an existing environment, first `GET`s it and PUTs it (`deployment_branch_policy` custom or `null`) with its `wait_timer`, `prevent_self_review` and `reviewers` carried back (a PUT resets what it omits; the release environment's resolved reviewers win; an unreadable existing environment is a usage error, nothing written), then POSTs; extra policies are never deleted. The `release` environment is not read for branch policies | read back |
 | github | secret | name | PUT sealed secret (presence only) | listed with recent `updated_at` |
 | github | variable | upper-cased name | `[github.variables] NAME = "value"`: `POST .../actions/variables` `{name,value}` when missing (`create`), `PATCH .../actions/variables/<name>` when the repository value differs (`update`: reason `live "a", want "b"`); equal is `ok`; an organization variable of the same value is `ok`, a different one is shadowed by a new repository variable (`create`). A variable a workflow reads (`vars.NAME`) with no value in hoist.toml is `pending` with the human step `variable:<NAME>` (`gh variable set <NAME> --repo <o>/<r> --body '<value>'`, or give it in hoist.toml; url `https://github.com/<o>/<r>/settings/variables/actions`); A variable read only by jobs with an `environment:` is also present when that environment exists and holds it (`GET .../environments/<env>/variables`; reason "present (environment <env>)"; an unreadable list is `unknown`), and the human step then names `gh variable set <NAME> --env <env> --repo <o>/<r> --body '<value>'`; any reading job without an environment needs the repository variable. `[github] optional_variables` shows it as an `optional_variable` item (`ok`). Read GET-only: `GET .../actions/variables` (paginated) and `GET .../actions/organization-variables` (404: none; 403: none plus a note in the reason), only when a variable is named; an unreadable repository list is `unknown`. Values are not secret and may appear in reasons | listed |
-| github | app installation | app slug | human step (link) | installation visible to the repo |
+| github | app installation | app slug (Renovate, or `[github] apps`) | human step `app:<slug>` (Renovate: `https://github.com/apps/<slug>`; `[github] apps`: `https://github.com/apps/<slug>/installations/new`) | installation visible to the repo |
 | cloudflare | Pages project | project name | create project (production branch = default branch) | deploy URL answers 200 after the next deploy |
 | cloudflare | Workers script | script name | none (created by first deploy) | script exists after deploy |
 | cloudflare | custom domain | hostname | attach to project | DNS resolves, TLS valid, 200 |
@@ -258,8 +281,8 @@ A fixed set of typed resources. Each has a natural key, a read, a diff, a write 
 | npm | first publish | package name | human step `first-publish:<name>` while `GET {npm}/<name>` is 404 | the registry has the package |
 | crates | trusted publisher | crate name | human step `crates-trust:<name>` (`https://crates.io/crates/<name>/settings`) | none: a CI token cannot read it (`unknown`) |
 | crates | first publish | crate name | human step `first-publish:<name>` while `GET {crates}/api/v1/crates/<name>` is 404 | the registry has the crate |
-| release | environment | `[release] environment` | the github environment write (branch policy = default branch, `[release] reviewers` (§5) or, by default, the token's user as required reviewer; a bot token user is not made the sole approver: no reviewer and the human step `release-reviewer`); an existing environment with no required-reviewers rule is `update`; the reviewer ids are resolved in the preflight (an App installation token has no user and no `reviewers`: exit 3 before any write); a 422 whose message names reviewers or protection rules (the plan has no required reviewers) leaves the environment without one and reports `drift` naming the missing reviewer; any other 422 is a failed write (exit 1) | read back |
-| release | workflow | `[release] environment` | none (`pending` "no workflow job uses environment `<env>`: add `environment: <env>` to your publish job, or run `hoist init`") | a workflow job declares `environment: <env>` |
+| release | environment | `[release] environment` | the github environment write (branch policy = default branch, `[release] reviewers` (§5) or, by default, the token's user as required reviewer; a bot token user is not made the sole approver: no reviewer and the human step `release-reviewer`); an existing environment with no required-reviewers rule is `update` (`ok` with `reviewers = []`, which writes none and never asks for one; with `reviewers = []` an environment that still has a required reviewer is `update`, written with `reviewers: []`); the reviewer ids are resolved in the preflight (an App installation token has no user and no `reviewers`: exit 3 before any write); a 422 whose message names reviewers or protection rules (the plan has no required reviewers) leaves the environment without one and reports `drift` naming the missing reviewer; any other 422 is a failed write (exit 1) | read back |
+| release | workflow | `[release] environment` | none (`pending` "no workflow job uses environment `<env>`: add `environment: <env>` to your publish job, or run `hoist init`"; with `[release] workflow` the check is for a job of that file) | a workflow job declares `environment: <env>` |
 
 Settings hoist does not model are never touched.
 
@@ -268,8 +291,8 @@ or has `github_release` (§4); a repo without such packages plans exactly as bef
 release environment joins the workflow-inferred environments once and is reported in the
 `release` area only (not again under `github`); `apply` creates it with the same environment
 write, plus one required reviewer: the user the token belongs to (`GET /user`; an App
-installation token has none, so `apply` exits 3 and says to use a user token). The workflow file in the trust commands is the file of the first job that declares
-`environment: <env>` (`release.yml` when none does). Registry reads are anonymous GETs (crates.io
+installation token has none, so `apply` exits 3 and says to use a user token). The workflow file in the trust commands is `[release] workflow` when set, else the file of the first job that declares
+`environment: <env>` (`release.yml` when none does). `[registry.*]` packages (§5) join the trust and first-publish items with their own workflow file. The crate `first-publish:<name>` step names `hoist release bootstrap` (§9.6) as the way to do the first publish. Registry reads are anonymous GETs (crates.io
 with `User-Agent: hoist/<version> (+https://github.com/keelstackhq/hoist)`; a scoped npm name is
 `@scope%2Fname`); a registry 5xx or transport error makes that package's `first_publish` item
 `unknown`, never exit 3. `--area npm` and `--area crates` read only their registry; `--area
@@ -496,7 +519,8 @@ without access to it gets an empty result, reported as "zone not visible to this
    `pending` (human step), `unknown` (no permission to read; reason quotes the API message).
    A rejected token (401) on any read, or a 404 on the repo itself (the token cannot see it),
    is an error (exit 3), never `unknown`: a dead token must not read as in sync. The Cloudflare
-   account id is required only when the Cloudflare area is read.
+   account id is required only when the Cloudflare area is read; `explain` (offline) shows a
+   missing one as the `unknown` item `cloudflare/account_id` and exits 0.
 4. Deletes appear only with `--prune`, and only for resources hoist would itself create (by key
    prefix `hoist:` or by being in the model). The live deploy token is the newest
    `hoist:<owner>/<repo>:deploy` token issued at or before the `updated_at` of the GitHub secret
@@ -720,6 +744,11 @@ ones. Then:
   workflow-level `env:` reaches every job of its file): hull's deploy job in `prod`, its
   preview-deploy job in `preview`, release jobs in `release`. hoist creates those environments
   (inferred from the jobs, deployment branch: the default branch only).
+- `[deploy] environment = "<env>"` of a Pages or Workers target (§5) puts the secrets hoist
+  writes for it (the minted `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`) in that
+  environment, even when no workflow job reads them yet (source `<dir>/hoist.toml:deploy.environment`);
+  the environment is created like the others (default branch only). `[deploy] environment` without `[github] secret_scope = "environment"` is a config error (exit 3, naming the key and the target's hoist.toml). Jobs that do read them add their
+  own environments: the homes are the union.
 - A reference is `secrets.X`, `secrets['X']` or `secrets["X"]` anywhere inside a `${{ … }}`, in
   any case (`Secrets.x` is `X`: GitHub secret names are case-insensitive). Any other `secrets` use
   in an expression (`toJSON(secrets)`, `secrets[matrix.n]`, `secrets[format(…)]`) names no secret:

@@ -18,6 +18,18 @@ pub mod settings;
 pub mod token;
 pub mod verify;
 
+/// The steps for the manifest: `template = "none"` is an existing repo (preflight and settings
+/// over all hoist areas), else all of them.
+pub fn steps_for(m: &crate::manifest::Manifest) -> Vec<Box<dyn Step>> {
+    if m.is_existing() {
+        return vec![
+            Box::new(preflight::ExistingPreflight),
+            Box::new(settings::SettingsAll),
+        ];
+    }
+    all_steps()
+}
+
 /// All steps, in order.
 pub fn all_steps() -> Vec<Box<dyn Step>> {
     vec![
@@ -218,6 +230,8 @@ pub(crate) mod testutil {
             pins: Pins::from_texts("t", pins_text, None).unwrap(),
             opts,
             verify: None,
+            items: Vec::new(),
+            pending: Vec::new(),
             sleep,
             stdin,
         }

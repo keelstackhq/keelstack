@@ -1487,8 +1487,9 @@ fn never_published_crate_is_pending_without_oidc() {
         .unwrap_or_else(|| panic!("{v:#}"));
     assert_eq!(
         first["title"],
-        "publish the real first version by hand (`cargo publish`) or a placeholder 0.0.0, \
-         then register the trusted publisher"
+        "publish the first version with `hoist release bootstrap` (spec §9.6: it publishes \
+         from this checkout and registers the trusted publisher), or by hand (`cargo publish`, \
+         or a placeholder 0.0.0), then register the trusted publisher"
     );
     assert!(!api.requests().iter().any(|r| r.path == "/oidc"));
     assert!(writes(&api).is_empty(), "{:?}", writes(&api));

@@ -561,6 +561,7 @@ fn live_github_is_constructible_for_unit_use() {
         env_variables: Default::default(),
         org_variables_note: None,
         env_unreviewed: Vec::new(),
+        env_reviewers: Default::default(),
         environments: Fetch::Unknown("x".into()),
         secrets: Fetch::Unknown("x".into()),
         org_secrets_note: None,

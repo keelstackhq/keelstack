@@ -177,6 +177,98 @@ impl Step for Preflight {
     }
 }
 
+/// `preflight` for `template = "none"`: an existing repo. gh logged in with admin on it, git
+/// checkout whose origin is the repo, `hoist` runs. No pin install in this mode.
+pub struct ExistingPreflight;
+
+impl Step for ExistingPreflight {
+    fn id(&self) -> &'static str {
+        "preflight"
+    }
+
+    fn check(&self, cx: &mut Ctx) -> Result<Check, KeelError> {
+        let repo = repo(cx)?;
+        let r = cx.runner;
+        let human = |title: String, url: &str, command: &str| {
+            Ok(Check::Human(HumanStep {
+                id: "preflight".into(),
+                title,
+                url: url.into(),
+                command: command.into(),
+            }))
+        };
+        match gh::auth_ok(r) {
+            None => {
+                return Ok(Check::Failed(
+                    "gh not found; install the GitHub CLI (https://cli.github.com)".into(),
+                ));
+            }
+            Some(false) => {
+                return human(
+                    "Log in to GitHub with the gh CLI".into(),
+                    "",
+                    "gh auth login",
+                );
+            }
+            Some(true) => {}
+        }
+        let Some(login) = gh::login(r) else {
+            return Ok(Check::Failed(
+                "`gh api user` failed; run `gh auth status` and `gh auth login`".into(),
+            ));
+        };
+        match gh::is_admin(r, &repo) {
+            Ok(true) => {}
+            Ok(false) => {
+                return human(
+                    format!("{login} needs admin on {repo}"),
+                    &format!("https://github.com/{repo}/settings/access"),
+                    "gh auth login",
+                );
+            }
+            Err(e) => return Ok(Check::Failed(e)),
+        }
+        let Some(git_v) = git::version(r) else {
+            return Ok(Check::Failed("git not found; install git".into()));
+        };
+        if !git::is_work_tree(r, &cx.dir) {
+            return Ok(Check::Failed(format!(
+                "{} is not a git checkout; run `git clone` of {repo} and use -C",
+                cx.dir.display()
+            )));
+        }
+        match git::origin(r, &cx.dir) {
+            Some(u) if git::origin_matches(&u, &repo) => {}
+            Some(u) => {
+                return Ok(Check::Failed(format!(
+                    "origin is {u}, not {repo}; fix it with `git remote set-url origin` or pass -C of the right checkout"
+                )));
+            }
+            None => {
+                return Ok(Check::Failed(format!(
+                    "the checkout has no `origin`; run `git remote add origin https://github.com/{repo}.git`"
+                )));
+            }
+        }
+        let h = r.run(&Cmd::new("hoist", &["--version"]));
+        if h.code != 0 {
+            return human(
+                "Install hoist: build it from this checkout and put target/debug on PATH, or install it from npm".into(),
+                "",
+                "cargo build -p keel-hoist --locked && export PATH=$PWD/target/debug:$PATH  (or: npm install -g @keelstackhq/hoist)",
+            );
+        }
+        Ok(Check::Done(format!(
+            "gh as {login} (admin on {repo}), git {git_v}, {}",
+            h.stdout.trim()
+        )))
+    }
+
+    fn apply(&self, cx: &mut Ctx) -> Result<Check, KeelError> {
+        self.check(cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

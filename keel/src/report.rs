@@ -48,6 +48,79 @@ pub struct HumanStep {
     pub command: String,
 }
 
+/// A hoist item, with the keel step that read it (`items[]` of the JSON report).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ReportItem {
+    pub step: String,
+    pub area: String,
+    pub kind: String,
+    pub key: String,
+    pub action: String,
+    pub reason: String,
+}
+
+/// One pending human step of the batched checklist (D-009).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ChecklistEntry {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub command: String,
+    /// `computer` or `phone`.
+    pub device: String,
+    pub verify: String,
+}
+
+/// Ids that need a phone: trusted publishers on npm and crates.io, and app installs.
+fn device_of(id: &str, url: &str) -> &'static str {
+    let phone = id.starts_with("npm-trust:")
+        || id.starts_with("crates-trust:")
+        || id.starts_with("app:")
+        || id.starts_with("app-install")
+        || url.contains("/installations/new");
+    if phone { "phone" } else { "computer" }
+}
+
+fn verify_of(id: &str) -> String {
+    if id.starts_with("npm-trust:") || id.starts_with("crates-trust:") {
+        format!("hoist cannot read it: run keel up --confirm {id} once done")
+    } else {
+        "keel plan re-checks it".into()
+    }
+}
+
+/// The checklist: every pending human step, deduped by id, minus `confirmed` ids; computer
+/// entries first, otherwise in the given order.
+pub fn build_checklist(steps: &[HumanStep], confirmed: &[String]) -> Vec<ChecklistEntry> {
+    let mut seen: Vec<&str> = Vec::new();
+    let mut all: Vec<ChecklistEntry> = Vec::new();
+    for h in steps {
+        if seen.contains(&h.id.as_str()) || confirmed.iter().any(|c| c == &h.id) {
+            continue;
+        }
+        seen.push(&h.id);
+        // hoist puts a command (`hoist secrets set NAME`) where a link would go: keep links only.
+        let link = h.url.starts_with("https://") || h.url.starts_with("http://");
+        let (url, command) = match (link, h.command.is_empty()) {
+            (true, _) => (h.url.clone(), h.command.clone()),
+            (false, true) => (String::new(), h.url.clone()),
+            (false, false) => (String::new(), h.command.clone()),
+        };
+        all.push(ChecklistEntry {
+            id: h.id.clone(),
+            title: h.title.clone(),
+            url,
+            command,
+            device: device_of(&h.id, &h.url).into(),
+            verify: verify_of(&h.id),
+        });
+    }
+    let (mut computer, phone): (Vec<_>, Vec<_>) =
+        all.into_iter().partition(|e| e.device == "computer");
+    computer.extend(phone);
+    computer
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Healthz {
@@ -107,6 +180,10 @@ pub struct Report {
     pub steps: Vec<StepResult>,
     pub human_step: Option<HumanStep>,
     pub exit_code: i32,
+    /// hoist items read by the steps (JSON `items`).
+    pub items: Vec<ReportItem>,
+    /// Every pending human step (JSON `checklist`); `human_step` is its first entry.
+    pub checklist: Vec<ChecklistEntry>,
     /// Present only when the manifest has `[deploy.fly]`.
     #[serde(skip)]
     pub verify: Option<Verify>,
@@ -127,6 +204,8 @@ struct JsonReport<'a> {
     status: Status,
     steps: &'a [StepResult],
     human_step: &'a Option<HumanStep>,
+    items: &'a [ReportItem],
+    checklist: &'a [ChecklistEntry],
     #[serde(skip_serializing_if = "Option::is_none")]
     verify: &'a Option<Verify>,
 }
@@ -141,6 +220,8 @@ pub fn render_json(report: &Report) -> String {
         status: report.status,
         steps: &report.steps,
         human_step: &report.human_step,
+        items: &report.items,
+        checklist: &report.checklist,
         verify: &report.verify,
     };
     serde_json::to_string(&view).expect("report serializes")
@@ -213,6 +294,20 @@ pub fn render_text(report: &Report) -> String {
     } else if report.status == Status::Done {
         out.push_str("\ndone\n");
     }
+    if !report.checklist.is_empty() {
+        out.push_str("\nchecklist:\n");
+        for (i, e) in report.checklist.iter().enumerate() {
+            let mut line = format!("  {}. [{}] {}", i + 1, e.device, e.title);
+            for extra in [&e.url, &e.command] {
+                if !extra.is_empty() {
+                    line.push_str(" | ");
+                    line.push_str(extra);
+                }
+            }
+            out.push_str(&line);
+            out.push('\n');
+        }
+    }
     out
 }
 
@@ -248,8 +343,49 @@ mod tests {
                 command: "keel up".into(),
             }),
             exit_code: 5,
+            items: vec![],
+            checklist: vec![],
             verify: None,
         }
+    }
+
+    #[test]
+    fn checklist_orders_dedupes_and_drops_confirmed() {
+        let h = |id: &str, url: &str| HumanStep {
+            id: id.into(),
+            title: format!("t {id}"),
+            url: url.into(),
+            command: "c".into(),
+        };
+        let steps = [
+            h("npm-trust:a", ""),
+            h("secret:X", ""),
+            h("npm-trust:a", ""),
+            h("crates-trust:k", ""),
+            h("app", "https://github.com/apps/x/installations/new"),
+            h("variable:V", ""),
+        ];
+        let c = build_checklist(&steps, &["crates-trust:k".into()]);
+        let ids: Vec<&str> = c.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(ids, ["secret:X", "variable:V", "npm-trust:a", "app"]);
+        let dev: Vec<&str> = c.iter().map(|e| e.device.as_str()).collect();
+        assert_eq!(dev, ["computer", "computer", "phone", "phone"]);
+        assert_eq!(
+            c[2].verify,
+            "hoist cannot read it: run keel up --confirm npm-trust:a once done"
+        );
+        assert_eq!(c[0].verify, "keel plan re-checks it");
+        let mut r = sample();
+        r.checklist = c;
+        let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
+        assert_eq!(v["checklist"][0]["device"], "computer");
+        assert_eq!(v["items"], serde_json::json!([]));
+        let t = render_text(&r);
+        assert!(
+            t.contains("checklist:\n  1. [computer] t secret:X | c"),
+            "{t}"
+        );
+        assert!(t.contains("  3. [phone] t npm-trust:a"), "{t}");
     }
 
     #[test]
@@ -323,5 +459,20 @@ mod tests {
         r.verify = Some(Verify::not_run("a.io"));
         let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
         assert_eq!(v["verify"]["http_status"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn checklist_moves_a_command_out_of_url() {
+        let h = HumanStep {
+            id: "secret:X".into(),
+            title: "set secret X".into(),
+            url: "hoist secrets set X".into(),
+            command: String::new(),
+        };
+        let c = build_checklist(&[h], &[]);
+        assert_eq!(
+            (c[0].url.as_str(), c[0].command.as_str()),
+            ("", "hoist secrets set X")
+        );
     }
 }

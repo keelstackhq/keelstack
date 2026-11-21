@@ -1,8 +1,4 @@
-# hoist's release settings for berth (hoist spec §5, §9.3). Inference covers everything else.
-
-[release]
-# Defaults: per-package versioning, tags `v{version}` (the root crate is the package), and
-# publishing from the `release` environment (job `publish` in .github/workflows/release.yml).
+# Release targets of this crate (hoist spec §5). Repo settings live in the root hoist.toml.
 
 [publish]
 crates = {}

@@ -36,6 +36,14 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
   environments in `hoist.toml`; an `update` says which branch policy is missing, `apply` adds it and
   never deletes extras) and `variable` / `optional_variable` (a workflow's `vars.X`).
 
+- Monorepo keys (root `hoist.toml`): `[workspace] members` (extra package/target dirs), `[github] apps`
+  (human step `app:<slug>`, url `https://github.com/apps/<slug>/installations/new`), `[github.tag_ruleset]`
+  (`patterns`, `bypass = ["github-actions"]`; item `github/tag_ruleset` key `hoist: tags`), `[release]`
+  `reviewers = []` (no reviewer, no `release-reviewer` step) and `workflow = "release.yml"`,
+  `[registry.npm."<name>"]` / `[registry.crates."<name>"]` `workflow` (packages outside the release model:
+  `npm-trust:`/`crates-trust:`/`first-publish:` steps), target `[deploy] environment` (deploy secrets live in
+  that environment), `[publish] crates = false`. Crate `first-publish:<name>` points at `hoist release bootstrap`.
+
 ## Exit codes
 
 0 in sync. 1 drift, failed write or failed verification. 2 a human step is pending. 3 usage, config,

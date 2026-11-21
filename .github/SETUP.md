@@ -1,60 +1,64 @@
-# Owner setup for the monorepo's GitHub Actions
+# Owner setup for the monorepo
 
-Names only; values live in GitHub settings. Nothing here is set by a workflow.
+keel and hoist do the one-time repository setup from the root `keel.toml` and `hoist.toml`.
+Nothing here is clicked by hand except the steps keel prints as its checklist (D-009).
 
-## Branch protection / rulesets (main)
+## Prerequisites (computer)
 
-- Required checks: `ci-ok`, `risk-check`, `review-verdict`, `main-open`.
-  The per-folder jobs `ci-bosun`, `ci-splice`, `ci-hull`, `ci-hoist`, `ci-hoard`, `ci-berth`,
-  `ci-keel`, `ci-decisions`, `ci-site`, `ci-repo` and `ci-gates` are aggregated by `ci-ok`; do not require them one by one
-  (a skipped job is fine inside `ci-ok`).
-- Merge queue: on (ci.yml listens to `merge_group`).
-- Merge method for version-bump PRs: merge or squash (release.yml compares the first parent).
-- Tag ruleset for `v*`: allow the release workflow (`github-actions[bot]`) to create `vX.Y.Z` and to
-  move the major tag `v0`.
+1. `gh auth login` as a user with **admin** on `keelstackhq/keelstack` (`gh auth status`).
+2. A Cloudflare API token with Pages Write and Account API Tokens Write, and the account id, in the
+   environment: `export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=...` (never on a command
+   line you keep in history; `read -rs CLOUDFLARE_API_TOKEN; export CLOUDFLARE_API_TOKEN` works).
+   Without them keel skips Cloudflare and lists it in the checklist.
+3. keel and hoist from this checkout: `cargo build -p keel-cli -p keel-hoist --locked &&
+   export PATH=$PWD/target/debug:$PATH`.
 
-## Environments
+## One command
 
-| Environment | Deployment branches | Reviewers | Used by |
-| --- | --- | --- | --- |
-| `release` | default branch only | none (D-022) | release.yml (all publish jobs), cargo-deny-npm.yml |
-| `bosun-app` | `main` only | none | risk.yml, verdict.yml, main-open.yml, main-health.yml |
-| `bosun-signer` | `main` only | none | signer.yml |
-| `review` | `main` only | none | review.yml |
-| `hoard-r2` | `main` only | none | hoard-self-test.yml (R2 storage legs) |
-| `site` | `main` only | none | deploy-site.yml (deploy job; D-024) |
+```sh
+keel plan        # read-only (GET only): every item below, what would change, the checklist
+keel up          # applies everything hoist can write, then prints the checklist; exit 5 while it is not empty
+```
 
-## Secrets
+Re-run `keel up` after each checklist step: it re-checks and resumes. A step hoist cannot read
+back (a trusted publisher) is marked done with `keel up --confirm <id>`.
 
-- `BOSUN_APP_KEY` (environment `bosun-app`): private key of the GitHub App `keelstackhq-bosun-gate`.
-- `BOSUN_SIGNER_KEY` (environment `bosun-signer`).
-- `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (environment `hoard-r2`):
-  the R2 bucket of hoard's self-test.
-- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (environment `site`): deploy `site/` to the Cloudflare Pages
-  project `keelstack-landing` (token: Pages edit on that account). Move both from the old site repo's
-  environment `production`; PRs never read them (the deploy job runs only off a push, a release run or
-  a manual run on main).
-- `ANTHROPIC_API_KEY` (environment `review`; only when `BOSUN_REVIEW_CI` is `true`).
-- Release: none. crates.io and npm use trusted publishing (OIDC).
+## The checklist keel prints
 
-## Variables
+Computer steps first, then phone steps. Typical first run:
 
-- `BOSUN_APP_CLIENT_ID`: client id of the `keelstackhq-bosun-gate` app.
-- `BOSUN_REVIEW_CI`: `true` to run review.yml (set it in the same change that sets bosun's
-  `[review] mode = "ci"`); unset = review.yml does not run.
+| Where | Step id | What |
+| --- | --- | --- |
+| computer | `cloudflare-token` | only when the prerequisite 2 is missing |
+| computer | `variable:BOSUN_APP_CLIENT_ID` | `gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'` |
+| computer | `secret:<NAME>` | `hoist secrets set <NAME>`: value from env `<NAME>` or a hidden prompt, sealed into its environment (never argv, files or logs). `BOSUN_APP_KEY` (bosun-app), `BOSUN_SIGNER_KEY` (bosun-signer), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (hoard-r2); `ANTHROPIC_API_KEY` (review) only with `BOSUN_REVIEW_CI = true` |
+| computer | `first-publish:<crate>` | `hoist release bootstrap` publishes every crate not on crates.io yet (trusted publishing cannot create a crate) |
+| phone | `app:keelstackhq-bosun-gate` | install `keelstackhq-bosun-gate` on the repo: https://github.com/apps/keelstackhq-bosun-gate/installations/new |
+| phone | `crates-trust:<crate>` | trusted publisher on `keel-bosun`, `keel-hoist`, `keel-berth`, `keel-cli`: repository `keelstackhq/keelstack`, workflow `release.yml`, environment `release` (https://crates.io/crates/<crate>/settings) |
+| phone | `npm-trust:<package>` | trusted publisher on every npm package: the bosun, splice, hoist, berth and keel launchers and their platform packages (workflow `release.yml`), the cargo-deny packages (workflow `cargo-deny-npm.yml`); environment `release` (https://www.npmjs.com/package/<package>/access). npm provenance needs a public repository |
 
-## Apps and registries
+`BOSUN_REVIEW_CI` stays unset (review.yml off) until bosun's `[review] mode = "ci"`; then
+`gh variable set BOSUN_REVIEW_CI --repo keelstackhq/keelstack --body true` in the same change.
 
-- Install the GitHub App `keelstackhq-bosun-gate` on `keelstackhq/keelstack`.
-- npm trusted publisher on every published package (the bosun, splice, hoist, berth and keel
-  launchers and their platform packages, and the cargo-deny packages): repository
-  `keelstackhq/keelstack`, workflow `release.yml` (`cargo-deny-npm.yml` for the cargo-deny
-  packages), environment `release`. npm provenance needs a public repository.
-- crates.io trusted publisher on `keel-bosun`, `keel-hoist`, `keel-berth`, `keel-cli`: repository
-  `keelstackhq/keelstack`, workflow `release.yml`, environment `release`. A crate that is not on
-  crates.io yet must be published once by hand (trusted publishing cannot create a crate).
-- Retired with the old repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the
-  `release-pr` environment.
+## Appendix: what `keel up` does
+
+- `preflight`: `gh` logged in with admin on the repo, `origin` is the repo, `hoist` runs.
+- `settings`: `hoist check`, then `hoist apply --yes` (all areas; without the Cloudflare token
+  every area but `cloudflare`). From `hoist.toml` and inference hoist writes:
+  - ruleset `hoist: default branch` on `main`: required checks `ci-ok`, `risk-check`,
+    `review-verdict`, `main-open` (`ci-ok` aggregates the per-folder `ci-*` jobs; do not require
+    them one by one), merge queue on (merge method merge; version-bump PRs merge or squash);
+  - ruleset `hoist: tags`: only the release workflow (`github-actions[bot]`) may create, move or
+    delete `v*` tags (`vX.Y.Z` and the major tag `v0`);
+  - environments `release`, `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default
+    branch only, no reviewers (D-022);
+  - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
+  - Cloudflare Pages project `keelstack-landing` (`site/`), a minted deploy token sealed with the
+    account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`;
+  - reads only: app installation, environment secrets and variables (present or not), crates.io and
+    npm packages (first publish needed or not).
+- Release: no secrets; crates.io and npm use trusted publishing (OIDC). Retired with the old
+  repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build
 
@@ -62,8 +66,8 @@ The gate workflows (risk, verdict, review, signer, main-open, main-health) build
 checked-out base (pull_request_target) or the default branch head. If that build fails, the gate
 fails closed with an `::error::` (no status is posted, so the required check stays missing) and
 `.github/scripts/gate-workflows.test.sh` (ci-repo) keeps it that way. There is no pinned-release
-fallback yet: no monorepo release exists, and the old `keelstackhq/bosun` releases (<= 0.21.0,
-the version in `.bosun/version`) predate `[[folders]]` and would judge the monorepo wrongly. The
+fallback yet: no monorepo release exists (`.bosun/version` is `unreleased`), and the old
+`keelstackhq/bosun` releases (<= 0.21.0) predate `[[folders]]` and would judge the monorepo wrongly. The
 fix path: open a `bosun:kind/mainfix` PR that makes bosun build on main (usually `bosun revert
 <pr>` of the breaking merge); the owner merges it past the missing gate statuses (ruleset bypass),
 then the gates run again from the fixed main. Once a monorepo release (> 0.21.0) exists and
@@ -78,7 +82,7 @@ then the gates run again from the fixed main. Once a monorepo release (> 0.21.0)
   monorepo hull release; `repository.url` in each launcher `package.json` is rewritten at publish.
 - Ported to the root (manual, plus weekly for hoard; Linux only, D-007): splice `action-selftest.yml`
   as `splice-action-selftest.yml`, hoard `self-test.yml` as `hoard-self-test.yml` (its R2 leg needs
-  the `R2_*` repository secrets, else it is skipped with a notice). Deleted, not ported (manual
+  the `R2_*` secrets of environment `hoard-r2`, else it is skipped with a notice). Deleted, not ported (manual
   tools, in git history): hoard `bench.yml` and `r2-checks.yml`; splice `release.yml` with
   `scripts/release-tag.mjs` and `scripts/release-major.mjs` and their tests (the root release.yml
   tags, releases and moves the major tag). Still inert in its folder: hoard `release.yml` (its

@@ -1,0 +1,9 @@
+# The landing site (hoist spec §5): Cloudflare Pages project `keelstack-landing`. Its deploy
+# job runs in the `site` environment, which holds CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
+# (hoist mints the token and seals both).
+
+[deploy]
+provider = "cloudflare-pages"
+project = "keelstack-landing"
+dir = "dist"
+environment = "site"

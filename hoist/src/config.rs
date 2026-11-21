@@ -69,6 +69,20 @@ pub struct GithubCfg {
     pub secret_scope: SecretScope,
     /// Per-environment overrides; a name listed only here is created too.
     pub environments: BTreeMap<String, EnvCfg>,
+    /// GitHub App slugs that must be installed on the repo, beside the inferred ones.
+    pub apps: Vec<String>,
+    /// `[github.tag_ruleset]`: the `hoist: tags` ruleset protecting release tags.
+    pub tag_ruleset: Option<TagRulesetCfg>,
+}
+
+/// `[github.tag_ruleset]`: tags only the bypass actor may create, move or delete.
+#[derive(Debug, Clone, PartialEq, Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct TagRulesetCfg {
+    /// Tag name patterns (`v*`); the ruleset includes `refs/tags/<pattern>`.
+    pub patterns: Vec<String>,
+    /// Who may bypass: only `github-actions` (the GitHub Actions app) is supported.
+    pub bypass: Vec<String>,
 }
 
 impl Default for GithubCfg {
@@ -88,6 +102,8 @@ impl Default for GithubCfg {
             managed: Managed::Hoist,
             secret_scope: SecretScope::Repo,
             environments: BTreeMap::new(),
+            apps: Vec::new(),
+            tag_ruleset: None,
         }
     }
 }
@@ -117,8 +133,12 @@ pub struct ReleaseCfg {
     pub versioning: Versioning,
     pub tag_format: Option<String>,
     pub environment: String,
-    /// GitHub logins that approve the release environment (default: the token's user).
-    pub reviewers: Vec<String>,
+    /// GitHub logins that approve the release environment. Unset: the token's user; `[]`: no
+    /// required reviewer at all.
+    pub reviewers: Option<Vec<String>>,
+    /// The workflow file (`release.yml`) that publishes in the release environment; unset: the
+    /// first workflow job found that uses it.
+    pub workflow: Option<String>,
 }
 
 impl Default for ReleaseCfg {
@@ -127,9 +147,34 @@ impl Default for ReleaseCfg {
             versioning: Versioning::PerPackage,
             tag_format: None,
             environment: "release".to_string(),
-            reviewers: Vec::new(),
+            reviewers: None,
+            workflow: None,
         }
     }
+}
+
+/// `[workspace]` (root only): workspace members beside `pnpm-workspace.yaml`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct WorkspaceCfg {
+    /// Directories or `dir/*` globs read like pnpm workspace packages.
+    pub members: Vec<String>,
+}
+
+/// `[registry.npm."<name>"]` / `[registry.crates."<name>"]` (root only): a package published
+/// outside the release model, by its own workflow.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RegistryPkgCfg {
+    /// The workflow file (`cargo-deny-npm.yml`) its trusted publisher names.
+    pub workflow: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+pub struct RegistryCfg {
+    pub npm: BTreeMap<String, RegistryPkgCfg>,
+    pub crates: BTreeMap<String, RegistryPkgCfg>,
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
@@ -138,6 +183,8 @@ pub struct RootConfig {
     pub github: GithubCfg,
     pub cloudflare: CloudflareCfg,
     pub release: ReleaseCfg,
+    pub workspace: WorkspaceCfg,
+    pub registry: RegistryCfg,
     /// Only for a single-package repo, whose root is the package (spec §5).
     pub publish: Option<PublishCfg>,
 }
@@ -149,6 +196,9 @@ pub struct DeployCfg {
     pub project: Option<String>,
     pub dir: Option<String>,
     pub domain: Option<String>,
+    /// The GitHub environment holding this target's deploy secrets under
+    /// `secret_scope = "environment"`.
+    pub environment: Option<String>,
     pub on: String,
 }
 
@@ -159,6 +209,7 @@ impl Default for DeployCfg {
             project: None,
             dir: None,
             domain: None,
+            environment: None,
             on: "push".to_string(),
         }
     }
@@ -192,11 +243,54 @@ pub struct GithubRelease {
 
 /// `[publish]` (spec §5): how a package is released.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
-#[serde(deny_unknown_fields, default)]
+#[serde(try_from = "RawPublish")]
 pub struct PublishCfg {
     pub npm: Option<NpmPublish>,
     pub crates: Option<CratesPublish>,
+    /// `crates = false`: a crate that is not published to crates.io (it ships binaries only).
+    pub no_crates: bool,
     pub github_release: Option<GithubRelease>,
+}
+
+/// `crates = {}` publishes to crates.io, `crates = false` opts out.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(untagged)]
+enum CratesField {
+    Flag(bool),
+    Table(CratesPublish),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]
+#[serde(deny_unknown_fields, default)]
+struct RawPublish {
+    npm: Option<NpmPublish>,
+    crates: Option<CratesField>,
+    github_release: Option<GithubRelease>,
+}
+
+impl TryFrom<RawPublish> for PublishCfg {
+    type Error = String;
+
+    fn try_from(raw: RawPublish) -> Result<Self, String> {
+        let (crates, no_crates) = match raw.crates {
+            None => (None, false),
+            Some(CratesField::Table(c)) => (Some(c), false),
+            Some(CratesField::Flag(false)) => (None, true),
+            Some(CratesField::Flag(true)) => {
+                return Err(
+                    "`crates = true` is not valid: write `crates = {}` to publish to \
+                            crates.io or `crates = false` to opt out"
+                        .to_string(),
+                );
+            }
+        };
+        Ok(Self {
+            npm: raw.npm,
+            crates,
+            no_crates,
+            github_release: raw.github_release,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Default)]
@@ -210,7 +304,33 @@ pub struct TargetConfig {
 pub fn load_root(dir: &Path) -> Result<RootConfig, HoistError> {
     let cfg: RootConfig = load(dir)?;
     validate_variables(dir, &cfg.github)?;
+    validate_tag_ruleset(dir, &cfg.github)?;
     Ok(cfg)
+}
+
+/// `[github.tag_ruleset]`: at least one pattern; the only bypass actor is `github-actions`.
+fn validate_tag_ruleset(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
+    let Some(t) = &g.tag_ruleset else {
+        return Ok(());
+    };
+    let bad = |message: String| HoistError::Config {
+        file: dir.join(FILE_NAME).display().to_string(),
+        message,
+    };
+    if t.patterns.is_empty() || t.patterns.iter().any(|p| p.trim().is_empty()) {
+        return Err(bad(
+            "`github.tag_ruleset.patterns` needs at least one tag pattern such as `v*`; fix it"
+                .to_string(),
+        ));
+    }
+    if t.bypass != ["github-actions"] {
+        return Err(bad(format!(
+            "`github.tag_ruleset.bypass` must be exactly [\"github-actions\"] (got {:?}); set it \
+             in `[github.tag_ruleset]`",
+            t.bypass
+        )));
+    }
+    Ok(())
 }
 
 /// Variable names GitHub accepts: letters, digits and `_`, not starting with a digit, no

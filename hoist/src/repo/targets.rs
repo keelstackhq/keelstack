@@ -2,7 +2,7 @@
 
 use super::Sourced;
 use crate::HoistError;
-use crate::config::{TargetConfig, load_target};
+use crate::config::{TargetConfig, load_root, load_target};
 use serde_json::Value;
 use std::collections::BTreeSet;
 use std::fs;
@@ -109,6 +109,23 @@ fn pnpm_dirs(root: &Path) -> Result<Vec<String>, HoistError> {
     expand(root, file, &globs)
 }
 
+/// Directories of `[workspace] members` in the root hoist.toml (spec §5), for repos whose root
+/// is no pnpm workspace.
+fn member_dirs(root: &Path) -> Result<Vec<String>, HoistError> {
+    let members = load_root(root)?.workspace.members;
+    expand(root, "hoist.toml", &members)
+}
+
+/// `a` then the entries of `b` it lacks.
+fn union(mut a: Vec<String>, b: Vec<String>) -> Vec<String> {
+    for dir in b {
+        if !a.contains(&dir) {
+            a.push(dir);
+        }
+    }
+    a
+}
+
 fn cargo_dirs(root: &Path) -> Result<Vec<String>, HoistError> {
     let file = "Cargo.toml";
     let Some(text) = read_optional(&root.join(file), file)? else {
@@ -193,7 +210,12 @@ pub(crate) fn join_rel(rel: &str, name: &str) -> String {
 }
 
 /// npm package directories: workspace members, or the root alone when it is no workspace.
+/// `[workspace] members` of the root hoist.toml come after them.
 pub(crate) fn npm_dirs(root: &Path) -> Result<Vec<String>, HoistError> {
+    Ok(union(base_npm_dirs(root)?, member_dirs(root)?))
+}
+
+fn base_npm_dirs(root: &Path) -> Result<Vec<String>, HoistError> {
     if root.join("pnpm-workspace.yaml").is_file() {
         return pnpm_dirs(root);
     }
@@ -279,7 +301,7 @@ pub(crate) fn read_crate(root: &Path, rel: &str) -> Result<Option<Sourced<String
 pub fn read_targets(dir: &Path) -> Result<(Vec<Target>, Packages, bool), HoistError> {
     let mut targets = Vec::new();
     let mut packages = Packages::default();
-    for rel in pnpm_dirs(dir)? {
+    for rel in union(pnpm_dirs(dir)?, member_dirs(dir)?) {
         if let Some(target) = read_target(dir, &rel)? {
             targets.push(target);
         }
@@ -290,6 +312,15 @@ pub fn read_targets(dir: &Path) -> Result<(Vec<Target>, Packages, bool), HoistEr
         }
     }
     for rel in crate_dirs(dir)? {
+        // `[publish] crates = false`: the crate ships binaries only, never to crates.io.
+        let publish = if rel.is_empty() {
+            load_root(dir)?.publish
+        } else {
+            load_target(&dir.join(&rel))?.publish
+        };
+        if publish.is_some_and(|p| p.no_crates) {
+            continue;
+        }
         if let Some(krate) = read_crate(dir, &rel)? {
             packages.crates.push(krate);
         }

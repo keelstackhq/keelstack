@@ -13,8 +13,6 @@ use crate::report::{Action, HumanStep, Item};
 /// R6: a trusted publisher can neither be read nor written with a CI token.
 pub const PUBLISHER_UNREADABLE: &str =
     "registered by a person; hoist cannot read it with a CI token";
-/// The workflow file named in trust commands when no job uses the release environment yet.
-const DEFAULT_WORKFLOW: &str = "release.yml";
 
 /// Whether each publishing package exists on its registry, in `DesiredRelease::packages` order.
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -25,14 +23,21 @@ pub struct LiveRegistries {
 /// Every package that publishes to a registry: the release packages, each launcher followed by
 /// its platform packages (R22: they are no release packages, but each needs its own trusted
 /// publisher and manual first publish).
-fn registry_packages(r: &DesiredRelease) -> impl Iterator<Item = &Package> {
-    r.packages.iter().flat_map(|p| {
+/// Then the `[registry]` packages published outside the release model. Each comes with the
+/// workflow file its trusted publisher names.
+fn registry_packages(r: &DesiredRelease) -> impl Iterator<Item = (&Package, &str)> {
+    let model = r.packages.iter().flat_map(|p| {
         let platforms = p
             .launcher
             .iter()
             .flat_map(|l| l.platforms.iter().map(|x| &x.pkg));
         std::iter::once(p).chain(platforms)
-    })
+    });
+    model
+        // A crate with `[publish] crates = false` never reaches crates.io.
+        .filter(|p| p.kind != PkgKind::Crate || p.publish.crates.is_some())
+        .map(|p| (p, r.workflow_file()))
+        .chain(r.registry.iter().map(|x| (&x.pkg, x.workflow.as_str())))
 }
 
 /// Read the packages of the registries that have a client (anonymous GETs only).
@@ -45,7 +50,7 @@ pub fn read_registries(
     let Some(r) = &d.release else {
         return Ok(out);
     };
-    for p in registry_packages(r) {
+    for (p, _) in registry_packages(r) {
         let http = match p.kind {
             PkgKind::Npm => npm,
             PkgKind::Crate => crates,
@@ -90,8 +95,9 @@ pub fn first_publish_step(name: &str, kind: PkgKind) -> HumanStep {
              platform package published from the checkout has no bin/)"
         }
         PkgKind::Crate => {
-            "publish the real first version by hand (`cargo publish`) or a placeholder 0.0.0, \
-             then register the trusted publisher"
+            "publish the first version with `hoist release bootstrap` (spec §9.6: it publishes \
+             from this checkout and registers the trusted publisher), or by hand \
+             (`cargo publish`, or a placeholder 0.0.0), then register the trusted publisher"
         }
     };
     step(
@@ -107,12 +113,6 @@ pub fn first_publish_step(name: &str, kind: PkgKind) -> HumanStep {
     )
 }
 
-fn workflow_file(r: &DesiredRelease) -> &str {
-    r.workflow
-        .as_ref()
-        .map_or(DEFAULT_WORKFLOW, |w| w.file.as_str())
-}
-
 /// The release environment against the live list (`None` without publishing packages).
 /// Externally managed GitHub resources are never created: that is drift.
 pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
@@ -120,7 +120,12 @@ pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
     let env = &r.environment;
     let (action, reason) = match l.environments.as_got() {
         Err(why) => (Action::Unknown, why.to_string()),
-        Ok(have) if have.contains(&env.value) && l.env_unreviewed.contains(&env.value) => {
+        // `[release] reviewers = []`: no required reviewer is wanted (D-022).
+        Ok(have)
+            if have.contains(&env.value)
+                && l.env_unreviewed.contains(&env.value)
+                && r.reviewers.as_ref().is_none_or(|v| !v.is_empty()) =>
+        {
             let action = match d.github.managed {
                 Managed::External => Action::Drift,
                 _ => Action::Update,
@@ -128,6 +133,23 @@ pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
             (
                 action,
                 "present, but no required reviewer; would add the configured reviewers or the token's user".to_string(),
+            )
+        }
+        Ok(have)
+            if have.contains(&env.value)
+                && r.reviewers.as_ref().is_some_and(Vec::is_empty)
+                && l.env_reviewers.contains_key(&env.value) =>
+        {
+            let action = match d.github.managed {
+                Managed::External => Action::Drift,
+                _ => Action::Update,
+            };
+            (
+                action,
+                format!(
+                    "present, but `[release] reviewers = []` wants no required reviewer; would drop {}",
+                    l.env_reviewers[&env.value].join(", ")
+                ),
             )
         }
         Ok(have) if have.contains(&env.value) => (Action::Ok, "present".to_string()),
@@ -174,10 +196,17 @@ pub fn diff_release(d: &Desired, l: &LiveGithub) -> Vec<Item> {
             "workflow",
             env,
             Action::Pending,
-            format!(
-                "no workflow job uses environment `{env}`: add `environment: {env}` to your \
-                 publish job, or run `hoist init` (writes release.yml; `--force` replaces your own)"
-            ),
+            match &r.workflow_name {
+                Some(file) => format!(
+                    "no job in `.github/workflows/{file}` uses environment `{env}`: add \
+                     `environment: {env}` to its publish job"
+                ),
+                None => format!(
+                    "no workflow job uses environment `{env}`: add `environment: {env}` to your \
+                     publish job, or run `hoist init` (writes release.yml; `--force` replaces \
+                     your own)"
+                ),
+            },
             &r.environment.source,
         ),
     });
@@ -199,13 +228,12 @@ pub fn diff_registry(
         PkgKind::Npm => "npm",
         PkgKind::Crate => "crates",
     };
-    let (repo, env, file) = (
+    let (repo, env) = (
         format!("{}/{}", d.repo.owner, d.repo.name),
         &r.environment.value,
-        workflow_file(r),
     );
     // Every npm package publishes to npm and every crate to crates.io (spec §5 defaults).
-    for p in registry_packages(r).filter(|p| p.kind == kind) {
+    for (p, file) in registry_packages(r).filter(|(p, _)| p.kind == kind) {
         let name = &p.name;
         let source = &p.version.source;
         items.push(item(

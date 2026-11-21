@@ -58,7 +58,7 @@ keel [-C DIR] [--json] [-v] doctor
   once. Poll interval: `KEEL_POLL_SECS` (default 10).
 - Tool timeout: every `hoist` call and `scripts/fly-setup.sh` and `scripts/smoke.sh` are killed after `KEEL_TOOL_TIMEOUT_SECS` (default 600; a value that is not a positive integer is ignored). A timed-out call fails with "timed out after N s" (exit 124 internally).
 - `--token-stdin`: read the PAT for step 6 from stdin (one line, trailing newline trimmed).
-- `--confirm agent-env|dns|backup`: record that the cloud environment setup script is attached
+- `--confirm ID`: only ids hoist cannot read back are recorded in `[confirmed] steps = ["ID", ...]`: `npm-trust:<pkg>` and `crates-trust:<crate>`. Any other id (`secret:X`, an empty id, whitespace) is a usage error (exit 2) naming the allowed forms. Confirmations filter only hoist's trust steps from the checklist, never other hoist steps and never keel's own step ids (`human_step` is always `checklist[0]`). `agent-env|dns|backup` keep their meaning: record that the cloud environment setup script is attached
   (step 7), that the DNS records were added by hand (step 9) or that the backup bucket was created
   by hand (step 10); stored in `keel.toml` `[confirmed]`. A confirmed step is done. `agent_env` is a boolean; `dns` and `backup` store what was confirmed, `dns = "<host>"` and `backup = "<fly app>"` (`--confirm dns|backup` needs `[deploy.fly]`, `backup` also `[backup]`). The confirmation is void (the step runs as if unconfirmed) when the value differs from the manifest's current `[deploy.fly] host` or `app`; an old `dns = true` or `backup = true` is void too, and is dropped the next time keel writes `keel.toml`.
 - Example: `npx @keelstackhq/keel up --repo owner/name --template rust --pieces rust-cli:my-cli`.
@@ -87,7 +87,9 @@ pending (D-020; 5 matches bosun's needs-human). Help and version exit 0. With `-
 - `verify`: present only when the manifest has `[deploy.fly]`:
   `{"url":"https://HOST","healthz":"ok"|"failed"|"not-run","http_status":200|null,"smoke":"passed"|"failed"|"none"|"not-run"}`.
   `not-run` until the `verify` step has reached that check. Text output adds a `verify:` line.
-- `human_step`: null, or `{id, title, url, command}` (`url`/`command` may be `""`). At most one.
+- `human_step`: null, or `{id, title, url, command}` (`url`/`command` may be `""`). At most one; it is `checklist[0]`.
+- `items`: hoist items read by the steps, `[{step, area, kind, key, action, reason}]` (`step` = the keel step id; `[]` for modes that read none).
+- `checklist`: every pending human step of every step, deduped by id, minus the ids in `[confirmed] steps`: `[{id, title, url, command, device, verify}]`. `device` is `phone` for ids `npm-trust:*`, `crates-trust:*` and app installs, else `computer`; computer entries first, stable order. `verify`: trust ids say "hoist cannot read it: run keel up --confirm <id> once done", others "keel plan re-checks it". `command` for a secret is hoist's `hoist secrets set NAME` (the value comes from env NAME or a hidden prompt; keel never handles values). In the other modes the checklist is the one human step. With the text output: a `checklist:` block, one numbered line per entry (`[computer]`/`[phone]`, title, url, command).
 - On exit 2 or 3: same envelope, `status:"error"`, `steps:[]`, `human_step:null`, plus
   `error:{message, fix}`.
 - Without `--json`: one line per step, then the human step or `done`. Logs go to stderr.
@@ -107,6 +109,7 @@ secret = "SPLICE_BOT_TOKEN"
 environment = "splice-bot"
 
 [confirmed]                       # written by --confirm
+steps = ["npm-trust:@o/pkg"]       # any checklist id done by hand that hoist cannot read
 agent_env = true
 dns = "app.example.com"            # DNS records added by hand, for this host
 backup = "my-app"                   # backup bucket created by hand, for this app
@@ -125,6 +128,8 @@ provider = "r2"                   # "r2" | "s3"
 retention_days = 30               # >= 1; default 30
 account_id = "..."                # optional Cloudflare account id for r2; written to hoist.toml [cloudflare]; env CLOUDFLARE_ACCOUNT_ID wins (hoist reads it)
 ```
+
+`template = "none"` is an existing repo (D-023, the monorepo itself): `template_ref` and `plan` are not needed, `pieces` must be empty (else a manifest error, exit 3), and the steps are the two below (§5.4).
 
 The pieces may include `sqlite` and `fly` (hull: `rust-service` needs `base`; `sqlite` and `fly` need `rust-service`; each has the var `service`, default `server`); splice validates them. With `[deploy.fly]` and a `fly` or `fly:NAME` piece, keel passes `--data app=<app>` to `splice new`. A bad enum value, an empty
 `app`/`region`/`host`, a `host` or `zone` that is not a DNS name (lowercase labels of a-z, 0-9 and `-`, 1-63 characters, no leading or trailing `-`, single dots, at least two labels, at most 253 characters: no scheme, path, port, `@`, `?`, `#`, whitespace or uppercase), an `app` outside `^[a-z0-9-]{1,63}$`, a `[backup] account_id` outside `^[0-9a-f]{32}$` (the env `CLOUDFLARE_ACCOUNT_ID` has the same rule: the backup step fails naming the variable), a `zone` that is neither `host` nor a parent domain of it at a label boundary, `retention_days = 0`, `[backup]` without `[deploy.fly]` or, with `provider = "r2"`, an `app` whose
@@ -155,6 +160,17 @@ every `check` only and marks work `would-run`; it stops after the first human ga
 | 11 | `doctor` | `bosun doctor --remote` (`--all` tried first, §10; `data.tools` entries with `ok: false` are summarised as a missing item) has no `missing` item (any missing item is a failed step, never a push or PR); a PR from the work branch exists. Offline doctor (exit 5, `data.offline`) is a human step: `export GH_TOKEN=$(gh auth token)`, then `keel up` | commit keel's own files only (`keel.toml`, `hoist.toml`, `.gitignore`, `Cargo.lock`; nothing keel-owned changed means no commit); `hoist.toml` goes in only when it is untracked, or when `git diff --unified=0 HEAD -- hoist.toml` removes no line and adds only blank lines and lines keel's section generators write for the current manifest (else it stays out and the detail says so), `git push -u origin <branch>` (never force), `bosun --json pr --single --ready` (exit 2, an old bosun: `gh pr create`) |
 | 12 | `merge` | the PR is merged (`gh pr view --json state,headRefOid`) | none: human gate "approve head SHA `<sha>` and merge PR #N" |
 | 13 | `verify` | no `[deploy.fly]`: done. After the merge: the `deploy.yml` run of the merged commit is `completed`: keel reads the merge commit (`gh pr view WORKBRANCH --repo R --json mergeCommit`, `mergeCommit.oid`; unreadable is failed), lists `gh run list --repo R --workflow deploy.yml --branch B --limit 20 --json status,conclusion,url,headSha` and takes the run whose `headSha` equals it (runs of other commits are ignored), polled every `KEEL_POLL_SECS` up to `--wait`; a conclusion other than `success` is failed (with the run URL); no run of that commit yet (after `--wait`) is a human step "wait for the first deploy". Then `curl -fsS -o /dev/null -w %{http_code} --max-time 10 https://HOST/healthz` gives 200 (polled the same way; else failed). Then `scripts/smoke.sh` with `SMOKE_URL=https://HOST` (the base URL; `SMOKE_TIMEOUT_SECS` is left at the script default, 60) when it exists (`keel plan` never runs it: `smoke` is `not-run`). The outcome is the report's `verify` key | none: read-only |
+
+### 5.4 Existing repo (`template = "none"`)
+
+Only two steps run; apps, render, governance, token, agent-env, deploy, dns, backup, doctor, merge and verify are not in the list.
+
+| id | check (read-only) | apply |
+|----|-------------------|-------|
+| `preflight` | `gh auth status`, `gh api user`, `gh api repos/R --jq .permissions.admin` is `true` (else human "needs admin on R"), git checkout whose `origin` is R, `hoist --version` runs (no pin install here; missing is a human step: `cargo build -p keel-hoist --locked` and put `target/debug` on PATH, or `npm install -g @keelstackhq/hoist`) | none |
+| `settings` | `CLOUDFLARE_API_TOKEN` set (presence only): `hoist --json check`, no `--area` (all areas). Unset: `hoist --json explain`; when it lists an item with area `cloudflare`, `hoist --json check --area github --area npm --area crates --area release` and the checklist gets `cloudflare-token` ("export CLOUDFLARE_API_TOKEN (Pages Write + Account API Tokens Write) and CLOUDFLARE_ACCOUNT_ID, then keel up"; names the cloudflare items' keys, e.g. the Pages project) | `hoist --json apply --yes` with the same areas |
+
+The adapter reads every `items[]` and every `human_steps[]` (id, title, url), not only the first; all go to the batched checklist (§3.2). hoist exit 0 or 1 with a non-empty checklist, or exit 2, is status `human` (exit 5), because trust steps do not make hoist exit 2; drift without a checklist is `planned` for `plan` (exit 1); no checklist and no drift is exit 0. Exit 2 with every human step confirmed is done. When hoist check exits 1 (a `todo`) or apply exits 1 (a failed step), the detail lists hoist's drift reasons from the JSON items (`kind/key: reason`, the first three not `ok`/`unknown`), not a generic message. `keel plan` runs hoist `check` and `explain` only, never `apply`, and no `gh` write.
 
 ### 5.1 Branch
 

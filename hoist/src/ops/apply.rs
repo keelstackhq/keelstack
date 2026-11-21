@@ -76,7 +76,8 @@ pub fn apply(
         preflight_github_admin(gh, live, d)?;
         // The release environment's reviewers (configured logins, else the token's user):
         // resolve them before any write.
-        let logins = d.release.as_ref().map(|r| r.reviewers.as_slice());
+        // `[release] reviewers = []` wants none (D-022): the environment is written without.
+        let logins = d.release.as_ref().and_then(|r| r.reviewers.as_deref());
         for c in &mut changes {
             if let Change::Environment {
                 release: true,
@@ -84,6 +85,11 @@ pub fn apply(
                 ..
             } = c
             {
+                if logins.is_some_and(<[String]>::is_empty) {
+                    // An explicit empty list: the PUT must not carry live reviewers back.
+                    *reviewers = crate::change::Reviewers::Users(Vec::new());
+                    continue;
+                }
                 *reviewers = crate::github_write::resolve_reviewers(gh, logins.unwrap_or(&[]))?;
             }
         }

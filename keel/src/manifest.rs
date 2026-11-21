@@ -115,6 +115,10 @@ pub struct Confirmed {
         skip_serializing_if = "Option::is_none"
     )]
     pub backup: Option<String>,
+    /// Human step ids (from the checklist) done by hand that hoist cannot read back, such as
+    /// `npm-trust:<pkg>` and `crates-trust:<crate>` (`--confirm <id>`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<String>,
 }
 
 /// A string is the confirmed value; a boolean (the old format) is void.
@@ -183,7 +187,17 @@ impl Manifest {
         Ok(m)
     }
 
-    fn validate(&self) -> Result<(), KeelError> {
+    /// `template = "none"`: an existing repo, nothing to render.
+    pub fn is_existing(&self) -> bool {
+        self.template.as_deref() == Some("none")
+    }
+
+    pub fn validate(&self) -> Result<(), KeelError> {
+        if self.is_existing() && !self.pieces.is_empty() {
+            return Err(manifest_err(
+                "`pieces` needs a template: remove it, or set `template` to rust, ts or a splice source (`template = \"none\"` is an existing repo)",
+            ));
+        }
         if let Some(f) = self.fly() {
             for (key, v) in [("app", &f.app), ("region", &f.region), ("host", &f.host)] {
                 if v.trim().is_empty() {
@@ -337,9 +351,18 @@ impl Manifest {
                     self.confirmed.backup = Some(app);
                 }
                 other => {
-                    return Err(KeelError::Usage(format!(
-                        "--confirm {other}: unknown step; the steps that take it are `agent-env`, `dns` and `backup`"
-                    )));
+                    let trust = ["npm-trust:", "crates-trust:"]
+                        .iter()
+                        .any(|p| other.strip_prefix(p).is_some_and(|r| !r.is_empty()));
+                    if !trust || other.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                        return Err(KeelError::Usage(format!(
+                            "--confirm {other:?}: hoist can read back every other step, so only `agent-env`, `dns`, `backup`, `npm-trust:<pkg>` and `crates-trust:<crate>` can be confirmed"
+                        )));
+                    }
+                    if !self.confirmed.steps.iter().any(|s| s == other) {
+                        self.confirmed.steps.push(other.to_string());
+                        changed = true;
+                    }
                 }
             }
         }
@@ -706,13 +729,49 @@ mod tests {
             .unwrap()
         );
         assert_eq!(m.confirmed.dns.as_deref(), Some("b.example.com"));
-        assert!(
+        for bad in [
+            "",
+            "two words",
+            "secret:X",
+            "variable:Y",
+            "npm-trust:",
+            "app",
+        ] {
+            assert!(
+                m.merge_flags(&UpArgs {
+                    confirm: vec![bad.into()],
+                    ..args()
+                })
+                .is_err(),
+                "{bad:?}"
+            );
+        }
+        // Any other checklist id is recorded once, in `[confirmed] steps`.
+        for _ in 0..2 {
             m.merge_flags(&UpArgs {
-                confirm: vec!["merge".into()],
+                confirm: vec!["npm-trust:@o/p".into()],
                 ..args()
             })
-            .is_err()
-        );
+            .unwrap();
+        }
+        assert_eq!(m.confirmed.steps, ["npm-trust:@o/p"]);
+        m.merge_flags(&UpArgs {
+            confirm: vec!["crates-trust:c".into()],
+            ..args()
+        })
+        .unwrap();
+        assert_eq!(m.confirmed.steps, ["npm-trust:@o/p", "crates-trust:c"]);
+        m.confirmed.steps.pop();
+        let t = toml::to_string(&m).unwrap();
+        assert_eq!(Manifest::parse(&t).unwrap(), m);
+    }
+
+    #[test]
+    fn template_none_is_an_existing_repo_and_rejects_pieces() {
+        let m = Manifest::parse("repo = \"o/n\"\ntemplate = \"none\"\n").unwrap();
+        assert!(m.is_existing());
+        let e = Manifest::parse("template = \"none\"\npieces = [\"a\"]\n").unwrap_err();
+        assert!(e.to_string().contains("pieces"), "{e}");
     }
 
     #[test]
