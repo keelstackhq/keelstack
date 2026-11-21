@@ -5,10 +5,11 @@ name: deploy-site
 #   - a push to main touches site/ or a folder it depends on (.bosun/bosun.toml, folder `site`),
 #   - release.yml finishes (the version bump reached main earlier; this deploys the released state),
 #   - someone runs it by hand.
-# A pull request that touches the same paths builds and tests the site and uploads the build as an
-# artifact. It never gets the Cloudflare secrets: the deploy job runs only on main, in the
+# A pull request that touches the same paths checks and builds the site (job `build`; a draft starts
+# no runner). It never gets the Cloudflare secrets: job `deploy` runs only off a pull request, in the
 # environment `site` (deployment branches: default branch only), which holds CLOUDFLARE_API_TOKEN and
-# CLOUDFLARE_ACCOUNT_ID (.github/SETUP.md).
+# CLOUDFLARE_ACCOUNT_ID (.github/SETUP.md). `deploy` checks and builds what it deploys itself: no
+# artifact crosses jobs or runs, so nothing a pull request wrote can reach a deploy.
 #
 # D-007: Linux only, no comment/label/edit triggers, job-level `if:`, one build per run.
 on:
@@ -27,7 +28,7 @@ on:
       - .github/workflows/deploy-site.yml
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - site/**
       - bosun/**
@@ -46,7 +47,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # A deploy is queued, never cancelled half-way; a newer PR push replaces the older preview build.
+  # A deploy is queued, never cancelled half-way; a newer PR push replaces the older build.
   group: deploy-site-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
@@ -58,8 +59,9 @@ env:
   SITE_REF: ${{ github.event_name == 'workflow_run' && github.event.repository.default_branch || github.sha }}
 
 jobs:
+  # Pull requests: check and build only.
   build:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    if: github.event_name == 'pull_request' && github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     defaults:
@@ -80,27 +82,33 @@ jobs:
           cache-dependency-path: site/pnpm-lock.yaml
       - name: Install
         run: pnpm install --frozen-lockfile --prefer-offline
-      # The tests build the site, compare the rendered page with the generated facts and check links:
-      # a page that disagrees with its sources is never deployed.
+      # The tests build the site, compare the rendered page with the generated facts and check links.
       - name: Check and build
         run: pnpm run ci
-      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
-        with:
-          name: site-dist
-          path: site/apps/site/dist
-          if-no-files-found: error
-          retention-days: 7
 
+  # main (push, a successful release run, a manual run): the same checks and build, then the deploy.
   deploy:
-    needs: build
-    if: github.event_name != 'pull_request'
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      github.event_name != 'pull_request' &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     environment: site
+    defaults:
+      run:
+        working-directory: site
     env:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
     steps:
+      - name: Check secrets
+        working-directory: .
+        run: |
+          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
+            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be secrets of the environment site (.github/SETUP.md)"
+            exit 1
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.SITE_REF }}
@@ -113,19 +121,11 @@ jobs:
           node-version-file: site/.node-version
           cache: pnpm
           cache-dependency-path: site/pnpm-lock.yaml
-      - name: Install (wrangler)
-        working-directory: site
+      - name: Install
         run: pnpm install --frozen-lockfile --prefer-offline
-      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
-        with:
-          name: site-dist
-          path: site/apps/site/dist
-      - name: Check secrets
-        run: |
-          if [ -z "$CLOUDFLARE_API_TOKEN" ] || [ -z "$CLOUDFLARE_ACCOUNT_ID" ]; then
-            echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be secrets of the environment site (.github/SETUP.md)"
-            exit 1
-          fi
+      # A page that disagrees with its sources is never deployed.
+      - name: Check and build
+        run: pnpm run ci
       - name: Deploy to Cloudflare Pages
         working-directory: site/apps/site
         run: pnpm exec wrangler pages deploy dist --project-name keelstack-landing --branch main
