@@ -278,7 +278,11 @@ pub enum ChangesetCommand {
         id: Option<String>,
     },
     /// Write `.changeset/config.json` and `.changeset/README.md`; no HTTP request
-    Init,
+    Init {
+        /// Also write `hoist-migrate.md`: the bumps commit history has pending since each tag
+        #[arg(long)]
+        from_commits: bool,
+    },
     /// Which changed packages lack a changeset (not yet available)
     Status,
 }
@@ -306,7 +310,7 @@ impl Command {
                 command: ChangesetCommand::Add { .. },
             } => "changeset add",
             Command::Changeset {
-                command: ChangesetCommand::Init,
+                command: ChangesetCommand::Init { .. },
             } => "changeset init",
             Command::Changeset {
                 command: ChangesetCommand::Status,
