@@ -115,6 +115,7 @@ fn gh_in_sync() -> LiveGithub {
         env_variables: Default::default(),
         org_variables_note: None,
         env_unreviewed: Vec::new(),
+        env_reviewers: Default::default(),
         environments: Fetch::Got(vec!["production".into()]),
         secrets: Fetch::Got(vec![
             "CLOUDFLARE_API_TOKEN".into(),
@@ -170,6 +171,7 @@ fn gh_all_missing() -> LiveGithub {
         env_variables: Default::default(),
         org_variables_note: None,
         env_unreviewed: Vec::new(),
+        env_reviewers: Default::default(),
         environments: Fetch::Got(Vec::new()),
         secrets: Fetch::Got(Vec::new()),
         org_secrets_note: None,
@@ -323,6 +325,7 @@ fn unknown_yields_no_changes() {
         env_variables: Default::default(),
         org_variables_note: None,
         env_unreviewed: Vec::new(),
+        env_reviewers: Default::default(),
         environments: why(),
         secrets: why(),
         org_secrets_note: None,

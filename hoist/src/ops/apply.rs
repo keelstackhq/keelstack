@@ -86,6 +86,8 @@ pub fn apply(
             } = c
             {
                 if logins.is_some_and(<[String]>::is_empty) {
+                    // An explicit empty list: the PUT must not carry live reviewers back.
+                    *reviewers = crate::change::Reviewers::Users(Vec::new());
                     continue;
                 }
                 *reviewers = crate::github_write::resolve_reviewers(gh, logins.unwrap_or(&[]))?;

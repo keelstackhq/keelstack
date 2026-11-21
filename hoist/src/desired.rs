@@ -291,12 +291,24 @@ fn apps(renovate: bool, configured: &[String]) -> Vec<Sourced<String>> {
 /// secrets hoist writes for the deploy (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) belong
 /// to that environment, even when no workflow job reads them yet; the jobs that do read them
 /// add theirs.
-fn deploy_environments(g: &mut DesiredGithub, root: &Path, targets: &[Target]) {
+fn deploy_environments(
+    g: &mut DesiredGithub,
+    root: &Path,
+    targets: &[Target],
+) -> Result<(), HoistError> {
     for t in targets {
         let Some(env) = t.config.deploy.as_ref().and_then(|d| d.environment.clone()) else {
             continue;
         };
         let rel = rel_dir(root, &t.dir, &t.name);
+        if !g.env_scope {
+            return Err(HoistError::Config {
+                file: format!("{rel}/hoist.toml"),
+                message: "`deploy.environment` needs `[github] secret_scope = \"environment\"` in \
+                          the root hoist.toml; set it, or remove `deploy.environment`"
+                    .to_string(),
+            });
+        }
         let source = format!("{rel}/hoist.toml:deploy.environment");
         if !g.environments.iter().any(|e| e.value == env) {
             g.environments.push(Sourced {
@@ -326,6 +338,7 @@ fn deploy_environments(g: &mut DesiredGithub, root: &Path, targets: &[Target]) {
             }
         }
     }
+    Ok(())
 }
 
 /// Each referenced variable's job environments and environment-less jobs.
@@ -707,9 +720,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
         }
     }
 
-    if github.env_scope {
-        deploy_environments(&mut github, dir, &targets);
-    }
+    deploy_environments(&mut github, dir, &targets)?;
 
     let account_id = match &root.cloudflare.account_id {
         Some(value) => Some(Sourced {

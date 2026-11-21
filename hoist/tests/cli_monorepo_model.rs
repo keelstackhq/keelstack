@@ -331,7 +331,7 @@ fn apply_creates_the_release_environment_without_reviewers() {
         .find(|r| r.method == "PUT")
         .expect("environment PUT");
     let body: Value = serde_json::from_str(put.body.as_deref().unwrap()).unwrap();
-    assert!(body.get("reviewers").is_none(), "{body}");
+    assert_eq!(body["reviewers"], serde_json::json!([]), "{body}");
     assert!(!api.requests().iter().any(|r| r.path == "/user"));
 }
 
@@ -687,4 +687,89 @@ fn a_crate_with_crates_false_never_reaches_crates_io() {
     let api = start(&release_routes(ENV_UNREVIEWED));
     let plan = run(Some(&api), d, &["plan", "--area", "crates"], 0);
     assert!(find(&plan, "trusted_publisher", "tool").is_none(), "{plan}");
+}
+
+// review fixes -------------------------------------------------------------------------------
+
+const ENV_REVIEWED: &str = r#"{"total_count":1,"environments":[{"name":"release","protection_rules":[{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":7,"login":"alice"}}]}]}]}"#;
+const ENV_DETAIL: &str = r#"{"name":"release","protection_rules":[{"type":"wait_timer","wait_timer":5},{"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":7,"login":"alice"}}]}]}"#;
+
+#[test]
+fn empty_reviewers_with_a_live_reviewer_is_an_update_naming_them() {
+    let repo = fixture_repo("publish", SITE);
+    write(repo.path(), "hoist.toml", "[release]\nreviewers = []\n");
+    let api = start(&release_routes(ENV_REVIEWED));
+    let report = run(Some(&api), repo.path(), &["plan", "--area", "release"], 0);
+    let it = item(&report, "environment", "release");
+    assert_eq!(it["action"], "update");
+    assert!(it["reason"].as_str().unwrap().contains("alice"), "{it}");
+}
+
+#[test]
+fn apply_drops_the_live_reviewers_and_keeps_the_other_protections() {
+    let repo = fixture_repo("publish", SITE);
+    write(repo.path(), "hoist.toml", "[release]\nreviewers = []\n");
+    let mut routes = release_routes(ENV_REVIEWED);
+    routes.push((
+        "GET /repos/acme/x/environments/release",
+        200,
+        ENV_DETAIL,
+        &[],
+    ));
+    let api = start(&routes);
+    run(
+        Some(&api),
+        repo.path(),
+        &["apply", "--yes", "--area", "release"],
+        // The static fake still lists the reviewer, so the verify read reports drift.
+        1,
+    );
+    let put = api
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .expect("environment PUT");
+    let body: Value = serde_json::from_str(put.body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["reviewers"], serde_json::json!([]), "{body}");
+    assert_eq!(body["wait_timer"], 5, "{body}");
+    assert_eq!(body["prevent_self_review"], true, "{body}");
+}
+
+#[test]
+fn a_tag_ruleset_needs_bypass_github_actions() {
+    for bypass in ["", "bypass = []\n"] {
+        let repo = git_repo();
+        write(
+            repo.path(),
+            "hoist.toml",
+            &format!("[github.tag_ruleset]\npatterns = [\"v*\"]\n{bypass}"),
+        );
+        let out = hoist()
+            .current_dir(repo.path())
+            .arg("explain")
+            .assert()
+            .code(3);
+        let err = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+        assert!(err.contains("github.tag_ruleset.bypass"), "{err}");
+    }
+}
+
+#[test]
+fn deploy_environment_without_environment_scope_exits_3() {
+    let repo = git_repo();
+    let d = repo.path();
+    write(d, "hoist.toml", "[workspace]\nmembers = [\"site\"]\n");
+    write(
+        d,
+        "site/hoist.toml",
+        "[deploy]\nprovider = \"cloudflare-pages\"\nproject = \"acme-landing\"\nenvironment = \"site\"\n",
+    );
+    let out = hoist().current_dir(d).arg("explain").assert().code(3);
+    let err = String::from_utf8_lossy(&out.get_output().stderr).to_string();
+    assert!(
+        err.contains("deploy.environment")
+            && err.contains("secret_scope")
+            && err.contains("site/hoist.toml"),
+        "{err}"
+    );
 }

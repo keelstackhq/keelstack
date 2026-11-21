@@ -135,6 +135,23 @@ pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
                 "present, but no required reviewer; would add the configured reviewers or the token's user".to_string(),
             )
         }
+        Ok(have)
+            if have.contains(&env.value)
+                && r.reviewers.as_ref().is_some_and(Vec::is_empty)
+                && l.env_reviewers.contains_key(&env.value) =>
+        {
+            let action = match d.github.managed {
+                Managed::External => Action::Drift,
+                _ => Action::Update,
+            };
+            (
+                action,
+                format!(
+                    "present, but `[release] reviewers = []` wants no required reviewer; would drop {}",
+                    l.env_reviewers[&env.value].join(", ")
+                ),
+            )
+        }
         Ok(have) if have.contains(&env.value) => (Action::Ok, "present".to_string()),
         Ok(_) if d.github.managed == Managed::External => (
             Action::Drift,

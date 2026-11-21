@@ -323,10 +323,11 @@ fn validate_tag_ruleset(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
                 .to_string(),
         ));
     }
-    if let Some(other) = t.bypass.iter().find(|b| *b != "github-actions") {
+    if t.bypass != ["github-actions"] {
         return Err(bad(format!(
-            "unknown `github.tag_ruleset.bypass` value `{other}`; the only supported value is \
-             `github-actions`"
+            "`github.tag_ruleset.bypass` must be exactly [\"github-actions\"] (got {:?}); set it \
+             in `[github.tag_ruleset]`",
+            t.bypass
         )));
     }
     Ok(())

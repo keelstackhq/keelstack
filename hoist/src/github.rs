@@ -96,6 +96,9 @@ pub struct LiveGithub {
     pub env_branches: std::collections::BTreeMap<String, Fetch<EnvBranches>>,
     /// Environments whose list entry shows `protection_rules` without a required-reviewers rule.
     pub env_unreviewed: Vec<String>,
+    /// Per environment the list shows: the logins (users) or slugs (teams) of its required
+    /// reviewers. Environments without any are absent.
+    pub env_reviewers: std::collections::BTreeMap<String, Vec<String>>,
     /// Repository variables plus the organization variables this repo can use; read only when
     /// a workflow or `hoist.toml` names a variable.
     pub variables: Fetch<Vec<LiveVariable>>,
@@ -165,6 +168,35 @@ fn unreviewed(items: &[Value]) -> Vec<String> {
             (!has).then(|| i.get("name").and_then(Value::as_str).map(str::to_string))?
         })
         .collect()
+}
+
+/// The required reviewers (login or team slug) of each environment the list shows.
+fn reviewers_of(items: &[Value]) -> std::collections::BTreeMap<String, Vec<String>> {
+    let mut out = std::collections::BTreeMap::new();
+    for i in items {
+        let Some(name) = i.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let who: Vec<String> = i["protection_rules"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|r| r["type"] == "required_reviewers")
+            .flat_map(|r| r["reviewers"].as_array().into_iter().flatten())
+            .filter_map(|r| {
+                let x = &r["reviewer"];
+                x["login"]
+                    .as_str()
+                    .or_else(|| x["slug"].as_str())
+                    .or_else(|| x["name"].as_str())
+                    .map(str::to_string)
+            })
+            .collect();
+        if !who.is_empty() {
+            out.insert(name.to_string(), who);
+        }
+    }
+    out
 }
 
 /// The deployment branch policy of each environment in `want` that the list shows. A list
@@ -713,6 +745,10 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         Fetch::Got(items) => unreviewed(items),
         Fetch::Unknown(_) => Vec::new(),
     };
+    let env_reviewers = match &environments {
+        Fetch::Got(items) => reviewers_of(items),
+        Fetch::Unknown(_) => Default::default(),
+    };
     Ok(LiveGithub {
         settings,
         rulesets: read_rulesets(http, &base)?,
@@ -742,6 +778,7 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         env_variables,
         org_variables_note,
         env_unreviewed,
+        env_reviewers,
         repo_strays: match (&secrets, &homes) {
             (Fetch::Got(items), Some(_)) => names(items.clone(), "name")
                 .into_iter()

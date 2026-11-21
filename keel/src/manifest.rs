@@ -729,7 +729,14 @@ mod tests {
             .unwrap()
         );
         assert_eq!(m.confirmed.dns.as_deref(), Some("b.example.com"));
-        for bad in ["", "two words", "secret:X", "variable:Y", "npm-trust:", "app"] {
+        for bad in [
+            "",
+            "two words",
+            "secret:X",
+            "variable:Y",
+            "npm-trust:",
+            "app",
+        ] {
             assert!(
                 m.merge_flags(&UpArgs {
                     confirm: vec![bad.into()],

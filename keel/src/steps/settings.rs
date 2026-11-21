@@ -392,14 +392,8 @@ mod tests {
         assert!(matches!(run(1, BODY, &[]), Check::Todo(_)));
         assert!(matches!(run(0, BODY, &[]), Check::Human(_)));
         assert!(matches!(run(2, none, &[]), Check::Failed(_)));
-        assert!(matches!(
-            run(0, BODY, &["npm-trust:p"]),
-            Check::Human(_)
-        ));
-        assert!(matches!(
-            run(2, BODY, &["npm-trust:p"]),
-            Check::Human(_)
-        ));
+        assert!(matches!(run(0, BODY, &["npm-trust:p"]), Check::Human(_)));
+        assert!(matches!(run(2, BODY, &["npm-trust:p"]), Check::Human(_)));
         assert!(matches!(run(3, "", &[]), Check::Failed(_)));
     }
 }
