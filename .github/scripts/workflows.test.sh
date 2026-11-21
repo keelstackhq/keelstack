@@ -5,9 +5,11 @@
 # 1. Every actions/checkout that does not push sets persist-credentials: false (the one that
 #    pushes: budget-report's `reports` checkout).
 # 2. main-health's `report` job (it holds the App key) runs only for refs/heads/main.
-# 3. deploy-site: `decide` deploys a version <= 0.21.0 (legacy state, D-024) or one whose tag
-#    vX.Y.Z exists, outputs the commit it resolved, and `deploy` checks out exactly that commit;
-#    the workflow_run trigger counts only this repository's dispatched release runs.
+# 3. deploy-site: every push to main deploys main's site; `decide` resolves the commit (the
+#    release run's head_sha after a release) and the latest release tag vX.Y.Z reachable from it
+#    (version facts come from that tag, never an untagged Cargo version). `build` (no secrets)
+#    installs and checks, `deploy` (environment site) runs wrangler on the sha256-verified
+#    artifact only. The workflow_run trigger counts only this repository's dispatched release runs.
 # 4. release.yml `plan`: only an absent workspace version at the first parent reads as empty; a
 #    git error (a missing object) fails the step. The plan checkout keeps no credentials.
 # 5. release.yml: the tag deploy key step fails closed without RELEASE_TAG_KEY, pins github.com's
@@ -87,65 +89,110 @@ ok "main-health report is guarded to refs/heads/main"
 
 # --- 3. deploy-site ------------------------------------------------------------------------
 ds="$wf/deploy-site.yml"
-decide_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$(job_text "$ds" decide)")"
+decide_job="$(job_text "$ds" decide)"
+build_job="$(job_text "$ds" build)"
+deploy="$(job_text "$ds" deploy)"
+decide_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$decide_job")"
 for want in "github.event.workflow_run.event == 'workflow_dispatch'" \
   "github.event.workflow_run.head_repository.full_name == github.repository" \
   "github.event.workflow_run.conclusion == 'success'"; do
   grep -qF "$want" <<<"$decide_if" || bad "deploy-site.yml decide if: lacks $want"
 done
-grep -qF 'sha: ${{ steps.tag.outputs.sha }}' <<<"$(job_text "$ds" decide)" || bad "deploy-site.yml: decide has no sha output"
-deploy="$(job_text "$ds" deploy)"
-grep -qF 'ref: ${{ needs.decide.outputs.sha }}' <<<"$deploy" || bad "deploy-site.yml: deploy does not check out decide's sha"
-! grep -q 'SITE_REF\|github.sha\|default_branch' <<<"$deploy" || bad "deploy-site.yml: deploy resolves the ref a second time"
+# The commit built is main's: this run's, or the release run's head (not main's moving head).
+grep -qF 'github.event.workflow_run.head_sha' <<<"$decide_job" || bad "deploy-site.yml: decide does not resolve workflow_run.head_sha"
+! grep -q 'default_branch' "$ds" || bad "deploy-site.yml: still resolves main's moving head by branch name"
+grep -qF 'sha: ${{ steps.release.outputs.sha }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no sha output"
+grep -qF 'released: ${{ steps.release.outputs.released }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no released output"
+grep -qF 'ref: ${{ needs.decide.outputs.sha }}' <<<"$build_job" || bad "deploy-site.yml: build does not check out decide's sha"
+grep -qF 'RELEASED_VERSION: ${{ needs.decide.outputs.released }}' <<<"$build_job" || bad "deploy-site.yml: build does not pass RELEASED_VERSION"
+! grep -q 'SITE_REF' "$ds" || bad "deploy-site.yml: SITE_REF is back: a deploy must not wait for a tag"
 grep -q '^# ci-minutes: allow concurrency [a-z]' "$ds" || bad "deploy-site.yml: no ci-minutes allow comment with a reason"
+# build installs and tests with no secrets and no environment; deploy holds the secrets and only
+# runs wrangler on a verified artifact: no checkout, no pnpm.
+grep -qF 'deploy --prod' <<<"$build_job" || bad "deploy-site.yml: build does not pack wrangler from the lockfile"
+! grep -qE 'secrets\.|^    environment:' <<<"$build_job" || bad "deploy-site.yml: build job sees secrets or an environment"
+! grep -qE 'pnpm|checkout|setup-node|npm install' <<<"$deploy" || bad "deploy-site.yml: deploy job installs or checks out code"
+grep -qF 'environment: site' <<<"$deploy" || bad "deploy-site.yml: deploy is not in environment site"
+grep -qF 'sha256sum -c' <<<"$deploy" || bad "deploy-site.yml: deploy does not verify the artifact's sha256"
+grep -qF 'needs.build.outputs.digest' <<<"$deploy" || bad "deploy-site.yml: deploy has no digest from build"
+before_deploy="$(awk '/^      - name: Deploy to Cloudflare/ { exit } { print }' <<<"$deploy")"
+! grep -qE 'secrets\.' <<<"$(grep -v 'name: Check secrets' <<<"$(awk '/^      - name: Check secrets/ { skip = 1; next } skip && /^      - / { skip = 0 } !skip' <<<"$before_deploy")")" ||
+  bad "deploy-site.yml: a deploy step before 'Deploy to Cloudflare Pages' (other than Check secrets) sees secrets"
+unpinned="$(grep -E '^\s*-?\s*uses:' "$ds" | grep -vE '@[0-9a-f]{40}( |$)' || true)"
+[ -z "$unpinned" ] || bad "deploy-site.yml: actions not pinned by SHA: $unpinned"
 
-decide="$(step_run "$ds" decide 'Is the version released')"
-[ -n "$decide" ] || bad "deploy-site.yml: step 'Is the version released' not found"
+rel_step="$(step_run "$ds" decide 'Latest release tag reachable from the commit')"
+[ -n "$rel_step" ] || bad "deploy-site.yml: step 'Latest release tag reachable from the commit' not found"
 mkdir -p "$tmp/ghbin"
-# A fake gh: prints $FAKE_REFS for matching-refs, logs its calls, fails when FAKE_GH_FAIL is set.
-cat >"$tmp/ghbin/gh" <<'EOF'
+# A fake gh. matching-refs prints $FAKE_REFS. commits/vX prints the tag commit's FIRST PARENT (the
+# release commit is a child of a main commit, reachable only from its tag): "f..." for tags in
+# $FAKE_UNREACHABLE, else "a...". commits/main prints $FAKE_MAIN. compare/<base>...<head> prints
+# "diverged" for an "f..." base, $FAKE_MAIN_STATUS for head == $FAKE_MAIN, else "ahead"; a compare
+# against a tag name (what a release commit would never satisfy) fails. FAKE_GH_FAIL fails all.
+cat >"$tmp/ghbin/gh" <<'FAKEGH'
 #!/usr/bin/env bash
-echo "$*" >>"$FAKE_GH_LOG"
+args="$*"
+echo "$args" >>"$FAKE_GH_LOG"
 [ -z "${FAKE_GH_FAIL:-}" ] || { echo "HTTP 500" >&2; exit 1; }
-case "$*" in */commits/*) printf '%s' "${FAKE_SHA:-}" ;; *) printf '%s' "$FAKE_REFS" ;; esac
-EOF
+case "$args" in
+  *matching-refs*) printf '%s\n' "$FAKE_REFS" ;;
+  */commits/main*) printf '%s\n' "$FAKE_MAIN" ;;
+  */commits/v*)
+    tag="${args##*/commits/}"
+    tag="${tag%% *}"
+    for t in ${FAKE_UNREACHABLE:-}; do
+      [ "$t" != "$tag" ] || { printf 'f%039d\n' 1; exit 0; }
+    done
+    printf 'a%039d\n' 1 ;;
+  */compare/v*) echo "release commits are not on main: compare against a tag name is wrong" >&2; exit 1 ;;
+  */compare/*)
+    pair="${args##*/compare/}"
+    pair="${pair%% *}"
+    base="${pair%%...*}"
+    head="${pair##*...}"
+    if [ "${base:0:1}" = f ]; then echo diverged
+    elif [ "$head" = "${FAKE_MAIN:-}" ] && [ -n "${FAKE_MAIN_STATUS:-}" ]; then echo "$FAKE_MAIN_STATUS"
+    else echo ahead; fi ;;
+  *) echo "unexpected gh call: $args" >&2; exit 1 ;;
+esac
+FAKEGH
 chmod +x "$tmp/ghbin/gh"
-# decide_case <version> <tag refs> <want deploy|error>
-decide_case() {
-  local d="$tmp/decide-$1-$RANDOM" out want="$3" got wantsha tagsha="${TAG_SHA-}"
+SHA_OK=0123456789abcdef0123456789abcdef01234567
+SHA_NEW=89abcdef0123456789abcdef0123456789abcdef
+# release_case <name> <tag refs> <want: a version, "none" or "error"> [sha] [want sha]
+release_case() {
+  local d="$tmp/rel-$1" out="$tmp/rel-$1.out" want="$3" sha="${4-$SHA_OK}" wantsha="${5-${4-$SHA_OK}}"
   mkdir -p "$d"
-  git -C "$d" init -q
-  git -C "$d" update-ref HEAD "$(mkcommit "$d" Cargo.toml "$(printf '[workspace]\nmembers = []\n\n[workspace.package]\nversion = "%s"\n' "$1")")"
-  git -C "$d" checkout -q -f HEAD -- .
-  out="$d.out"
   : >"$out"
-  if (cd "$d" && PATH="$tmp/ghbin:$PATH" FAKE_GH_LOG="$d.log" FAKE_REFS="$2" FAKE_SHA="$tagsha" FAKE_GH_FAIL="${FAKE_GH_FAIL:-}" \
-    GITHUB_OUTPUT="$out" GITHUB_REPOSITORY=o/r GH_TOKEN=x bash -e -c "$decide") >"$d.stdout" 2>&1; then
-    got="$(sed -n 's/^deploy=//p' "$out")"
-    [ "$got" = "$want" ] || bad "decide $1 [$2]: deploy=$got, want $want: $(cat "$d.stdout")"
-    # A released version (> 0.21.0) builds the tag's commit; a legacy one the resolved HEAD.
-    wantsha="$(git -C "$d" rev-parse HEAD)"
-    if [ "$want" = true ] && [ -n "$tagsha" ]; then wantsha="$tagsha"; fi
-    [ "$(sed -n 's/^sha=//p' "$out" | tail -n 1)" = "$wantsha" ] || bad "decide $1: sha output is not $wantsha"
+  if (cd "$d" && PATH="$tmp/ghbin:$PATH" FAKE_GH_LOG="$d.log" FAKE_REFS="$2" FAKE_UNREACHABLE="${FAKE_UNREACHABLE:-}" FAKE_GH_FAIL="${FAKE_GH_FAIL:-}" \
+    FAKE_MAIN="${FAKE_MAIN:-$sha}" FAKE_MAIN_STATUS="${FAKE_MAIN_STATUS:-}" GITHUB_EVENT_NAME="${EVENT:-push}" \
+    GITHUB_OUTPUT="$out" GITHUB_REPOSITORY=o/r GH_TOKEN=x SITE_SHA="$sha" bash -e -c "$rel_step") >"$d.stdout" 2>&1; then
+    [ "$want" != error ] || { bad "release $1: passed, want a failure"; return; }
+    [ "$want" != none ] || want=""
+    grep -qx "released=$want" "$out" || bad "release $1: $(grep '^released=' "$out" || echo 'no released='), want '$want': $(cat "$d.stdout")"
+    grep -qx "sha=$wantsha" "$out" || bad "release $1: sha output is not $wantsha: $(cat "$out")"
   else
-    [ "$want" = error ] || bad "decide $1 [$2] failed: $(cat "$d.stdout")"
+    [ "$want" = error ] || bad "release $1 failed: $(cat "$d.stdout")"
   fi
-  if [ "${NO_GH:-}" = 1 ] && [ -s "$d.log" ]; then bad "decide $1 called gh: $(cat "$d.log")"; fi
 }
-NO_GH=1 decide_case 0.21.0 "" true
-NO_GH=1 decide_case 0.20.9 "" true
-NO_GH=1 decide_case 0.3.1 "" true
-NO_GH=1 FAKE_GH_FAIL=1 decide_case 0.21.0 "" true
-TAG_SHA=1111111111111111111111111111111111111111 decide_case 0.22.0 "refs/tags/v0.22.0" true
-TAG_SHA=2222222222222222222222222222222222222222 decide_case 0.21.1 $'refs/tags/v0.21.10\nrefs/tags/v0.21.1' true
-TAG_SHA=notasha decide_case 0.22.0 "refs/tags/v0.22.0" error
-decide_case 0.22.0 "refs/tags/v0.22.0-rc.1" false
-decide_case 0.22.0 "" false
-decide_case 1.0.0 "" false
-FAKE_GH_FAIL=1 decide_case 0.22.0 "" error
-decide_case 0.22 "" error
-decide_case 0.22.0-rc.1 "" error
-[ "$fail" = 1 ] || ok "deploy-site decide: <= 0.21.0 or tagged deploys, sha pinned, guards"
+release_case none "" none
+release_case one "refs/tags/v0.22.0" 0.22.0
+release_case highest $'refs/tags/v0.21.9\nrefs/tags/v0.21.10\nrefs/tags/v0.9.0' 0.21.10
+release_case major $'refs/tags/v0.22.0\nrefs/tags/v1.0.0' 1.0.0
+release_case prerelease-ignored $'refs/tags/v0.22.0-rc.1\nrefs/tags/v0.22.0' 0.22.0
+release_case only-prerelease "refs/tags/v0.22.0-rc.1" none
+release_case other-suffix $'refs/tags/v0.22.0\nrefs/tags/v0.30.0x' 0.22.0
+FAKE_UNREACHABLE="v0.23.0" release_case unreachable-skipped $'refs/tags/v0.22.0\nrefs/tags/v0.23.0' 0.22.0
+FAKE_UNREACHABLE="v0.23.0" release_case all-unreachable "refs/tags/v0.23.0" none
+FAKE_GH_FAIL=1 release_case gh-fails "refs/tags/v0.22.0" error
+release_case bad-sha "" error notasha
+# A release run's head_sha: main's head when it did not move, else main's head when it is ahead
+# (never roll the site back); a main that is not ahead keeps head_sha.
+EVENT=workflow_run release_case run-same-head "refs/tags/v0.22.0" 0.22.0
+EVENT=workflow_run FAKE_MAIN="$SHA_NEW" release_case run-main-ahead "refs/tags/v0.22.0" 0.22.0 "$SHA_OK" "$SHA_NEW"
+EVENT=workflow_run FAKE_MAIN="$SHA_NEW" FAKE_MAIN_STATUS=diverged release_case run-main-not-ahead "refs/tags/v0.22.0" 0.22.0
+EVENT=push FAKE_MAIN="$SHA_NEW" release_case push-ignores-main "refs/tags/v0.22.0" 0.22.0
+[ "$fail" = 1 ] || ok "deploy-site: latest reachable release tag, main's sha, guards; build (no secrets) and deploy split"
 
 # --- 4. release.yml plan: the first parent's version --------------------------------------
 rel="$wf/release.yml"

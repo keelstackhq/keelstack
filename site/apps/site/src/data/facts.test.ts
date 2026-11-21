@@ -5,9 +5,11 @@ import { beforeAll, describe, expect, test } from "vite-plus/test";
 import {
   facts,
   findRoot,
+  loadFacts,
   parseLegacyTags,
   parseSubcommands,
   readmeLead,
+  releasedVersionInput,
   semverGt,
   tomlString,
   workspaceMembers,
@@ -108,13 +110,50 @@ describe("release state", () => {
   });
 });
 
+describe("loadFacts: version facts come from the latest released tag, not the Cargo version", () => {
+  const repoRoot = findRoot();
+  const cargo = tomlString(
+    readFileSync(`${repoRoot}/Cargo.toml`, "utf8"),
+    "workspace.package",
+    "version",
+  );
+
+  test("a released version above the move version wins over an untagged Cargo version", () => {
+    const f = loadFacts(repoRoot, "9.8.7");
+    expect(f.version).toBe("9.8.7");
+    expect(f.tag).toBe("v9.8.7");
+    expect(f.released).toBe(true);
+    expect(f.hoardAction).toBe("keelstackhq/keelstack/hoard@v9.8.7");
+    expect(f.workspaceVersion).toBe(cargo);
+  });
+
+  test("an empty released version (nothing tagged yet) is not released and shows no untagged version", () => {
+    const f = loadFacts(repoRoot, "");
+    expect(f.released).toBe(false);
+    expect(f.version).toBe(f.moveVersion);
+    expect(f.tag).toBe(`v${f.moveVersion}`);
+    expect(f.hoardAction).toBe(`keelstackhq/keelstack/hoard@v${f.moveVersion}`);
+  });
+
+  test("a released version at or below the move version is not released", () => {
+    expect(loadFacts(repoRoot, facts.moveVersion).released).toBe(false);
+  });
+
+  test("a malformed released version fails", () => {
+    expect(() => loadFacts(repoRoot, "v1.2")).toThrow(/RELEASED_VERSION/);
+  });
+});
+
 describe("facts come from the monorepo", () => {
   const rootDir = findRoot();
   const file = (p: string): string => readFileSync(`${rootDir}/${p}`, "utf8");
 
   test("version is the workspace version", () => {
-    expect(facts.version).toBe(tomlString(file("Cargo.toml"), "workspace.package", "version"));
-    expect(facts.version).toMatch(/^\d+\.\d+\.\d+$/);
+    const cargo = tomlString(file("Cargo.toml"), "workspace.package", "version");
+    expect(facts.workspaceVersion).toBe(cargo);
+    expect(facts.workspaceVersion).toMatch(/^\d+\.\d+\.\d+$/);
+    // Without a released-version input the page shows the workspace version.
+    if (releasedVersionInput === undefined) expect(facts.version).toBe(cargo);
   });
 
   test("every tool carries a crate description, subcommands and a folder link", () => {
@@ -131,7 +170,7 @@ describe("facts come from the monorepo", () => {
   test("every npm launcher package mirrors the workspace version (lockstep)", () => {
     for (const t of facts.tools.filter((x) => x.npm)) {
       const pkg = JSON.parse(file(`${t.name}/npm/${t.name}/package.json`)) as { version: string };
-      expect(pkg.version, t.name).toBe(facts.version);
+      expect(pkg.version, t.name).toBe(facts.workspaceVersion);
     }
   });
 

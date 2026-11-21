@@ -82,13 +82,16 @@ Computer steps first, then phone steps. Typical first run:
   - Cloudflare Pages project `keelstack-landing` (`site/hoist.toml`; deploy-site.yml builds and
     deploys `site/apps/site/dist`), a minted deploy token sealed with the
     account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`.
-    deploy-site deploys only a released version: a version-bump push skips the deploy (job
-    `decide` finds no tag `vX.Y.Z` yet) and the release run's completion deploys it. The release
-    commit lives only on the tag (main never moves), so a released version (> 0.21.0) is built
-    from the tag's commit, never from a later main head; <= 0.21.0 builds the resolved main
-    commit. A manual run deploys only from main. Pull requests build and test the site in ci.yml (`ci-site`);
-    deploy-site has no `pull_request` trigger. Only its `Check secrets` and `Deploy to
-    Cloudflare Pages` steps receive `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`;
+    deploy-site deploys main's site on every push to main touching `site/` or a dependency, and
+    after a release run (built at that run's head commit). Version facts (version, install
+    commands, `@vX` sources) come from the latest release tag `vX.Y.Z` reachable from the built
+    commit (job `decide`), never from an untagged Cargo version; before the first release > 0.21.0
+    the page pins the old repos' last releases. Job `build` runs install, tests and build with no
+    secrets; job `deploy` (environment `site`) verifies the artifact's sha256 and runs the wrangler in it
+    (installed from the lockfile by build), with no checkout and no install. A manual run deploys only from main. Pull requests build and
+    test the site in ci.yml (`ci-site`); deploy-site has no `pull_request` trigger. Only its
+    `Check secrets` and `Deploy to Cloudflare Pages` steps receive `CLOUDFLARE_API_TOKEN` /
+    `CLOUDFLARE_ACCOUNT_ID`;
   - reads only: app installation, environment secrets and variables (present or not), crates.io and
     npm packages (first publish needed or not).
 - Release: no publish secrets (crates.io and npm use trusted publishing, OIDC); the one

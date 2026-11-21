@@ -38,8 +38,14 @@ export interface PieceFact {
 }
 
 export interface Facts {
-  /** `[workspace.package] version` of the root Cargo.toml: one version for every tool. */
+  /**
+   * The version the page shows and the commands pin: the latest released tag (RELEASED_VERSION,
+   * resolved by deploy-site.yml), never an untagged Cargo version. Without that input (local
+   * builds, ci-site) it is the workspace version.
+   */
   version: string;
+  /** `[workspace.package] version` of the root Cargo.toml: one version for every tool. */
+  workspaceVersion: string;
   tag: string;
   repoUrl: string;
   orgUrl: string;
@@ -66,6 +72,12 @@ export interface Facts {
   templateFiles: Record<string, number>;
   hoardAction: string;
 }
+
+// No @types/node in this workspace: only the environment is used.
+declare const process: { env: Record<string, string | undefined> };
+
+/** RELEASED_VERSION: the latest released tag's version, set by deploy-site.yml; unset elsewhere. */
+export const releasedVersionInput: string | undefined = process.env.RELEASED_VERSION;
 
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -194,12 +206,27 @@ function countFiles(dir: string): number {
   return n;
 }
 
-export function loadFacts(root: string = findRoot()): Facts {
+/**
+ * `releasedVersion`: the latest vX.Y.Z release tag reachable from main, as X.Y.Z. `""` means
+ * nothing is released yet (the page shows the move version); `undefined` (not given) falls back to the workspace version.
+ * Default: the RELEASED_VERSION environment variable.
+ */
+export function loadFacts(
+  root: string = findRoot(),
+  releasedVersion: string | undefined = releasedVersionInput,
+): Facts {
   const read = (...p: string[]): string => readFileSync(join(root, ...p), "utf8");
   const cargo = read("Cargo.toml");
   const version = tomlString(cargo, "workspace.package", "version");
   if (!version) throw new Error("facts: [workspace.package] version missing in Cargo.toml");
   const members = workspaceMembers(cargo);
+  if (
+    releasedVersion !== undefined &&
+    releasedVersion !== "" &&
+    !/^\d+\.\d+\.\d+$/.test(releasedVersion)
+  ) {
+    throw new Error(`facts: RELEASED_VERSION '${releasedVersion}' is not X.Y.Z`);
+  }
 
   const first = members[0]!;
   const repoUrl = tomlString(read(first, "Cargo.toml"), "package", "repository");
@@ -260,12 +287,20 @@ export function loadFacts(root: string = findRoot()): Facts {
   }
 
   const legacyTags = parseLegacyTags(read("hull", "legacy-tags.txt"));
+  // The page follows the latest release tag. With none (""), it shows the version before the
+  // monorepo's releases (the legacy state), never an untagged workspace version.
+  const shown = releasedVersion === undefined ? version : releasedVersion || legacyTags.moveVersion;
+  const released = semverGt(
+    releasedVersion === undefined ? version : releasedVersion || "0.0.0",
+    legacyTags.moveVersion,
+  );
 
   return {
-    version,
-    tag: `v${version}`,
+    version: shown,
+    workspaceVersion: version,
+    tag: `v${shown}`,
     moveVersion: legacyTags.moveVersion,
-    released: semverGt(version, legacyTags.moveVersion),
+    released,
     hullLegacyTags: legacyTags.tags,
     decisionsChannel: `gh:${org}/${repo}//decisions/channel`,
     spliceAction: `${org}/${repo}/splice/action`,
@@ -277,7 +312,7 @@ export function loadFacts(root: string = findRoot()): Facts {
     pieces,
     stack: { node, pnpm: pnpmM[1]!, typescript: tsM[1]! },
     templateFiles,
-    hoardAction: `${org}/${repo}/hoard@v${version}`,
+    hoardAction: `${org}/${repo}/hoard@v${shown}`,
   };
 }
 
