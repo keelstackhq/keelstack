@@ -117,8 +117,14 @@ this one knows; the exit code stays 3.
 
 `hoist check` verifies each required check against the workflows: a job id or name, or a commit
 status. Commit statuses (posted by workflows, not jobs) are the built-in bosun set `main-open`,
-`review-verdict`, `risk-check` plus `[github] statuses`; those pass with the detail "a commit
-status". Any other name that is no job fails as before.
+`review-verdict`, `risk-check` plus `[github] statuses`. A status verifies when some workflow
+job's token may post statuses: `statuses: write` or `write-all` in the job's `permissions`, else
+in the workflow's (a job's own `permissions` replace the workflow's; `~` is no override), or no
+`permissions` at all with `actions_permissions = "write"`. The detail names the `file:job`s
+("a commit status (...); `statuses: write` in gate.yml:judge"); hoist cannot tell which job posts
+which status. A status with no such job fails ("is a commit status (...), but no workflow job has
+`statuses: write` to post it"). A `statuses` entry missing from `required_checks` is a config
+error (exit 3). Any other name that is no job fails as before.
 
 `[github] optional_secrets = ["NAME", …]` marks workflow-named secrets that may stay unset (names
 are case-insensitive). They are reported as `github/optional_secret` items, action `ok`

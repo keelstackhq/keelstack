@@ -135,7 +135,11 @@ the text stays on stderr. A usage error also prints the hoist version and a `whi
 (an older hoist earlier on `PATH` may be the one that rejected the flag); the exit code stays 3.
 
 `check` accepts a required check that is a commit status rather than a job: the built-in bosun
-set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["name"]`. Mark
+set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["name"]`; such a
+check verifies when some workflow job has `statuses: write` (or `write-all`) in its effective
+`permissions` (a job's own replace the workflow's; none at all counts only with
+`actions_permissions = "write"`), else it fails. Each `statuses` entry must also be in
+`required_checks` (else exit 3). Mark
 secrets a workflow names but that may stay unset with `[github] optional_secrets = ["NAME"]`:
 they show as `optional_secret` items (action `ok`), not as pending human steps.
 

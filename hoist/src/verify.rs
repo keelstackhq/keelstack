@@ -24,17 +24,35 @@ pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
             let found = w.jobs.iter().any(|j| j.value == check.value);
             let status = BOSUN_STATUSES.contains(&check.value.as_str())
                 || d.github.statuses.contains(&check.value);
+            // A job without `permissions` gets the repo default, which apply sets.
+            let mut writers = w.status_writers.clone();
+            if d.github.actions_permissions.value == "write" {
+                writers.extend(w.default_permission_jobs.iter().cloned());
+            }
             let kept = check.source == crate::adopt::SOURCE;
             let (reason, ok) = if kept {
                 (
                     "kept from the live ruleset (--adopt); not a check hoist names".to_string(),
                     true,
                 )
+            } else if status && !found && !writers.is_empty() {
+                (
+                    format!(
+                        "a commit status (built-in bosun set or `[github] statuses`); \
+                         `statuses: write` in {}",
+                        writers.join(", ")
+                    ),
+                    true,
+                )
             } else if status && !found {
                 (
-                    "a commit status (built-in bosun set or `[github] statuses`), not a job"
-                        .to_string(),
-                    true,
+                    format!(
+                        "required check `{}` is a commit status (built-in bosun set or \
+                         `[github] statuses`), but no workflow job has `statuses: write` to \
+                         post it",
+                        check.value
+                    ),
+                    false,
                 )
             } else if found {
                 ("a job with this name exists in the workflows".to_string(), true)
