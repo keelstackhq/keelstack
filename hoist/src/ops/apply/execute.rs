@@ -7,7 +7,7 @@ use crate::change::Change;
 use crate::cloudflare_write::execute_cloudflare_with;
 use crate::desired::Desired;
 use crate::error::HoistError;
-use crate::github_write::execute_github;
+use crate::github_write::{DEPLOY_KEYS_POLICY, execute_github};
 use crate::http::Http;
 use crate::ops::check::exit_code;
 use crate::report::{Action, HumanStep, Item, Report, Verify};
@@ -40,7 +40,12 @@ pub(super) fn write_all(
     let mut created = Vec::new();
     let mut plan_limited = false;
     let mut reviewer_limited = false;
+    let mut policy: Option<HumanStep> = None;
     for (index, change) in changes.iter().enumerate() {
+        // Deploy keys are not allowed: the tag ruleset would bypass a key that cannot exist.
+        if policy.is_some() && matches!(change, Change::TagRuleset { .. }) {
+            continue;
+        }
         match execute(gh, cf, d, change, groups, r2) {
             // Not a stop: the other writes still apply, and the report names the gap.
             Err(HoistError::PlanLimited(_))
@@ -52,6 +57,9 @@ pub(super) fn write_all(
                 reviewer_limited = true;
             }
             Ok(step) => {
+                if let Some(s) = step.as_ref().filter(|s| s.id == DEPLOY_KEYS_POLICY) {
+                    policy = Some(s.clone());
+                }
                 match (&step, change) {
                     (None, Change::PagesProject { name, exists, .. }) if !exists => {
                         created.push(("pages_project".to_string(), name.clone()))
@@ -71,6 +79,22 @@ pub(super) fn write_all(
                 };
                 steps.extend(r2.map(R2Run::take_left_over).unwrap_or_default());
                 let mut report = stopped(changes, plan, status, steps);
+                if let Some(step) = &policy {
+                    // Only the items a change stood for: a planned `drift` or `ok` item has
+                    // no change and stays as it was.
+                    let kinds: Vec<&str> = changes
+                        .iter()
+                        .filter_map(|c| match c {
+                            Change::TagDeployKey { .. } => Some("tag_deploy_key"),
+                            Change::TagRuleset { .. } => Some("tag_ruleset"),
+                            _ => None,
+                        })
+                        .collect();
+                    mark_deploy_keys_pending(&mut report, step, |i| {
+                        kinds.contains(&i.kind.as_str())
+                    });
+                    report.exit_code = 1;
+                }
                 if plan_limited {
                     mark_plan_limited(&mut report, d);
                 }
@@ -212,7 +236,7 @@ fn execute(
         let cf = cf.ok_or_else(|| not_read("Cloudflare"))?;
         execute_cloudflare_with(cf, gh, d, change, groups)
     } else {
-        execute_github(gh.ok_or_else(|| not_read("GitHub"))?, d, change).map(|()| None)
+        execute_github(gh.ok_or_else(|| not_read("GitHub"))?, d, change)
     }
 }
 
@@ -287,10 +311,34 @@ fn stopped(
     report
 }
 
+/// Deploy keys are not allowed: the tag deploy key and the tag ruleset were not written, so
+/// their items are `pending` (not drift, not applied) with the step's title as reason.
+fn mark_deploy_keys_pending(
+    report: &mut Report,
+    step: &HumanStep,
+    skipped: impl Fn(&Item) -> bool,
+) {
+    for item in report
+        .items
+        .iter_mut()
+        .filter(|i| (i.kind == "tag_deploy_key" || i.kind == "tag_ruleset") && skipped(i))
+    {
+        item.action = Action::Pending;
+        item.reason = step.title.clone();
+        item.verify = None;
+    }
+}
+
 /// Add the human steps the writers returned (a domain whose zone is not on the account): the
 /// matching item becomes `pending`, so the exit code is 2 when nothing else failed.
 pub(super) fn add_steps(report: &mut Report, steps: Vec<HumanStep>) {
     for step in steps {
+        if step.id == DEPLOY_KEYS_POLICY {
+            // Only what the skipped writes would have changed; `drift` and `ok` stay.
+            mark_deploy_keys_pending(report, &step, |i| {
+                matches!(i.action, Action::Create | Action::Update)
+            });
+        }
         if let Some(host) = step.id.strip_prefix("domain:") {
             for item in report.items.iter_mut().filter(|i| {
                 i.kind == "custom_domain" && i.key == host && i.action == Action::Create

@@ -695,7 +695,7 @@ impl Http {
                     method,
                     path: path.to_string(),
                     status,
-                    message: hint(&resp.body, status),
+                    message: write_message(self.service, &resp.body, status),
                 }),
             };
         }
@@ -852,6 +852,64 @@ fn hint(body: &[u8], status: u16) -> String {
     })
 }
 
+/// The message of a rejected write. GitHub: `message` plus every `errors[]` entry (a string, or
+/// an object with `message`, `code`, `field`), e.g. `Validation Failed: key is invalid (field
+/// key, code custom)`. Never the request body. Other services: [`hint`].
+fn write_message(service: Service, body: &[u8], status: u16) -> String {
+    if !matches!(service, Service::Github | Service::GithubUploads) {
+        return hint(body, status);
+    }
+    let json: Option<Value> = serde_json::from_slice(body).ok();
+    let top = json
+        .as_ref()
+        .and_then(|v| v.get("message"))
+        .and_then(Value::as_str);
+    let details: Vec<String> = json
+        .as_ref()
+        .and_then(|v| v.get("errors"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(error_entry)
+        .collect();
+    match (top, details.is_empty()) {
+        (Some(top), true) => top.to_string(),
+        (Some(top), false) => format!("{top}: {}", details.join("; ")),
+        (None, false) => details.join("; "),
+        (None, true) => hint(body, status),
+    }
+}
+
+fn error_entry(e: &Value) -> Option<String> {
+    if let Some(s) = e.as_str() {
+        return Some(s.to_string());
+    }
+    let text = |k: &str| e.get(k).and_then(Value::as_str).filter(|s| !s.is_empty());
+    let (message, code, field) = (text("message"), text("code"), text("field"));
+    let mut extra = Vec::new();
+    if let Some(r) = text("resource") {
+        extra.push(format!("resource {r}"));
+    }
+    if let Some(f) = field {
+        extra.push(format!("field {f}"));
+    }
+    let lead = match (message, code) {
+        (Some(m), c) => {
+            if let Some(c) = c {
+                extra.push(format!("code {c}"));
+            }
+            m
+        }
+        (None, Some(c)) => c,
+        (None, None) => return None,
+    };
+    Some(if extra.is_empty() {
+        lead.to_string()
+    } else {
+        format!("{lead} ({})", extra.join(", "))
+    })
+}
+
 /// The `rel="next"` target of a `Link` header.
 fn parse_link_next(value: &str) -> Option<String> {
     value.split(',').find_map(|part| {
@@ -923,6 +981,30 @@ mod tests {
         assert_eq!(text, "GitHub rejected PUT /x (422): Validation Failed");
         let unauthorized = HttpError::Unauthorized { service };
         assert!(!unauthorized.to_string().contains("SECRETCURSOR"));
+    }
+
+    #[test]
+    fn github_write_message_carries_errors_not_the_body() {
+        let body = br#"{"message":"Validation Failed","errors":["plain",{"resource":"Key","code":"custom","field":"key","message":"key is invalid","value":"SECRETVALUE"},{"code":"missing_field","field":"title"}],"request":"SECRETBODY"}"#;
+        let m = write_message(Service::Github, body, 422);
+        assert_eq!(
+            m,
+            "Validation Failed: plain; key is invalid (resource Key, field key, code custom); \
+             missing_field (field title)"
+        );
+        assert!(!m.contains("SECRET"));
+        assert_eq!(
+            write_message(Service::Github, br#"{"message":"nope"}"#, 422),
+            "nope"
+        );
+        assert_eq!(
+            write_message(
+                Service::Cloudflare,
+                br#"{"errors":[{"message":"bad"}]}"#,
+                400
+            ),
+            "bad"
+        );
     }
 
     #[test]
