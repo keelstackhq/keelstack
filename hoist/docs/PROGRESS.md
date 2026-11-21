@@ -19,6 +19,7 @@ release PR opened with a GitHub App token. Release-workflow generation by `apply
 Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.
 
 - 2026-11-21 Changesets CS-1 (ported, opt-in): `src/changeset/` reads and writes `.changeset/<id>.md` and `config.json` (2.31.1 key set); library only, no CLI or release change yet.
+- 2026-11-21 Changesets CS-2 (ported, opt-in): `hoist changeset add|init` (ids from branch or words, names checked against the release model), `status` stub exit 3; CS-1 follow-ups (skip AGENTS/CLAUDE/GEMINI.md, tuple `changelog`). No HTTP, no release change.
 
 ## Blocked
 

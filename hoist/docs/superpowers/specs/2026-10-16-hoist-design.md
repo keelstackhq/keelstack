@@ -76,6 +76,9 @@ hoist auth check [--json]              permissions each token has vs needs
 hoist secrets set NAME                 value from env NAME or hidden prompt; never argv
 hoist secrets rotate [NAME]            for tokens hoist minted (§8.3)
 hoist init [--sha SHA] [--force] [--dry-run]  write release.yml (§12.5)
+hoist changeset add NAME:TYPE… -m TEXT [--id ID] | --empty   write .changeset/<id>.md (no HTTP)
+hoist changeset init                   write .changeset/config.json and README.md (no HTTP)
+hoist changeset status                 stub, exit 3 "not yet" until the check lands
 hoist release plan    [--json]         next versions and changelogs, no writes
 hoist release prepare                  open/update the release PR (CI, push to main)
 hoist release publish [--assets DIR] [--dry-run]  tag, release, publish (CI, release PR merged)

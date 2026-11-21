@@ -258,8 +258,7 @@ fn commit_true_refused() {
 fn custom_changelog_refused() {
     for v in [
         r#""@changesets/changelog-github""#,
-        r#"["@changesets/cli/changelog", {"repo": "a/b"}]"#,
-        r#"["@changesets/changelog-github", {}]"#,
+        r#"["@changesets/changelog-github", {"repo": "a/b"}]"#,
         "true",
     ] {
         let e = config_err(read_config(cfg(&format!(r#"{{"changelog": {v}}}"#)).path()));
@@ -268,6 +267,8 @@ fn custom_changelog_refused() {
     for v in [
         r#""@changesets/changelog-git""#,
         r#"["@changesets/cli/changelog", {}]"#,
+        r#"["@changesets/changelog-git", {"x": 1}]"#,
+        r#"["@changesets/cli/changelog", {"repo": "a/b"}]"#,
     ] {
         let ok = read_config(cfg(&format!(r#"{{"changelog": {v}}}"#)).path());
         assert!(ok.expect("ok").expect("some").changelog, "{v}");
