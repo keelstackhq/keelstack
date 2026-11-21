@@ -18,6 +18,8 @@ release PR opened with a GitHub App token. Release-workflow generation by `apply
 
 Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.
 
+- 2026-11-21 Changesets CS-1 (ported, opt-in): `src/changeset/` reads and writes `.changeset/<id>.md` and `config.json` (2.31.1 key set); library only, no CLI or release change yet.
+
 ## Blocked
 
 Human-only items, with the exact action:
