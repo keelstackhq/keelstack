@@ -193,6 +193,11 @@ impl Manifest {
     }
 
     pub fn validate(&self) -> Result<(), KeelError> {
+        if let Some(bad) = self.confirmed.steps.iter().find(|s| !is_trust_id(s)) {
+            return Err(manifest_err(format!(
+                "[confirmed] steps {bad:?}: hoist can read back every step but `npm-trust:<pkg>` and `crates-trust:<crate>`; remove it"
+            )));
+        }
         if self.is_existing() && !self.pieces.is_empty() {
             return Err(manifest_err(
                 "`pieces` needs a template: remove it, or set `template` to rust, ts or a splice source (`template = \"none\"` is an existing repo)",
@@ -351,10 +356,7 @@ impl Manifest {
                     self.confirmed.backup = Some(app);
                 }
                 other => {
-                    let trust = ["npm-trust:", "crates-trust:"]
-                        .iter()
-                        .any(|p| other.strip_prefix(p).is_some_and(|r| !r.is_empty()));
-                    if !trust || other.chars().any(|c| c.is_whitespace() || c.is_control()) {
+                    if !is_trust_id(other) {
                         return Err(KeelError::Usage(format!(
                             "--confirm {other:?}: hoist can read back every other step, so only `agent-env`, `dns`, `backup`, `npm-trust:<pkg>` and `crates-trust:<crate>` can be confirmed"
                         )));
@@ -368,6 +370,15 @@ impl Manifest {
         }
         Ok(changed)
     }
+}
+
+/// The step ids hoist cannot read back, so only these can be confirmed: `npm-trust:<pkg>` and
+/// `crates-trust:<crate>`, without whitespace or control characters.
+pub fn is_trust_id(id: &str) -> bool {
+    ["npm-trust:", "crates-trust:"]
+        .iter()
+        .any(|p| id.strip_prefix(p).is_some_and(|r| !r.is_empty()))
+        && !id.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
 /// A fly app name: `^[a-z0-9-]+$`, at most 63 characters.
@@ -865,5 +876,15 @@ mod tests {
     fn embedded_pins_pin_hull_to_v0_13_0() {
         let pins = Pins::from_texts("e", crate::pins::EMBEDDED, None).unwrap();
         assert_eq!(pins.version("hull"), Some("v0.13.0"));
+    }
+
+    #[test]
+    fn parse_rejects_confirmed_steps_that_are_not_trust_ids() {
+        let ok = "[confirmed]\nsteps = [\"npm-trust:@o/p\", \"crates-trust:c\"]\n";
+        assert_eq!(Manifest::parse(ok).unwrap().confirmed.steps.len(), 2);
+        for bad in ["secret:K", "", "npm-trust:", "npm-trust:a b", "app:x"] {
+            let e = Manifest::parse(&format!("[confirmed]\nsteps = [{bad:?}]\n")).unwrap_err();
+            assert!(e.to_string().contains("[confirmed] steps"), "{bad:?}: {e}");
+        }
     }
 }

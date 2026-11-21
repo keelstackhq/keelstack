@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docs } from "./docs";
+import { links } from "./versions";
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
 const copy = read("./hull/start-checklist.md");
@@ -28,9 +29,8 @@ describe("Start a project page", () => {
     const body = copy.replace(/^# .*\n\n/, "");
     expect(page).toContain(body);
     expect(page.slice(page.indexOf(body) + body.length)).toMatch(/^\n---\n\nNote on this copy/);
-    expect(page).toContain(
-      `https://github.com/keelstackhq/hull/blob/${source.ref}/docs/start-checklist.md`,
-    );
+    // Linked at the pinned release in the monorepo (hull/legacy-tags.txt maps the old tag).
+    expect(page).toContain(`${links.hull}/docs/start-checklist.md`);
   });
 
   it("says TODO(owner) is hull's marker, not a step", () => {

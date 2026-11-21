@@ -5,8 +5,9 @@
 [github]
 # ci-ok aggregates the per-folder ci-* jobs; the other three are bosun's commit statuses (D-022).
 required_checks = ["ci-ok", "risk-check", "review-verdict", "main-open"]
-# Inferred from ci.yml's merge_group trigger; stated here so it never silently turns off.
-merge_queue = true
+# Off: risk-check, review-verdict and main-open never post on merge_group, so a merge queue
+# would hold every PR (ci.yml still listens to merge_group, harmless).
+merge_queue = false
 allow_auto_merge = true
 delete_branch_on_merge = true
 # Every secret lives in the environment of the jobs that read it, never in the repository.
@@ -18,7 +19,15 @@ optional_secrets = ["ANTHROPIC_API_KEY"]
 # The bosun gate app posts risk-check, review-verdict and main-open.
 apps = ["keelstackhq-bosun-gate"]
 
-# release.yml creates `vX.Y.Z` and moves the major tag `v0`; nobody else may.
+# release.yml creates `vX.Y.Z` and moves the major tag `v0`. Accepted risk: the bypass actor is
+# the whole GitHub Actions integration, not one workflow, so ANY workflow job of this repo whose
+# token has `contents: write` can create, move or delete `v*` tags, including `v0` that every
+# `keelstackhq/keelstack/<tool>@v0` consumer runs. Today two workflows hold it: release.yml
+# (jobs `release` and `major`) and budget-report.yml (job `report`, for its reports branch).
+# Every workflow file is R-ci in .bosun/risk.toml (`.github/workflows/**`, owner only, also on
+# the critical floor) and owned by the owner in .github/CODEOWNERS, so adding `contents: write`
+# anywhere needs the owner's approval. The repository default token is read-only (Actions
+# permissions), so only a job that asks for `contents: write` gets it.
 [github.tag_ruleset]
 patterns = ["v*"]
 bypass = ["github-actions"]

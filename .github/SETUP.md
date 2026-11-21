@@ -47,18 +47,40 @@ Computer steps first, then phone steps. Typical first run:
   every area but `cloudflare`). From `hoist.toml` and inference hoist writes:
   - ruleset `hoist: default branch` on `main`: required checks `ci-ok`, `risk-check`,
     `review-verdict`, `main-open` (`ci-ok` aggregates the per-folder `ci-*` jobs; do not require
-    them one by one), merge queue on (merge method merge; version-bump PRs merge or squash);
-  - ruleset `hoist: tags`: only the release workflow (`github-actions[bot]`) may create, move or
-    delete `v*` tags (`vX.Y.Z` and the major tag `v0`);
+    them one by one), merge queue off (`merge_queue = false`: bosun posts `risk-check`,
+    `review-verdict` and `main-open` on the PR head, never on a merge-group commit, so a queue
+    would hold every PR), plus the rules `deletion` (main cannot be deleted) and
+    `non_fast_forward` (no force-push to main), and one bypass actor: the repository admin role
+    in `pull_request` mode (an admin may merge a pull request past the missing gate statuses, for
+    the mainfix path below, but never pushes to main directly);
+  - ruleset `hoist: tags`: creation, update and deletion of `v*` tags (`vX.Y.Z` and the major
+    tag `v0`) are blocked for everyone but the bypass actor, the GitHub Actions integration as a
+    whole. That is wider than release.yml: any workflow job whose token has `contents: write`
+    can create, move or delete `v0`, which every `keelstackhq/keelstack/<tool>@v0` consumer runs.
+    Accepted risk (no separate release App): today only release.yml (jobs `release` and `major`)
+    and budget-report.yml (job `report`, for its reports branch) ask for `contents: write`; the
+    repository default token is read-only; every workflow file is R-ci in `.bosun/risk.toml`
+    (`.github/workflows/**`, owner only and on bosun's critical floor) and owned by the owner in
+    `.github/CODEOWNERS`, so no workflow gains or uses `contents: write` without the owner's
+    approval. `hoist apply` updates of `hoist: tags` keep owner-added includes, rules and bypass
+    actors (hoist reads, merges, writes);
   - environments `release`, `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default
     branch only, no reviewers (D-022);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
   - Cloudflare Pages project `keelstack-landing` (`site/hoist.toml`; deploy-site.yml builds and
     deploys `site/apps/site/dist`), a minted deploy token sealed with the
-    account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`;
+    account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`.
+    deploy-site deploys only a released version: a version-bump push skips the deploy (job
+    `decide` finds no tag `vX.Y.Z` yet) and the release run's completion deploys it; a manual
+    run deploys only from main. Pull requests build and test the site in ci.yml (`ci-site`);
+    deploy-site has no `pull_request` trigger. Only its `Check secrets` and `Deploy to
+    Cloudflare Pages` steps receive `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`;
   - reads only: app installation, environment secrets and variables (present or not), crates.io and
     npm packages (first publish needed or not).
-- Release: no secrets; crates.io and npm use trusted publishing (OIDC). Retired with the old
+- Release: no secrets; crates.io and npm use trusted publishing (OIDC). Environment `release`
+  has no required reviewer (D-022), so anyone with write access can dispatch release.yml or
+  cargo-deny-npm.yml (an npm publish of the cargo-deny packages) from main; the environment's
+  default-branch-only rule keeps both on main. Retired with the old
   repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build
@@ -70,11 +92,17 @@ fails closed with an `::error::` (no status is posted, so the required check sta
 fallback yet: no monorepo release exists (`.bosun/version` is `unreleased`), and the old
 `keelstackhq/bosun` releases (<= 0.21.0) predate `[[folders]]` and would judge the monorepo wrongly. The
 fix path: open a `bosun:kind/mainfix` PR that makes bosun build on main (usually `bosun revert
-<pr>` of the breaking merge); the owner merges it past the missing gate statuses (ruleset bypass),
+<pr>` of the breaking merge); the owner, as repository admin, merges that pull request past the
+missing gate statuses (the default-branch ruleset's admin bypass in `pull_request` mode; a direct
+push or force-push to main stays blocked),
 then the gates run again from the fixed main. Once a monorepo release (> 0.21.0) exists and
 `.bosun/version` names it, the workflows can fall back to that pinned release again.
 
 ## Follow-ups (not done here)
+
+- Narrower tag bypass without a new App: a deploy key as the only bypass actor of `hoist: tags`,
+  its private key kept in environment `release`, release.yml pushing tags over SSH. Needs a hoist
+  model change (a deploy-key bypass actor) and an owner-created key.
 
 - Download URLs: installers (`hoard/scripts/install.sh`, `hoard/circleci/hoard.yml` and its hull
   template copy, `hoard/action/src/binary.ts`, `hoist/release/action.yml`) send versions > 0.21.0 to

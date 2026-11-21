@@ -34,6 +34,6 @@ describe("package.json", () => {
 
   it("names this repo for npm provenance", () => {
     expect(pkg.repository.url).toBe("git+https://github.com/keelstackhq/keelstack.git");
-    expect(pkg.repository.directory).toBe("packages/docspack");
+    expect(pkg.repository.directory).toBe("site/packages/docspack");
   });
 });

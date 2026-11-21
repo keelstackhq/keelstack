@@ -2721,6 +2721,15 @@ paths = ["channel/**", ".github/workflows/**", "deny.toml"]
             };
             assert!(!critical(&[], &[f], false).is_empty(), "{t}");
         }
+        // bosun's trust code is on the floor wherever bosun's code is.
+        for t in crate::core::approve::TRUST_CODE_FILES {
+            let f = ChangedFile {
+                path: t.into(),
+                previous_path: None,
+                added_lines: Vec::new(),
+            };
+            assert!(!critical(&[], &[f], true).is_empty(), "{t}");
+        }
     }
 }
 

@@ -201,6 +201,65 @@ fn merge_queue_config_false_overrides_the_trigger() {
 }
 
 #[test]
+fn merge_queue_false_with_no_live_queue_is_ok() {
+    let (_dir, d) = desired("[github]\nmerge_queue = false\n");
+    let api = fake_with(&[(
+        "GET /repos/acme/x/rulesets/11",
+        200,
+        "github/ruleset_no_queue.json",
+        &[],
+    )]);
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Ok, "{item:#?}");
+}
+
+#[test]
+fn a_ruleset_without_deletion_force_push_rules_or_admin_bypass_is_update() {
+    let (_dir, d) = desired("");
+    let api = fake_with(&[(
+        "GET /repos/acme/x/rulesets/11",
+        200,
+        "github/ruleset_no_guard.json",
+        &[],
+    )]);
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Update, "{item:#?}");
+    assert_eq!(
+        item.reason,
+        "rules: missing `deletion`, `non_fast_forward`; bypass actors: missing the repository \
+         admin role (pull_request)"
+    );
+}
+
+#[test]
+fn an_extra_bypass_actor_is_kept_out_of_an_adopt_update() {
+    // In sync otherwise: the extra actor alone is no drift.
+    let (_dir, d) = desired("");
+    let api = fake_with(&[(
+        "GET /repos/acme/x/rulesets/11",
+        200,
+        "github/ruleset_extra_bypass.json",
+        &[],
+    )]);
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Ok, "{item:#?}");
+    // Needing an update under --adopt: drift naming the actor an update would drop.
+    let (_dir, mut d) = desired("[github]\nmerge_queue = false\n");
+    d.adopt = true;
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Drift, "{item:#?}");
+    assert!(
+        item.reason.contains("bypass actor `Team:7:always`"),
+        "{}",
+        item.reason
+    );
+}
+
+#[test]
 fn merge_queue_inferred_from_merge_group_trigger() {
     let (_dir, d) = desired("");
     assert!(d.github.ruleset.merge_queue.value);

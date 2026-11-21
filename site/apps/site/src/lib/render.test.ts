@@ -1,6 +1,6 @@
 import { expect, test } from "vite-plus/test";
 import { installBlock } from "../data/scenarios.ts";
-import { docRefs, tagCommits, versions } from "../data/versions.ts";
+import { links, sources, versions } from "../data/versions.ts";
 import { buildCtx, renderTemplate } from "./render.ts";
 
 const v = versions;
@@ -18,19 +18,13 @@ test("block tokens render the fenced builder output", () => {
 
 test("derived keys", () => {
   expect(ctx["bare.hull"]).toBe(v.hull.replace(/^v/, ""));
-  expect(ctx["short.bosun"]).toHaveLength(7);
-  expect(ctx["ref.bosunSpec"]).toBe(docRefs.bosunSpec);
-  expect(ctx["ref.spliceAction"]).toBe(docRefs.spliceAction);
-  expect(ctx["ref.spliceActionVersion"]).toBe(docRefs.spliceActionVersion);
-  // The action pin is what bosun's channel seeds: a full commit SHA, and the splice tag's own
-  // commit while bosun seeds the current splice release.
-  expect(ctx["ref.spliceAction"]).toMatch(/^[0-9a-f]{40}$/);
-  if (docRefs.spliceActionVersion === versions.splice) {
-    expect(ctx["ref.spliceAction"]).toBe(tagCommits.splice);
-  }
-  expect(ctx.verified).toContain("Last verified");
+  // Sources and links come from versions.ts (derived from facts.ts), one token each.
+  for (const [k, val] of Object.entries(sources)) expect(ctx[`src.${k}`]).toBe(val);
+  for (const [k, val] of Object.entries(links)) expect(ctx[`link.${k}`]).toBe(val);
+  expect(ctx["link.main"]).toBe("https://github.com/keelstackhq/keelstack/blob/main");
+  expect(ctx["commit.hull"]).toBeUndefined();
   expect(ctx["block.adoptHullBlock"]).toBeUndefined();
-  const withAssess = buildCtx(v, { ...docRefs, assessUrl: "/assess/a.mjs", assessSha: "abc" });
+  const withAssess = buildCtx(v, { assessUrl: "/assess/a.mjs", assessSha: "abc" });
   expect(withAssess["block.adoptHullBlock"]).toContain("/assess/a.mjs");
   expect(withAssess["assess.url"]).toBe("/assess/a.mjs");
   expect(withAssess["assess.sha"]).toBe("abc");
@@ -55,16 +49,9 @@ test("a token with inner spaces is not accepted", () => {
   expect(() => renderTemplate("{{ks. splice }}", ctx, "x.md")).toThrow("unknown token");
 });
 
-test("commit, short and verified derive from the arguments", () => {
-  const c = buildCtx(
-    { ...v, bosun: "9.9.9" } as unknown as typeof versions,
-    docRefs,
-    { ...tagCommits, bosun: "abcdef1234" },
-    "2030-01-01",
-  );
-  expect(c["commit.bosun"]).toBe("abcdef1234");
-  expect(c["short.bosun"]).toBe("abcdef1");
-  expect(c.verified).toBe(
-    `Last verified 2030-01-01 against bosun 9.9.9, hull ${v.hull}, splice ${v.splice}.`,
-  );
+test("versions and verified derive from the arguments", () => {
+  const c = buildCtx({ ...v, bosun: "9.9.9" }, {}, "2030-01-01");
+  expect(c.bosun).toBe("9.9.9");
+  expect(c["bare.hull"]).toBe(v.hull.replace(/^v/, ""));
+  expect(c.verifiedOn).toBe("2030-01-01");
 });

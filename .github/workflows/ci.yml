@@ -151,9 +151,11 @@ jobs:
           persist-credentials: false
       # The base is a worktree outside the checkout; with no base (first push) the head is used.
       # Setup PR (D-023): a base without the root workspace has no bosun to build, so the gates use
-      # bosun from keelstackhq/bosun at the commit imported into bosun/ (pinned, not this change's
-      # code) and judge the change against the commit that holds the plain imports (pinned, an
-      # ancestor of HEAD): the imported repos' own tests are the baseline, not "no tests".
+      # bosun from keelstackhq/bosun at 6fe5305 (branch claude/monorepo-scope, applied here as
+      # c42ac110; pinned, not this change's code). Not the imported main b8029e1 (MIGRATION.md): it
+      # lacks [[folders]] support, so it cannot read the root .bosun/bosun.toml. The gates judge
+      # the change against the commit that holds the plain imports (pinned, an ancestor of HEAD):
+      # the imported repos' own tests are the baseline, not "no tests".
       - name: bosun of the base
         id: base
         env:
@@ -400,7 +402,7 @@ jobs:
           ALL: ${{ needs.detect.outputs.all }}
         run: |
           set -e
-          if [ -z "$BASE" ] || [ "$ALL" = true ] || git -C "$GITHUB_WORKSPACE" diff --name-only "$BASE...HEAD" -- ':!hull' | grep -q .; then
+          if [ -z "$BASE" ] || [ "$ALL" = true ] || git -C "$GITHUB_WORKSPACE" diff --no-renames --name-only "$BASE...HEAD" -- ':!hull' | grep -q .; then
             list=$(node scripts/affected-combos.mjs --all)
           else
             list=$(node scripts/affected-combos.mjs --base "$BASE")

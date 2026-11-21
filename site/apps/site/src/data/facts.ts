@@ -46,6 +46,19 @@ export interface Facts {
   repoSlug: string;
   /** `gh:<org>/<repo>//hull/template` */
   hullSource: string;
+  /** The workspace version at the move into the monorepo; nothing was released at it. */
+  moveVersion: string;
+  /**
+   * The workspace version is a monorepo release: it is greater than `moveVersion`
+   * (hull/legacy-tags.txt: this repository's releases come after it; a version-bump merge releases).
+   */
+  released: boolean;
+  /** hull's old release tags -> their commits in this repository (hull/legacy-tags.txt). */
+  hullLegacyTags: Record<string, string>;
+  /** `gh:<org>/<repo>//decisions/channel` */
+  decisionsChannel: string;
+  /** `<org>/<repo>/splice/action` (append `@<ref>`) */
+  spliceAction: string;
   tools: ToolFact[];
   pieces: PieceFact[];
   stack: { node: string; pnpm: string; typescript: string };
@@ -89,6 +102,26 @@ export function workspaceMembers(src: string): string[] {
   const m = /^members\s*=\s*\[([^\]]*)\]/m.exec(src);
   if (!m) throw new Error("facts: [workspace] members not found");
   return [...m[1]!.matchAll(/"([^"]+)"/g)].map((x) => x[1]!);
+}
+
+/** `a > b` for X.Y.Z versions. */
+export function semverGt(a: string, b: string): boolean {
+  const pa = a.split(".").map(Number);
+  const pb = b.split(".").map(Number);
+  for (let i = 0; i < 3; i++) if (pa[i] !== pb[i]) return pa[i]! > pb[i]!;
+  return false;
+}
+
+/** hull/legacy-tags.txt: the `> X.Y.Z` floor of this repository's releases and its tag lines. */
+export function parseLegacyTags(src: string): {
+  moveVersion: string;
+  tags: Record<string, string>;
+} {
+  const floor = /tags, > (\d+\.\d+\.\d+)\)/.exec(src);
+  if (!floor) throw new Error("facts: hull/legacy-tags.txt names no '> X.Y.Z' release floor");
+  const tags: Record<string, string> = {};
+  for (const m of src.matchAll(/^(v\d+\.\d+\.\d+) ([0-9a-f]{40})$/gm)) tags[m[1]!] = m[2]!;
+  return { moveVersion: floor[1]!, tags };
 }
 
 const kebab = (s: string): string => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
@@ -226,9 +259,16 @@ export function loadFacts(root: string = findRoot()): Facts {
     templateFiles[p.id] = countFiles(join(root, "hull", "template", "pieces", p.id, "files"));
   }
 
+  const legacyTags = parseLegacyTags(read("hull", "legacy-tags.txt"));
+
   return {
     version,
     tag: `v${version}`,
+    moveVersion: legacyTags.moveVersion,
+    released: semverGt(version, legacyTags.moveVersion),
+    hullLegacyTags: legacyTags.tags,
+    decisionsChannel: `gh:${org}/${repo}//decisions/channel`,
+    spliceAction: `${org}/${repo}/splice/action`,
     repoUrl: base,
     orgUrl,
     repoSlug: `${org}/${repo}`,

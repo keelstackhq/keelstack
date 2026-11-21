@@ -2,7 +2,7 @@
 import { buildCommand } from "../lib/command";
 import { pickerData } from "../lib/picker-data";
 import { facts } from "./facts";
-import { tagCommits, versions } from "./versions";
+import { bare, links, versions } from "./versions";
 import { scenarios } from "./scenarios";
 import { org, roles, tools } from "./tools";
 
@@ -36,7 +36,7 @@ const defaultPieces = [
 ];
 const total = defaultPieces.reduce((n, p) => n + (facts.templateFiles[p.id] ?? 0), 0);
 export const terminal = {
-  title: `~ · splice ${facts.version}`,
+  title: `~ · splice ${bare(versions.splice)}`,
   command: buildCommand(pickerData, new Set(pickerData.defaultOn))
     .split("\n")
     .map((l) => l.trim()),
@@ -159,7 +159,7 @@ export const update: {
       "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
       "Merge only when `ci-ok` is green.",
     ],
-    guide: `https://github.com/keelstackhq/hull/blob/${tagCommits.hull}/docs/updating.md`,
+    guide: `${links.hull}/docs/updating.md`,
   },
   bosun: {
     heading: "Update bosun",
@@ -183,7 +183,7 @@ export const update: {
       "Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.",
       "A repo set up with `bosun init` or hull has `.splice/channels/bosun.toml`: `bosun pin` refuses there; use `splice update --channel bosun` (the update bot opens that PR). The steps above are for a repo set up with `bosun adopt`.",
     ],
-    guide: "https://github.com/keelstackhq/bosun/blob/main/docs/update.md",
+    guide: `${links.main}/bosun/docs/update.md`,
   },
 };
 

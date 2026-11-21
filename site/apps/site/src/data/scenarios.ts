@@ -1,9 +1,16 @@
 // The copy-paste blocks of /docs/start, /migrate, /docs/cloud, /docs/risk, /docs/update, the
 // landing "Pick your path" cards and llms.txt. Commands are copied from the bosun, hull and splice
-// docs (see sources below); no imports, so scripts/adopt.mjs can use the same builders.
+// docs (see sources below); imports only .ts files, so scripts/adopt.mjs can use the same builders.
+// hull and decisions sources come from versions.ts (derived from facts.ts), never typed here.
 // Sources: bosun main docs/quickstart.md, docs/migrate-booster.md, docs/update.md,
 // docs/adopt-existing-repo.md, docs/spec/08-risk.md, docs/spec/10-slack.md,
 // src/cli/setup_snippet.rs; hull docs/adopt.md, docs/start-checklist.md; splice README.
+
+import { readSetupScript } from "../lib/setup-script.ts";
+import { sources } from "./versions.ts";
+
+const hullSrc = (template: string): string => `${sources.hull}/${template}`;
+const script = readSetupScript();
 
 export interface Versions {
   hull: string;
@@ -140,7 +147,7 @@ export const installBlock = (v: Versions): string =>
 
 export const newRepoBlock = (v: Versions): string =>
   [
-    `pnpm dlx @keelstackhq/splice@${v.splice} new gh:keelstackhq/hull//template my-repo --ref ${v.hull} --piece <id>:<name> ...`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} new ${hullSrc("template")} my-repo --ref ${v.hull} --piece <id>:<name> ...`,
     "cd my-repo && pnpm install && pnpm run ci",
     'git add -A && git commit -m "chore: render from hull"   # commit the render and its lockfile (`splice new --commit` skips the lockfile)',
     "gh repo create <owner>/my-repo --private --source . --push   # before bosun init; <owner> from the brief",
@@ -215,13 +222,13 @@ export const adoptHullBlock = (v: Versions, assessUrl: string, sha: string): str
     `curl -fsSL https://keelstack.dev${assessUrl} -o /tmp/assess.mjs`,
     `echo "${sha}  /tmp/assess.mjs" | sha256sum -c`,
     "node /tmp/assess.mjs --assess --json",
-    `pnpm dlx @keelstackhq/splice@${v.splice} adopt gh:keelstackhq/hull//<template> --ref ${v.hull} --piece <id>:<name> ... --dry-run --json`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} adopt ${hullSrc("<template>")} --ref ${v.hull} --piece <id>:<name> ... --dry-run --json`,
   ].join("\n");
 
 /** After the owner confirmed the dry run: the same command for real, then the check. */
 export const adoptHullRunBlock = (v: Versions): string =>
   [
-    `pnpm dlx @keelstackhq/splice@${v.splice} adopt gh:keelstackhq/hull//<template> --ref ${v.hull} --piece <id>:<name> ...   # the dry-run command without --dry-run`,
+    `pnpm dlx @keelstackhq/splice@${v.splice} adopt ${hullSrc("<template>")} --ref ${v.hull} --piece <id>:<name> ...   # the dry-run command without --dry-run`,
     `pnpm dlx @keelstackhq/splice@${v.splice} check --offline   # conflict markers fail it`,
   ].join("\n");
 
@@ -251,7 +258,15 @@ export const upgradeBlock = (v: Versions): string =>
   ].join("\n");
 
 export const UPGRADE_NOTE =
-  "Do bosun first, then hull; each is its own PR and each is R-gov (`.bosun/**`, `.claude/**`, `.splice/**`), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun 0.20.0's script pins splice 0.6.0, hoist 0.5.1 and berth 0.2.1, so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
+  "Do bosun first, then hull; each is its own PR and each is R-gov (`.bosun/**`, `.claude/**`, `.splice/**`), so the owner approves each head as in F. A repo set up with bosun init or hull has .splice/channels/bosun.toml and cannot run bosun pin (it refuses, exit 1): there `splice update --all` below also updates the bosun channel (or `splice update --channel bosun` alone), so skip the bosun pin lines and the npm line; install the bosun version the merged channel update put in .bosun/version. The bosun pin lines are for a repo set up with bosun adopt. Cloud sessions run the repo's own setup script, whose tool pins come with the bosun release: bosun " +
+  script.bosun +
+  "'s script pins splice " +
+  script.splice +
+  ", hoist " +
+  script.hoist +
+  " and berth " +
+  script.berth +
+  ", so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
 
 export const approveBlock: string = [
   "bosun approve --list   # ready PRs and heads",
@@ -266,7 +281,7 @@ export const cliBlock = "bosun doctor   # each missing step with its fix";
 
 /** Channels only (no hull template): the decisions channel (hull docs/adopt.md, step 10). */
 export const channelsBlock = (v: Versions): string =>
-  `pnpm dlx @keelstackhq/splice@${v.splice} channel add gh:keelstackhq/decisions//channel --track main --piece import-project`;
+  `pnpm dlx @keelstackhq/splice@${v.splice} channel add ${sources.decisions} --track main --piece import-project`;
 
 /** hoist on an existing repo: only adds, never loosens a stricter live setting. */
 export const hoistAdoptBlock: string = [

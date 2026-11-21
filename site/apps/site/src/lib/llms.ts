@@ -2,7 +2,7 @@ import { readyDocs } from "../data/docs";
 import { hero, quickstart } from "../data/content";
 import { tools } from "../data/tools";
 import { scenarios } from "../data/scenarios";
-import { versions } from "../data/versions";
+import { pinsLine } from "../data/versions";
 import { docMdPath } from "./docs-md";
 import { startMdPath } from "./start-md";
 import { SITE_URL } from "./site";
@@ -22,7 +22,7 @@ export function buildLlmsTxt(): string {
     "",
     `If you are an agent in a repo to set up, adopt or upgrade: read ${SITE_URL}/agents.md in full first (one file: decide, human-only steps, exact steps, verify, rollback).`,
     "",
-    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}. Each scenario file below is Setup plus one exact copy-paste block: read only yours.`,
+    `${pinsLine()} Each scenario file below is Setup plus one exact copy-paste block: read only yours.`,
     "",
     ...scenarios.map(
       (s) => `- ${s.id.toUpperCase()}. ${s.title}: ${s.summary} ${SITE_URL}${startMdPath(s.id)}`,

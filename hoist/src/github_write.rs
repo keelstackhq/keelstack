@@ -3,7 +3,7 @@
 
 use crate::auth::Secret;
 use crate::change::{Change, Reviewers};
-use crate::desired::{ACTIONS_APP_ID, Desired, RULESET_NAME, TAG_RULESET_NAME};
+use crate::desired::{ACTIONS_APP_ID, ADMIN_ROLE_ID, Desired, RULESET_NAME, TAG_RULESET_NAME};
 use crate::error::HoistError;
 use crate::github::plan_limited;
 use crate::http::{Fetched, Http, HttpError, Method, seg};
@@ -53,25 +53,7 @@ pub fn execute_github(http: &Http, d: &Desired, change: &Change) -> Result<(), H
         Change::TagRuleset {
             existing_id,
             patterns,
-        } => {
-            let body = tag_ruleset_body(patterns);
-            let sent = match existing_id {
-                Some(id) => {
-                    let path = format!("{repo}/rulesets/{}", seg(&id.to_string()));
-                    http.send_json(Method::Put, &path, Some(&body))
-                }
-                None => http.send_json(Method::Post, &format!("{repo}/rulesets"), Some(&body)),
-            };
-            match sent {
-                Ok(_) => Ok(()),
-                Err(HttpError::Rejected {
-                    status: 403,
-                    message,
-                    ..
-                }) if plan_limited(&message) => Err(HoistError::PlanLimited(message)),
-                Err(err) => Err(err.into()),
-            }
-        }
+        } => write_tag_ruleset(http, &repo, *existing_id, patterns),
         Change::ActionsPermissions { default } => send(
             http,
             Method::Put,
@@ -298,22 +280,121 @@ pub fn merge_queue_parameters() -> Value {
     })
 }
 
-/// The `hoist: tags` ruleset: only the GitHub Actions app (github-actions[bot]) bypasses
-/// the creation, update and deletion rules on the matching tags.
+/// The rule types of the `hoist: tags` ruleset, in the order a new one lists them.
+pub const TAG_RULES: [&str; 3] = ["creation", "update", "deletion"];
+
+fn actions_app_actor() -> Value {
+    json!({
+        "actor_id": ACTIONS_APP_ID,
+        "actor_type": "Integration",
+        "bypass_mode": "always"
+    })
+}
+
+/// The `hoist: tags` ruleset: the GitHub Actions app (github-actions[bot]) bypasses the
+/// creation, update and deletion rules on the matching tags.
 fn tag_ruleset_body(patterns: &[String]) -> Value {
     let include: Vec<String> = patterns.iter().map(|p| format!("refs/tags/{p}")).collect();
+    let rules: Vec<Value> = TAG_RULES.iter().map(|t| json!({ "type": t })).collect();
     json!({
         "name": TAG_RULESET_NAME,
         "target": "tag",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": include, "exclude": []}},
-        "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
-        "bypass_actors": [{
-            "actor_id": ACTIONS_APP_ID,
-            "actor_type": "Integration",
-            "bypass_mode": "always"
-        }]
+        "rules": rules,
+        "bypass_actors": [actions_app_actor()]
     })
+}
+
+/// Read-merge-write of an existing `hoist: tags` ruleset: the PUT replaces `rules`,
+/// `conditions` and `bypass_actors` whole, so the live ones are written back with only hoist's
+/// parts changed: enforcement `active`, target `tag`, the wanted tag includes added, excludes
+/// cleared, missing rules added (live rules keep their parameters), and the Actions app's
+/// bypass mode `always`. Owner-added includes, rules and bypass actors stay.
+fn merged_tag_ruleset_body(live: &Value, patterns: &[String]) -> Value {
+    let fresh = tag_ruleset_body(patterns);
+    let list = |v: Option<&Value>| v.and_then(Value::as_array).cloned().unwrap_or_default();
+    let mut include = list(live.pointer("/conditions/ref_name/include"));
+    for want in list(fresh.pointer("/conditions/ref_name/include")) {
+        if !include.contains(&want) {
+            include.push(want);
+        }
+    }
+    let mut rules = list(live.get("rules"));
+    for want in TAG_RULES {
+        if !rules.iter().any(|r| r["type"] == want) {
+            rules.push(json!({ "type": want }));
+        }
+    }
+    let mut bypass = list(live.get("bypass_actors"));
+    let is_app = |b: &Value| {
+        b["actor_type"] == "Integration" && b["actor_id"].as_u64() == Some(ACTIONS_APP_ID)
+    };
+    match bypass.iter_mut().find(|b| is_app(b)) {
+        Some(b) => *b = actions_app_actor(),
+        None => bypass.push(actions_app_actor()),
+    }
+    let mut conditions = live
+        .get("conditions")
+        .filter(|c| c.is_object())
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    conditions["ref_name"] = json!({"include": include, "exclude": []});
+    json!({
+        "name": TAG_RULESET_NAME,
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": conditions,
+        "rules": rules,
+        "bypass_actors": bypass
+    })
+}
+
+/// The `hoist: tags` write: a POST for a new ruleset; for an existing one a GET first, then a
+/// PUT of [`merged_tag_ruleset_body`]. A ruleset gone since the plan is created again; an
+/// unreadable one is not rewritten blind.
+fn write_tag_ruleset(
+    http: &Http,
+    repo: &str,
+    existing_id: Option<u64>,
+    patterns: &[String],
+) -> Result<(), HoistError> {
+    let create = || {
+        http.send_json(
+            Method::Post,
+            &format!("{repo}/rulesets"),
+            Some(&tag_ruleset_body(patterns)),
+        )
+    };
+    let sent = match existing_id {
+        None => create(),
+        Some(id) => {
+            let path = format!("{repo}/rulesets/{}", seg(&id.to_string()));
+            match http.get_json(&path)? {
+                Fetched::Ok(live) => {
+                    let body = merged_tag_ruleset_body(&live, patterns);
+                    http.send_json(Method::Put, &path, Some(&body))
+                }
+                Fetched::NotFound => create(),
+                Fetched::Forbidden(hint) => {
+                    return Err(HoistError::Usage(format!(
+                        "cannot read {path} before changing it ({hint}); hoist will not \
+                         rewrite the `{TAG_RULESET_NAME}` ruleset blind, since that could drop \
+                         what the owner added: fix the token's Administration permission"
+                    )));
+                }
+            }
+        }
+    };
+    match sent {
+        Ok(_) => Ok(()),
+        Err(HttpError::Rejected {
+            status: 403,
+            message,
+            ..
+        }) if plan_limited(&message) => Err(HoistError::PlanLimited(message)),
+        Err(err) => Err(err.into()),
+    }
 }
 
 fn ruleset_body(required_checks: &[String], merge_queue: bool) -> Value {
@@ -321,13 +402,18 @@ fn ruleset_body(required_checks: &[String], merge_queue: bool) -> Value {
         .iter()
         .map(|c| json!({ "context": c }))
         .collect();
-    let mut rules = vec![json!({
-        "type": "required_status_checks",
-        "parameters": {
-            "strict_required_status_checks_policy": false,
-            "required_status_checks": checks
-        }
-    })];
+    // No deletion and no force push of the default branch; status checks after them.
+    let mut rules = vec![
+        json!({"type": "deletion"}),
+        json!({"type": "non_fast_forward"}),
+        json!({
+            "type": "required_status_checks",
+            "parameters": {
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": checks
+            }
+        }),
+    ];
     if merge_queue {
         rules.push(json!({
             "type": "merge_queue",
@@ -343,5 +429,14 @@ fn ruleset_body(required_checks: &[String], merge_queue: bool) -> Value {
         json!({"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}),
     );
     body.insert("rules".into(), Value::Array(rules));
+    // The repository admin role may merge a PR past the rules (a mainfix), never push.
+    body.insert(
+        "bypass_actors".into(),
+        json!([{
+            "actor_id": ADMIN_ROLE_ID,
+            "actor_type": "RepositoryRole",
+            "bypass_mode": "pull_request"
+        }]),
+    );
     Value::Object(body)
 }

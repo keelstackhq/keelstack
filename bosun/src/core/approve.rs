@@ -529,8 +529,10 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// signed approval, owner or delegate key, so a compromised key cannot enroll keys or owners.
 /// Also the org decisions index and D-022, which name the trust root and the quorum (D-022
 /// names its own row as trust root), as the keelstack monorepo keeps them in `decisions/`.
-pub const TRUST_FILES: [&str; 7] = [
+/// And `.bosun/bosun.toml`, whose `[approvals]` table sets the approval policy (D-022).
+pub const TRUST_FILES: [&str; 8] = [
     APPROVERS_PATH,
+    APPROVALS_CONFIG,
     "governance/owners.toml",
     "CODEOWNERS",
     ".github/CODEOWNERS",
@@ -538,6 +540,15 @@ pub const TRUST_FILES: [&str; 7] = [
     DECISIONS_INDEX,
     DECISION_TRUST_ROOT,
 ];
+
+/// The bosun config that holds `[approvals]` (D-022 trust root).
+pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
+
+/// bosun's code that decides who approves: the risk path lists (`CRITICAL_PATHS` and the floor
+/// in `src/core/risk.rs`) and this trust list. Trust files only under a code root (where
+/// bosun's code is: the repo root of bosun itself, `bosun/` in the monorepo), so another repo's
+/// `src/core/risk.rs` is no trust file.
+pub const TRUST_CODE_FILES: [&str; 2] = ["src/core/risk.rs", "src/core/approve.rs"];
 
 /// The org decisions index (D-002), read in place in the monorepo.
 pub const DECISIONS_INDEX: &str = "decisions/DECISIONS.md";
@@ -551,11 +562,13 @@ pub fn trust_files_changed<'a>(
     trust_files_changed_in(files, &[])
 }
 
-/// [`TRUST_FILES`] at the root and under each of `roots` (bosun's folder in a monorepo).
+/// [`TRUST_FILES`] at the root and under each of `roots` (bosun's folder in a monorepo), and
+/// [`TRUST_CODE_FILES`] under each of `roots` (`""` is the repo root).
 pub fn trust_files_in(roots: &[String]) -> Vec<String> {
     let mut out: Vec<String> = TRUST_FILES.iter().map(|t| t.to_string()).collect();
     for r in roots {
         out.extend(super::folders::under(r, &TRUST_FILES));
+        out.extend(super::folders::under(r, &TRUST_CODE_FILES));
     }
     out.sort();
     out.dedup();
@@ -781,6 +794,31 @@ mod tests {
             slack: None,
             comment_id: id,
         }
+    }
+
+    /// D-022 trust root: `[approvals]` in `.bosun/bosun.toml` and the risk path list in
+    /// `src/core/risk.rs` (and the trust list itself) need the owner, never a signature: at the
+    /// repo root (bosun's own repo) and under bosun's folder in a monorepo.
+    #[test]
+    fn approvals_config_and_risk_code_are_trust_files() {
+        let mono = vec!["bosun".to_string()];
+        for (p, roots) in [
+            (".bosun/bosun.toml", &[][..]),
+            ("bosun/.bosun/bosun.toml", &mono[..]),
+            ("src/core/risk.rs", &[String::new()][..]),
+            ("src/core/approve.rs", &[String::new()][..]),
+            ("bosun/src/core/risk.rs", &mono[..]),
+            ("bosun/src/core/approve.rs", &mono[..]),
+        ] {
+            let t = trust_files_changed_in([(p, None)], roots);
+            assert_eq!(t, [p], "{p}");
+            // A rename away counts too.
+            let t = trust_files_changed_in([("x.rs", Some(p))], roots);
+            assert_eq!(t, ["x.rs"], "{p}");
+        }
+        // bosun's code is a trust file only where bosun's code is (a code root).
+        assert!(trust_files_changed_in([("src/core/risk.rs", None)], &[]).is_empty());
+        assert!(trust_files_changed_in([("splice/src/core/risk.rs", None)], &mono).is_empty());
     }
 
     #[test]

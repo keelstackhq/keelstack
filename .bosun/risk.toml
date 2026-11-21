@@ -11,6 +11,8 @@ paths = [
     ".bosun/**", "governance/**", "CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS", "**/codeowners", ".claude/**", "**/.claude/**", ".splice/**", "**/hoist.toml", "docs/setup-script.sh", "REVIEW.md", "docs/lessons.toml", "src/core/session_rules.rs", "src/core/session_rules/**", "src/hooks/session_rules.rs", "src/hooks/session_rules/**", ".claude-plugin/**", "docs/agents/**", "**/agents.md", "**/claude.md", "**/claude.local.md", "**/plans/**",
     # Org decisions (D-002; D-022 names its own row as trust root).
     "decisions/**",
+    # The repo setup `keel up` applies (with hoist.toml above).
+    "keel.toml",
     # splice's own R-gov rule (its old .bosun/risk.toml), re-rooted under splice/.
     "splice/.bosun/**", "splice/governance/**", "splice/CODEOWNERS", "splice/docs/CODEOWNERS", "splice/.github/CODEOWNERS", "splice/.claude/**", "splice/.splice/**", "splice/docs/setup-script.sh", "splice/REVIEW.md", "splice/src/core/session_rules.rs", "splice/src/core/session_rules/**", "splice/src/hooks/session_rules.rs", "splice/src/hooks/session_rules/**", "splice/.claude-plugin/**", "splice/docs/agents/**",
     # hull's own R-gov rule (its old .bosun/risk.toml), re-rooted under hull/.
@@ -29,6 +31,9 @@ why = "CI decides what is verified."
 # loosens a folder's old rule). One id per rule, so the same holds for bosun's paths here.
 paths = [
     ".github/workflows/**", ".github/actions/**", ".github/dependabot.yml", "scripts/**", "Makefile", "**/Makefile", "justfile", "**/justfile", "Dockerfile", "**/Dockerfile", ".husky/**", "**/action.yml", "**/action.yaml", ".circleci/**", ".gitlab-ci.yml", ".gitlab/ci/**", ".buildkite/**", "**/jenkinsfile", "azure-pipelines.y*ml", "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml", "**/deny.toml", "**/.deny.toml", "**/deny.exceptions.toml", "**/.deny.exceptions.toml", "**/deny.local.toml", "**/.deny.local.toml", "scripts/deny.mjs", "rust-toolchain.toml", "rust-toolchain",
+    # `.github/workflows/**` above also guards the tag ruleset: its bypass actor is the whole
+    # GitHub Actions integration, so any job with `contents: write` (release.yml, budget-report.yml)
+    # can move `v0`; adding that permission to a workflow needs the owner (hoist.toml).
     # affected.sh decides which folders CI builds and tests.
     ".github/scripts/**",
     # splice's own R-ci rule (its old .bosun/risk.toml), re-rooted under splice/.

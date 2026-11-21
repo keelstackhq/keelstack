@@ -27,15 +27,15 @@ child sessions is in the [Playbook](/docs/playbook/).
 
 ## The tools
 
-| Tool                                                  | What it does                                                                                                                            | Released                 | Get it                                                            |
-| ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------- |
-| [hull](https://github.com/keelstackhq/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | {{ks.hull}}              | Rendered by splice from `gh:keelstackhq/hull//template`           |
-| [splice](https://github.com/keelstackhq/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | {{ks.splice}}            | `pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} <command>`       |
-| [bosun](https://github.com/keelstackhq/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | {{ks.bosun}}             | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
-| [hoist](https://github.com/keelstackhq/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | {{ks.hoist}}             | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
-| [hoard](https://github.com/keelstackhq/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions (and CircleCI) in one line of YAML. No account, no server.                      | {{ks.hoard}} (pin `@v0`) | `uses: keelstackhq/hoard@v0`                                      |
-| [berth](https://github.com/keelstackhq/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | {{ks.berth}}             | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
-| [decisions](https://github.com/keelstackhq/decisions) | Settled cross-repo decisions, delivered to each repo as a splice channel.                                                               | tracks `main`            | `splice channel add gh:keelstackhq/decisions//channel …`          |
+| Tool                                    | What it does                                                                                                                            | Released                 | Get it                                                            |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ | ----------------------------------------------------------------- |
+| [hull]({{ks.link.tree}}/hull)           | An opinionated, AI-native monorepo template. You pick pieces; hull owns structure, stack, tool versions and config.                     | {{ks.hull}}              | Rendered by splice from `{{ks.src.hull}}/template`                |
+| [splice]({{ks.link.tree}}/splice)       | Renders a template into a repo and keeps it up to date. A Copier alternative in one static binary.                                      | {{ks.splice}}            | `pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} <command>`       |
+| [bosun]({{ks.link.tree}}/bosun)         | Orchestration for agent-built repos: claims and leases, spawn limits, waves, gates, risk checks, review verdicts, lessons and cost.     | {{ks.bosun}}             | `npm i -g @keelstackhq/bosun` or `cargo install keel-bosun`       |
+| [hoist]({{ks.link.tree}}/hoist)         | Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs releases.                        | {{ks.hoist}}             | `npm install -g @keelstackhq/hoist` or `cargo install keel-hoist` |
+| [hoard]({{ks.link.tree}}/hoard)         | A Turborepo (and Vite+) remote cache for GitHub Actions (and CircleCI) in one line of YAML. No account, no server.                      | {{ks.hoard}} (pin `@v0`) | `uses: {{ks.src.hoardMajor}}`                                     |
+| [berth]({{ks.link.tree}}/berth)         | Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database. | {{ks.berth}}             | `npm i -g @keelstackhq/berth` or `cargo install keel-berth`       |
+| [decisions]({{ks.link.tree}}/decisions) | Settled cross-repo decisions, delivered to each repo as a splice channel.                                                               | tracks `main`            | `splice channel add {{ks.src.decisions}} …`                       |
 
 splice, bosun, hoist and berth are static Rust binaries. Every command prints one JSON object
 with `--json` (bosun always does) and has fixed exit codes, so an agent can act on the result
@@ -63,16 +63,16 @@ toolchain, cargo-deny and cargo-nextest, and no Node). `template-rust` is releas
 A channel is a second template applied next to the main one (or alone), with its own lock in
 `.splice/channels/<name>.toml`. Three channels matter here:
 
-- **rigging** (`gh:keelstackhq/hull//rigging`): the subagents lived here from hull v0.2.0 to
+- **rigging** (`{{ks.src.hull}}/rigging`): the subagents lived here from hull v0.2.0 to
   v0.10.x. Since hull v0.11.0 they are part of `base` again and the `claude` piece is empty.
-- **decisions** (`gh:keelstackhq/decisions//channel`): a snapshot of the org decisions in
+- **decisions** (`{{ks.src.decisions}}`): a snapshot of the org decisions in
   `docs/agents/org-decisions.md`, imported by your agent rules (D-004).
-- **bosun** (`gh:keelstackhq/bosun//channel`): bosun's governance files, the gate, risk, verdict
+- **bosun** (`{{ks.src.bosunChannel}}`): bosun's governance files, the gate, risk, verdict
   and main-health workflows, and the Claude Code hooks. `bosun init` adds it for you. In a hull
   repo, hull owns `.claude/settings.json`, so the hooks come from hull instead (since v0.3.0,
   guarded so they do nothing in a repo without bosun).
 
-The splice update bot (`keelstackhq/splice/action@{{ks.ref.spliceAction}} # v{{ks.ref.spliceActionVersion}}`) runs `splice update --all` on a schedule
+The splice update bot (`{{ks.src.spliceAction}}`) runs `splice update --all` on a schedule
 and opens one pull request with the changes to the template and every channel.
 
 ### bosun runs the work on GitHub
@@ -97,7 +97,7 @@ bosun uses the other tools for the parts it does not own:
 - **hoist**: `hoist apply` sets branch protection, auto-merge, the required checks and
   environments; `bosun doctor --remote` runs `hoist check`; releases run `hoist release` in a
   workflow.
-- **hoard**: generated gate workflows for pnpm stacks cache through `keelstackhq/hoard@v0`. Rust
+- **hoard**: generated gate workflows for pnpm stacks cache through `{{ks.src.hoardMajor}}`. Rust
   gate jobs use `Swatinem/rust-cache`, since hoard caches Turborepo and Vite+ tasks, not cargo
   builds.
 

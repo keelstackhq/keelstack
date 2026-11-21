@@ -50,8 +50,9 @@ pub struct Ruleset {
     pub merge_queue: bool,
     /// `active`, `evaluate` or `disabled`; `None` when the detail omits it.
     pub enforcement: Option<String>,
-    /// What hoist's own PUT would drop: rule types it does not write, a strict status-check
-    /// policy, pinned check sources, an exclude list, or targets beside the default branch.
+    /// What hoist's own default-branch PUT would drop: rule types it does not write, a strict
+    /// status-check policy, pinned check sources, an exclude list, targets beside the default
+    /// branch, or bypass actors other than the repository admin role.
     pub unmodelled: Vec<String>,
     /// `branch` or `tag`; `None` when the detail omits it.
     pub target: Option<String>,
@@ -393,6 +394,8 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
                     unmodelled.push("merge queue settings".to_string());
                 }
             }
+            // hoist writes these two (no parameters) on the default branch.
+            Some("deletion" | "non_fast_forward") => {}
             other => unmodelled.push(format!("rule `{}`", other.unwrap_or("?"))),
         }
     }
@@ -433,6 +436,10 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
         })
         .unwrap_or_default();
     bypass.sort();
+    // hoist's default-branch PUT writes only the repository admin role.
+    for actor in bypass.iter().filter(|b| *b != crate::desired::ADMIN_BYPASS) {
+        unmodelled.push(format!("bypass actor `{actor}`"));
+    }
     Ruleset {
         id,
         target: v.get("target").and_then(Value::as_str).map(str::to_string),

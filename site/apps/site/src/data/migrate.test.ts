@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { footerLinks, nav } from "./content";
-import { APPENDIX_URL, migrate, RUNBOOK_URL } from "./migrate";
+import { facts } from "./facts";
+import { APPENDIX_URL, migrate, QUICKSTART_URL, RUNBOOK_URL } from "./migrate";
 import { MIN_BOSUN_MIGRATE } from "./versions";
 import { buildLlmsTxt } from "../lib/llms";
 
@@ -17,7 +18,7 @@ test("the ladder has the four modes in order, flags, rollback line, and links th
   expect(JSON.stringify(migrate)).not.toContain("bosun pr --pr <n> --ready");
   expect(migrate.does.startId).toBe("c");
   expect(migrate.notes.join(" ")).toContain("Rollback");
-  expect(migrate.knobsUrl).toContain("bosun/blob/main/docs/quickstart.md");
+  expect(migrate.knobsUrl).toContain(`${facts.repoUrl}/blob/main/bosun/docs/quickstart.md`);
   expect(page).toContain("{migrate.ladder.map");
   expect(page).not.toContain("migrate.knobs.map");
 });
@@ -58,9 +59,7 @@ test("CLI, web and Slack sections are short, one prompt for all, long path links
 
 test("page: env headings, runbook link, no new island", () => {
   expect(page).toContain("href={RUNBOOK_URL}");
-  expect(RUNBOOK_URL).toBe(
-    "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md",
-  );
+  expect(RUNBOOK_URL).toBe(`${facts.repoUrl}/blob/main/bosun/docs/migrate-booster.md`);
   expect(page).not.toMatch(/client:/);
   for (const k of ["local", "web", "slack"]) expect(page).toContain(`{${k}.heading}`);
 });
@@ -73,7 +72,8 @@ test("linked from the nav, the footer, the home Get started links and llms.txt",
 });
 
 test("copy never names a client org or repo", () => {
-  const src = readFileSync(new URL("./migrate.ts", import.meta.url), "utf8") + page;
+  // The rendered copy: links come from versions.ts (the monorepo), never a typed org.
+  const src = JSON.stringify(migrate) + RUNBOOK_URL + QUICKSTART_URL + page;
   const orgs = [...src.matchAll(/github\.com\/([A-Za-z0-9_.-]+)/g)].map((m) => m[1]);
   expect(orgs.length).toBeGreaterThan(0);
   expect(new Set(orgs)).toEqual(new Set(["keelstackhq"]));

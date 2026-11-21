@@ -2,11 +2,11 @@
 // Quick start at its top. Min bosun comes from MIN_BOSUN_MIGRATE (versions.ts); other versions come from versions.ts. Names no client org or repo.
 
 import { MIGRATE_NOTES, MIGRATE_PROMPT, MODE_LADDER } from "./scenarios";
-import { bare, MIN_BOSUN_MIGRATE, versions } from "./versions";
+import { bare, links, MIN_BOSUN_MIGRATE, versions } from "./versions";
 
-export const RUNBOOK_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/migrate-booster.md";
+export const RUNBOOK_URL = `${links.main}/bosun/docs/migrate-booster.md`;
 export const APPENDIX_URL = `${RUNBOOK_URL}#appendix-a-the-manual-path`;
-export const QUICKSTART_URL = "https://github.com/keelstackhq/bosun/blob/main/docs/quickstart.md";
+export const QUICKSTART_URL = `${links.main}/bosun/docs/quickstart.md`;
 
 export const migrate = {
   title: "Move a repo to bosun booster",
@@ -29,8 +29,7 @@ export const migrate = {
   ladder: MODE_LADDER,
   ladderHead: ["Mode", "What bosun does for you", "Owner touches"] as const,
   notes: MIGRATE_NOTES,
-  knobsUrl:
-    "https://github.com/keelstackhq/bosun/blob/main/docs/quickstart.md#0-set-the-mode-all-modes-all-environments",
+  knobsUrl: `${links.main}/bosun/docs/quickstart.md#0-set-the-mode-all-modes-all-environments`,
   does: {
     intro: "What bosun migrate does (the exact commands are in Start block C):",
     startId: "c",

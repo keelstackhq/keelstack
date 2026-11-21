@@ -6,10 +6,10 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. This page was last checked line by line against bosun 0.19.0; its links point at bosun 0.20.0. Long details are in
-bosun's specs: [lifecycle](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/spec/04-lifecycle.md),
-[spawning and waves](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/spec/05-spawn.md) and
-[cost and main-health](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/spec/09-main-health.md).
+each other, and what stops work. This page was last checked line by line against bosun 0.19.0; its links point at the monorepo's `main`. Long details are in
+bosun's specs: [lifecycle](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec/04-lifecycle.md),
+[spawning and waves](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec/05-spawn.md) and
+[cost and main-health](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec/09-main-health.md).
 
 ## Every command speaks JSON
 
@@ -55,7 +55,7 @@ A session calls `bosun <command>` and acts on the one JSON object on stdout, als
 
 ## Plans, items, tasks and UCs
 
-Work enters as a plan file in `plans/` ([format](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)).
+Work enters as a plan file in `plans/` ([format](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md)).
 `bosun plan import <file>` turns it into issues:
 
 | Plan part                                 | Becomes                                                  | Limits                                                           |
@@ -74,7 +74,7 @@ amendment's pull request in one step. It is for amendments only: the first plan 
 `bosun init --plan`.
 
 Item and task fields are in bosun's
-[plan format](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/plan-format.md):
+[plan format](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md):
 an item takes `area:`, `depends:`, `shape:` (`single`, `split` or `auto`) and `budget_usd:`; a task
 takes `touch:`, `depends:`, `size:`, `kind:`, `risk:`, `allow:` and `done-by: #N` (a task whose PR
 already merged). A PR over twice the planned `size:` of its tasks gets a drift note in the review
@@ -241,7 +241,7 @@ per_task_usd = 25
 ```
 
 Most values are estimates; their evidence is in
-[defaults.md](https://github.com/keelstackhq/bosun/blob/main/docs/defaults.md). With
+[defaults.md](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/defaults.md). With
 `max_live_sessions = 1` the root session does all the work in waves.
 
 ## Stop rules
@@ -304,5 +304,5 @@ digest (`bosun digest`), auto spawn (`bosun wave tick`) and a brake that turns t
 after a red `main`, reverts or a high red-CI rate. `bosun mode` prints the knobs in force and
 `bosun metrics` the numbers. A less strict mode is an owner-approved R-weaken change; budgets and
 limits are never part of a mode. `bosun migrate --to <mode>` opens the one PR for a move, and
-`--finish` after the merge. Details: [modes spec](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/spec/18-modes.md) and bosun's
-[quickstart](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/quickstart.md).
+`--finish` after the merge. Details: [modes spec](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec/18-modes.md) and bosun's
+[quickstart](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/quickstart.md).

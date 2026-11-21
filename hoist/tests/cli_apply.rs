@@ -838,10 +838,14 @@ fn live_ruleset(checks: &[&str], pull_request: bool) -> String {
         rules.push(serde_json::json!({"type": "pull_request",
             "parameters": {"required_approving_review_count": 1}}));
     }
+    rules.push(serde_json::json!({"type": "deletion"}));
+    rules.push(serde_json::json!({"type": "non_fast_forward"}));
     serde_json::json!({"id": 11, "name": "hoist: default branch", "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "rules": rules})
+        "rules": rules,
+        "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole",
+            "bypass_mode": "pull_request"}]})
     .to_string()
 }
 
@@ -890,7 +894,7 @@ fn adopt_adds_its_checks_beside_the_live_ones() {
         .find(|r| r.method == "PUT")
         .unwrap();
     let body: Value = serde_json::from_str(put.body.as_deref().unwrap()).unwrap();
-    let contexts: Vec<&str> = body["rules"][0]["parameters"]["required_status_checks"]
+    let contexts: Vec<&str> = body["rules"][2]["parameters"]["required_status_checks"]
         .as_array()
         .unwrap()
         .iter()

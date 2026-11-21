@@ -33,9 +33,36 @@ expect "site/apps/site/src/data/facts.ts" "site"
 expect "decisions/DECISIONS.md" "decisions"
 expect "README.md" ""
 expect "MIGRATION.md" ""
+expect "MIGRATION-ARCHIVE.md" ""
 for root in Cargo.toml Cargo.lock rust-toolchain.toml deny.toml .cargo/config.toml .github/workflows/ci.yml; do
   expect "$root" "$everything"
 done
+# Fail safe: a path outside every folder and not in the short no-effect list affects every folder
+# (folder tests read root files: keel/tests reads keel.toml, bosun tests read .bosun/risk.toml).
+for root in keel.toml hoist.toml .bosun/risk.toml .gitignore AGENTS.md CLAUDE.md REVIEW.md \
+  docs/lessons.toml governance/owners.toml scripts/bump-version.sh .claude/settings.json bosunx/a bosun; do
+  expect "$root" "$everything"
+done
+expect $'README.md\nbosun/src/main.rs' "bosun keel site"
+
+# A rename lists both paths: `git mv splice/x hull/x` affects splice too (git diff --no-renames).
+# Two commits from a fast-import stream (add splice/x.txt; move it to hull/x.txt unchanged).
+mkdir -p "$tmp/repo"
+got="$(
+  cd "$tmp/repo"
+  git init -q
+  printf '%s\n' 'commit refs/heads/rename-test' 'committer t <t@t> 0 +0000' 'data 3' 'add' \
+    'M 100644 inline splice/x.txt' 'data 6' 'a' 'b' 'c' '' \
+    'commit refs/heads/rename-test' 'committer t <t@t> 1 +0000' 'data 2' 'mv' \
+    'D splice/x.txt' 'M 100644 inline hull/x.txt' 'data 6' 'a' 'b' 'c' '' | git fast-import --quiet
+  git checkout -q rename-test
+  GITHUB_OUTPUT='' PR_BASE='HEAD~1' bash "$here/affected.sh" | grep -E '^(splice|hull|all)=' | tr '\n' ' '
+)"
+if [ "$got" != "splice=true hull=true all=false " ]; then
+  echo "FAIL: rename splice/x.txt -> hull/x.txt: got '$got'"; fail=1
+else
+  echo "ok: rename splice/x.txt -> hull/x.txt -> splice and hull"
+fi
 
 # rust= is false for decisions-only and hull-only changes.
 r="$(GITHUB_OUTPUT='' CHANGED="decisions/x.md" bash "$here/affected.sh" | grep '^rust=')"

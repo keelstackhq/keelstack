@@ -1,5 +1,7 @@
 // Reads what bosun's copied setup script pins (data/bosun/), so the docs that describe it are derived.
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 export interface SetupScript {
   bosun: string;
@@ -27,8 +29,22 @@ export function parseSetupScript(sh: string, json: string): SetupScript {
   };
 }
 
-export const readSetupScript = (): SetupScript =>
-  parseSetupScript(
-    readFileSync(new URL("../data/bosun/setup-script.sh", import.meta.url), "utf8"),
-    readFileSync(new URL("../data/bosun/setup-script.json", import.meta.url), "utf8"),
+/** `src/data/bosun/` of this app, found upwards (from the source, or from Astro's bundled chunk). */
+function bosunData(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  for (;;) {
+    const d = join(dir, "src", "data", "bosun");
+    if (existsSync(join(d, "setup-script.json"))) return d;
+    const up = dirname(dir);
+    if (up === dir) throw new Error("setup-script: src/data/bosun not found");
+    dir = up;
+  }
+}
+
+export const readSetupScript = (): SetupScript => {
+  const d = bosunData();
+  return parseSetupScript(
+    readFileSync(join(d, "setup-script.sh"), "utf8"),
+    readFileSync(join(d, "setup-script.json"), "utf8"),
   );
+};

@@ -3,8 +3,8 @@ layout: ../../layouts/Docs.astro
 ---
 
 The guide below is hull's
-[`docs/adopt.md`](https://github.com/keelstackhq/hull/blob/{{ks.commit.hull}}/docs/adopt.md) at commit
-`{{ks.short.hull}}`, copied verbatim. Its `start-checklist.md` is
+[`docs/adopt.md`]({{ks.link.hull}}/docs/adopt.md) at commit
+`{{ks.link.hullShort}}`, copied verbatim. Its `start-checklist.md` is
 [Start a project](/docs/start-project/) on this site. `TODO(owner)` in the copy is hull's own marker for facts hull's maintainers have not written down. It is not a step for you: skip it.
 
 ## The short path
@@ -45,7 +45,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
    item yourself. Tell me that keeping an owned base file (for example ci.yml) blocks adopt
    without --force: keeping one means channels only, or adopting it later (adopt.md).
 3. Create a new branch with a clean working tree, move code into place as I confirmed, then run
-   pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} adopt gh:keelstackhq/hull//<template> --ref {{ks.hull}} --piece <id>:<name> ... --dry-run --json
+   pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} adopt {{ks.src.hull}}/<template> --ref {{ks.hull}} --piece <id>:<name> ... --dry-run --json
    and show me the change list by action: refuse, replace, merge, conflict, create, skip.
 4. Only after I confirm: run the same command without --dry-run, resolve the conflicts, run the
    ready skill, and open a pull request with the change list and my choices. Never pass --force
@@ -77,7 +77,7 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.13.0.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev{{ks.assess.url}} -o /tmp/assess.mjs
 echo "189a681d40ad3cdd243e4183bda9d9774ebada31a2563f0968211827d9acb16e  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```

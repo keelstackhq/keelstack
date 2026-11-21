@@ -5,7 +5,9 @@ name: cargo-deny-npm
 # building it from source (docs/superpowers/specs/2026-11-10-fast-setup-design.md):
 # - @keelstackhq/cargo-deny-linux-x64 and -linux-arm64: upstream's binary, unchanged, in bin/;
 # - @keelstackhq/cargo-deny: the launcher (npm/cargo-deny/bin/cargo-deny.js).
-# Manual runs only, from main, in environment `release` (the owner approves each run). Each
+# Manual runs only, from main, in environment `release` (deployment branches: default branch
+# only; no required reviewer, D-022: nobody approves a run, so a run started by anyone with
+# write access publishes). Each
 # tarball is checked against upstream's .sha256 before anything is published; npm trusted
 # publishing (OIDC, no token) with provenance. Platform packages first, then the launcher. A
 # re-run skips what npm already has. Not part of bosun's release (hoist does not see npm/cargo-deny*).

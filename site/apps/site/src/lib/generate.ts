@@ -3,7 +3,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
-import { docRefs, verifiedOn, versions } from "../data/versions.ts";
+import { verifiedOn, versions } from "../data/versions.ts";
 import { buildCtx, renderTemplate } from "./render.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -28,7 +28,6 @@ export function generate(): Map<string, string> {
     assess: { url: string; sha256: string };
   };
   const ctx = buildCtx(undefined, {
-    ...docRefs,
     assessUrl: adopt.assess.url,
     assessSha: adopt.assess.sha256,
   });

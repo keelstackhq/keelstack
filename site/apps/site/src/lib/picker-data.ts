@@ -1,5 +1,6 @@
 // Build-time data for the piece picker, from data/facts.ts (node only).
 import { facts } from "../data/facts";
+import { bare, sources, versions } from "../data/versions";
 import type { PickerData, Piece } from "./command";
 
 /** Editorial: which hull pieces the picker offers, and which are on by default. */
@@ -32,9 +33,10 @@ const pieces: Piece[] = OFFERED.map((id) => {
 
 export const pickerData: PickerData = {
   splicePackage: facts.tools.find((t) => t.name === "splice")!.npm!,
-  spliceVersion: facts.version,
-  hullSource: facts.hullSource,
-  hullRef: facts.tag,
+  // Pins that resolve today (data/versions.ts): the workspace version once released.
+  spliceVersion: bare(versions.splice),
+  hullSource: `${sources.hull}/template`,
+  hullRef: versions.hull,
   pieces,
   defaultOn: pieces
     .filter((p) => (DEFAULT_PIECES as readonly string[]).includes(p.piece))

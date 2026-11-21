@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull {{ks.hull}}, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. It was last checked line by line against bosun 0.19.0; links point at bosun {{ks.bare.bosun}}. The example plan was re-checked with `bosun plan check` {{ks.bare.bosun}} (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull {{ks.hull}} and was not re-run for {{ks.bare.bosun}}. Every
+plan turns into work. It was last checked line by line against bosun 0.19.0; links point at {{ks.link.pinnedLabel}}. The example plan was re-checked with `bosun plan check` {{ks.bare.bosun}} (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull {{ks.hull}} and was not re-run for {{ks.bare.bosun}}. Every
 command and flag below was checked, at bosun 0.19.0, against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -33,9 +33,9 @@ docs/setup-script.sh       the cloud environment's setup script
 plans/<name>.md            the plan: the only input bosun reads (`--plan` copies yours here)
 ```
 
-Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/adopt-existing-repo.md)
+Descriptions follow bosun's [adopt guide]({{ks.link.pinned}}/bosun/docs/adopt-existing-repo.md)
 (section 3, "What lands in the repo") and its
-[layout spec](https://github.com/keelstackhq/bosun/blob/{{ks.ref.bosunSpec}}/docs/spec/03-layout.md). For
+[layout spec]({{ks.link.pinned}}/bosun/docs/spec/03-layout.md). For
 `session-rules.toml` and `intake.toml` see the bosun docs and the layout spec. `bosun init` writes
 neither (checked by running it): the intake file only exists with `--intake <file>`, which bosun
 copies, and the session rules are bosun's built-in text until you write a file. A seed is
@@ -59,7 +59,7 @@ bosun reads only `plans/*.md`. It has no convention for a brief or a product spe
   `docs/superpowers/specs/<date>-<name>.md`, and list it in the `touch:` of the tasks that update
   it.
 - The plan goes in `plans/<name>.md`, in bosun's format
-  ([plan-format.md](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)). Its
+  ([plan-format.md]({{ks.link.main}}/bosun/docs/plan-format.md)). Its
   `project:` must equal `project` in `.bosun/bosun.toml`. A minimal plan, which
   `bosun plan check` ({{ks.bare.bosun}}) accepts with no warnings. A task that touches `apps/api/src/` also
   lists a test under `apps/api/tests/`, or `plan check` warns:
@@ -134,7 +134,7 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 
 1. **Owner:** create the repo and install the [Claude GitHub App](https://github.com/apps/claude).
 2. **Agent:** render hull {{ks.hull}}
-   (`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref {{ks.hull}} --piece …`,
+   (`pnpm dlx @keelstackhq/splice new {{ks.src.hull}}/template <repo> --ref {{ks.hull}} --piece …`,
    or `//template-rust`; both ship `ready`),
    then run the `ready` skill (advisory since hull v0.11.0: it never blocks and takes defaults for unanswered onboarding questions; `.bosun/` does not exist yet, so answer `bosun` with `yes` in `docs/agents/onboarding.toml`).
 3. **Agent:** write the plan first: turn the brief into `plans/<name>.md` (the spec stays in

@@ -2,12 +2,18 @@ import { readdirSync, readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { docs } from "./docs";
 import { docMarkdown } from "../lib/docs-md";
-import { tagCommits, verifiedLine, versions } from "./versions";
+import { facts } from "./facts";
+import { released, tagCommits, verifiedLine, versions } from "./versions";
 
 test("the verified line comes from versions.ts and ends every docs Markdown page", () => {
-  expect(verifiedLine()).toBe(
-    "Last verified 2026-11-18 against bosun 0.20.0, hull v0.13.0, splice 0.6.0.",
+  // Before the first monorepo release the pins are the old repos' last releases (legacy.ts).
+  expect(verifiedLine(versions, "2026-11-18", false)).toBe(
+    `Last verified 2026-11-18 against bosun ${versions.bosun.replace(/^v/, "")}, hull ${versions.hull}, splice ${versions.splice} (the old tool repos' last releases, pinned until keelstack's first release).`,
   );
+  expect(verifiedLine(versions, "2026-11-18", true)).toBe(
+    `Every pin is keelstack ${facts.tag}, one version for every tool.`,
+  );
+  expect(verifiedLine()).toBe(verifiedLine(versions, undefined, released));
   for (const d of docs.filter((x) => x.ready)) {
     expect(docMarkdown(d).trimEnd().endsWith(verifiedLine())).toBe(true);
   }

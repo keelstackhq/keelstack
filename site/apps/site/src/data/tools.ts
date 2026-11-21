@@ -2,6 +2,7 @@
 // reads the monorepo sources (D-024). Only the editorial labels below are written by hand; a test
 // fails when a tool has no label or a label has no tool.
 import { facts } from "./facts";
+import { sources } from "./versions";
 
 export const org = { name: "keelstackhq", url: facts.orgUrl } as const;
 
@@ -39,7 +40,7 @@ function detail(name: string): { text: string; mono: boolean } {
   const names = f.subcommands.map((s) => s.name);
   const shown = names.slice(0, SHOWN).join(" · ");
   const more = names.length > SHOWN ? ` · … (${names.length} commands)` : "";
-  const action = name === "hoard" ? `uses: ${facts.hoardAction} · ` : "";
+  const action = name === "hoard" ? `uses: ${sources.hoardAction} · ` : "";
   return { text: `${action}${shown}${more}`, mono: true };
 }
 

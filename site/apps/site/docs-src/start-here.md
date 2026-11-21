@@ -19,10 +19,10 @@ https://keelstack.dev/llms-full.txt.
 ## The path
 
 1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} new
-   gh:keelstackhq/hull//template my-repo --piece …` (or `//template-rust`), then commit.
+   {{ks.src.hull}}/template my-repo --piece …` (or `//template-rust`), then commit.
    [Getting started, step 1](/docs/getting-started/#1-render-the-template-new-repo).
 2. **Add the decisions channel** (agent).
-   `splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project`
+   `splice channel add {{ks.src.decisions}} --track main --piece import-project`
    (hull v0.11.0 or later ships the subagents; no rigging channel).
    [Getting started, step 2](/docs/getting-started/#2-add-the-channels).
 3. **Set up bosun** (agent). `bosun init --stack rust|ts-pnpm --owner <login>` opens one setup

@@ -717,7 +717,7 @@ fn plugin_findings(
     let mut add = |p: String, f: String| out.push((p, f));
     let pin_of = |name: &str| script.and_then(|s| script_pin(s, name));
     let settings_fix = format!(
-        ".claude/settings.json: set extraKnownMarketplaces.{MARKET}.source to {{\"source\":\"github\",\"repo\":\"keelstackhq/bosun\",\"ref\":\"<{MARKET_PIN}>\"}} and enable superpowers@{MARKET} and caveman@{MARKET} in enabledPlugins; {SWITCH}"
+        ".claude/settings.json: set extraKnownMarketplaces.{MARKET}.source to {{\"source\":\"github\",\"repo\":\"keelstackhq/keelstack\",\"ref\":\"<{MARKET_PIN}>\",\"path\":\"bosun/.claude-plugin/marketplace.json\",\"sparsePaths\":[\"bosun/.claude-plugin\"]}} (repos rendered from bosun's channel may keep {{\"source\":\"github\",\"repo\":\"keelstackhq/bosun\"}}) and enable superpowers@{MARKET} and caveman@{MARKET} in enabledPlugins; {SWITCH}"
     );
     let mut mref = None;
     match settings {
@@ -727,12 +727,14 @@ fn plugin_findings(
         ),
         Some(s) => {
             let src = &s["extraKnownMarketplaces"][MARKET]["source"];
-            if !src.is_null()
-                && (src["source"] != "github"
-                    || !src["repo"]
-                        .as_str()
-                        .is_some_and(|r| r.eq_ignore_ascii_case("keelstackhq/bosun")))
-            {
+            let repo = src["repo"].as_str().unwrap_or("");
+            let old_form = repo.eq_ignore_ascii_case("keelstackhq/bosun");
+            let monorepo = repo.eq_ignore_ascii_case("keelstackhq/keelstack")
+                && matches!(
+                    src["path"].as_str(),
+                    Some("bosun/.claude-plugin" | "bosun/.claude-plugin/marketplace.json")
+                );
+            if !src.is_null() && (src["source"] != "github" || !(old_form || monorepo)) {
                 add(
                     format!("marketplace {MARKET} source is not github keelstackhq/bosun"),
                     settings_fix.clone(),
@@ -1786,6 +1788,36 @@ mod tests {
         );
         assert!(out.contains("KEELSTACK_MARKETPLACE_REF"), "{out}");
         assert!(out.contains(M1), "{out}");
+    }
+
+    #[test]
+    fn the_monorepo_and_the_old_marketplace_sources_are_ok() {
+        let mut s = settings(M1, true);
+        s["extraKnownMarketplaces"]["keelstack"]["source"] = json!({
+            "source": "github", "repo": "keelstackhq/keelstack", "ref": M1,
+            "path": "bosun/.claude-plugin/marketplace.json",
+            "sparsePaths": ["bosun/.claude-plugin"]
+        });
+        let i = installed(P1, C);
+        assert_eq!(run(Some(&s), Some(&script()), Some(&i), None), "");
+        s["extraKnownMarketplaces"]["keelstack"]["source"]["path"] = json!("bosun/.claude-plugin");
+        assert_eq!(run(Some(&s), Some(&script()), Some(&i), None), "");
+        // The old source still counts.
+        let old = settings(M1, true);
+        assert_eq!(run(Some(&old), Some(&script()), Some(&i), None), "");
+    }
+
+    #[test]
+    fn the_monorepo_source_with_another_path_is_a_problem() {
+        for path in [json!("hull/.claude-plugin"), json!("bosun"), Value::Null] {
+            let mut s = settings(M1, true);
+            s["extraKnownMarketplaces"]["keelstack"]["source"] = json!({
+                "source": "github", "repo": "keelstackhq/keelstack", "ref": M1, "path": path
+            });
+            let out = run(Some(&s), Some(&script()), Some(&installed(P1, C)), None);
+            assert!(out.contains("not github keelstackhq/bosun"), "{out}");
+            assert!(out.contains("bosun/.claude-plugin"), "{out}");
+        }
     }
 
     #[test]

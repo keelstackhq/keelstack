@@ -1,40 +1,41 @@
-// Renders docs-src templates: `{{ks.NAME}}` tokens become values from the one version source.
+// Renders docs-src templates: `{{ks.NAME}}` tokens become values from versions.ts (pins, sources
+// and monorepo links, all derived from facts.ts) and the scenario builders.
 // Imports only versions.ts, scenarios.ts and setup-script.ts (with .ts extensions) so Node can run it directly.
 import { readSetupScript } from "./setup-script.ts";
 import * as sc from "../data/scenarios.ts";
 import {
   bare,
-  docRefs,
+  links,
   MIN_BOSUN_MIGRATE,
-  tagCommits,
+  sources,
   verifiedLine,
   verifiedOn,
   versions,
+  type Versions,
 } from "../data/versions.ts";
 
 export type Ctx = Record<string, string>;
 
-type Refs = typeof docRefs & { assessUrl?: string; assessSha?: string };
+export interface Refs {
+  assessUrl?: string;
+  assessSha?: string;
+}
 
 const fence = (body: string): string => "```bash\n" + body + "\n```";
 
 export function buildCtx(
-  v: typeof versions = versions,
-  refs: Refs = docRefs,
-  commits: Record<keyof typeof versions, string> = tagCommits,
+  v: Versions = versions,
+  refs: Refs = {},
   verified: string = verifiedOn,
 ): Ctx {
   const ctx: Ctx = {};
-  for (const t of Object.keys(v) as (keyof typeof versions)[]) {
+  for (const t of Object.keys(v) as (keyof Versions)[]) {
     ctx[t] = v[t];
     ctx[`bare.${t}`] = bare(v[t]);
-    ctx[`commit.${t}`] = commits[t];
-    ctx[`short.${t}`] = commits[t].slice(0, 7);
   }
   ctx["min.bosunMigrate"] = MIN_BOSUN_MIGRATE;
-  ctx["ref.bosunSpec"] = refs.bosunSpec;
-  ctx["ref.spliceAction"] = refs.spliceAction;
-  ctx["ref.spliceActionVersion"] = refs.spliceActionVersion;
+  for (const [k, val] of Object.entries(sources)) ctx[`src.${k}`] = val;
+  for (const [k, val] of Object.entries(links)) ctx[`link.${k}`] = val;
   for (const [k, val] of Object.entries(readSetupScript())) ctx[`script.${k}`] = val;
   ctx.verifiedOn = verified;
   ctx.verified = verifiedLine(v, verified);

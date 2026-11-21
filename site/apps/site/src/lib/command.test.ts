@@ -1,21 +1,31 @@
 import { expect, test } from "vite-plus/test";
 import { facts } from "../data/facts";
+import { legacy } from "../data/legacy";
+import { bare, released, versions } from "../data/versions";
 import { buildCommand, caption } from "./command";
 import { NOT_OFFERED, OFFERED, pickerData as d } from "./picker-data";
 
 const def = new Set(d.defaultOn);
 
-test("pins the workspace version for splice and hull", () => {
-  expect(d.spliceVersion).toBe(facts.version);
-  expect(d.hullRef).toBe(`v${facts.version}`);
-  expect(d.hullSource).toBe("gh:keelstackhq/keelstack//hull/template");
+test("pins what resolves: the workspace version once released, else the last old releases", () => {
+  expect(d.spliceVersion).toBe(bare(versions.splice));
+  expect(d.hullRef).toBe(versions.hull);
+  if (released) {
+    expect(d.spliceVersion).toBe(facts.version);
+    expect(d.hullRef).toBe(facts.tag);
+    expect(d.hullSource).toBe("gh:keelstackhq/keelstack//hull/template");
+  } else {
+    expect(d.spliceVersion).toBe(legacy.versions.splice);
+    expect(d.hullRef).toBe(legacy.versions.hull);
+    expect(d.hullSource).toBe("gh:keelstackhq/hull//template");
+  }
   expect(d.splicePackage).toBe("@keelstackhq/splice");
 });
 
 test("defaults: the command run for the hero output", () => {
   expect(buildCommand(d, def)).toBe(
-    `pnpm dlx @keelstackhq/splice@${facts.version} new \\\n` +
-      `  gh:keelstackhq/keelstack//hull/template my-repo --ref v${facts.version} \\\n` +
+    `pnpm dlx @keelstackhq/splice@${d.spliceVersion} new \\\n` +
+      `  ${d.hullSource} my-repo --ref ${d.hullRef} \\\n` +
       "  --piece preact-app:web --piece hono-worker:api",
   );
 });
@@ -28,8 +38,8 @@ test("keeps piece order whatever the insertion order", () => {
 
 test("nothing selected: no dangling backslash", () => {
   expect(buildCommand(d, new Set())).toBe(
-    `pnpm dlx @keelstackhq/splice@${facts.version} new \\\n` +
-      `  gh:keelstackhq/keelstack//hull/template my-repo --ref v${facts.version}`,
+    `pnpm dlx @keelstackhq/splice@${d.spliceVersion} new \\\n` +
+      `  ${d.hullSource} my-repo --ref ${d.hullRef}`,
   );
 });
 
@@ -40,7 +50,7 @@ test("no line ends in a space", () => {
 });
 
 test("caption names the pinned hull ref", () => {
-  expect(caption(d)).toContain(`v${facts.version}`);
+  expect(caption(d)).toContain(versions.hull);
   expect(caption(d)).toContain("--ref");
 });
 

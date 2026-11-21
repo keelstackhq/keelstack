@@ -66,7 +66,12 @@ permissions: {}
 concurrency:
   # A run is never cancelled. Releases of different commits do not wait for each other; a re-run
   # of one commit waits for the first. Plan runs of different PRs never share a group (a pending
-  # run would replace another one).
+  # run would replace another one). The version is not known here (a manual run may leave the
+  # input empty: plan reads it from Cargo.toml), so the jobs after plan that write a version's
+  # draft, tag, crates, npm packages or v<major> (release, crates, npm, major) each also hold a
+  # job-level group release-<job>-<version>: two runs of one version (two commits, or a manual
+  # run next to a dispatched one) never write the same draft or packages at once. One group per
+  # job, not one per version, so the jobs of one run never wait for each other.
   group: ${{ github.event_name == 'workflow_dispatch' && format('release-{0}', inputs.sha || github.sha) || format('plan-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -129,8 +134,14 @@ jobs:
             # The merge commit's first parent is main before the merge (merge and squash merges;
             # a rebase merge puts several commits on main, so use merge or squash for bump PRs).
             prev=$(cargo_version "$sha^1" 2>/dev/null || true)
-            echo "workspace version: $prev -> $version"
+            echo "workspace version: ${prev:-none} -> $version"
             if [ "$version" != "$prev" ]; then release=true; fi
+            if [ -z "$prev" ]; then
+              # The first parent has no root workspace version: the merge that created the
+              # monorepo (D-023). Its version is the imported one, released by the old repositories.
+              echo "::notice::the first parent has no [workspace.package] version in Cargo.toml (monorepo setup merge): nothing to release"
+              release=false
+            fi
           fi
           if [ "$release" = true ]; then
             re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
@@ -429,6 +440,10 @@ jobs:
       needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # One run at a time per version for this job (see the top-level concurrency).
+    concurrency:
+      group: release-release-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
     environment: release
     permissions:
       contents: write
@@ -618,6 +633,9 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    concurrency:
+      group: release-crates-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
     environment: release
     permissions:
       contents: read
@@ -703,6 +721,9 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    concurrency:
+      group: release-npm-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
     environment: release
     permissions:
       contents: read
@@ -779,6 +800,16 @@ jobs:
         run: |
           set -euo pipefail
           [ -s publish-dirs.txt ] || { echo "::error::no packages to publish"; exit 1; }
+          # dist-tag `latest` only when this is the highest stable vX.Y.Z tag (the backport rule
+          # of job major); a backport gets `v<major>.<minor>-latest`, so `latest` never moves back.
+          newest=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
+          if [ "$newest" = "$TAG" ]; then
+            dist_tag=latest
+          else
+            dist_tag="v${VERSION%.*}-latest"
+            echo "::notice::newest stable tag is ${newest:-none}, not $TAG: npm dist-tag $dist_tag, latest not moved"
+          fi
           while read -r dir; do
             name=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).name" "$dir")
             got=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).version" "$dir")
@@ -796,7 +827,7 @@ jobs:
               npm pkg set "repository.type=git" "repository.url=git+https://github.com/$GH_REPO.git" </dev/null
               case "$dir" in ./*) npm pkg set "repository.directory=${dir#./}" </dev/null ;; esac
             )
-            npm publish "$dir" --provenance --access public --tag latest </dev/null
+            npm publish "$dir" --provenance --access public --tag "$dist_tag" </dev/null
           done <publish-dirs.txt
 
   # The Action's major tag follows the newest stable release, and only moves once the release,
@@ -810,6 +841,9 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: release-major-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
     environment: release
     permissions:
       contents: write

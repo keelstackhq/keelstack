@@ -1,730 +1,833 @@
 {
- "version": 1,
- "command": "check",
- "ok": false,
- "exit_code": 2,
- "items": [
-  {
-   "area": "github",
-   "kind": "ruleset",
-   "key": "hoist: default branch",
-   "action": "create",
-   "reason": "ruleset missing on main: required checks ci-ok, risk-check, review-verdict, main-open; merge queue on (merge method merge)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "tag_ruleset",
-   "key": "hoist: tags",
-   "action": "create",
-   "reason": "ruleset missing: patterns v*; bypass github-actions",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "release",
-   "action": "create",
-   "reason": "environment release missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "bosun-app",
-   "action": "create",
-   "reason": "environment bosun-app missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "bosun-signer",
-   "action": "create",
-   "reason": "environment bosun-signer missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "review",
-   "action": "create",
-   "reason": "environment review missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "hoard-r2",
-   "action": "create",
-   "reason": "environment hoard-r2 missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "environment",
-   "key": "site",
-   "action": "create",
-   "reason": "environment site missing (default branch only, no reviewers)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "variable",
-   "key": "BOSUN_APP_CLIENT_ID",
-   "action": "pending",
-   "reason": "missing; run: gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "variable",
-   "key": "BOSUN_REVIEW_CI",
-   "action": "ok",
-   "reason": "optional: unset keeps review.yml off",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "BOSUN_APP_KEY",
-   "action": "pending",
-   "reason": "missing in environment bosun-app; run: hoist secrets set BOSUN_APP_KEY",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "BOSUN_SIGNER_KEY",
-   "action": "pending",
-   "reason": "missing in environment bosun-signer; run: hoist secrets set BOSUN_SIGNER_KEY",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "R2_ACCOUNT_ID",
-   "action": "pending",
-   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCOUNT_ID",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "R2_ACCESS_KEY_ID",
-   "action": "pending",
-   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCESS_KEY_ID",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "R2_SECRET_ACCESS_KEY",
-   "action": "pending",
-   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_SECRET_ACCESS_KEY",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "R2_BUCKET",
-   "action": "pending",
-   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_BUCKET",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "secret",
-   "key": "ANTHROPIC_API_KEY",
-   "action": "ok",
-   "reason": "optional: only with BOSUN_REVIEW_CI = true",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "github",
-   "kind": "app",
-   "key": "keelstackhq-bosun-gate",
-   "action": "pending",
-   "reason": "app not installed on the repository",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun-linux-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun-linux-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun-darwin-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun-darwin-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/bosun-win32-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/splice",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist-linux-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist-linux-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist-darwin-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist-darwin-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/hoist-win32-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth-linux-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth-linux-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth-darwin-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth-darwin-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/berth-win32-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel-linux-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel-linux-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel-darwin-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel-darwin-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/keel-win32-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/cargo-deny",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/cargo-deny-linux-x64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "npm",
-   "kind": "trusted_publisher",
-   "key": "@keelstackhq/cargo-deny-linux-arm64",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "first_publish",
-   "key": "keel-bosun",
-   "action": "pending",
-   "reason": "not on crates.io yet",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "trusted_publisher",
-   "key": "keel-bosun",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "first_publish",
-   "key": "keel-hoist",
-   "action": "pending",
-   "reason": "not on crates.io yet",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "trusted_publisher",
-   "key": "keel-hoist",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "first_publish",
-   "key": "keel-berth",
-   "action": "pending",
-   "reason": "not on crates.io yet",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "trusted_publisher",
-   "key": "keel-berth",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "first_publish",
-   "key": "keel-cli",
-   "action": "pending",
-   "reason": "not on crates.io yet",
-   "source": "registry"
-  },
-  {
-   "area": "crates",
-   "kind": "trusted_publisher",
-   "key": "keel-cli",
-   "action": "pending",
-   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
-   "source": "registry"
-  },
-  {
-   "area": "cloudflare",
-   "kind": "pages_project",
-   "key": "keelstack-landing",
-   "action": "create",
-   "reason": "Pages project missing (site/)",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "cloudflare",
-   "kind": "secret",
-   "key": "CLOUDFLARE_API_TOKEN",
-   "action": "create",
-   "reason": "minted deploy token sealed into environment site",
-   "source": "hoist.toml"
-  },
-  {
-   "area": "cloudflare",
-   "kind": "secret",
-   "key": "CLOUDFLARE_ACCOUNT_ID",
-   "action": "create",
-   "reason": "account id sealed into environment site",
-   "source": "hoist.toml"
-  }
- ],
- "human_steps": [
-  {
-   "id": "variable:BOSUN_APP_CLIENT_ID",
-   "title": "Set variable BOSUN_APP_CLIENT_ID (client id of keelstackhq-bosun-gate)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/variables/actions",
-   "status": "pending"
-  },
-  {
-   "id": "secret:BOSUN_APP_KEY",
-   "title": "set secret BOSUN_APP_KEY",
-   "url": "hoist secrets set BOSUN_APP_KEY",
-   "status": "pending"
-  },
-  {
-   "id": "secret:BOSUN_SIGNER_KEY",
-   "title": "set secret BOSUN_SIGNER_KEY",
-   "url": "hoist secrets set BOSUN_SIGNER_KEY",
-   "status": "pending"
-  },
-  {
-   "id": "secret:R2_ACCOUNT_ID",
-   "title": "set secret R2_ACCOUNT_ID",
-   "url": "hoist secrets set R2_ACCOUNT_ID",
-   "status": "pending"
-  },
-  {
-   "id": "secret:R2_ACCESS_KEY_ID",
-   "title": "set secret R2_ACCESS_KEY_ID",
-   "url": "hoist secrets set R2_ACCESS_KEY_ID",
-   "status": "pending"
-  },
-  {
-   "id": "secret:R2_SECRET_ACCESS_KEY",
-   "title": "set secret R2_SECRET_ACCESS_KEY",
-   "url": "hoist secrets set R2_SECRET_ACCESS_KEY",
-   "status": "pending"
-  },
-  {
-   "id": "secret:R2_BUCKET",
-   "title": "set secret R2_BUCKET",
-   "url": "hoist secrets set R2_BUCKET",
-   "status": "pending"
-  },
-  {
-   "id": "app:keelstackhq-bosun-gate",
-   "title": "Install the GitHub App keelstackhq-bosun-gate on keelstackhq/keelstack",
-   "url": "https://github.com/apps/keelstackhq-bosun-gate/installations/new",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun",
-   "title": "Add a trusted publisher for @keelstackhq/bosun on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun-linux-x64",
-   "title": "Add a trusted publisher for @keelstackhq/bosun-linux-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun-linux-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun-linux-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/bosun-linux-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun-linux-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun-darwin-x64",
-   "title": "Add a trusted publisher for @keelstackhq/bosun-darwin-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun-darwin-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun-darwin-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/bosun-darwin-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun-darwin-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/bosun-win32-x64",
-   "title": "Add a trusted publisher for @keelstackhq/bosun-win32-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/bosun-win32-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/splice",
-   "title": "Add a trusted publisher for @keelstackhq/splice on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/splice/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist",
-   "title": "Add a trusted publisher for @keelstackhq/hoist on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist-linux-x64",
-   "title": "Add a trusted publisher for @keelstackhq/hoist-linux-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist-linux-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist-linux-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/hoist-linux-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist-linux-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist-darwin-x64",
-   "title": "Add a trusted publisher for @keelstackhq/hoist-darwin-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist-darwin-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist-darwin-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/hoist-darwin-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist-darwin-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/hoist-win32-x64",
-   "title": "Add a trusted publisher for @keelstackhq/hoist-win32-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/hoist-win32-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth",
-   "title": "Add a trusted publisher for @keelstackhq/berth on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth-linux-x64",
-   "title": "Add a trusted publisher for @keelstackhq/berth-linux-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth-linux-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth-linux-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/berth-linux-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth-linux-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth-darwin-x64",
-   "title": "Add a trusted publisher for @keelstackhq/berth-darwin-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth-darwin-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth-darwin-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/berth-darwin-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth-darwin-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/berth-win32-x64",
-   "title": "Add a trusted publisher for @keelstackhq/berth-win32-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/berth-win32-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel",
-   "title": "Add a trusted publisher for @keelstackhq/keel on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel-linux-x64",
-   "title": "Add a trusted publisher for @keelstackhq/keel-linux-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel-linux-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel-linux-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/keel-linux-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel-linux-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel-darwin-x64",
-   "title": "Add a trusted publisher for @keelstackhq/keel-darwin-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel-darwin-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel-darwin-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/keel-darwin-arm64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel-darwin-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/keel-win32-x64",
-   "title": "Add a trusted publisher for @keelstackhq/keel-win32-x64 on npm (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/keel-win32-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/cargo-deny",
-   "title": "Add a trusted publisher for @keelstackhq/cargo-deny on npm (repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/cargo-deny-linux-x64",
-   "title": "Add a trusted publisher for @keelstackhq/cargo-deny-linux-x64 on npm (repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny-linux-x64/access",
-   "status": "pending"
-  },
-  {
-   "id": "npm-trust:@keelstackhq/cargo-deny-linux-arm64",
-   "title": "Add a trusted publisher for @keelstackhq/cargo-deny-linux-arm64 on npm (repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release)",
-   "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny-linux-arm64/access",
-   "status": "pending"
-  },
-  {
-   "id": "first-publish:keel-bosun",
-   "title": "Publish keel-bosun once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
-   "url": "https://crates.io/crates/keel-bosun",
-   "status": "pending"
-  },
-  {
-   "id": "crates-trust:keel-bosun",
-   "title": "Add a trusted publisher for keel-bosun on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://crates.io/crates/keel-bosun/settings",
-   "status": "pending"
-  },
-  {
-   "id": "first-publish:keel-hoist",
-   "title": "Publish keel-hoist once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
-   "url": "https://crates.io/crates/keel-hoist",
-   "status": "pending"
-  },
-  {
-   "id": "crates-trust:keel-hoist",
-   "title": "Add a trusted publisher for keel-hoist on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://crates.io/crates/keel-hoist/settings",
-   "status": "pending"
-  },
-  {
-   "id": "first-publish:keel-berth",
-   "title": "Publish keel-berth once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
-   "url": "https://crates.io/crates/keel-berth",
-   "status": "pending"
-  },
-  {
-   "id": "crates-trust:keel-berth",
-   "title": "Add a trusted publisher for keel-berth on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://crates.io/crates/keel-berth/settings",
-   "status": "pending"
-  },
-  {
-   "id": "first-publish:keel-cli",
-   "title": "Publish keel-cli once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
-   "url": "https://crates.io/crates/keel-cli",
-   "status": "pending"
-  },
-  {
-   "id": "crates-trust:keel-cli",
-   "title": "Add a trusted publisher for keel-cli on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
-   "url": "https://crates.io/crates/keel-cli/settings",
-   "status": "pending"
-  }
- ]
+  "version": 1,
+  "command": "check",
+  "ok": false,
+  "exit_code": 2,
+  "items": [
+    {
+      "area": "github",
+      "kind": "ruleset",
+      "key": "hoist: default branch",
+      "action": "create",
+      "reason": "ruleset missing on main: required checks ci-ok, risk-check, review-verdict, main-open; merge queue on (merge method merge)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "tag_ruleset",
+      "key": "hoist: tags",
+      "action": "create",
+      "reason": "ruleset missing: patterns v*; bypass github-actions",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "release",
+      "action": "create",
+      "reason": "environment release missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "bosun-app",
+      "action": "create",
+      "reason": "environment bosun-app missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "bosun-signer",
+      "action": "create",
+      "reason": "environment bosun-signer missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "review",
+      "action": "create",
+      "reason": "environment review missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "hoard-r2",
+      "action": "create",
+      "reason": "environment hoard-r2 missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "environment",
+      "key": "site",
+      "action": "create",
+      "reason": "environment site missing (default branch only, no reviewers)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "variable",
+      "key": "BOSUN_APP_CLIENT_ID",
+      "action": "pending",
+      "reason": "missing; run: gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "variable",
+      "key": "BOSUN_REVIEW_CI",
+      "action": "ok",
+      "reason": "optional: unset keeps review.yml off",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "BOSUN_APP_KEY",
+      "action": "pending",
+      "reason": "missing in environment bosun-app; run: hoist secrets set BOSUN_APP_KEY",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "BOSUN_SIGNER_KEY",
+      "action": "pending",
+      "reason": "missing in environment bosun-signer; run: hoist secrets set BOSUN_SIGNER_KEY",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "R2_ACCOUNT_ID",
+      "action": "pending",
+      "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCOUNT_ID",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "R2_ACCESS_KEY_ID",
+      "action": "pending",
+      "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCESS_KEY_ID",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "R2_SECRET_ACCESS_KEY",
+      "action": "pending",
+      "reason": "missing in environment hoard-r2; run: hoist secrets set R2_SECRET_ACCESS_KEY",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "R2_BUCKET",
+      "action": "pending",
+      "reason": "missing in environment hoard-r2; run: hoist secrets set R2_BUCKET",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "secret",
+      "key": "ANTHROPIC_API_KEY",
+      "action": "ok",
+      "reason": "optional: only with BOSUN_REVIEW_CI = true",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "github",
+      "kind": "app",
+      "key": "keelstackhq-bosun-gate",
+      "action": "pending",
+      "reason": "app not installed on the repository",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth-darwin-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth-darwin-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth-darwin-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth-darwin-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth-linux-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth-linux-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/berth-win32-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "berth/npm/berth-win32-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun-darwin-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun-darwin-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun-darwin-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun-darwin-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun-linux-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun-linux-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/bosun-win32-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "bosun/npm/bosun-win32-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/cargo-deny",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/cargo-deny\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/cargo-deny-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/cargo-deny-linux-arm64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/cargo-deny-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/cargo-deny-linux-x64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist-darwin-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist-darwin-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist-darwin-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist-darwin-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist-linux-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist-linux-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/hoist-win32-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist/npm/hoist-win32-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel-darwin-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel-darwin-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel-darwin-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel-darwin-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel-linux-arm64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel-linux-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/keel-win32-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "keel/npm/keel-win32-x64/package.json:3",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice-darwin-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice-darwin-arm64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice-darwin-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice-darwin-x64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice-linux-arm64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice-linux-arm64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice-linux-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice-linux-x64\"",
+      "verify": null
+    },
+    {
+      "area": "npm",
+      "kind": "trusted_publisher",
+      "key": "@keelstackhq/splice-win32-x64",
+      "action": "unknown",
+      "reason": "registered by a person; hoist cannot read it with a CI token",
+      "source": "hoist.toml:registry.npm.\"@keelstackhq/splice-win32-x64\"",
+      "verify": null
+    },
+    {
+      "area": "crates",
+      "kind": "first_publish",
+      "key": "keel-bosun",
+      "action": "pending",
+      "reason": "not on crates.io yet",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "trusted_publisher",
+      "key": "keel-bosun",
+      "action": "pending",
+      "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "first_publish",
+      "key": "keel-hoist",
+      "action": "pending",
+      "reason": "not on crates.io yet",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "trusted_publisher",
+      "key": "keel-hoist",
+      "action": "pending",
+      "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "first_publish",
+      "key": "keel-berth",
+      "action": "pending",
+      "reason": "not on crates.io yet",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "trusted_publisher",
+      "key": "keel-berth",
+      "action": "pending",
+      "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "first_publish",
+      "key": "keel-cli",
+      "action": "pending",
+      "reason": "not on crates.io yet",
+      "source": "registry"
+    },
+    {
+      "area": "crates",
+      "kind": "trusted_publisher",
+      "key": "keel-cli",
+      "action": "pending",
+      "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+      "source": "registry"
+    },
+    {
+      "area": "cloudflare",
+      "kind": "pages_project",
+      "key": "keelstack-landing",
+      "action": "create",
+      "reason": "Pages project missing (site/)",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "cloudflare",
+      "kind": "secret",
+      "key": "CLOUDFLARE_API_TOKEN",
+      "action": "create",
+      "reason": "minted deploy token sealed into environment site",
+      "source": "hoist.toml"
+    },
+    {
+      "area": "cloudflare",
+      "kind": "secret",
+      "key": "CLOUDFLARE_ACCOUNT_ID",
+      "action": "create",
+      "reason": "account id sealed into environment site",
+      "source": "hoist.toml"
+    }
+  ],
+  "human_steps": [
+    {
+      "id": "variable:BOSUN_APP_CLIENT_ID",
+      "title": "Set variable BOSUN_APP_CLIENT_ID (client id of keelstackhq-bosun-gate)",
+      "url": "https://github.com/keelstackhq/keelstack/settings/variables/actions",
+      "status": "pending"
+    },
+    {
+      "id": "secret:BOSUN_APP_KEY",
+      "title": "set secret BOSUN_APP_KEY",
+      "url": "hoist secrets set BOSUN_APP_KEY",
+      "status": "pending"
+    },
+    {
+      "id": "secret:BOSUN_SIGNER_KEY",
+      "title": "set secret BOSUN_SIGNER_KEY",
+      "url": "hoist secrets set BOSUN_SIGNER_KEY",
+      "status": "pending"
+    },
+    {
+      "id": "secret:R2_ACCOUNT_ID",
+      "title": "set secret R2_ACCOUNT_ID",
+      "url": "hoist secrets set R2_ACCOUNT_ID",
+      "status": "pending"
+    },
+    {
+      "id": "secret:R2_ACCESS_KEY_ID",
+      "title": "set secret R2_ACCESS_KEY_ID",
+      "url": "hoist secrets set R2_ACCESS_KEY_ID",
+      "status": "pending"
+    },
+    {
+      "id": "secret:R2_SECRET_ACCESS_KEY",
+      "title": "set secret R2_SECRET_ACCESS_KEY",
+      "url": "hoist secrets set R2_SECRET_ACCESS_KEY",
+      "status": "pending"
+    },
+    {
+      "id": "secret:R2_BUCKET",
+      "title": "set secret R2_BUCKET",
+      "url": "hoist secrets set R2_BUCKET",
+      "status": "pending"
+    },
+    {
+      "id": "app:keelstackhq-bosun-gate",
+      "title": "Install the GitHub App keelstackhq-bosun-gate on keelstackhq/keelstack",
+      "url": "https://github.com/apps/keelstackhq-bosun-gate/installations/new",
+      "status": "pending"
+    },
+    {
+      "id": "first-publish:keel-bosun",
+      "title": "Publish keel-bosun once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
+      "url": "https://crates.io/crates/keel-bosun",
+      "status": "pending"
+    },
+    {
+      "id": "crates-trust:keel-bosun",
+      "title": "Add a trusted publisher for keel-bosun on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
+      "url": "https://crates.io/crates/keel-bosun/settings",
+      "status": "pending"
+    },
+    {
+      "id": "first-publish:keel-hoist",
+      "title": "Publish keel-hoist once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
+      "url": "https://crates.io/crates/keel-hoist",
+      "status": "pending"
+    },
+    {
+      "id": "crates-trust:keel-hoist",
+      "title": "Add a trusted publisher for keel-hoist on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
+      "url": "https://crates.io/crates/keel-hoist/settings",
+      "status": "pending"
+    },
+    {
+      "id": "first-publish:keel-berth",
+      "title": "Publish keel-berth once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
+      "url": "https://crates.io/crates/keel-berth",
+      "status": "pending"
+    },
+    {
+      "id": "crates-trust:keel-berth",
+      "title": "Add a trusted publisher for keel-berth on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
+      "url": "https://crates.io/crates/keel-berth/settings",
+      "status": "pending"
+    },
+    {
+      "id": "first-publish:keel-cli",
+      "title": "Publish keel-cli once: run `hoist release bootstrap` (trusted publishing cannot create a crate)",
+      "url": "https://crates.io/crates/keel-cli",
+      "status": "pending"
+    },
+    {
+      "id": "crates-trust:keel-cli",
+      "title": "Add a trusted publisher for keel-cli on crates.io (repository keelstackhq/keelstack, workflow release.yml, environment release)",
+      "url": "https://crates.io/crates/keel-cli/settings",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth",
+      "title": "npm trust github @keelstackhq/berth --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth-linux-x64",
+      "title": "npm trust github @keelstackhq/berth-linux-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth-linux-arm64",
+      "title": "npm trust github @keelstackhq/berth-linux-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth-darwin-x64",
+      "title": "npm trust github @keelstackhq/berth-darwin-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth-darwin-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth-darwin-arm64",
+      "title": "npm trust github @keelstackhq/berth-darwin-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth-darwin-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/berth-win32-x64",
+      "title": "npm trust github @keelstackhq/berth-win32-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/berth-win32-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun",
+      "title": "npm trust github @keelstackhq/bosun --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun-linux-x64",
+      "title": "npm trust github @keelstackhq/bosun-linux-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun-linux-arm64",
+      "title": "npm trust github @keelstackhq/bosun-linux-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun-darwin-x64",
+      "title": "npm trust github @keelstackhq/bosun-darwin-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun-darwin-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun-darwin-arm64",
+      "title": "npm trust github @keelstackhq/bosun-darwin-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun-darwin-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/bosun-win32-x64",
+      "title": "npm trust github @keelstackhq/bosun-win32-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/bosun-win32-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist",
+      "title": "npm trust github @keelstackhq/hoist --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist-linux-x64",
+      "title": "npm trust github @keelstackhq/hoist-linux-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist-linux-arm64",
+      "title": "npm trust github @keelstackhq/hoist-linux-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist-darwin-x64",
+      "title": "npm trust github @keelstackhq/hoist-darwin-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist-darwin-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist-darwin-arm64",
+      "title": "npm trust github @keelstackhq/hoist-darwin-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist-darwin-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/hoist-win32-x64",
+      "title": "npm trust github @keelstackhq/hoist-win32-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/hoist-win32-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel",
+      "title": "npm trust github @keelstackhq/keel --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel-linux-x64",
+      "title": "npm trust github @keelstackhq/keel-linux-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel-linux-arm64",
+      "title": "npm trust github @keelstackhq/keel-linux-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel-darwin-x64",
+      "title": "npm trust github @keelstackhq/keel-darwin-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel-darwin-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel-darwin-arm64",
+      "title": "npm trust github @keelstackhq/keel-darwin-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel-darwin-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/keel-win32-x64",
+      "title": "npm trust github @keelstackhq/keel-win32-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/keel-win32-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/cargo-deny",
+      "title": "npm trust github @keelstackhq/cargo-deny --file cargo-deny-npm.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/cargo-deny-linux-arm64",
+      "title": "npm trust github @keelstackhq/cargo-deny-linux-arm64 --file cargo-deny-npm.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/cargo-deny-linux-x64",
+      "title": "npm trust github @keelstackhq/cargo-deny-linux-x64 --file cargo-deny-npm.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/cargo-deny-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice",
+      "title": "npm trust github @keelstackhq/splice --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice-darwin-arm64",
+      "title": "npm trust github @keelstackhq/splice-darwin-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice-darwin-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice-darwin-x64",
+      "title": "npm trust github @keelstackhq/splice-darwin-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice-darwin-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice-linux-arm64",
+      "title": "npm trust github @keelstackhq/splice-linux-arm64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice-linux-arm64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice-linux-x64",
+      "title": "npm trust github @keelstackhq/splice-linux-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice-linux-x64/access",
+      "status": "pending"
+    },
+    {
+      "id": "npm-trust:@keelstackhq/splice-win32-x64",
+      "title": "npm trust github @keelstackhq/splice-win32-x64 --file release.yml --repo keelstackhq/keelstack --env release --allow-publish",
+      "url": "https://www.npmjs.com/package/@keelstackhq/splice-win32-x64/access",
+      "status": "pending"
+    }
+  ]
 }

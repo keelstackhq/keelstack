@@ -179,7 +179,12 @@ impl Step for SettingsAll {
         match SettingsAll::read(cx, true)? {
             Err(e) => Ok(Check::Failed(e)),
             Ok(p) if p.code == 0 => self.check(cx),
-            Ok(p) if p.code == 2 => Ok(SettingsAll::decide(cx, &p)),
+            // Exit 2 hides drift behind the human steps: when all of them are confirmed, only a
+            // clean re-check is done.
+            Ok(p) if p.code == 2 => match SettingsAll::decide(cx, &p) {
+                Check::Done(_) => self.check(cx),
+                other => Ok(other),
+            },
             Ok(p) => {
                 let why = drift_reasons(&p);
                 Ok(Check::Failed(if why.is_empty() {
@@ -395,5 +400,39 @@ mod tests {
         assert!(matches!(run(0, BODY, &["npm-trust:p"]), Check::Human(_)));
         assert!(matches!(run(2, BODY, &["npm-trust:p"]), Check::Human(_)));
         assert!(matches!(run(3, "", &[]), Check::Failed(_)));
+    }
+
+    #[test]
+    fn apply_exit_2_with_every_human_step_confirmed_is_done_only_after_a_clean_recheck() {
+        let all = ["npm-trust:p", "secret:K"];
+        let trust_only =
+            r#"{"items":[],"human_steps":[{"id":"npm-trust:p","title":"Trust p","url":"v"}]}"#;
+        let drift = r#"{"items":[{"area":"github","kind":"ruleset","key":"main","action":"drift","reason":"bypass differs"}],"human_steps":[]}"#;
+        let apply = |check: Out, confirmed: &[&str]| {
+            let r = FakeRunner::new()
+                .on(&["hoist", "--json", "apply"], Out::with(2, trust_only, ""))
+                .on(&["hoist", "--json", "check"], check);
+            let mut cx = none_ctx(&r, true, confirmed);
+            let c = SettingsAll.apply(&mut cx).unwrap();
+            (c, r.calls().iter().map(|c| c.line()).collect::<Vec<_>>())
+        };
+        // Check still exits 2 with only confirmed trust steps: done, after apply and a re-check.
+        let (c, calls) = apply(Out::with(2, trust_only, ""), &all);
+        assert!(matches!(c, Check::Done(_)), "{c:?}");
+        assert_eq!(calls, ["hoist --json apply --yes", "hoist --json check"]);
+        // The re-check finds drift: not done.
+        let (c, calls) = apply(Out::with(1, drift, ""), &all);
+        assert!(
+            matches!(&c, Check::Todo(m) if m.contains("ruleset/main")),
+            "{c:?}"
+        );
+        assert_eq!(calls.len(), 2);
+        // The re-check fails: failed.
+        let (c, _) = apply(Out::with(3, "", ""), &all);
+        assert!(matches!(c, Check::Failed(_)), "{c:?}");
+        // Not all confirmed: the human step, no re-check.
+        let (c, calls) = apply(Out::with(2, trust_only, ""), &[]);
+        assert!(matches!(c, Check::Human(_)), "{c:?}");
+        assert_eq!(calls, ["hoist --json apply --yes"]);
     }
 }

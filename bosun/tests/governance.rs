@@ -128,11 +128,16 @@ fn builtin_rules_equal_the_repo_rules() {
         };
         // The monorepo file holds every built-in path, in order, and may add the folders' own
         // old rules re-rooted under the folder (`hull/scripts/**`): a folder never loosens.
+        // Root-only additions are the monorepo's own files, listed here by name (keel's
+        // manifest `keel.toml`, which `keel up` applies, R-gov next to `**/hoist.toml`).
+        const ROOT_EXTRAS: [&str; 1] = ["keel.toml"];
         let (pa, pb) = (paths(a), paths(b));
         assert_eq!(pa[..pb.len().min(pa.len())], pb[..], "{}", a.id);
         assert!(
-            pa[pb.len()..].iter().all(|p| p.contains('/')),
-            "{}: extra paths are folder paths",
+            pa[pb.len()..]
+                .iter()
+                .all(|p| p.contains('/') || ROOT_EXTRAS.contains(&p.as_str())),
+            "{}: extra paths are folder paths or ROOT_EXTRAS",
             a.id
         );
         assert_eq!(

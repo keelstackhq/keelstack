@@ -30,7 +30,7 @@ import { describe, expect, test } from "vite-plus/test";
 import { buildLlmsTxt } from "../lib/llms.ts";
 import { buildCtx } from "../lib/render.ts";
 import { HUMAN_STEPS } from "./scenarios.ts";
-import { docRefs, versions } from "./versions.ts";
+import { versions } from "./versions.ts";
 
 const site = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const repo = join(site, "../..");
@@ -39,7 +39,6 @@ const adopt = JSON.parse(readFileSync(join(site, "src/data/hull/adopt.json"), "u
   assess: { url: string; sha256: string };
 };
 const ctx = buildCtx(undefined, {
-  ...docRefs,
   assessUrl: adopt.assess.url,
   assessSha: adopt.assess.sha256,
 });

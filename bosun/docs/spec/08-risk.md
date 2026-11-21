@@ -125,9 +125,13 @@ High-risk PRs:
   Enroll or rotate a key with a PR that changes `.bosun/approvers.toml` (R-gov), approved by
   the owner on GitHub (a review or a plain-token comment). No signed approval counts, owner or
   delegate key, on a PR that changes or renames away `.bosun/approvers.toml`,
-  `governance/owners.toml`, a `CODEOWNERS` file (root, `.github/`, `docs/`) or a trust-root
+  `governance/owners.toml`, `.bosun/bosun.toml` (its `[approvals]` table is the D-022 trust
+  root), a `CODEOWNERS` file (root, `.github/`, `docs/`) or a trust-root
   decision (`decisions/DECISIONS.md`, `decisions/decisions/022-hands-off-approvals.md`; `TRUST_FILES` in
-  `src/core/approve.rs`), or on a PR whose diff bosun could not see whole (R-unseen: it may hide
+  `src/core/approve.rs`), or bosun's own trust code under each code root (`src/core/risk.rs`, the
+  risk path lists, and `src/core/approve.rs`, this list; `TRUST_CODE_FILES`: at the root in
+  bosun's repo, `bosun/src/core/risk.rs` in the monorepo, never another repo's `src/`; both are
+  on the critical floor there through `APPROVAL_CODE_PATHS`), or on a PR whose diff bosun could not see whole (R-unseen: it may hide
   one), so a compromised key cannot enroll keys or owners; risk-check logs why to stderr. A removed key stops counting once that PR merges. `bosun keygen [--out PEM] [--id ID] [--role owner|delegate] [--enroll]` makes the key (PKCS#8 PEM, mode 0600, default `~/.bosun/approver.pem`, refused inside any git worktree, never overwritten) and prints or, with `--enroll`, appends its block. A bare-repo dotfiles setup (`git --git-dir=~/.cfg --work-tree=~`) has no `.git` entry and is not detected, so keep `~/.bosun` out of it. By hand, make a key with
   `openssl genpkey -algorithm ed25519 -out key.pem`; its public key is
   `openssl pkey -in key.pem -pubout -outform DER | tail -c 32 | base64`. risk.yml runs the
@@ -374,8 +378,9 @@ High-risk PRs:
   `bosun/.bosun/**`; a glob starting with `**` already matches at any depth) and keeps every
   root `APPROVAL_CODE_PATHS` entry (the root workspace `Cargo.toml`, `Cargo.lock`, `.cargo/**`
   build the folder too), the bootstrap
-  exclusions and the trust files (`bosun/.bosun/approvers.toml`, `bosun/governance/owners.toml`,
-  CODEOWNERS) likewise, and every risk rule's path globs gain a copy re-rooted there
+  exclusions and the trust files (`bosun/.bosun/approvers.toml`, `bosun/.bosun/bosun.toml`,
+  `bosun/governance/owners.toml`, CODEOWNERS, `bosun/src/core/risk.rs`,
+  `bosun/src/core/approve.rs`) likewise, and every risk rule's path globs gain a copy re-rooted there
   (`Rules::rooted`: `src/core/risk.rs` R-gate also matches `bosun/src/core/risk.rs`). The root
   globs always stay, so root `.bosun/**` and root `.github/workflows/**` are on the floor and a
   folder prefix never makes a protected path unprotected; other folders' code is judged by the

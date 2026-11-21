@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
+import { facts, findRoot } from "./facts";
 import { bare, versions } from "./versions";
 
 const bosunVersion = versions.bosun;
@@ -64,8 +65,11 @@ describe("docs data", () => {
       expect(d.sources.length).toBeGreaterThan(0);
       for (const s of d.sources) {
         const [repo, ...rest] = s.split("/");
-        expect(repos).toContain(repo);
         expect(rest.join("/")).not.toBe("");
+        // A path in the monorepo that exists, or a file of rust-canary (its own repo).
+        if (repo === "rust-canary") continue;
+        expect([...repos, ".bosun", ".github"], s).toContain(repo);
+        expect(existsSync(`${findRoot()}/${s}`), s).toBe(true);
       }
     }
   });
@@ -73,8 +77,9 @@ describe("docs data", () => {
   it("builds hrefs and source urls", () => {
     expect(docHref("")).toBe("/docs/");
     expect(docHref("ci")).toBe("/docs/ci/");
-    expect(sourceUrl("bosun/docs/spec.md")).toBe(
-      "https://github.com/keelstackhq/bosun/blob/main/docs/spec.md",
+    expect(sourceUrl("bosun/docs/spec.md")).toBe(`${facts.repoUrl}/blob/main/bosun/docs/spec.md`);
+    expect(sourceUrl("rust-canary/docs/a.md")).toBe(
+      `${facts.orgUrl}/rust-canary/blob/main/docs/a.md`,
     );
   });
 
@@ -101,16 +106,15 @@ describe("cloud environment page", () => {
   ) as { repo: string; ref: string; path: string; sha256: string };
 
   it("embeds bosun's setup script verbatim, from a pinned commit", () => {
-    expect(source.repo).toBe("keelstackhq/bosun");
-    expect(source.path).toBe("docs/setup-script.sh");
+    // The commit in this repository (imported history) whose bosun/docs/setup-script.sh it is.
+    expect(source.repo).toBe(facts.repoSlug);
+    expect(source.path).toBe("bosun/docs/setup-script.sh");
     expect(source.ref).toMatch(/^[0-9a-f]{40}$/);
     expect(createHash("sha256").update(copy).digest("hex")).toBe(source.sha256);
     expect(page.split("```bash\n#!/usr/bin/env bash\n")[1]?.split("```")[0]).toBe(
       copy.replace(/^#!\/usr\/bin\/env bash\n/, ""),
     );
-    expect(page).toContain(
-      `https://github.com/keelstackhq/bosun/blob/${source.ref}/docs/setup-script.sh`,
-    );
+    expect(page).toContain(`${facts.repoUrl}/blob/${source.ref}/bosun/docs/setup-script.sh`);
   });
 
   it("pins the bosun release the site shows", () => {

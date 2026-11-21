@@ -308,6 +308,16 @@ fn confirm_removes_a_trust_step_and_is_written_to_keel_toml() {
         .collect();
     assert!(!ids.contains(&id), "{ids:?}");
     assert!(ids.contains(&"npm-trust:@keelstackhq/hoist"));
+    for plat in [
+        "linux-x64",
+        "linux-arm64",
+        "darwin-x64",
+        "darwin-arm64",
+        "win32-x64",
+    ] {
+        let sp = format!("npm-trust:@keelstackhq/splice-{plat}");
+        assert!(ids.contains(&sp.as_str()), "{sp}");
+    }
     assert_eq!(ids.len(), before["checklist"].as_array().unwrap().len() - 1);
 }
 
@@ -343,7 +353,7 @@ fn text_output_prints_the_numbered_checklist() {
     let t = String::from_utf8(out).unwrap();
     assert!(t.contains("\nchecklist:\n  1. [computer] "), "{t}");
     assert!(
-        t.contains("[phone] Add a trusted publisher for @keelstackhq/bosun"),
+        t.contains("[phone] npm trust github @keelstackhq/bosun "),
         "{t}"
     );
 }

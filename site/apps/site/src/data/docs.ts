@@ -1,3 +1,4 @@
+import { facts } from "./facts";
 import { org } from "./tools";
 
 export type Repo =
@@ -150,7 +151,7 @@ export const docs: DocPage[] = [
       "bosun/channel/pieces/core/files/docs/setup-script.sh.jinja",
       "bosun/docs/spec",
       "bosun/docs/PROGRESS.md",
-      "bosun/.bosun/approvers.toml",
+      ".bosun/approvers.toml",
     ],
     ready: true,
   },
@@ -197,7 +198,7 @@ export const docs: DocPage[] = [
     summary:
       "Risk rules and approval classes, review verdicts, owner approvals on GitHub or signed from chat, delegated decisions, asking the owner, and the kill switch.",
     sources: [
-      "bosun/.bosun/approvers.toml",
+      ".bosun/approvers.toml",
       "bosun/docs/spec",
       "bosun/README.md",
       "bosun/REVIEW.md",
@@ -234,10 +235,9 @@ export const docs: DocPage[] = [
       "hull/.github/workflows/release.yml",
       "bosun/CHANGELOG.md",
       "bosun/changelog.d/README.md",
-      "bosun/.github/workflows/release.yml",
+      ".github/workflows/release.yml",
       "hoist/README.md",
       "bosun/docs/releasing.md",
-      "splice/.github/workflows/release.yml",
       "hull/template/pieces/base/files/.github/workflows/release.yml",
       "hull/template/pieces/ts-lib/files/AGENTS.md",
       "hull/template/pieces/secrets/files/docs/agents/secrets.md",
@@ -265,7 +265,7 @@ export const docs: DocPage[] = [
       "bosun/AGENTS.md",
       "bosun/docs/PROGRESS.md",
       "decisions/DECISIONS.md",
-      "splice/.github/workflows/release.yml",
+      ".github/workflows/release.yml",
       "hoist/README.md",
       "rust-canary/docs/canary-findings.md",
     ],
@@ -286,7 +286,7 @@ export const docs: DocPage[] = [
       "hoist/docs/PROGRESS.md",
       "splice/README.md",
       "splice/docs/getting-started.md",
-      "splice/.github/workflows/release.yml",
+      ".github/workflows/release.yml",
       "splice/action/action.yml",
       "hull/README.md",
       "berth/README.md",
@@ -299,7 +299,11 @@ export const docHref = (slug: string): string => (slug === "" ? "/docs/" : `/doc
 
 export const readyDocs = (): DocPage[] => docs.filter((d) => d.ready);
 
+/** A monorepo path on `main`; rust-canary is its own repo in the org. */
 export function sourceUrl(source: string): string {
   const i = source.indexOf("/");
-  return `${org.url}/${source.slice(0, i)}/blob/main/${source.slice(i + 1)}`;
+  if (source.slice(0, i) === "rust-canary") {
+    return `${org.url}/rust-canary/blob/main/${source.slice(i + 1)}`;
+  }
+  return `${facts.repoUrl}/blob/main/${source}`;
 }

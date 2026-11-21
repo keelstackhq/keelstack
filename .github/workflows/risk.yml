@@ -29,8 +29,13 @@ on:
     types: [opened, synchronize, reopened, edited, ready_for_review]
   issue_comment:
     types: [created]
-  # The base moved: re-judge every open PR against main, since a verdict is stale once main
-  # changes (risk rules, plan, owner approvals read from the base). One job, one run per push.
+  # The base moved: re-judge every open PR against main. One job, one run per push. What the
+  # re-judge picks up: bosun's code (built from main's new head, so its built-in rules and
+  # checks), the PR's current files, reviews, comments and statuses. What it does not: the
+  # base-side config (.bosun/risk.toml, owners, plan, [[folders]]) is read at the PR's
+  # `base.sha` from the API (risk_check.rs, pull.base_sha), which GitHub moves only when the PR's
+  # head is pushed or its base is changed, not when main moves. New risk rules on main judge a
+  # PR from its next push (or base change) on.
   push:
     branches: [main]
 

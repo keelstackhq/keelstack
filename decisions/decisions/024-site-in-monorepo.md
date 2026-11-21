@@ -25,11 +25,16 @@ always up to date, with no excuses.
   a source file types a version or an archived repo URL.
 - `site` is a folder in `.bosun/bosun.toml` that `depends_on` every tool folder it reads, so a
   change to any of them runs `ci-site` (build, lint, tests, link check) and `ci-ok` waits for it.
-- `deploy-site.yml` deploys to Pages on a push to main that touches `site/` or a folder it
-  depends on, and after `release.yml` finishes, from the environment `site` (main only). Pull
-  requests build and test the site and upload the build; they never see the Cloudflare secrets.
-- Docs pages under `/docs/` keep their pinned-release tables (`site/apps/site/src/data/versions.ts`)
-  until they are moved onto the generated facts; they say which release they were verified against.
+- `deploy-site.yml` deploys only a released version, from the environment `site` (main only): a
+  push to main that touches `site/` or a folder it depends on deploys when the workspace version's
+  tag `vX.Y.Z` exists (a version-bump push skips it), and the completion of `release.yml` deploys
+  the released state. The deploy job checks and builds main itself and deploys that build (no
+  artifact from another job). Pull requests build and test the site in `ci.yml` (`ci-site`) only;
+  they never see the Cloudflare secrets.
+- Docs pages under `/docs/`, `llms.txt` and the scenario pages take versions, sources and links
+  from the generated facts (`site/apps/site/src/data/versions.ts` derives them). Until the first
+  monorepo release (> 0.21.0) exists, commands pin the old repos' last releases, kept in the one
+  frozen file `site/apps/site/src/data/legacy.ts`.
 
 ## Consequences
 

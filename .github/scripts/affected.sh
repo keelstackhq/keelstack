@@ -8,16 +8,20 @@
 # Rules: a push to main, a merge queue run, a schedule or a manual run (GITHUB_EVENT_NAME push,
 # merge_group, schedule, workflow_dispatch) affects every folder: main health reads every
 # folder's latest real result on the main head, and a skipped job is no result (bosun spec §9;
-# main pushes are few, D-007). Else, for a PR: a path under <folder>/ affects that folder. The
-# shared root files (Cargo.toml, Cargo.lock, rust-toolchain.toml, deny.toml, .cargo/**,
-# .github/**, .bosun/bosun.toml) affect every folder. No base (first push, zero SHA) or a failed
-# diff affects every folder. Then the `depends_on` of `[[folders]]` in .bosun/bosun.toml (the one
+# main pushes are few, D-007). Else, for a PR: a path under <folder>/ affects that folder. Fail
+# safe: every other path (Cargo.toml, .cargo/**, .github/**, .bosun/**, keel.toml, hoist.toml,
+# .gitignore, ...: folder tests read root files) affects every folder, except NO_EFFECT, root
+# docs that no folder's build or test reads. The diff uses --no-renames, so a moved file lists
+# its old path too. No base (first push, zero SHA) or a failed diff affects every folder. Then the `depends_on` of `[[folders]]` in .bosun/bosun.toml (the one
 # source, also read by bosun) adds dependents: a folder is affected when a folder it depends on
 # is. A bosun.toml this parser cannot read, or whose folders differ from FOLDERS, fails the run.
 set -euo pipefail
 
 FOLDERS=(bosun splice hull hoist hoard berth keel decisions site)
 RUST=(bosun splice hoist hoard berth keel)
+# Root paths that affect no folder: nothing under a folder reads them (checked with grep; site
+# reads only the root Cargo.toml). Keep this list short; anything else affects every folder.
+NO_EFFECT=(README.md MIGRATION.md MIGRATION-ARCHIVE.md)
 toml="${BOSUN_TOML:-$(cd "$(dirname "$0")/../.." && pwd)/.bosun/bosun.toml}"
 
 out="${GITHUB_OUTPUT:-/dev/stdout}"
@@ -78,7 +82,7 @@ else
   if [ -z "$base" ]; then
     all=true
     changed=""
-  elif ! changed="$(git diff --name-only "$base...HEAD" 2>/dev/null)"; then
+  elif ! changed="$(git diff --no-renames --name-only "$base...HEAD" 2>/dev/null)"; then
     echo "::warning::git diff against $base failed; treating every folder as affected" >&2
     all=true
     changed=""
@@ -88,10 +92,11 @@ fi
 declare -A hit=()
 while IFS= read -r f; do
   [ -n "$f" ] || continue
+  case " ${NO_EFFECT[*]} " in *" $f "*) continue ;; esac
   case "$f" in
-    Cargo.toml | Cargo.lock | rust-toolchain.toml | deny.toml | .cargo/* | .github/* | .bosun/bosun.toml) all=true ;;
-    */*) hit["${f%%/*}"]=1 ;;
+    */*) case " ${FOLDERS[*]} " in *" ${f%%/*} "*) hit["${f%%/*}"]=1; continue ;; esac ;;
   esac
+  all=true
 done <<<"$changed"
 
 if [ "$all" = true ]; then

@@ -178,6 +178,21 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             on_off(want.merge_queue.value)
         ));
     }
+    let missing: Vec<String> = ["deletion", "non_fast_forward"]
+        .iter()
+        .filter(|t| !live.rule_types.iter().any(|h| h == *t))
+        .map(|t| t.to_string())
+        .collect();
+    if !missing.is_empty() {
+        problems.push(format!("rules: missing {}", quoted(&missing)));
+    }
+    if !live
+        .bypass
+        .iter()
+        .any(|b| b == crate::desired::ADMIN_BYPASS)
+    {
+        problems.push("bypass actors: missing the repository admin role (pull_request)".into());
+    }
     if problems.is_empty() {
         cx.push("ruleset", name, Action::Ok, in_sync, &source);
     } else if d.adopt && !live.unmodelled.is_empty() {
@@ -239,33 +254,87 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     if live.target.as_deref().is_some_and(|t| t != "tag") {
         problems.push("target is not tags".to_string());
     }
-    let mut have = live.include.clone();
-    have.sort();
-    if have != refs {
-        problems.push(format!(
-            "tags: live {}, want {}",
-            quoted(&have),
-            quoted(&refs)
-        ));
+    // hoist's update reads the live ruleset and writes back what the owner added (extra tags,
+    // rules, bypass actors); only the parts below are hoist's.
+    let missing_refs: Vec<String> = refs
+        .iter()
+        .filter(|r| !live.include.contains(r))
+        .cloned()
+        .collect();
+    if !missing_refs.is_empty() {
+        problems.push(format!("tags: missing {}", quoted(&missing_refs)));
     }
+    // An exclude can unprotect a release tag: an update clears it.
     if !live.exclude.is_empty() {
         problems.push(format!("excludes {}", quoted(&live.exclude)));
     }
-    if live.rule_types != ["creation", "deletion", "update"] {
-        problems.push(format!(
-            "rules: live {}, want `creation`, `deletion`, `update`",
-            quoted(&live.rule_types)
-        ));
+    let missing_rules: Vec<String> = crate::github_write::TAG_RULES
+        .iter()
+        .filter(|t| !live.rule_types.iter().any(|h| h == *t))
+        .map(|t| t.to_string())
+        .collect();
+    if !missing_rules.is_empty() {
+        problems.push(format!("rules: missing {}", quoted(&missing_rules)));
     }
-    let bypass = format!("Integration:{}:always", crate::desired::ACTIONS_APP_ID);
-    if live.bypass != [bypass.as_str()] {
-        problems.push(format!(
-            "bypass actors: live {}, want only the GitHub Actions app",
-            quoted(&live.bypass)
-        ));
+    let app = format!("Integration:{}:", crate::desired::ACTIONS_APP_ID);
+    let ours = format!("{app}always");
+    match live.bypass.iter().find(|b| b.starts_with(&app)) {
+        None => problems.push("bypass actors: missing the GitHub Actions app".to_string()),
+        Some(b) if *b != ours => problems.push(format!(
+            "bypass actors: the GitHub Actions app has mode `{}`, want `always`",
+            b.trim_start_matches(&app)
+        )),
+        Some(_) => {}
+    }
+    let extra_refs: Vec<String> = live
+        .include
+        .iter()
+        .filter(|i| !refs.contains(i))
+        .cloned()
+        .collect();
+    let extra_rules: Vec<String> = live
+        .rule_types
+        .iter()
+        .filter(|t| !crate::github_write::TAG_RULES.contains(&t.as_str()))
+        .cloned()
+        .collect();
+    let extra_bypass: Vec<String> = live
+        .bypass
+        .iter()
+        .filter(|b| !b.starts_with(&app))
+        .cloned()
+        .collect();
+    let mut kept = Vec::new();
+    if !extra_refs.is_empty() {
+        kept.push(format!("tags {}", quoted(&extra_refs)));
+    }
+    if !extra_rules.is_empty() {
+        kept.push(format!("rules {}", quoted(&extra_rules)));
+    }
+    if !extra_bypass.is_empty() {
+        kept.push(format!("bypass actors {}", quoted(&extra_bypass)));
     }
     if problems.is_empty() {
+        let mut in_sync = in_sync;
+        if !extra_bypass.is_empty() {
+            in_sync = format!(
+                "tags {} may be created, moved and deleted only by github-actions and the \
+                 bypass actors the owner added",
+                quoted(&refs)
+            );
+        }
+        if !kept.is_empty() {
+            in_sync = format!("{in_sync}; owner-added, kept: {}", kept.join("; "));
+        }
         cx.push("tag_ruleset", name, Action::Ok, in_sync, source);
+    } else if d.adopt && !live.exclude.is_empty() {
+        // The update keeps every owner addition but clears excludes: adopting writes nothing.
+        let why = format!(
+            "{}; not written: an update would drop excludes {} (--adopt never loosens)",
+            problems.join("; "),
+            quoted(&live.exclude)
+        );
+        cx.push("tag_ruleset", name, Action::Drift, why, source);
     } else {
         cx.push(
             "tag_ruleset",

@@ -6,7 +6,7 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull v0.13.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. It was last checked line by line against bosun 0.19.0; links point at bosun 0.20.0. The example plan was re-checked with `bosun plan check` 0.20.0 (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull v0.13.0 and was not re-run for 0.20.0. Every
+plan turns into work. It was last checked line by line against bosun 0.19.0; links point at the monorepo's `main`. The example plan was re-checked with `bosun plan check` 0.20.0 (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull v0.13.0 and was not re-run for 0.20.0. Every
 command and flag below was checked, at bosun 0.19.0, against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -35,9 +35,9 @@ docs/setup-script.sh       the cloud environment's setup script
 plans/<name>.md            the plan: the only input bosun reads (`--plan` copies yours here)
 ```
 
-Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/adopt-existing-repo.md)
+Descriptions follow bosun's [adopt guide](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/adopt-existing-repo.md)
 (section 3, "What lands in the repo") and its
-[layout spec](https://github.com/keelstackhq/bosun/blob/aef4c80213e72d90ce4313dff234ac52701cd5d8/docs/spec/03-layout.md). For
+[layout spec](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec/03-layout.md). For
 `session-rules.toml` and `intake.toml` see the bosun docs and the layout spec. `bosun init` writes
 neither (checked by running it): the intake file only exists with `--intake <file>`, which bosun
 copies, and the session rules are bosun's built-in text until you write a file. A seed is
@@ -61,7 +61,7 @@ bosun reads only `plans/*.md`. It has no convention for a brief or a product spe
   `docs/superpowers/specs/<date>-<name>.md`, and list it in the `touch:` of the tasks that update
   it.
 - The plan goes in `plans/<name>.md`, in bosun's format
-  ([plan-format.md](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)). Its
+  ([plan-format.md](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md)). Its
   `project:` must equal `project` in `.bosun/bosun.toml`. A minimal plan, which
   `bosun plan check` (0.20.0) accepts with no warnings. A task that touches `apps/api/src/` also
   lists a test under `apps/api/tests/`, or `plan check` warns:

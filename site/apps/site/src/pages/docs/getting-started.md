@@ -40,7 +40,7 @@ git add -A && git commit -m "chore: initial commit from hull"
   (template contract rule 9.28).
 - `base` is always rendered. `--piece ID:NAME` adds a piece and names its instance. The pieces
   and their variables are listed in
-  [hull's pieces reference](https://github.com/keelstackhq/hull/blob/main/docs/pieces.md);
+  [hull's pieces reference](https://github.com/keelstackhq/keelstack/blob/main/hull/docs/pieces.md);
   `scope` is the npm scope (default `acme`).
 - splice runs `git init` when needed and the template's post commands (`pnpm install`), but it
   never commits. Commit `.splice/lock.toml` with everything else and never edit it by hand.
@@ -111,7 +111,7 @@ git add -A && git commit -m "chore: add decisions channel"
 - **Your org's own decisions** can live in a repo of the same shape, for example
   `<org>/decisions`. Copy `DECISIONS.md`, `decisions/000-template.md`, `channel/` and `scripts/`,
   rename the channel and its snapshot file as the
-  [decisions README](https://github.com/keelstackhq/decisions#your-orgs-own-decisions-repo) lists,
+  [decisions README](https://github.com/keelstackhq/keelstack/blob/main/decisions/README.md#your-orgs-own-decisions-repo) lists,
   then `splice channel add gh:<org>/decisions//channel --as <org>-decisions --track main --piece import-claude`.
   It sits next to keelstackhq's portable channel: the files and section markers differ, so
   neither touches the other.
@@ -207,7 +207,7 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 
 ```yaml
 - run: pnpm install --frozen-lockfile
-- uses: keelstackhq/hoard@v0 # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
+- uses: { { ks.src.hoardMajor } } # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
 - run: pnpm turbo run build test lint
 ```
 
@@ -217,7 +217,7 @@ prints a notice when `TURBO_API`, `TURBO_TOKEN` or `TURBO_TEAM` are already set.
 
 On CircleCI (since hoard 0.4.0), `circleci/hoard.yml` installs a checksum-verified release and runs
 it with `hoard serve --detach` and `hoard stop`
-([hoard's CircleCI guide](https://github.com/keelstackhq/hoard/blob/main/docs/circleci.md)).
+([hoard's CircleCI guide](https://github.com/keelstackhq/keelstack/blob/main/hoard/docs/circleci.md)).
 CircleCI caches are not branch-scoped, so a PR could save a cache that `main` restores; hoard v0.5.0 adds a `restore` parameter: pass `restore: false` on the default branch.
 
 ## 6. Use berth locally
@@ -234,12 +234,12 @@ berth down fix-login        # after the work merged; or `berth gc` for all merge
 An optional `berth.toml` at the repo root sets the copied files, port names, the setup command
 and the database. For Claude Code, berth's hooks make `claude --worktree` and subagent worktrees
 berth worktrees; the settings snippet is in
-[berth's integration guide](https://github.com/keelstackhq/berth/blob/main/docs/integration.md).
+[berth's integration guide](https://github.com/keelstackhq/keelstack/blob/main/berth/docs/integration.md).
 
 ## 7. Run the first task
 
 Write a plan in `plans/<project>.md` (format:
-[plan-format.md](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)). Its
+[plan-format.md](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md)). Its
 `project:` line must equal `project` in `.bosun/bosun.toml`. An agent session then runs the loop;
 everything up to the verdict is what worked on the rust-canary trial:
 

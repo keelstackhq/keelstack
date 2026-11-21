@@ -1,6 +1,7 @@
 import { expect, test } from "vite-plus/test";
 import { facts } from "./facts";
 import { org, roles, tools } from "./tools";
+import { released, sources } from "./versions";
 
 test("every tool in the monorepo has a card and every card a tool (a new tool fails here)", () => {
   expect(tools.map((t) => t.name).toSorted()).toEqual(facts.tools.map((t) => t.name).toSorted());
@@ -21,10 +22,11 @@ test("pitch is the crate description (hull: README lead), not typed copy", () =>
   }
 });
 
-test("hoard shows the action pinned to the workspace tag", () => {
-  expect(tools.find((t) => t.name === "hoard")!.detail).toContain(
-    `uses: keelstackhq/keelstack/hoard@v${facts.version}`,
-  );
+test("hoard shows the action pinned to what resolves (the workspace tag once released)", () => {
+  expect(tools.find((t) => t.name === "hoard")!.detail).toContain(`uses: ${sources.hoardAction}`);
+  if (released) {
+    expect(sources.hoardAction).toBe(`keelstackhq/keelstack/hoard@v${facts.version}`);
+  }
 });
 
 test("no copy uses the old repos or npm scope", () => {

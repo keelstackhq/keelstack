@@ -87,8 +87,10 @@
     "keelstack": {
       "source": {
         "source": "github",
-        "repo": "keelstackhq/bosun",
-        "ref": "main"
+        "repo": "keelstackhq/keelstack",
+        "ref": "main",
+        "path": "bosun/.claude-plugin/marketplace.json",
+        "sparsePaths": ["bosun/.claude-plugin"]
       }
     }
   },

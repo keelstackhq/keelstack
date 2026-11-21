@@ -41,7 +41,10 @@ const isCurrent = ref === versions.hull && commit === tagCommits.hull;
 const label = isCommit
   ? `commit \`${commit.slice(0, 7)}\``
   : `\`${isCurrent ? "{{ks.hull}}" : ref}\``;
-const commitTok = isCurrent ? "{{ks.commit.hull}}" : commit;
+// The current release links its commit in the monorepo (hull/legacy-tags.txt); any other ref its source.
+const docUrl = isCurrent
+  ? `{{ks.link.hull}}/${path}`
+  : `https://github.com/${repo}/blob/${commit}/${path}`;
 // "(not tagged yet)" only while hull has no v0.5.0 tag: ask the remote, never assume.
 const sinceTag = "v0.5.0";
 const tagged = execFileSync(
@@ -64,7 +67,7 @@ layout: ../../layouts/Docs.astro
 ---
 
 This page is hull's
-[\`docs/start-checklist.md\`](https://github.com/${repo}/blob/${commitTok}/${path}) at ${label},
+[\`docs/start-checklist.md\`](${docUrl}) at ${label},
 copied verbatim. A repo rendered from ${since} or later carries the same list: its \`ready\` skill
 (\`node scripts/ready.mjs\`) runs the checks and links each item to this file at the hull tag the
 repo was rendered from. The full path, with the details, is in

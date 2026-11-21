@@ -29,7 +29,7 @@ import {
   SLACK_TOML,
   scenarios,
 } from "./scenarios";
-import { bare, versions } from "./versions";
+import { bare, pinsLine, versions } from "./versions";
 
 const read = (rel: string) => readFileSync(new URL(`../pages/${rel}`, import.meta.url), "utf8");
 const start = read("docs/start.md");
@@ -147,8 +147,9 @@ test("/docs/risk has the cheat sheet, the 4 signer steps and the digest", () => 
 test("llms.txt: one line per scenario and one version line", () => {
   const out = buildLlmsTxt();
   for (const s of scenarios) expect(out).toContain(`- ${s.id.toUpperCase()}. ${s.title}:`);
-  expect(out).toContain(
-    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}.`,
+  expect(out).toContain(pinsLine());
+  expect(pinsLine()).toContain(
+    `Current versions: hull ${versions.hull}, splice ${versions.splice}, bosun ${versions.bosun}, hoist ${versions.hoist}, hoard ${versions.hoard}, berth ${versions.berth}`,
   );
 });
 

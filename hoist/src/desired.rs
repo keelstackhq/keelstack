@@ -15,6 +15,12 @@ pub const RULESET_NAME: &str = "hoist: default branch";
 pub const TAG_RULESET_NAME: &str = "hoist: tags";
 /// The GitHub Actions app (github-actions[bot]): the only tag-ruleset bypass actor.
 pub const ACTIONS_APP_ID: u64 = 15368;
+/// GitHub's repository role id of `admin` (`actor_type` `RepositoryRole`): the default-branch
+/// ruleset's only bypass actor, in `pull_request` mode (the owner merges a PR past the rules,
+/// e.g. a mainfix; no direct push).
+pub const ADMIN_ROLE_ID: u64 = 5;
+/// The default-branch bypass actor as `<actor_type>:<actor_id>:<bypass_mode>`.
+pub const ADMIN_BYPASS: &str = "RepositoryRole:5:pull_request";
 const ACCOUNT_ENV: &str = "CLOUDFLARE_ACCOUNT_ID";
 const DEPLOY_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
 

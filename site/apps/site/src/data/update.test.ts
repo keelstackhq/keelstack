@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { update } from "./content";
+import { links } from "./versions";
 import { buildLlmsTxt } from "../lib/llms";
 import { startScenarioMd } from "../lib/start-md";
 
@@ -34,7 +35,7 @@ test("the bosun update path is on the page", () => {
     null,
     "npm i -g @keelstackhq/bosun@<new> && bosun --version",
   ]);
-  expect(update.bosun.guide).toBe("https://github.com/keelstackhq/bosun/blob/main/docs/update.md");
+  expect(update.bosun.guide).toBe(`${links.main}/bosun/docs/update.md`);
 });
 
 test.each(["hull", "bosun"] as const)("%s: every step, note and the guide are on the page", (k) => {

@@ -1,4 +1,5 @@
 import { facts } from "./facts";
+import { bare, sources, versions } from "./versions";
 import { expect, test } from "vite-plus/test";
 import * as content from "./content";
 import { tools } from "./tools";
@@ -25,10 +26,10 @@ test("hero has three variants and seconds is active", () => {
 });
 
 test("terminal shows the default command and rows generated from hull's pieces", () => {
-  expect(terminal.title).toBe(`~ · splice ${facts.version}`);
+  expect(terminal.title).toBe(`~ · splice ${bare(versions.splice)}`);
   expect(terminal.command).toEqual([
-    `pnpm dlx @keelstackhq/splice@${facts.version} new \\`,
-    `gh:keelstackhq/keelstack//hull/template my-repo --ref v${facts.version} \\`,
+    `pnpm dlx @keelstackhq/splice@${bare(versions.splice)} new \\`,
+    `${sources.hull}/template my-repo --ref ${versions.hull} \\`,
     "--piece preact-app:web --piece hono-worker:api",
   ]);
   expect(terminal.output.map((o) => o.path)).toEqual([

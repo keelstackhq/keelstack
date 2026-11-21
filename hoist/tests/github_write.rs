@@ -43,10 +43,17 @@ fn base_ruleset() -> Value {
         "target": "branch",
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
-        "rules": [{"type": "required_status_checks", "parameters": {
-            "strict_required_status_checks_policy": false,
-            "required_status_checks": [{"context": "ci-ok"}]
-        }}]
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": [{"context": "ci-ok"}]
+            }}
+        ],
+        "bypass_actors": [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+        ]
     })
 }
 
@@ -348,8 +355,118 @@ fn ruleset_update_with_merge_queue_puts_queue_rule() {
     execute_github(&http(&api), &d, &ruleset(Some(11), true)).unwrap();
     let sent = body(&api, 0);
     let rules = sent["rules"].as_array().unwrap();
-    assert_eq!(rules.len(), 2);
-    assert_eq!(rules[1]["type"], "merge_queue");
+    assert_eq!(rules.len(), 4);
+    assert_eq!(rules[3]["type"], "merge_queue");
+}
+
+fn tag_ruleset(existing_id: Option<u64>) -> Change {
+    Change::TagRuleset {
+        existing_id,
+        patterns: vec!["v*".into()],
+    }
+}
+
+fn fresh_tag_ruleset() -> Value {
+    json!({
+        "name": "hoist: tags",
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+        "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+        "bypass_actors": [
+            {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
+        ]
+    })
+}
+
+#[test]
+fn tag_ruleset_create_body_exact() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    execute_github(&http(&api), &d, &tag_ruleset(None)).unwrap();
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(body(&api, 0), fresh_tag_ruleset());
+}
+
+#[test]
+fn tag_ruleset_update_reads_then_keeps_what_the_owner_added() {
+    let (_dir, d) = desired();
+    // Owner-added: an include, a rule, a bypass actor; hoist's rules keep their parameters.
+    let live = json!({
+        "id": 12, "name": "hoist: tags", "target": "tag", "enforcement": "evaluate",
+        "node_id": "RRS_x", "source_type": "Repository", "source": "acme/x",
+        "_links": {"self": {"href": "x"}}, "created_at": "2026-01-01T00:00:00Z",
+        "current_user_can_bypass": "always",
+        "conditions": {"ref_name": {"include": ["refs/tags/release-*"], "exclude": []}},
+        "rules": [
+            {"type": "update", "parameters": {"update_allows_fetch_and_merge": false}},
+            {"type": "required_signatures"}
+        ],
+        "bypass_actors": [
+            {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"},
+            {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "pull_request"}
+        ]
+    });
+    let live = live.to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/12", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/12", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[1].method, "PUT");
+    assert_eq!(
+        body(&api, 1),
+        json!({
+            "name": "hoist: tags",
+            "target": "tag",
+            "enforcement": "active",
+            "conditions": {"ref_name": {
+                "include": ["refs/tags/release-*", "refs/tags/v*"],
+                "exclude": []
+            }},
+            "rules": [
+                {"type": "update", "parameters": {"update_allows_fetch_and_merge": false}},
+                {"type": "required_signatures"},
+                {"type": "creation"},
+                {"type": "deletion"}
+            ],
+            "bypass_actors": [
+                {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"},
+                {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn tag_ruleset_update_of_a_vanished_ruleset_creates_it() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/12", 404, "empty.json", &[]),
+        ("POST /repos/acme/x/rulesets", 201, "created.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(body(&api, 1), fresh_tag_ruleset());
+}
+
+#[test]
+fn tag_ruleset_update_of_an_unreadable_ruleset_writes_nothing() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "GET /repos/acme/x/rulesets/12",
+        403,
+        "github/forbidden.json",
+        &[],
+    )]);
+    let err = execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap_err();
+    assert!(err.to_string().contains("blind"), "{err}");
+    assert!(api.requests().iter().all(|r| r.method == "GET"));
 }
 
 #[test]

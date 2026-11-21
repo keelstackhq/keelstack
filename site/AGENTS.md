@@ -31,6 +31,11 @@ touch `site/` or a dependency and after `release.yml`. Never deploy by hand.
 
 ## Not done yet
 
-`/docs/**` pages still use the pinned-release table in `src/data/versions.ts` and old-repo tag
-commits (`tagCommits`, `docRefs`, the bosun setup script copy). docspack's npm release workflow was
-not ported.
+`/docs/**`, `/llms.txt`, `/agents.md` and the scenario blocks take their pins, sources and links
+from `src/data/versions.ts`, which derives them from facts.ts. The rule: commands show only what
+resolves. Until the first monorepo release (`facts.released`: the workspace version is above the move
+version in `hull/legacy-tags.txt`), they pin the old repos' last releases and their `gh:` sources
+(frozen history in `src/data/legacy.ts`, the only file that may type them). From that release on,
+everything pins the workspace version and the monorepo sources. Links always point at the monorepo.
+After the version bump, run the gen script and re-copy the bosun setup script and hull's copies
+(their tests pin them to the shown versions). docspack's npm release workflow was not ported.

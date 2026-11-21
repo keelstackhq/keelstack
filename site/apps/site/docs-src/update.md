@@ -22,7 +22,7 @@ Work on a branch, so the update is one reviewable change:
 - Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@{{ks.bare.splice}}` in place of `splice`.
 - Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.
 - Merge only when `ci-ok` is green.
-- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/hull/blob/{{ks.commit.hull}}/docs/updating.md) at tag `{{ks.hull}}` (`{{ks.short.hull}}`).
+- Full guide: [hull's `docs/updating.md`]({{ks.link.hull}}/docs/updating.md) at tag `{{ks.hull}}` (`{{ks.link.hullShort}}`).
 
 ## Update bosun
 
@@ -34,6 +34,6 @@ Work on a branch, so the update is one reviewable change:
 
 - Cloud: nothing to do. Paste `bosun setup-snippet` once; never again.
 - A repo set up with `bosun init` or hull has `.splice/channels/bosun.toml`: `bosun pin` refuses there; use `splice update --channel bosun` (the update bot opens that PR). The steps above are for a repo set up with `bosun adopt`.
-- Full guide: [bosun's `docs/update.md`](https://github.com/keelstackhq/bosun/blob/main/docs/update.md).
+- Full guide: [bosun's `docs/update.md`]({{ks.link.main}}/bosun/docs/update.md).
 
 Machine-readable: this page is https://keelstack.dev/docs/update.md.

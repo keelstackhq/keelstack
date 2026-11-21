@@ -18,10 +18,68 @@
 /docs/lessons.toml       @urbanisierung
 /hoard/action.yml        @urbanisierung
 /hoard/action/           @urbanisierung
+/hoist.toml              @urbanisierung
+/keel.toml               @urbanisierung
+/CODEOWNERS              @urbanisierung
+/docs/CODEOWNERS         @urbanisierung
+/docs/setup-script.sh    @urbanisierung
+/docs/agents/            @urbanisierung
+/rust-toolchain          @urbanisierung
 
-# Org decisions are governance (the decisions folder was its own repo).
-/decisions/decisions/    @urbanisierung
-/decisions/DECISIONS.md  @urbanisierung
+# Anywhere in the repo (no leading slash matches at any depth): the R-gov and R-ci globs of
+# .bosun/risk.toml that start with `**/` or apply in every folder.
+CODEOWNERS               @urbanisierung
+hoist.toml               @urbanisierung
+AGENTS.md                @urbanisierung
+CLAUDE.md                @urbanisierung
+CLAUDE.local.md          @urbanisierung
+.claude/                 @urbanisierung
+.claude-plugin/          @urbanisierung
+.splice/                 @urbanisierung
+plans/                   @urbanisierung
+action.yml               @urbanisierung
+action.yaml              @urbanisierung
+Makefile                 @urbanisierung
+justfile                 @urbanisierung
+Dockerfile               @urbanisierung
+Jenkinsfile              @urbanisierung
+deny.toml                @urbanisierung
+.deny.toml               @urbanisierung
+deny.exceptions.toml     @urbanisierung
+.deny.exceptions.toml    @urbanisierung
+deny.local.toml          @urbanisierung
+.deny.local.toml         @urbanisierung
+rust-toolchain.toml      @urbanisierung
+.npmrc                   @urbanisierung
+.husky/                  @urbanisierung
+/.circleci/              @urbanisierung
+/.gitlab-ci.yml          @urbanisierung
+/.gitlab/                @urbanisierung
+/.buildkite/             @urbanisierung
+/azure-pipelines.yml     @urbanisierung
+/azure-pipelines.yaml    @urbanisierung
+/bitbucket-pipelines.yml @urbanisierung
+/.travis.yml             @urbanisierung
+/.drone.yml              @urbanisierung
+
+# Org decisions are governance (the decisions folder was its own repo; R-gov `decisions/**`):
+# the decisions, the index, the channel shipped to other repos and its scripts.
+/decisions/              @urbanisierung
+
+# bosun's code judges every approval (R-gate, critical floor), its channel ships CI to other
+# repos (R-ci-review) and its npm launcher installs it: review requests go to the owner too
+# (code owner review is not required by the ruleset; .bosun/risk.toml decides who approves).
+/bosun/src/              @urbanisierung
+/bosun/channel/          @urbanisierung
+/bosun/npm/              @urbanisierung
+/bosun/Cargo.toml        @urbanisierung
+/bosun/build.rs          @urbanisierung
+
+# Per folder CI scripts (R-ci `<folder>/scripts/**`).
+/splice/scripts/         @urbanisierung
+/hull/scripts/           @urbanisierung
+/hoard/scripts/          @urbanisierung
+/hoist/scripts/          @urbanisierung
 
 # Per folder: the same governance paths bosun's own CODEOWNERS named.
 /bosun/.bosun/           @urbanisierung

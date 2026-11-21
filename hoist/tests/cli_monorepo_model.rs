@@ -481,6 +481,154 @@ fn a_matching_tag_ruleset_is_ok_and_a_drifted_one_is_updated_in_place() {
         1,
     );
     assert_eq!(writes(&api), ["PUT /repos/acme/x/rulesets/12"]);
+    assert_eq!(
+        put_body(&api),
+        serde_json::json!({
+            "name": "hoist: tags",
+            "target": "tag",
+            "enforcement": "active",
+            "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+            "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+            "bypass_actors": [
+                {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
+            ]
+        })
+    );
+}
+
+fn put_body(api: &FakeApi) -> Value {
+    let put = api
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .expect("ruleset PUT");
+    serde_json::from_str(put.body.as_deref().unwrap()).unwrap()
+}
+
+fn tag_ruleset_with(include: &str, exclude: &str, bypass: &str, rules: &str) -> String {
+    format!(
+        r#"{{"id":12,"name":"hoist: tags","target":"tag","enforcement":"active","conditions":{{"ref_name":{{"include":{include},"exclude":{exclude}}}}},"rules":{rules},"bypass_actors":{bypass}}}"#
+    )
+}
+
+#[test]
+fn an_owner_added_tag_include_is_ok_and_kept_by_an_update() {
+    let repo = git_repo();
+    write(repo.path(), "hoist.toml", TAGS_TOML);
+    let include = r#"["refs/tags/v*","refs/tags/release-*"]"#;
+    let good = tag_ruleset_with(include, "[]", GOOD_BYPASS, GOOD_RULES);
+    let api = start(&tag_routes(LIST_TAGS, &good));
+    let plan = run(Some(&api), repo.path(), &["plan", "--area", "github"], 0);
+    let t = item(&plan, "tag_ruleset", "hoist: tags");
+    assert_eq!(t["action"], "ok", "{t}");
+    assert!(
+        t["reason"]
+            .as_str()
+            .unwrap()
+            .contains("`refs/tags/release-*`"),
+        "{t}"
+    );
+
+    // Drifted (no bypass actor): the update keeps the owner's include.
+    let drifted = tag_ruleset_with(include, "[]", "[]", GOOD_RULES);
+    let api = start(&tag_routes(LIST_TAGS, &drifted));
+    run(
+        Some(&api),
+        repo.path(),
+        &["apply", "--yes", "--area", "github"],
+        1,
+    );
+    let body = put_body(&api);
+    assert_eq!(
+        body["conditions"]["ref_name"]["include"],
+        serde_json::json!(["refs/tags/v*", "refs/tags/release-*"])
+    );
+}
+
+#[test]
+fn an_owner_added_tag_rule_and_bypass_actor_are_ok_and_kept_by_an_update() {
+    let repo = git_repo();
+    write(repo.path(), "hoist.toml", TAGS_TOML);
+    let rules = r#"[{"type":"creation"},{"type":"update"},{"type":"deletion"},{"type":"required_signatures"}]"#;
+    let bypass = r#"[{"actor_id":15368,"actor_type":"Integration","bypass_mode":"always"},{"actor_id":7,"actor_type":"Team","bypass_mode":"always"}]"#;
+    let good = tag_ruleset_with(r#"["refs/tags/v*"]"#, "[]", bypass, rules);
+    let api = start(&tag_routes(LIST_TAGS, &good));
+    let plan = run(Some(&api), repo.path(), &["plan", "--area", "github"], 0);
+    let t = item(&plan, "tag_ruleset", "hoist: tags");
+    assert_eq!(t["action"], "ok", "{t}");
+    let reason = t["reason"].as_str().unwrap();
+    assert!(reason.contains("`required_signatures`"), "{t}");
+    assert!(reason.contains("`Team:7:always`"), "{t}");
+
+    // Drifted (no `deletion` rule, enforcement off): rule and actor survive the update.
+    let rules = r#"[{"type":"creation"},{"type":"update"},{"type":"required_signatures"}]"#;
+    let drifted = tag_ruleset_with(r#"["refs/tags/v*"]"#, "[]", bypass, rules)
+        .replace(r#""enforcement":"active""#, r#""enforcement":"evaluate""#);
+    let api = start(&tag_routes(LIST_TAGS, &drifted));
+    let plan = run(Some(&api), repo.path(), &["plan", "--area", "github"], 0);
+    let t = item(&plan, "tag_ruleset", "hoist: tags");
+    assert_eq!(t["action"], "update", "{t}");
+    run(
+        Some(&api),
+        repo.path(),
+        &["apply", "--yes", "--area", "github"],
+        1,
+    );
+    let body = put_body(&api);
+    assert_eq!(body["enforcement"], "active");
+    assert_eq!(
+        body["rules"],
+        serde_json::json!([
+            {"type": "creation"}, {"type": "update"}, {"type": "required_signatures"},
+            {"type": "deletion"}
+        ])
+    );
+    assert_eq!(
+        body["bypass_actors"],
+        serde_json::from_str::<Value>(bypass).unwrap()
+    );
+}
+
+#[test]
+fn an_adopt_update_never_clears_tag_excludes() {
+    let repo = git_repo();
+    write(repo.path(), "hoist.toml", TAGS_TOML);
+    let live = tag_ruleset_with(
+        r#"["refs/tags/v*"]"#,
+        r#"["refs/tags/v0"]"#,
+        "[]",
+        GOOD_RULES,
+    );
+    let api = start(&tag_routes(LIST_TAGS, &live));
+    // Without --adopt: an update clears the exclude (it unprotects release tags).
+    let plan = run(Some(&api), repo.path(), &["plan", "--area", "github"], 0);
+    assert_eq!(
+        item(&plan, "tag_ruleset", "hoist: tags")["action"],
+        "update"
+    );
+    // With --adopt: drift naming what an update would drop, nothing written.
+    let plan = run(
+        Some(&api),
+        repo.path(),
+        &["plan", "--adopt", "--area", "github"],
+        0,
+    );
+    let t = item(&plan, "tag_ruleset", "hoist: tags");
+    assert_eq!(t["action"], "drift", "{t}");
+    assert!(
+        t["reason"]
+            .as_str()
+            .unwrap()
+            .contains("excludes `refs/tags/v0`"),
+        "{t}"
+    );
+    run(
+        Some(&api),
+        repo.path(),
+        &["apply", "--adopt", "--yes", "--area", "github"],
+        1,
+    );
+    assert!(writes(&api).is_empty(), "{:?}", writes(&api));
 }
 
 #[test]

@@ -266,8 +266,8 @@ A fixed set of typed resources. Each has a natural key, a read, a diff, a write 
 | Area | Resource | Key | Write | Verify |
 |---|---|---|---|---|
 | github | repo settings | owner/repo | PATCH repo | settings read back |
-| github | branch ruleset | name `hoist: default branch` | create/update ruleset (only this one: other rulesets, such as `hoist: secrets repo`, are never touched) | required check is a job name in a workflow on the default branch |
-| github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]); read from the rulesets list hoist already reads (details by id, GET-only); enforcement, tags, rules or bypass actors that differ are `update`; GitHub Free's 403 is `drift` like the default-branch ruleset; no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
+| github | branch ruleset | name `hoist: default branch` | create/update ruleset (only this one: other rulesets, such as `hoist: secrets repo`, are never touched): target `~DEFAULT_BRANCH`, enforcement `active`, rules `deletion`, `non_fast_forward`, `required_status_checks` (and `merge_queue` when on; `merge_queue = false` writes no queue rule, and a live queue rule is then `update`), `bypass_actors` = `[{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}]` (the repository admin role may merge a PR past the rules, e.g. a mainfix while `main-open` fails; it never pushes directly) | required check is a job name in a workflow on the default branch |
+| github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]); read from the rulesets list hoist already reads (details by id, GET-only). hoist models only these parts: enforcement not `active`, a target other than `tag`, a wanted tag include missing, any exclude (it can unprotect a release tag), a missing `creation`/`update`/`deletion` rule, or the Actions app missing or not `always` are `update`. Owner-added includes, rules and bypass actors are no drift: the `ok` reason lists them ("owner-added, kept: tags …; rules …; bypass actors …", and "only by github-actions and the bypass actors the owner added" when there are extra actors). An update is a read-merge-write: `apply` `GET`s the ruleset by id, then `PUT`s it with the live includes, rules (with their parameters) and bypass actors kept, the missing wanted ones appended, the Actions app's mode set to `always`, `exclude` emptied and enforcement `active`; a ruleset gone (404) is created with `POST`; an unreadable one (403) is a usage error and nothing is written. Under `--adopt` an update that would clear live excludes is `drift` ("…; not written: an update would drop excludes `<x>` (--adopt never loosens)"). GitHub Free's 403 is `drift` like the default-branch ruleset; no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
 | github | Actions permissions | repo | PUT default workflow permissions | read back |
 | github | environment | name | create the environment with its deployment branch policies (default: the default branch; `[github.environments.<name>] branches`, §5; `[]` = none). An existing one is read GET-only: the list entry's `deployment_branch_policy` (absent: not judged; `null`: any branch; `protected_branches`; `custom_branch_policies`: then `GET .../environments/<name>/deployment-branch-policies`, unreadable: `unknown`). A wanted branch the environment lacks is `update` (reason names the missing and the extra live policies); `apply` POSTs the missing policies only when custom policies are already on (no PUT: reviewers stay), else, for an existing environment, first `GET`s it and PUTs it (`deployment_branch_policy` custom or `null`) with its `wait_timer`, `prevent_self_review` and `reviewers` carried back (a PUT resets what it omits; the release environment's resolved reviewers win; an unreadable existing environment is a usage error, nothing written), then POSTs; extra policies are never deleted. The `release` environment is not read for branch policies | read back |
 | github | secret | name | PUT sealed secret (presence only) | listed with recent `updated_at` |
@@ -303,7 +303,10 @@ reason) and the GitHub and Cloudflare areas proceed; `--area github|cloudflare` 
 `auth check`, `import`, `secrets` and `explain`'s environment list never read it.
 
 The ruleset diff covers enforcement (anything but `active` is an `update`), the default-branch
-target, the required checks and the merge queue. GitHub Free has no rulesets, classic branch
+target, the required checks, the merge queue, the `deletion` and `non_fast_forward` rules
+(reason "rules: missing `deletion`, `non_fast_forward`") and the repository admin bypass actor
+(reason "bypass actors: missing the repository admin role (pull_request)"); a bypass actor
+besides it is no drift but an update would drop it, so `--adopt` keeps it (below). GitHub Free has no rulesets, classic branch
 protection or merge queue for a private repo (GitHub's OpenAPI text: protected branches are
 available "in public repositories with GitHub Free … and in public and private repositories with
 GitHub Pro, GitHub Team, …"); a 403 whose message contains "Upgrade to GitHub Pro" or "make this
@@ -380,9 +383,10 @@ code_owner_review = false                   # default
 `required_review_thread_resolution` false (GitHub needs all five). A change to a path that
 CODEOWNERS covers then needs a code owner's GitHub review. Stale reviews are dismissed: otherwise
 a push after the code owner's approval (to a CODEOWNERS path too) would merge on that approval.
-Any `pull_request` rule also makes every change to the default branch go through a PR: hoist adds
-no bypass actors, so only a bypass actor added by hand can push to it directly (whether a PUT
-keeps it: see the plan's facts). hoist manages the ruleset when `required_checks` or
+Any `pull_request` rule also makes every change to the default branch go through a PR: hoist's
+only bypass actor is the repository admin role in `pull_request` mode (it may merge a PR past the
+rules, not push), so only a bypass actor added by hand can push to it directly (hoist's PUT drops
+it; `--adopt` refuses that update). hoist manages the ruleset when `required_checks` or
 `code_owner_review` asks for it; with no checks, the body has no `required_status_checks` rule,
 and `explain` and the reasons say "code-owner review" instead of "no required checks". The wanted
 `pull_request` rule is exactly the five parameters above when on, and no rule when off: a live
@@ -634,8 +638,11 @@ Environments are only ever created, never rewritten (as without `--adopt`): a mi
 replaces the whole ruleset, so when the live `hoist: default branch` needs an update and holds
 anything hoist does not write (another rule type, a strict status-check policy, pinned check
 sources, merge queue settings other than hoist's, a target other than branches, targets beside
-the default branch, excluded branches), the ruleset is `drift` (exit 1) with what an update would
-drop, and nothing is written for it. A missing `CLOUDFLARE_API_TOKEN` is minted only when no
+the default branch, excluded branches, a bypass actor other than the repository admin role in
+`pull_request` mode, named "bypass actor `<type>:<id>:<mode>`"), the ruleset is `drift` (exit 1)
+with what an update would drop, and nothing is written for it. The `hoist: tags` update keeps
+every owner addition (read-merge-write, §6) but clears excludes, so under `--adopt` an update of
+a tag ruleset with excludes is `drift` too. A missing `CLOUDFLARE_API_TOKEN` is minted only when no
 `hoist:<owner>/<repo>:deploy` token exists; otherwise it is `pending` with the step
 `rotate:CLOUDFLARE_API_TOKEN` (`hoist secrets rotate` mints it and revokes the older ones), since
 adopt revokes nothing and a second token would leave the live one unclear. An existing Pages project whose production branch differs is `drift`
