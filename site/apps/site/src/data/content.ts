@@ -1,13 +1,18 @@
 // Page copy from the design reference. Names follow D-001 (`keelstackhq`).
-import { buildCommand, DEFAULT_ON, SPLICE_VERSION } from "../lib/command";
+import { buildCommand } from "../lib/command";
+import { pickerData } from "../lib/picker-data";
+import { facts } from "./facts";
+import { tagCommits, versions } from "./versions";
 import { scenarios } from "./scenarios";
-import { org } from "./tools";
-import { tagCommits } from "./versions";
+import { org, roles, tools } from "./tools";
 
 export interface HeroVariant {
   lead: string;
   highlight: string;
 }
+
+const bosunNpm = facts.tools.find((t) => t.name === "bosun")!.npm!;
+const bosunCrate = facts.tools.find((t) => t.name === "bosun")!.crate!;
 
 export const hero = {
   eyebrow: "An AI-native monorepo, bootstrapped and kept current",
@@ -20,23 +25,26 @@ export const hero = {
   body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
-// Real `splice new` run, last recorded with splice 0.6.0 and hull v0.12.1 (not re-run at the current
-// versions in versions.ts; the shown lines were unchanged at each re-run). Default pieces. `output` is an excerpt of
-// its 67 create lines, in output order; `summary` is our `#` note counting them, not splice output.
-// The generated repo pins Node 24 (.node-version) and pnpm 12.11.2 (packageManager). Re-record when the versions change.
+// The hero shows the default `splice new` command and what it renders. Both are generated: the
+// command from lib/picker-data.ts, the rows from hull's piece folders (one row per piece: its target
+// and how many template files it contributes, from data/facts.ts). Nothing is recorded by hand.
+const defaultPieces = [
+  { id: "base", target: "." },
+  ...pickerData.pieces
+    .filter((p) => pickerData.defaultOn.includes(p.name))
+    .map((p) => ({ id: p.piece, target: `${p.piece === "docs" ? "docs" : p.name}/` })),
+];
+const total = defaultPieces.reduce((n, p) => n + (facts.templateFiles[p.id] ?? 0), 0);
 export const terminal = {
-  title: `~ · splice ${SPLICE_VERSION}`,
-  command: buildCommand(new Set(DEFAULT_ON))
+  title: `~ · splice ${facts.version}`,
+  command: buildCommand(pickerData, new Set(pickerData.defaultOn))
     .split("\n")
     .map((l) => l.trim()),
-  output: [
-    { path: ".github/workflows/ci.yml", cls: "owned" },
-    { path: "AGENTS.md", cls: "seed" },
-    { path: "CLAUDE.md", cls: "owned" },
-    { path: "apps/api/src/index.ts", cls: "seed" },
-    { path: "apps/web/src/app.tsx", cls: "seed" },
-  ] as { path: string; cls: "owned" | "shared" | "seed" }[],
-  summary: "# … 67 files: 41 owned, 8 shared, 18 seed; then pnpm install",
+  output: defaultPieces.map((p) => ({
+    path: `${p.target}  (${p.id})`,
+    cls: `${facts.templateFiles[p.id] ?? 0} files`,
+  })),
+  summary: `# … ${total} template files from ${defaultPieces.length} pieces; then pnpm install`,
   turn: "→ your turn: write the app",
 };
 
@@ -51,7 +59,7 @@ export const split = {
   handles: [
     "pnpm workspace",
     "Turborepo",
-    "TypeScript 7",
+    `TypeScript ${facts.stack.typescript.split(".")[0]}`,
     "Vite+",
     "tool versions",
     "config",
@@ -147,7 +155,7 @@ export const update: {
     ],
     notes: [
       "Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.",
-      `Needs splice 0.3.0 or later. Without a global install write \`pnpm dlx @keelstackhq/splice@${SPLICE_VERSION}\` in place of \`splice\`.`,
+      `Needs splice 0.3.0 or later. Without a global install write \`pnpm dlx @keelstackhq/splice@${versions.splice}\` in place of \`splice\`.`,
       "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
       "Merge only when `ci-ok` is green.",
     ],
@@ -167,7 +175,7 @@ export const update: {
       },
       { text: "The owner approves; auto-merge lands it on green." },
       {
-        cmd: "npm i -g @keelstackhq/bosun@<new> && bosun --version",
+        cmd: `npm i -g ${bosunNpm}@<new> && bosun --version`,
         note: "your machine, after the merge; <new> is the version pin --check printed",
       },
     ],
@@ -180,6 +188,20 @@ export const update: {
 };
 
 // `body` is plain text; the 05 intro mentions `pnpm install` as inline code in the reference.
+const NUMBER_WORDS = [
+  "Zero",
+  "One",
+  "Two",
+  "Three",
+  "Four",
+  "Five",
+  "Six",
+  "Seven",
+  "Eight",
+  "Nine",
+  "Ten",
+];
+
 export const sections: Record<
   "split" | "tools" | "agents" | "current" | "start",
   {
@@ -194,8 +216,8 @@ export const sections: Record<
     heading: "hull owns the plumbing. Your app code stays yours.",
   },
   tools: {
-    label: "02 · Six tools",
-    heading: "Template. Bootstrap. Cache. Orchestrate. Provision. Isolate.",
+    label: `02 · ${NUMBER_WORDS[tools.length] ?? String(tools.length)} tools`,
+    heading: tools.map((t) => `${roles[t.name]!.verb}.`).join(" "),
   },
   agents: {
     label: "03 · Built for agents",
@@ -209,12 +231,12 @@ export const sections: Record<
   start: {
     label: "05 · Get started",
     heading: "Pick your pieces.",
-    body: "splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node 24 and pnpm 12.",
+    body: `splice renders hull’s base plus the pieces you pick, writes the lock, then runs pnpm install. Needs Node ${facts.stack.node} and pnpm ${facts.stack.pnpm.split(".")[0]}.`,
     links: [
       {
         label: "Start a project",
         href: "/docs/start-project/",
-        text: "Every owner step before agents work on a new repo, and how hull’s ready check (since hull v0.5.0) verifies it.",
+        text: "Every owner step before agents work on a new repo, and how hull’s ready check verifies it.",
       },
       {
         label: "Greenfield repo with bosun",
@@ -236,13 +258,8 @@ export const sections: Record<
 };
 
 export const footerLinks: { label: string; href: string }[] = [
-  { label: "hull", href: `${org.url}/hull` },
-  { label: "splice", href: `${org.url}/splice` },
-  { label: "hoard", href: `${org.url}/hoard` },
-  { label: "bosun", href: `${org.url}/bosun` },
-  { label: "hoist", href: `${org.url}/hoist` },
-  { label: "berth", href: `${org.url}/berth` },
-  { label: "decisions", href: `${org.url}/decisions` },
+  ...tools.map((t) => ({ label: t.name, href: t.repo })),
+  { label: "decisions", href: `${facts.repoUrl}/tree/main/decisions` },
   { label: "Migrate to booster", href: "/migrate/" },
 ];
 
@@ -269,7 +286,7 @@ export const quickstart = {
   heading: "From your repo to the first plan in nine steps.",
   body: "For humans, on a computer, in a clean checkout of your repo’s default branch. You need Node, the gh CLI signed in, and admin on the repo.",
   steps: [
-    { cmd: "npm i -g @keelstackhq/bosun", text: "Install bosun (or cargo install keel-bosun)." },
+    { cmd: `npm i -g ${bosunNpm}`, text: `Install bosun (or cargo install ${bosunCrate}).` },
     { cmd: "export GITHUB_TOKEN=$(gh auth token)", text: "A token with repo and workflow scopes." },
     {
       cmd: "bosun adopt --owner <you>",

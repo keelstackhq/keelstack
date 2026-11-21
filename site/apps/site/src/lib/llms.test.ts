@@ -33,8 +33,8 @@ describe("buildLlmsTxt", () => {
     expect(out).not.toContain("keelstack.dev/docspack/");
   });
 
-  it("lists all six tools with their versions", () => {
-    expect(tools).toHaveLength(6);
+  it("lists every tool", () => {
+    expect(tools.length).toBeGreaterThanOrEqual(6);
     for (const t of tools) expect(out).toContain(`[${t.name}](${t.repo})`);
   });
 

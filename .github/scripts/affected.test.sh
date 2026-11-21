@@ -21,13 +21,15 @@ expect() {
   fi
 }
 
-everything="bosun splice hull hoist hoard berth keel decisions"
-expect "bosun/src/main.rs" "bosun keel"
-expect "splice/src/lib.rs" "splice hull keel"
-expect "hoist/src/lib.rs" "hoist keel"
-expect "keel/src/main.rs" "keel"
-expect "hull/scripts/render.mjs" "hull"
-expect $'hoard/action/src/main.ts\nkeel/src/main.rs' "hoard hull keel"
+everything="bosun splice hull hoist hoard berth keel decisions site"
+expect "bosun/src/main.rs" "bosun keel site"
+expect "splice/src/lib.rs" "splice hull keel site"
+expect "hoist/src/lib.rs" "hoist keel site"
+expect "keel/src/main.rs" "keel site"
+expect "hull/scripts/render.mjs" "hull site"
+expect $'hoard/action/src/main.ts\nkeel/src/main.rs' "hoard hull keel site"
+expect "berth/README.md" "berth site"
+expect "site/apps/site/src/data/facts.ts" "site"
 expect "decisions/DECISIONS.md" "decisions"
 expect "README.md" ""
 expect "MIGRATION.md" ""
@@ -43,21 +45,21 @@ r="$(GITHUB_OUTPUT='' CHANGED="berth/src/x.rs" bash "$here/affected.sh" | grep '
 
 # No base: every folder.
 got="$(GITHUB_OUTPUT='' PR_BASE='' QUEUE_BASE='' PUSH_BEFORE=0000000000000000000000000000000000000000 bash "$here/affected.sh" | grep -c '=true$')"
-[ "$got" = 10 ] || { echo "FAIL: zero SHA should affect all (8 folders + rust + all), got $got"; fail=1; }
+[ "$got" = 11 ] || { echo "FAIL: zero SHA should affect all (9 folders + rust + all), got $got"; fail=1; }
 
 # Every folder runs on a push to main, a merge queue run, a schedule and a manual run: main health
 # reads each folder's latest real result, and a skipped job is no result (bosun spec §9).
 for ev in push merge_group schedule workflow_dispatch; do
   got="$(GITHUB_EVENT_NAME=$ev GITHUB_OUTPUT='' CHANGED="bosun/src/main.rs" bash "$here/affected.sh" | grep -c '=true$')"
-  [ "$got" = 10 ] || { echo "FAIL: $ev should affect every folder, got $got =true lines"; fail=1; }
+  [ "$got" = 11 ] || { echo "FAIL: $ev should affect every folder, got $got =true lines"; fail=1; }
   got="$(GITHUB_EVENT_NAME=$ev GITHUB_OUTPUT='' PR_BASE='' QUEUE_BASE='' PUSH_BEFORE=HEAD bash "$here/affected.sh" | grep -c '=true$')"
-  [ "$got" = 10 ] || { echo "FAIL: $ev with a base should affect every folder, got $got"; fail=1; }
+  [ "$got" = 11 ] || { echo "FAIL: $ev with a base should affect every folder, got $got"; fail=1; }
 done
 echo "ok: push/merge_group/schedule/workflow_dispatch -> every folder"
 
 # depends_on comes from .bosun/bosun.toml (the one source): hull depends on splice and hoard,
-# keel calls bosun, splice and hoist.
-for want in 'depends_on = ["splice", "hoard"]' 'depends_on = ["bosun", "splice", "hoist"]'; do
+# keel calls bosun, splice and hoist; site reads every tool folder.
+for want in 'depends_on = ["splice", "hoard"]' 'depends_on = ["bosun", "splice", "hoist"]' 'depends_on = ["bosun", "splice", "hull", "hoist", "hoard", "berth", "keel"]'; do
   grep -qxF "$want" "$here/../../.bosun/bosun.toml" ||
     { echo "FAIL: .bosun/bosun.toml should hold: $want"; fail=1; }
 done
@@ -65,7 +67,7 @@ expect ".bosun/bosun.toml" "$everything"
 
 # A fixture config: a transitive chain (keel -> berth -> bosun) and a comment are read.
 fixture() {
-  for d in bosun splice hull hoist hoard berth keel decisions; do
+  for d in bosun splice hull hoist hoard berth keel decisions site; do
     printf '[[folders]]\npath = "%s"\n' "$d"
     case "$d" in
       berth) echo 'depends_on = ["bosun"] # comment' ;;

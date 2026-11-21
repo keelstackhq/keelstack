@@ -1,6 +1,6 @@
 import { Button } from "@cascivo/react";
 import { useEffect, useRef, useState } from "react";
-import { buildCommand, CAPTION, DEFAULT_ON, PIECES } from "../lib/command";
+import { buildCommand, caption, type PickerData } from "../lib/command";
 import "./PiecePicker.css";
 
 export const COPIED_MS = 1400;
@@ -12,8 +12,8 @@ const COPY_LABEL: Record<CopyState, string> = {
   failed: "Copy failed",
 };
 
-export default function PiecePicker() {
-  const [on, setOn] = useState<ReadonlySet<string>>(() => new Set(DEFAULT_ON));
+export default function PiecePicker({ data }: { data: PickerData }) {
+  const [on, setOn] = useState<ReadonlySet<string>>(() => new Set(data.defaultOn));
   const [copy, setCopy] = useState<CopyState>("idle");
   const [canCopy, setCanCopy] = useState(false);
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -23,7 +23,7 @@ export default function PiecePicker() {
     return () => clearTimeout(timer.current);
   }, []);
 
-  const command = buildCommand(on);
+  const command = buildCommand(data, on);
 
   function toggle(name: string) {
     setOn((prev) => {
@@ -50,7 +50,7 @@ export default function PiecePicker() {
     <div className="pp">
       <div className="pp-chips">
         <span className="pp-base">base · always</span>
-        {PIECES.map(({ piece, name }) => {
+        {data.pieces.map(({ piece, name }) => {
           const active = on.has(name);
           return (
             <Button
@@ -80,7 +80,7 @@ export default function PiecePicker() {
           <code>{command}</code>
         </pre>
       </div>
-      <p className="pp-caption">{CAPTION}</p>
+      <p className="pp-caption">{caption(data)}</p>
       <span aria-live="polite" className="visually-hidden">
         {copy === "copied" ? "Copied to clipboard" : copy === "failed" ? "Copy failed" : ""}
       </span>

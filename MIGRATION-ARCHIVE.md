@@ -104,3 +104,13 @@ Releases after 0.21.0 are published from keelstackhq/keelstack: one tag `vX.Y.Z`
 Update references to: `gh:keelstackhq/keelstack//decisions/channel`.
 Existing pins to this repository keep working; it is read-only.
 ```
+
+## keelstackhq/site
+
+```markdown
+# site (archived)
+
+This repository moved to [keelstackhq/keelstack](https://github.com/keelstackhq/keelstack/tree/main/site)
+(folder `site/`, full history imported; decision D-024). keelstack.dev is built and deployed from
+there. Issues and PRs go there.
+```

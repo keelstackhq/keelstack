@@ -16,7 +16,7 @@
 # is. A bosun.toml this parser cannot read, or whose folders differ from FOLDERS, fails the run.
 set -euo pipefail
 
-FOLDERS=(bosun splice hull hoist hoard berth keel decisions)
+FOLDERS=(bosun splice hull hoist hoard berth keel decisions site)
 RUST=(bosun splice hoist hoard berth keel)
 toml="${BOSUN_TOML:-$(cd "$(dirname "$0")/../.." && pwd)/.bosun/bosun.toml}"
 

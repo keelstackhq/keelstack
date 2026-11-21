@@ -1,5 +1,6 @@
 ---
 import { sections } from "../data/content";
+import { pickerData } from "../lib/picker-data";
 import PiecePicker from "./PiecePicker";
 import SectionHead from "./SectionHead.astro";
 
@@ -11,7 +12,7 @@ const [before, after = ""] = (sections.start.body ?? "").split("pnpm install");
   <div class="inner">
     <SectionHead id="start-h" label={sections.start.label} heading={sections.start.heading} />
     <p class="intro">{before}<code>pnpm install</code>{after}</p>
-    <PiecePicker client:visible />
+    <PiecePicker client:visible data={pickerData} />
     <ul class="next">
       {
         sections.start.links?.map((l) => (

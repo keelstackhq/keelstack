@@ -8,12 +8,12 @@ TypeScript, Vite+. Packages live in `apps/*`, `packages/*`, `crates/*`. Repo-spe
 
 ```bash
 pnpm install        # install, also runs in the SessionStart hook
-pnpm check          # lint, format:check, typecheck, test (all packages)
-pnpm run ci        # the CI task list on changed packages (--affected)
+pnpm check          # same as ci
+pnpm run ci        # build, lint, format:check, typecheck, tests (CI job ci-site)
 pnpm format         # vp fmt
 ```
 
-Packages call `vp build/test/lint/fmt/pack` directly. Turbo caches; never wrap tasks in `vp run`.
+Packages call `vp build/test/lint/fmt/pack` directly; never wrap tasks in `vp run`. Run from `site/` (`pnpm --dir site ...` at the repo root). Facts on the page come from `apps/site/src/data/facts.ts` (see `AGENTS.md`).
 
 ## Rules
 

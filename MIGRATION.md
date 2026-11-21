@@ -17,6 +17,7 @@ The final re-sync merges each source repo's commits after the imported SHA below
 | berth | https://github.com/keelstackhq/berth | 5d1db8191bf8e46937f18a30a2e70a3be7e4a734 |
 | keel | https://github.com/keelstackhq/keel | e34f177359f889b2482814f5b611ec90c8fe9339 |
 | decisions | https://github.com/keelstackhq/decisions | 5b05c178f0a27d93e06d93089afb330e97bb1243 |
+| site | https://github.com/keelstackhq/site | d43156f4161b75218da5287af56f349663cc03f5 |
 
 Re-sync check 2026-11-20: every source repo's main still equals its imported SHA (nothing to bring in).
 
@@ -66,3 +67,14 @@ Re-sync check 2026-11-20: every source repo's main still equals its imported SHA
 - bosun's channel templates and `bosun/CLAUDE.md` still describe a standalone bosun repo.
 - Templates rendered into other repos (`hull/template/**`, `bosun/channel/**`) keep pins to the
   old repos' last releases until the first monorepo release (> 0.21.0) exists.
+
+## Site (D-024)
+
+`site/` was imported from keelstackhq/site (`git filter-repo --to-subdirectory-filter site`, merge with
+`--allow-unrelated-histories`; branch `claude/monorepo-site`). Its own `.github/`, `.bosun/`, `.claude/`,
+`.splice/`, `governance/`, `renovate.json`, turbo and `scripts/setup-release-tag.sh` were deleted: the
+root ones replace them. Not ported: docspack's npm release workflow (`packages/docspack` still
+releases by hand until it is) and the two docspack tests that read it. The docs pages keep their pins
+to the old repos' last releases (`site/apps/site/src/data/versions.ts`) until they move onto the
+generated facts. The Cloudflare secrets move from the old repo's environment `production` to the
+environment `site` here (`.github/SETUP.md`).

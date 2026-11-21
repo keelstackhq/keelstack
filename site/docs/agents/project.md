@@ -1,5 +1,10 @@
 # Project notes
 
+> Since D-024 this folder is `site/` in keelstackhq/keelstack (see `site/AGENTS.md`): the old repo's
+> workflows, bosun config, splice update bot and Turborepo are gone; CI is `ci-site` and deploy is
+> `.github/workflows/deploy-site.yml` at the repo root (environment `site`). Every home-page fact is
+> generated from the monorepo (`apps/site/src/data/facts.ts`). The history below is the old repo's.
+
 Notes for AI agents that are specific to this repository. `CLAUDE.md` imports this file; edit it
 freely, template updates never touch it.
 

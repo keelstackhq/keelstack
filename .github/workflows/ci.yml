@@ -51,6 +51,7 @@ jobs:
       berth: ${{ steps.affected.outputs.berth }}
       keel: ${{ steps.affected.outputs.keel }}
       decisions: ${{ steps.affected.outputs.decisions }}
+      site: ${{ steps.affected.outputs.site }}
       rust: ${{ steps.affected.outputs.rust }}
       base: ${{ steps.affected.outputs.base }}
       all: ${{ steps.affected.outputs.all }}
@@ -656,9 +657,37 @@ jobs:
         working-directory: decisions
         run: bash scripts/check-index.sh
 
+  # The landing site (D-024): every fact it shows is generated from the tool folders it depends on
+  # (.bosun/bosun.toml), so any of them runs this job. The site's tests build it, check the
+  # rendered page against the generated facts and check its links.
+  ci-site:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.node-version
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Check (build, lint, format, typecheck, tests incl. facts and link checks)
+        run: pnpm run ci
+
   # The one required check. Skipped folder jobs are fine; failed or cancelled ones are not.
   ci-ok:
-    needs: [detect, ci-repo, ci-gates, ci-bosun, ci-splice, ci-hull, ci-hoist, ci-hoard, ci-berth, ci-keel, ci-decisions]
+    needs: [detect, ci-repo, ci-gates, ci-bosun, ci-splice, ci-hull, ci-hoist, ci-hoard, ci-berth, ci-keel, ci-decisions, ci-site]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 2

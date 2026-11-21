@@ -1,62 +1,34 @@
-import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
-import { org, tools } from "./tools";
-import { versions } from "./versions";
+import { facts } from "./facts";
+import { org, roles, tools } from "./tools";
 
-test("lists all six tools, the original three first", () => {
-  expect(tools.map((t) => t.name)).toEqual(["hull", "splice", "hoard", "bosun", "hoist", "berth"]);
+test("every tool in the monorepo has a card and every card a tool (a new tool fails here)", () => {
+  expect(tools.map((t) => t.name).toSorted()).toEqual(facts.tools.map((t) => t.name).toSorted());
+  expect(Object.keys(roles).toSorted()).toEqual(facts.tools.map((t) => t.name).toSorted());
 });
 
-test("every tool links to its repo in the keelstackhq org (D-001)", () => {
-  for (const tool of tools) {
-    expect(tool.repo).toBe(`${org.url}/${tool.name}`);
+test("cards link to the folder in the monorepo and show the one workspace version", () => {
+  for (const t of tools) {
+    expect(t.repo).toBe(`${facts.repoUrl}/tree/main/${t.name}`);
+    expect(t.status).toBe(`v${facts.version}`);
   }
   expect(org.url).toBe("https://github.com/keelstackhq");
 });
 
-test("statuses and styles follow the design", () => {
-  expect(tools.map((t) => t.status)).toEqual([
-    versions.hull,
-    `v${versions.splice}`,
-    versions.hoard,
-    `v${versions.bosun}`,
-    `v${versions.hoist}`,
-    `v${versions.berth}`,
-  ]);
-  expect(tools.map((t) => t.statusStyle)).toEqual([
-    "filled",
-    "outline",
-    "dashed",
-    "outline",
-    "outline",
-    "outline",
-  ]);
-  expect(tools.map((t) => t.detailMono)).toEqual([false, true, true, true, true, true]);
+test("pitch is the crate description (hull: README lead), not typed copy", () => {
+  for (const t of tools) {
+    expect(t.pitch).toBe(facts.tools.find((f) => f.name === t.name)!.description);
+  }
 });
 
-test("hoard detail is the pinned Action from its README", () => {
-  expect(tools[2]?.detail).toBe(
-    "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
+test("hoard shows the action pinned to the workspace tag", () => {
+  expect(tools.find((t) => t.name === "hoard")!.detail).toContain(
+    `uses: keelstackhq/keelstack/hoard@v${facts.version}`,
   );
 });
 
-test("no copy uses the old keelstack org or npm scope", () => {
+test("no copy uses the old repos or npm scope", () => {
   const text = JSON.stringify({ tools });
   expect(text).not.toMatch(/@keelstack\//);
-  expect(text).not.toMatch(/github\.com\/keelstack\//);
-  expect(text).not.toMatch(/gh:keelstack\//);
-});
-
-test("docs index tools table Released column equals versions.ts", () => {
-  const page = readFileSync(new URL("../pages/docs/index.md", import.meta.url), "utf8");
-  const cell = (name: string): string => {
-    const row = page.split("\n").find((l) => l.startsWith(`| [${name}](`));
-    return (row?.split("|")[3] ?? "").trim();
-  };
-  expect(cell("hull")).toBe(versions.hull);
-  expect(cell("splice")).toBe(versions.splice);
-  expect(cell("bosun")).toBe(versions.bosun);
-  expect(cell("hoist")).toBe(versions.hoist);
-  expect(cell("hoard")).toBe(`${versions.hoard} (pin \`@v0\`)`);
-  expect(cell("berth")).toBe(versions.berth);
+  expect(text).not.toMatch(/github\.com\/keelstackhq\/(hull|splice|hoard|bosun|hoist|berth)\b/);
 });

@@ -2,10 +2,9 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
-import { tools } from "./tools";
 import { bare, versions } from "./versions";
 
-const bosunVersion = tools.find((t) => t.name === "bosun")?.status.replace(/^v/, "");
+const bosunVersion = versions.bosun;
 
 const dir = new URL("../pages/docs/", import.meta.url);
 const repos = ["hull", "splice", "bosun", "hoist", "hoard", "berth", "decisions", "rust-canary"];
@@ -192,7 +191,7 @@ it("no page uses the stale splice/action@v1 tag", () => {
 
 it("the update bot's workflow and notes pin splice/action by SHA, not @v1", () => {
   const root = new URL("../../../../", import.meta.url);
-  for (const f of [".github/workflows/splice.yml", "docs/agents/project.md"]) {
+  for (const f of ["docs/agents/project.md"]) {
     const text = readFileSync(new URL(f, root), "utf8");
     expect(text, f).not.toContain("splice/action@v1");
     expect(text, f).toMatch(/splice\/action@[0-9a-f]{40} # v\d/);

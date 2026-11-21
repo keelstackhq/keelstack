@@ -3,13 +3,14 @@ declare module "*.css";
 // Minimal typing for the docs test (the site has no @types/node).
 declare module "node:fs" {
   export function readdirSync(dir: URL): string[];
+  export function readdirSync(dir: string): string[];
   export function readdirSync(
     dir: string,
     options: { withFileTypes: true },
   ): { name: string; isDirectory(): boolean }[];
   export function readFileSync(file: URL | string, encoding: "utf8"): string;
   export function readFileSync(file: URL): Uint8Array;
-  export function existsSync(file: URL): boolean;
+  export function existsSync(file: URL | string): boolean;
   export function mkdtempSync(prefix: string): string;
   export function mkdirSync(dir: string, options?: { recursive?: boolean }): void;
   export function writeFileSync(file: string, data: string): void;
@@ -19,6 +20,7 @@ declare module "node:fs" {
 // Minimal typing for the docs generator (src/lib/generate.ts) and its drift test.
 declare module "node:path" {
   export function dirname(path: string): string;
+  export function basename(path: string): string;
   export function join(...parts: string[]): string;
   export function relative(from: string, to: string): string;
 }

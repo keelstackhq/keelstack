@@ -1,9 +1,14 @@
 ---
-import { verifiedLine } from "../data/versions";
+import { facts } from "../data/facts";
+
+// Generated at build time: the workspace version and the build date. Nothing typed in.
+const built = new Date().toISOString().slice(0, 10);
 ---
 
 <aside class="verified" aria-label="Verification">
-  <p>{verifiedLine()}</p>
+  <p>
+    keelstack {facts.tag}: one version for every tool. Built {built} from <a href={facts.repoUrl}>{facts.repoSlug}</a>.
+  </p>
 </aside>
 
 <style>

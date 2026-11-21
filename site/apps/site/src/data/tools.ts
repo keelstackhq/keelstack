@@ -1,14 +1,25 @@
-// Page copy for the tool cards. Names follow D-001 (org and npm scope `keelstackhq`).
-import { versions } from "./versions";
+// Tool cards. Every fact (version, description, subcommands, links) comes from data/facts.ts, which
+// reads the monorepo sources (D-024). Only the editorial labels below are written by hand; a test
+// fails when a tool has no label or a label has no tool.
+import { facts } from "./facts";
 
-export const org = {
-  name: "keelstackhq",
-  url: "https://github.com/keelstackhq",
-} as const;
+export const org = { name: "keelstackhq", url: facts.orgUrl } as const;
+
+/** Editorial: card order, the number-and-role label, and the one-word verb of the heading. */
+export const roles: Record<string, { role: string; verb: string }> = {
+  hull: { role: "monorepo template", verb: "Template" },
+  splice: { role: "bootstrap + update", verb: "Bootstrap" },
+  hoard: { role: "cached CI", verb: "Cache" },
+  bosun: { role: "agent orchestration", verb: "Orchestrate" },
+  hoist: { role: "provision + release", verb: "Provision" },
+  berth: { role: "agent workspaces", verb: "Isolate" },
+  keel: { role: "guided setup", verb: "Guide" },
+};
 
 export interface Tool {
-  name: "hull" | "splice" | "hoard" | "bosun" | "hoist" | "berth";
+  name: string;
   role: string;
+  verb: string;
   status: string;
   statusStyle: "filled" | "outline" | "dashed";
   pitch: string;
@@ -17,73 +28,34 @@ export interface Tool {
   repo: string;
 }
 
-export const tools: Tool[] = [
-  {
-    name: "hull",
-    role: "01 · monorepo template",
-    status: versions.hull,
-    statusStyle: "filled",
-    pitch:
-      "An opinionated, AI-native monorepo. Pick the pieces you need; hull owns structure, stack, tool versions and config.",
-    detail:
-      "pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro, Rust, Tauri, Hono on Cloudflare, CI on GitHub Actions or CircleCI",
-    detailMono: false,
-    repo: `${org.url}/hull`,
-  },
-  {
-    name: "splice",
-    role: "02 · bootstrap + update",
-    status: `v${versions.splice}`,
-    statusStyle: "outline",
-    pitch:
-      "Start a repo from versioned template pieces and keep it up to date. A Copier alternative in one static binary.",
-    detail: "new · add · update · check · diff · explain",
-    detailMono: true,
-    repo: `${org.url}/splice`,
-  },
-  {
-    name: "hoard",
-    role: "03 · cached CI",
-    status: versions.hoard,
-    statusStyle: "dashed",
-    pitch:
-      "A Turborepo (and Vite+) remote cache for GitHub Actions and CircleCI. The cache never fails your build: an error is a miss.",
-    // The README pins `@v0` while hoard is 0.x.
-    detail: "uses: keelstackhq/hoard@v0 · GitHub Actions cache or your own R2 bucket",
-    detailMono: true,
-    repo: `${org.url}/hoard`,
-  },
-  {
-    name: "bosun",
-    role: "04 · agent orchestration",
-    status: `v${versions.bosun}`,
-    statusStyle: "outline",
-    pitch:
-      "Runs an agent-built repo on GitHub: claims and leases, waves, gates, risk checks, review verdicts and approvals. Agents act on one JSON object per command.",
-    detail: "plan · claim · spawn · pr · gate · risk-check · verdict · approve",
-    detailMono: true,
-    repo: `${org.url}/bosun`,
-  },
-  {
-    name: "hoist",
-    role: "05 · provision + release",
-    status: `v${versions.hoist}`,
-    statusStyle: "outline",
-    pitch:
-      "Provisions and verifies a repo's GitHub and Cloudflare setup from what the repo already says, and runs its releases.",
-    detail: "plan · check · apply · release · secrets",
-    detailMono: true,
-    repo: `${org.url}/hoist`,
-  },
-  {
-    name: "berth",
-    role: "06 · agent workspaces",
-    status: `v${versions.berth}`,
-    statusStyle: "outline",
-    pitch:
-      "Gives each parallel agent an isolated workspace: a git worktree, copied env files, a block of ports, a setup hook and its own database.",
-    detail: "up · down · ls · env · gc",
-    detailMono: true,
-    repo: `${org.url}/berth`,
-  },
-];
+const SHOWN = 8;
+
+function detail(name: string): { text: string; mono: boolean } {
+  const f = facts.tools.find((t) => t.name === name)!;
+  if (name === "hull") {
+    const ids = facts.pieces.filter((p) => p.template === "template").map((p) => p.id);
+    return { text: `pieces: ${ids.join(", ")}`, mono: false };
+  }
+  const names = f.subcommands.map((s) => s.name);
+  const shown = names.slice(0, SHOWN).join(" · ");
+  const more = names.length > SHOWN ? ` · … (${names.length} commands)` : "";
+  const action = name === "hoard" ? `uses: ${facts.hoardAction} · ` : "";
+  return { text: `${action}${shown}${more}`, mono: true };
+}
+
+export const tools: Tool[] = Object.keys(roles).map((name, i) => {
+  const f = facts.tools.find((t) => t.name === name);
+  if (!f) throw new Error(`tools: ${name} has a label but no folder in the monorepo`);
+  const d = detail(name);
+  return {
+    name,
+    role: `${String(i + 1).padStart(2, "0")} · ${roles[name]!.role}`,
+    verb: roles[name]!.verb,
+    status: facts.tag,
+    statusStyle: i === 0 ? "filled" : i === 2 ? "dashed" : "outline",
+    pitch: f.description,
+    detail: d.text,
+    detailMono: d.mono,
+    repo: f.url,
+  };
+});

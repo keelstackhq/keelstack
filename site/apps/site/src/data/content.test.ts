@@ -1,7 +1,7 @@
-import { versions } from "./versions";
+import { facts } from "./facts";
 import { expect, test } from "vite-plus/test";
 import * as content from "./content";
-import { org, tools } from "./tools";
+import { tools } from "./tools";
 
 const { agentRows, current, footerLinks, hero, nav, sections, split, stats, terminal } = content;
 
@@ -24,24 +24,21 @@ test("hero has three variants and seconds is active", () => {
   expect(hero.active).toBe("seconds");
 });
 
-test("terminal shows the default command, real create lines and file counts", () => {
-  expect(terminal.title).toContain(`splice ${versions.splice}`);
-  expect(terminal.title).not.toMatch(/preview/i);
-  // The command that was run to record the output below.
+test("terminal shows the default command and rows generated from hull's pieces", () => {
+  expect(terminal.title).toBe(`~ · splice ${facts.version}`);
   expect(terminal.command).toEqual([
-    `pnpm dlx @keelstackhq/splice@${versions.splice} new \\`,
-    `gh:keelstackhq/hull//template my-repo --ref ${versions.hull} \\`,
+    `pnpm dlx @keelstackhq/splice@${facts.version} new \\`,
+    `gh:keelstackhq/keelstack//hull/template my-repo --ref v${facts.version} \\`,
     "--piece preact-app:web --piece hono-worker:api",
   ]);
-  // Lines copied from `splice new` output (the run recorded in content.ts), in output order.
-  expect(terminal.output.map((o) => `create  ${o.path}  ${o.cls}`)).toEqual([
-    "create  .github/workflows/ci.yml  owned",
-    "create  AGENTS.md  seed",
-    "create  CLAUDE.md  owned",
-    "create  apps/api/src/index.ts  seed",
-    "create  apps/web/src/app.tsx  seed",
+  expect(terminal.output.map((o) => o.path)).toEqual([
+    ".  (base)",
+    "web/  (preact-app)",
+    "api/  (hono-worker)",
   ]);
-  expect(terminal.summary).toBe("# … 67 files: 41 owned, 8 shared, 18 seed; then pnpm install");
+  expect(terminal.summary).toBe(
+    `# … ${(["base", "preact-app", "hono-worker"] as const).reduce((a, id) => a + facts.templateFiles[id]!, 0)} template files from 3 pieces; then pnpm install`,
+  );
 });
 
 test("stats shapes", () => {
@@ -83,16 +80,13 @@ test("links stay in the keelstackhq org or on the page", () => {
     ).toBe(true);
   }
   expect(footerLinks.map((l) => l.label)).toEqual([
-    "hull",
-    "splice",
-    "hoard",
-    "bosun",
-    "hoist",
-    "berth",
+    ...tools.map((t) => t.name),
     "decisions",
     "Migrate to booster",
   ]);
-  expect(footerLinks[6]?.href).toBe(`${org.url}/decisions`);
+  expect(footerLinks.find((l) => l.label === "decisions")?.href).toBe(
+    `${facts.repoUrl}/tree/main/decisions`,
+  );
 });
 
 test("get started copy no longer says splice is unreleased", () => {
