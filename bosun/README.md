@@ -48,9 +48,7 @@ cloud sessions install, and the optional Routines: create them from `data.routin
 1. Paste `bosun setup-snippet` once as the cloud environment's setup script.
 2. In the repo: `bosun adopt --ci none --policy autonomous --owner <login>`; commit, push, merge the
    setup PR.
-3. The owner approves a gated PR with a `/bosun approve <sha>` comment, or the quorum policy counts
-   reviewer approvals (D-022).
-4. Merge: with `[ci] provider = "none"` there are no required checks, so auto-merge does not apply;
+3. Merge: with `[ci] provider = "none"` there are no required checks, so auto-merge does not apply;
    the orchestrator runs `bosun merge <pr>` (D-019). With CI, auto-merge does it.
 
 ## For agents
