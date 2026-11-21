@@ -44,6 +44,14 @@ for root in keel.toml hoist.toml .bosun/risk.toml .gitignore AGENTS.md CLAUDE.md
   expect "$root" "$everything"
 done
 expect $'README.md\nbosun/src/main.rs' "bosun keel site"
+# Exact matching, not substrings of a space-joined list: a path with spaces or a prefix
+# look-alike of a folder or of a NO_EFFECT file affects every folder.
+for odd in 'bosun splice/x' 'bosun splice' 'README.md MIGRATION.md' 'sitex' 'sitex/a' 'bosunx/a' \
+  'hull hoard/x' 'README' 'README.md.bak' 'xREADME.md' 'docs/README.md' ' bosun/a' 'bosun /a'; do
+  expect "$odd" "$everything"
+done
+# A folder path with a space inside the folder part is still that folder only.
+expect "bosun/a b.rs" "bosun keel site"
 
 # A rename lists both paths: `git mv splice/x hull/x` affects splice too (git diff --no-renames).
 # Two commits from a fast-import stream (add splice/x.txt; move it to hull/x.txt unchanged).

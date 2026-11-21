@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 bosun keeps all coordination on GitHub: issues, labels, comments and pull requests. This page
 describes how work is cut up, which states a task goes through, how sessions avoid stepping on
-each other, and what stops work. This page was last checked line by line against bosun 0.19.0; its links point at {{ks.link.pinnedLabel}}. Long details are in
+each other, and what stops work. This page was last checked line by line against bosun {{ks.checked.bosun}}; its links point at {{ks.link.pinnedLabel}}. Long details are in
 bosun's specs: [lifecycle]({{ks.link.pinned}}/bosun/docs/spec/04-lifecycle.md),
 [spawning and waves]({{ks.link.pinned}}/bosun/docs/spec/05-spawn.md) and
 [cost and main-health]({{ks.link.pinned}}/bosun/docs/spec/09-main-health.md).

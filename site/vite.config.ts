@@ -15,6 +15,9 @@ export default defineConfig({
       "**/dist/**",
       "**/.astro/**",
       "**/*.astro",
+      // Templates with `{{ks.NAME}}` tokens: oxfmt formats a fenced YAML block and splits a token
+      // into a flow mapping (`{ { ks.x } }`). gen-docs.ts formats the rendered pages instead.
+      "**/docs-src/**",
       "**/storybook-static/**",
       "**/target/**",
       "pnpm-lock.yaml",

@@ -1,6 +1,6 @@
 # Migration to one monorepo
 
-Decision D-023 (`decisions/023-one-monorepo.md`) moves every keelstackhq repo into this one.
+Decision D-023 (`decisions/decisions/023-one-monorepo.md`) moves every keelstackhq repo into this one.
 Each repo was imported with its full history into its own folder (`git filter-repo
 --to-subdirectory-filter <folder>`, then `git merge --allow-unrelated-histories`). Tags were not
 imported.
@@ -50,8 +50,10 @@ Re-sync check 2026-11-20: every source repo's main still equals its imported SHA
 - Ported, manual runs only (hoard's also weekly; Linux only; not run yet): splice's action
   self-test (`.github/workflows/splice-action-selftest.yml`) and hoard's self-test
   (`.github/workflows/hoard-self-test.yml`; its R2 legs need environment `hoard-r2`). Deleted with
-  their tests, because the root `release.yml` does their job: splice's `release.yml` and its
-  `release-tag`/`release-major` scripts; hoard's `bench.yml` and `r2-checks.yml`.
+  their scripts, because the root `release.yml` does their job: splice's `release.yml` and its
+  `release-tag`/`release-major` scripts (their tests, `splice/scripts/release-tag.test.mjs` and
+  `release-major.test.mjs`, stay and test the root `release.yml`); hoard's `bench.yml` and
+  `r2-checks.yml`.
 - Not ported: the splice update bot (hull's and bosun's `splice.yml`; its hull test is gone).
   main-health's weekly job covers only the Rust workspace.
 - Tests that still read an old per-folder release workflow: hoard
@@ -78,3 +80,32 @@ releases by hand until it is) and the two docspack tests that read it. The docs 
 to the old repos' last releases (`site/apps/site/src/data/versions.ts`) until they move onto the
 generated facts. The Cloudflare secrets move from the old repo's environment `production` to the
 environment `site` here (`.github/SETUP.md`).
+
+## Trust files in the monorepo (D-022)
+
+A PR that changes a trust file (`TRUST_FILES`, and `TRUST_CODE_FILES` under each of bosun's code
+roots, in `bosun/src/core/approve.rs`) never passes on a signed approval (owner, delegate or the
+orchestrator's key) and never carries an approval over a merge of main (carry-over rule 4 uses
+the same code-root-aware list). Only the owner's own GitHub review or comment counts. The list
+also holds the code and files that apply it, because a signed PR that weakened one of them would
+have the next PR judged by the weakened copy:
+
+- `bosun/src/cli/risk_check.rs` (runs the check and reads the code roots),
+  `bosun/src/core/folders.rs` (re-roots the rules and the floor under a folder) and
+  `bosun/src/core/glob.rs` (matches every rule and trust path), next to `bosun/src/core/risk.rs`
+  and `bosun/src/core/approve.rs`;
+- the code that sets and applies the verdict quorum: `bosun/src/core/verdict.rs`
+  (`APPROVE_MIN`), `bosun/src/cli/verdict.rs`, `bosun/src/core/carry.rs` and
+  `bosun/src/cli/carry_over.rs` (the approval carry-over);
+- `.bosun/risk.toml` (the rules risk-check reads from the base) and
+  `.github/workflows/risk.yml`, `verdict.yml`, `signer.yml`, `main-open.yml` and `review.yml`
+  (they build and run risk-check, the verdict, the signer, the main-open required check and
+  the review).
+
+The claim is narrowed to this: the trust list covers the files that hold or apply the trust and
+quorum rules. Dependency manifests (`Cargo.toml`, `Cargo.lock`, which pick the ed25519 crate)
+are owner-approved under R-deps, not trust files, so a dependency bump needs no owner signature.
+
+`.bosun/bosun.toml` is a trust file as a whole (for its `[approvals]` table), so every edit of it,
+also `[[folders]]` (which names the code roots) or `[slack]`, is owner-signed only. D-022's own
+file is the trust root and is not changed by this.

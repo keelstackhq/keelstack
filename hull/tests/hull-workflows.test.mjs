@@ -134,8 +134,10 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   const writers = Object.entries(wf.jobs).filter(([, j]) => j.permissions?.contents === "write");
   assert.deepEqual(
     writers.map(([k]) => k),
-    ["release", "major"],
+    ["release"],
   );
+  // major moves v<major> with the release environment's deploy key: its token needs nothing.
+  assert.deepEqual(wf.jobs.major.permissions, {});
   for (const [name, job] of Object.entries(wf.jobs)) {
     if (job.environment === undefined) continue;
     assert.equal(job.environment, "release", name);
@@ -147,7 +149,9 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   assert.match(release.if, /needs\.plan\.outputs\.release == 'true'/);
   const run = release.steps.map((s) => s.run ?? "").join("\n");
   assert.match(run, /--notes-start-tag/);
-  assert.match(run, /git push origin "refs\/tags\/\$TAG"/);
+  // The tag goes over SSH with the release environment's deploy key, not the job token.
+  assert.match(run, /remote="git@github\.com:\$GH_REPO\.git"/);
+  assert.match(run, /git push "\$remote" "refs\/tags\/\$TAG"/);
   const co = release.steps.find((s) => s.uses?.startsWith("actions/checkout@"));
   assert.equal(co.with.ref, "${{ needs.plan.outputs.sha }}");
   assert.equal(co.with["persist-credentials"], false);

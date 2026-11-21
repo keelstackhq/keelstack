@@ -367,7 +367,11 @@ mod tests {
         let r = FakeRunner::new()
             .on(&["hoist", "--json", "explain"], Out::ok(BODY))
             .on(&["hoist", "--json", "check"], Out::with(2, BODY, ""));
-        let mut cx = none_ctx(&r, false, &["secret:K", "npm-trust:p", "cloudflare-token"]);
+        let mut cx = none_ctx(
+            &r,
+            false,
+            &["npm-trust:q", "npm-trust:p", "cloudflare-token"],
+        );
         SettingsAll.check(&mut cx).unwrap();
         let ids: Vec<&str> = cx.pending.iter().map(|h| h.id.as_str()).collect();
         assert_eq!(ids, ["cloudflare-token", "secret:K"]);
@@ -404,7 +408,7 @@ mod tests {
 
     #[test]
     fn apply_exit_2_with_every_human_step_confirmed_is_done_only_after_a_clean_recheck() {
-        let all = ["npm-trust:p", "secret:K"];
+        let all = ["npm-trust:p", "npm-trust:q"];
         let trust_only =
             r#"{"items":[],"human_steps":[{"id":"npm-trust:p","title":"Trust p","url":"v"}]}"#;
         let drift = r#"{"items":[{"area":"github","kind":"ruleset","key":"main","action":"drift","reason":"bypass differs"}],"human_steps":[]}"#;

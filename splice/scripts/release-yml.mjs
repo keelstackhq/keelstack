@@ -31,10 +31,10 @@ export function stepScript(jobText, step) {
   return out.join("\n") + "\n";
 }
 
-// A fake `gh` for the API calls release.yml makes. State (JSON): `releases` [{id, tag, draft}],
-// `next` (release id), `tags` {name: {commit, object}} (object: an annotated tag's own sha),
-// `hijack` (a commit a PATCH of a tag ref is replaced by, as if someone moved it meanwhile),
-// `fail` (an endpoint prefix that errors). Every call is logged as one JSON array per line.
+// A fake `gh` for the release API calls release.yml makes (tags are git's: they are pushed over
+// SSH, which tests point at a bare origin with url.insteadOf). State (JSON): `releases`
+// [{id, tag, draft}], `next` (release id), `fail` (an endpoint prefix that errors). Every call is
+// logged as one JSON array per line.
 const FAKE_GH = String.raw`#!/usr/bin/env node
 const fs = require("fs");
 const file = process.env.FAKE_GH_STATE;
@@ -67,24 +67,6 @@ if (method === "GET" && path.startsWith("releases?")) {
   if (method === "PATCH") r.draft = fields.draft !== "false";
   if (method === "DELETE") s.releases = s.releases.filter((x) => x !== r);
   save();
-} else if ((m = path.match(/^git\/matching-refs\/tags\/(.*)$/))) {
-  for (const name of Object.keys(s.tags)) if (name.startsWith(m[1])) console.log("refs/tags/" + name);
-} else if ((m = path.match(/^commits\/(.+)$/))) {
-  const t = s.tags[m[1]];
-  if (!t) fail("HTTP 422: no commit for " + m[1]);
-  console.log(t.commit);
-} else if ((m = path.match(/^git\/ref\/tags\/(.+)$/))) {
-  if (!s.tags[m[1]]) fail("HTTP 404: Not Found");
-  console.log(JSON.stringify({ ref: "refs/tags/" + m[1] }));
-} else if (method === "PATCH" && (m = path.match(/^git\/refs\/tags\/(.+)$/))) {
-  if (!s.tags[m[1]]) fail("HTTP 422: Reference does not exist");
-  s.tags[m[1]] = { commit: s.hijack || fields.sha, object: s.hijack || fields.sha };
-  save();
-} else if (method === "POST" && path === "git/refs") {
-  const name = fields.ref.replace(/^refs\/tags\//, "");
-  if (s.tags[name]) fail("HTTP 422: Reference already exists");
-  s.tags[name] = { commit: fields.sha, object: fields.sha };
-  save();
 } else fail("fake gh: unsupported " + method + " " + path);
 `;
 
@@ -97,7 +79,7 @@ export function fakeGh(state = {}) {
   chmodSync(join(bin, "gh"), 0o755);
   const stateFile = join(dir, "state.json");
   const logFile = join(dir, "log");
-  writeFileSync(stateFile, JSON.stringify({ releases: [], next: 1, tags: {}, ...state }));
+  writeFileSync(stateFile, JSON.stringify({ releases: [], next: 1, ...state }));
   writeFileSync(logFile, "");
   return {
     dir,

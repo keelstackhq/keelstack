@@ -28,6 +28,15 @@ out="${GITHUB_OUTPUT:-/dev/stdout}"
 all=false
 base=""
 
+# in_list <word> <list...>: exact membership (never a substring of a space-joined list, so a path
+# with spaces or a prefix look-alike such as `bosunx` or `README` matches nothing).
+in_list() {
+  local w="$1" x
+  shift
+  for x in "$@"; do [ "$x" == "$w" ] && return 0; done
+  return 1
+}
+
 die() {
   echo "::error::affected.sh: $1 ($toml). Fix .bosun/bosun.toml: each [[folders]] has one-line path = \"<dir>\" and optional one-line depends_on = [\"<dir>\", ...]." >&2
   exit 1
@@ -66,7 +75,7 @@ listed="$(printf '%s\n' "$parsed" | sed -n 's/^P //p' | sort)"
 DEPENDS_ON=()
 while IFS= read -r d; do
   [ -n "$d" ] || continue
-  case " ${FOLDERS[*]} " in *" ${d#*:} "*) ;; *) die "depends_on names unknown folder ${d#*:}" ;; esac
+  in_list "${d#*:}" "${FOLDERS[@]}" || die "depends_on names unknown folder ${d#*:}"
   DEPENDS_ON+=("$d")
 done < <(printf '%s\n' "$parsed" | sed -n 's/^D //p')
 
@@ -92,9 +101,9 @@ fi
 declare -A hit=()
 while IFS= read -r f; do
   [ -n "$f" ] || continue
-  case " ${NO_EFFECT[*]} " in *" $f "*) continue ;; esac
+  in_list "$f" "${NO_EFFECT[@]}" && continue
   case "$f" in
-    */*) case " ${FOLDERS[*]} " in *" ${f%%/*} "*) hit["${f%%/*}"]=1; continue ;; esac ;;
+    */*) if in_list "${f%%/*}" "${FOLDERS[@]}"; then hit["${f%%/*}"]=1; continue; fi ;;
   esac
   all=true
 done <<<"$changed"

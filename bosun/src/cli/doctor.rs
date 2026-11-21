@@ -736,7 +736,9 @@ fn plugin_findings(
                 );
             if !src.is_null() && (src["source"] != "github" || !(old_form || monorepo)) {
                 add(
-                    format!("marketplace {MARKET} source is not github keelstackhq/bosun"),
+                    format!(
+                        "marketplace {MARKET} source is not github keelstackhq/keelstack with path bosun/.claude-plugin (or, in a repo rendered from bosun's channel, keelstackhq/bosun)"
+                    ),
                     settings_fix.clone(),
                 );
             }
@@ -1815,7 +1817,11 @@ mod tests {
                 "source": "github", "repo": "keelstackhq/keelstack", "ref": M1, "path": path
             });
             let out = run(Some(&s), Some(&script()), Some(&installed(P1, C)), None);
-            assert!(out.contains("not github keelstackhq/bosun"), "{out}");
+            // The monorepo form is named, not only the old repo.
+            assert!(
+                out.contains("not github keelstackhq/keelstack with path bosun/.claude-plugin"),
+                "{out}"
+            );
             assert!(out.contains("bosun/.claude-plugin"), "{out}");
         }
     }
@@ -1831,7 +1837,7 @@ mod tests {
             let mut s = settings(M1, true);
             s["extraKnownMarketplaces"]["keelstack"]["source"] = src;
             let out = run(Some(&s), Some(&script()), Some(&installed(P1, C)), None);
-            assert!(out.contains("not github keelstackhq/bosun"), "{out}");
+            assert!(out.contains("not github keelstackhq/keelstack"), "{out}");
             assert!(out.contains(want), "{out}");
         }
         let mut s = settings(M1, true);

@@ -38,7 +38,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 
 - Monorepo keys (root `hoist.toml`): `[workspace] members` (extra package/target dirs), `[github] apps`
   (human step `app:<slug>`, url `https://github.com/apps/<slug>/installations/new`), `[github.tag_ruleset]`
-  (`patterns`, `bypass = ["github-actions"]`; item `github/tag_ruleset` key `hoist: tags`), `[release]`
+  (`patterns`; `bypass = ["github-actions"]` is required with `[github] tags_bypass = "actions"`, the default, and unset with `"deploy_key"`, where `hoist apply` adds the write deploy key `hoist: release tags` and seals its private key as secret `RELEASE_TAG_KEY` of the release environment: item `github/tag_deploy_key`; item `github/tag_ruleset` key `hoist: tags`), `[github] admin_bypass = true` (opt-in: the admin role may merge a PR past `hoist: default branch`, never push), `[release]`
   `reviewers = []` (no reviewer, no `release-reviewer` step) and `workflow = "release.yml"`,
   `[registry.npm."<name>"]` / `[registry.crates."<name>"]` `workflow` (packages outside the release model:
   `npm-trust:`/`crates-trust:`/`first-publish:` steps), target `[deploy] environment` (deploy secrets live in

@@ -529,8 +529,14 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// signed approval, owner or delegate key, so a compromised key cannot enroll keys or owners.
 /// Also the org decisions index and D-022, which name the trust root and the quorum (D-022
 /// names its own row as trust root), as the keelstack monorepo keeps them in `decisions/`.
-/// And `.bosun/bosun.toml`, whose `[approvals]` table sets the approval policy (D-022).
-pub const TRUST_FILES: [&str; 8] = [
+/// And `.bosun/bosun.toml`, whose `[approvals]` table sets the approval policy (D-022): as a
+/// whole file, so every edit of it (`[[folders]]`, which also names the code roots, `[slack]`,
+/// any table) is owner-signed only. And what applies this list to the next PR: the risk rules
+/// (`.bosun/risk.toml`) and the workflows that run risk-check, the verdict, the signer, the
+/// main-open check and the review; a signed PR that weakened one would have every later PR
+/// judged by the weakened copy. Dependency manifests (`Cargo.toml`, `Cargo.lock`) are no trust
+/// files: they are owner-approved under R-deps.
+pub const TRUST_FILES: [&str; 14] = [
     APPROVERS_PATH,
     APPROVALS_CONFIG,
     "governance/owners.toml",
@@ -539,16 +545,37 @@ pub const TRUST_FILES: [&str; 8] = [
     "docs/CODEOWNERS",
     DECISIONS_INDEX,
     DECISION_TRUST_ROOT,
+    ".bosun/risk.toml",
+    ".github/workflows/risk.yml",
+    ".github/workflows/verdict.yml",
+    ".github/workflows/signer.yml",
+    ".github/workflows/main-open.yml",
+    ".github/workflows/review.yml",
 ];
 
 /// The bosun config that holds `[approvals]` (D-022 trust root).
 pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
 
 /// bosun's code that decides who approves: the risk path lists (`CRITICAL_PATHS` and the floor
-/// in `src/core/risk.rs`) and this trust list. Trust files only under a code root (where
-/// bosun's code is: the repo root of bosun itself, `bosun/` in the monorepo), so another repo's
-/// `src/core/risk.rs` is no trust file.
-pub const TRUST_CODE_FILES: [&str; 2] = ["src/core/risk.rs", "src/core/approve.rs"];
+/// in `src/core/risk.rs`), this trust list, and the code that applies them: risk-check
+/// (`src/cli/risk_check.rs`, which also reads the code roots), the folder re-rooting
+/// (`src/core/folders.rs`), the glob matcher (`src/core/glob.rs`), and the verdict quorum:
+/// `APPROVE_MIN` and the verdict rules (`src/core/verdict.rs`), the verdict command that records
+/// and applies them (`src/cli/verdict.rs`) and the approval carry-over (`src/core/carry.rs`,
+/// `src/cli/carry_over.rs`). Trust files only under a code root (where bosun's code is: the repo
+/// root of bosun itself, `bosun/` in the monorepo), so another repo's `src/core/risk.rs` is no
+/// trust file.
+pub const TRUST_CODE_FILES: [&str; 9] = [
+    "src/core/risk.rs",
+    "src/core/approve.rs",
+    "src/cli/risk_check.rs",
+    "src/core/folders.rs",
+    "src/core/glob.rs",
+    "src/core/verdict.rs",
+    "src/cli/verdict.rs",
+    "src/core/carry.rs",
+    "src/cli/carry_over.rs",
+];
 
 /// The org decisions index (D-002), read in place in the monorepo.
 pub const DECISIONS_INDEX: &str = "decisions/DECISIONS.md";
@@ -819,6 +846,47 @@ mod tests {
         // bosun's code is a trust file only where bosun's code is (a code root).
         assert!(trust_files_changed_in([("src/core/risk.rs", None)], &[]).is_empty());
         assert!(trust_files_changed_in([("splice/src/core/risk.rs", None)], &mono).is_empty());
+    }
+
+    /// The code and files that apply the trust list are trust files too: a signed PR that weakened
+    /// them would have the next PR judged by the weakened code (the risk rules, the code roots, the
+    /// glob matcher, and the workflows that run risk-check, verdict and the signer).
+    #[test]
+    fn the_code_and_files_that_apply_the_trust_list_are_trust_files() {
+        let mono = vec!["bosun".to_string()];
+        for p in [
+            ".bosun/risk.toml",
+            ".github/workflows/risk.yml",
+            ".github/workflows/verdict.yml",
+            ".github/workflows/signer.yml",
+            ".github/workflows/main-open.yml",
+            ".github/workflows/review.yml",
+        ] {
+            assert_eq!(trust_files_changed_in([(p, None)], &[]), [p], "{p}");
+            assert_eq!(trust_files_changed_in([(p, None)], &mono), [p], "{p}");
+            assert!(trust_files_in(&mono).contains(&p.to_string()), "{p}");
+        }
+        for p in [
+            "src/cli/risk_check.rs",
+            "src/core/folders.rs",
+            "src/core/glob.rs",
+            "src/core/verdict.rs",
+            "src/cli/verdict.rs",
+            "src/core/carry.rs",
+            "src/cli/carry_over.rs",
+        ] {
+            let at_root = trust_files_changed_in([(p, None)], &[String::new()]);
+            assert_eq!(at_root, [p], "{p}");
+            let q = format!("bosun/{p}");
+            assert_eq!(
+                trust_files_changed_in([(q.as_str(), None)], &mono),
+                [q.as_str()]
+            );
+            // Only under a code root, never another folder's `src/`.
+            assert!(trust_files_changed_in([(p, None)], &[]).is_empty(), "{p}");
+            let other = format!("splice/{p}");
+            assert!(trust_files_changed_in([(other.as_str(), None)], &mono).is_empty());
+        }
     }
 
     #[test]

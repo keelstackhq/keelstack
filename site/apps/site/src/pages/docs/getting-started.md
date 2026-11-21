@@ -126,7 +126,7 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.6.0 @keelstackhq/bosun@0.20.0
+npm install -g @keelstackhq/splice@0.6.0 @keelstackhq/bosun@0.21.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
@@ -207,7 +207,7 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 
 ```yaml
 - run: pnpm install --frozen-lockfile
-- uses: { { ks.src.hoardMajor } } # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
+- uses: keelstackhq/hoard@v0 # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
 - run: pnpm turbo run build test lint
 ```
 

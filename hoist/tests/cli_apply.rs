@@ -844,9 +844,27 @@ fn live_ruleset(checks: &[&str], pull_request: bool) -> String {
         "enforcement": "active",
         "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
         "rules": rules,
-        "bypass_actors": [{"actor_id": 5, "actor_type": "RepositoryRole",
-            "bypass_mode": "pull_request"}]})
+        "bypass_actors": []})
     .to_string()
+}
+
+/// The PUT body of the ruleset write.
+fn put_ruleset_body(api: &FakeApi) -> Value {
+    let put = api
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT" && r.path == "/repos/acme/x/rulesets/11")
+        .expect("ruleset PUT");
+    serde_json::from_str(put.body.as_deref().unwrap()).unwrap()
+}
+
+fn rule<'a>(body: &'a Value, kind: &str) -> &'a Value {
+    body["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == kind)
+        .unwrap_or_else(|| panic!("no rule {kind} in {body}"))
 }
 
 fn adopt(ruleset: &str, extra: &[&str], code: i32) -> (FakeApi, Value) {
@@ -888,32 +906,120 @@ fn adopt_adds_its_checks_beside_the_live_ones() {
     let after = live_ruleset(&["ci-ok", "lint"], false);
     let (api, _) = adopt_then(&live_ruleset(&["lint"], false), &after, &[], 0);
     assert_eq!(writes(&api), [PUT_RULESET]);
-    let put = api
-        .requests()
-        .into_iter()
-        .find(|r| r.method == "PUT")
-        .unwrap();
-    let body: Value = serde_json::from_str(put.body.as_deref().unwrap()).unwrap();
-    let contexts: Vec<&str> = body["rules"][2]["parameters"]["required_status_checks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["context"].as_str().unwrap())
-        .collect();
+    let body = put_ruleset_body(&api);
+    let contexts: Vec<&str> =
+        rule(&body, "required_status_checks")["parameters"]["required_status_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["context"].as_str().unwrap())
+            .collect();
     assert_eq!(contexts, ["ci-ok", "lint"]);
 }
 
 #[test]
 fn adopt_never_drops_a_rule_hoist_does_not_model() {
-    // An update would replace the ruleset's rules and drop `pull_request`: drift, no write.
-    let (api, report) = adopt(&live_ruleset(&["lint"], true), &[], 1);
+    // The update is a read-merge-write: the owner's `pull_request` rule stays.
+    let after = live_ruleset(&["ci-ok", "lint"], true);
+    let (api, _) = adopt_then(&live_ruleset(&["lint"], true), &after, &[], 0);
+    assert_eq!(writes(&api), [PUT_RULESET]);
+    let body = put_ruleset_body(&api);
+    assert_eq!(
+        rule(&body, "pull_request")["parameters"]["required_approving_review_count"],
+        1
+    );
+}
+
+/// The `repo()` fixture with `[github] admin_bypass = true`.
+fn repo_with_admin_bypass() -> tempfile::TempDir {
+    let dir = repo();
+    let toml = dir.path().join("hoist.toml");
+    let text = std::fs::read_to_string(&toml).unwrap_or_default();
+    let text = if text.contains("[github]") {
+        text.replacen("[github]", "[github]\nadmin_bypass = true", 1)
+    } else {
+        format!("{text}\n[github]\nadmin_bypass = true\n")
+    };
+    std::fs::write(&toml, text).unwrap();
+    dir
+}
+
+#[test]
+fn admin_bypass_is_added_but_never_under_adopt() {
+    let live = live_ruleset(&["ci-ok"], false);
+    let mut with_admin: Value = serde_json::from_str(&live).unwrap();
+    with_admin["bypass_actors"] = serde_json::json!([
+        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+    ]);
+    let with_admin = with_admin.to_string();
+    // Without --adopt: an update adds the admin role.
+    let dir = repo_with_admin_bypass();
+    let api = Routes::synced()
+        .set(RULESET_11, 200, &live)
+        .then(RULESET_11, 200, &live)
+        .then(RULESET_11, 200, &with_admin)
+        .set(PUT_RULESET, 200, "empty.json")
+        .start();
+    run(&api, dir.path(), &["apply", "--yes", "--json"], 0);
+    assert_eq!(writes(&api), [PUT_RULESET]);
+    assert_eq!(
+        put_ruleset_body(&api)["bypass_actors"],
+        serde_json::json!([
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+        ])
+    );
+    // With --adopt: adding a bypass loosens, so drift and nothing written.
+    let dir = repo_with_admin_bypass();
+    let api = Routes::synced().set(RULESET_11, 200, &live).start();
+    let r = run(
+        &api,
+        dir.path(),
+        &["apply", "--yes", "--json", "--adopt"],
+        1,
+    );
     api.assert_only_get();
+    let report = r.report.unwrap();
     let rs = item(&report, "ruleset", "hoist: default branch");
     assert_eq!(rs["action"], "drift", "{report:#}");
     assert!(
-        rs["reason"].as_str().unwrap().contains("pull_request"),
+        rs["reason"]
+            .as_str()
+            .unwrap()
+            .contains("--adopt never loosens"),
         "{rs}"
     );
+}
+
+#[test]
+fn an_unwanted_bypass_actor_is_drift_in_both_modes_and_never_removed() {
+    let mut live: Value = serde_json::from_str(&live_ruleset(&["ci-ok"], false)).unwrap();
+    live["bypass_actors"] = serde_json::json!([
+        {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+    ]);
+    let live = live.to_string();
+    for args in [
+        &["check", "--json"][..],
+        &["check", "--json", "--adopt"][..],
+    ] {
+        let dir = repo();
+        let api = Routes::synced().set(RULESET_11, 200, &live).start();
+        let r = run(&api, dir.path(), args, 1);
+        api.assert_only_get();
+        let report = r.report.unwrap();
+        let rs = item(&report, "ruleset", "hoist: default branch");
+        assert_eq!(rs["action"], "drift", "{args:?}: {report:#}");
+        let reason = rs["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("`RepositoryRole:5:pull_request`"),
+            "{reason}"
+        );
+        assert!(reason.contains("admin_bypass = true"), "{reason}");
+    }
+    // apply writes nothing for it.
+    let dir = repo();
+    let api = Routes::synced().set(RULESET_11, 200, &live).start();
+    run(&api, dir.path(), &["apply", "--yes", "--json"], 1);
+    api.assert_only_get();
 }
 
 #[test]
@@ -1003,19 +1109,17 @@ fn adopt_never_opens_up_visibility() {
 
 #[test]
 fn adopt_keeps_merge_queue_settings_it_does_not_write() {
-    // A live queue with its own settings (SQUASH): an update would replace them, so drift.
+    // A live queue with its own settings (SQUASH): the read-merge-write keeps them.
     let mut rs: Value = serde_json::from_str(&live_ruleset(&["lint"], false)).unwrap();
     rs["rules"][1]["parameters"] = serde_json::json!({"merge_method": "SQUASH"});
-    let (api, report) = adopt(&rs.to_string(), &[], 1);
-    api.assert_only_get();
-    let r = item(&report, "ruleset", "hoist: default branch");
-    assert_eq!(r["action"], "drift", "{report:#}");
-    assert!(
-        r["reason"]
-            .as_str()
-            .unwrap()
-            .contains("merge queue settings"),
-        "{r}"
+    let mut after: Value = serde_json::from_str(&live_ruleset(&["ci-ok", "lint"], false)).unwrap();
+    after["rules"][1]["parameters"] = serde_json::json!({"merge_method": "SQUASH"});
+    let (api, _) = adopt_then(&rs.to_string(), &after.to_string(), &[], 0);
+    assert_eq!(writes(&api), [PUT_RULESET]);
+    let body = put_ruleset_body(&api);
+    assert_eq!(
+        rule(&body, "merge_queue")["parameters"],
+        serde_json::json!({"merge_method": "SQUASH"})
     );
 }
 

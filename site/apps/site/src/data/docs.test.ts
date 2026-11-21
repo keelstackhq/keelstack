@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
@@ -97,6 +98,9 @@ describe("docs data", () => {
   });
 });
 
+const git = (...args: string[]): string =>
+  execFileSync("git", args, { cwd: findRoot(), encoding: "utf8", stdio: "pipe" });
+
 describe("cloud environment page", () => {
   const page = readFileSync(new URL("../pages/docs/cloud.md", import.meta.url), "utf8");
   // bosun's docs/setup-script.sh, copied verbatim at a pinned bosun commit (data/bosun/).
@@ -115,6 +119,30 @@ describe("cloud environment page", () => {
       copy.replace(/^#!\/usr\/bin\/env bash\n/, ""),
     );
     expect(page).toContain(`${facts.repoUrl}/blob/${source.ref}/bosun/docs/setup-script.sh`);
+  });
+
+  it("copies the file at a commit of this branch's history, byte for byte", (ctx) => {
+    // The page links the copy at `ref`: it must be an ancestor of HEAD (no orphan commit), and the
+    // file there must have the recorded sha256. Skipped outside a git checkout, and in a shallow
+    // clone that lacks the commit (CI's ci-site checks out with depth 1).
+    try {
+      git("rev-parse", "--git-dir");
+    } catch {
+      return ctx.skip();
+    }
+    const has = (() => {
+      try {
+        git("cat-file", "-e", `${source.ref}^{commit}`);
+        return true;
+      } catch {
+        return false;
+      }
+    })();
+    if (!has && git("rev-parse", "--is-shallow-repository").trim() === "true") return ctx.skip();
+    expect(has, `${source.ref} is not in this repository`).toBe(true);
+    expect(() => git("merge-base", "--is-ancestor", source.ref, "HEAD")).not.toThrow();
+    const blob = git("show", `${source.ref}:${source.path}`); // UTF-8 text, hashed as such
+    expect(createHash("sha256").update(blob).digest("hex")).toBe(source.sha256);
   });
 
   it("pins the bosun release the site shows", () => {

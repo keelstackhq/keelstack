@@ -50,20 +50,32 @@ Computer steps first, then phone steps. Typical first run:
     them one by one), merge queue off (`merge_queue = false`: bosun posts `risk-check`,
     `review-verdict` and `main-open` on the PR head, never on a merge-group commit, so a queue
     would hold every PR), plus the rules `deletion` (main cannot be deleted) and
-    `non_fast_forward` (no force-push to main), and one bypass actor: the repository admin role
-    in `pull_request` mode (an admin may merge a pull request past the missing gate statuses, for
-    the mainfix path below, but never pushes to main directly);
-  - ruleset `hoist: tags`: creation, update and deletion of `v*` tags (`vX.Y.Z` and the major
-    tag `v0`) are blocked for everyone but the bypass actor, the GitHub Actions integration as a
-    whole. That is wider than release.yml: any workflow job whose token has `contents: write`
-    can create, move or delete `v0`, which every `keelstackhq/keelstack/<tool>@v0` consumer runs.
-    Accepted risk (no separate release App): today only release.yml (jobs `release` and `major`)
-    and budget-report.yml (job `report`, for its reports branch) ask for `contents: write`; the
-    repository default token is read-only; every workflow file is R-ci in `.bosun/risk.toml`
-    (`.github/workflows/**`, owner only and on bosun's critical floor) and owned by the owner in
-    `.github/CODEOWNERS`, so no workflow gains or uses `contents: write` without the owner's
-    approval. `hoist apply` updates of `hoist: tags` keep owner-added includes, rules and bypass
-    actors (hoist reads, merges, writes);
+    `non_fast_forward` (no force-push to main), and, because `hoist.toml` sets
+    `[github] admin_bypass = true` (opt-in, default false), one bypass actor: the repository
+    admin role in `pull_request` mode. That is only the owner's mainfix path below: an admin may
+    merge a pull request past the missing gate statuses, never push to main directly. The merge
+    identity matters here: bosun (the orchestrator, D-022) merges with the workflow's
+    `GITHUB_TOKEN`, never an admin token, so the admin bypass never applies to bosun's merges and
+    the required checks stay enforced for them;
+  - ruleset `hoist: tags` (`[github] tags_bypass = "deploy_key"`): creation, update and deletion
+    of `v*` tags (`vX.Y.Z` and the major tag `v0`, which every `keelstackhq/keelstack/<tool>@v0`
+    consumer runs) are blocked for everyone but one bypass actor, the write deploy key
+    `hoist: release tags`. No workflow token can create, move or delete a `v*` tag, whatever its
+    `contents:` scope, and neither can a push-triggered workflow on an unmerged branch. `hoist
+    apply` creates the key pair, adds the public key as deploy key `hoist: release tags` (write
+    access), seals the private key as secret `RELEASE_TAG_KEY` into environment `release` and
+    makes that deploy key the only bypass actor; no step for the owner. release.yml's `release`
+    and `major` jobs (environment `release`, main only) load `RELEASE_TAG_KEY` (ed25519, OpenSSH
+    format, no passphrase) into ssh-agent (never on disk), pin github.com's ed25519 host key
+    (`StrictHostKeyChecking=yes`) and push `refs/tags/vX.Y.Z` and `+refs/tags/v0` over SSH; they
+    fail closed when the secret is missing. GitHub's DeployKey bypass actor takes no id, so it
+    covers every write deploy key of the repository: `hoist check` reports any other write
+    deploy key as drift (remove it by hand). Re-running `hoist apply` keeps the key and the
+    secret; to rotate, delete deploy key `hoist: release tags` and secret `RELEASE_TAG_KEY`, then
+    re-run `keel up` (or `hoist apply`). Unwanted live bypass actors on either ruleset are
+    reported as drift, never removed. Deleting a wrong tag needs an admin to first edit or
+    disable the tags ruleset (its only bypass actor is the deploy key), or to use the deploy key. The repository stays public (npm provenance). `hoist apply` updates of
+    `hoist: tags` keep owner-added includes and rules (hoist reads, merges, writes);
   - environments `release`, `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default
     branch only, no reviewers (D-022);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
@@ -71,13 +83,16 @@ Computer steps first, then phone steps. Typical first run:
     deploys `site/apps/site/dist`), a minted deploy token sealed with the
     account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`.
     deploy-site deploys only a released version: a version-bump push skips the deploy (job
-    `decide` finds no tag `vX.Y.Z` yet) and the release run's completion deploys it; a manual
-    run deploys only from main. Pull requests build and test the site in ci.yml (`ci-site`);
+    `decide` finds no tag `vX.Y.Z` yet) and the release run's completion deploys it. The release
+    commit lives only on the tag (main never moves), so a released version (> 0.21.0) is built
+    from the tag's commit, never from a later main head; <= 0.21.0 builds the resolved main
+    commit. A manual run deploys only from main. Pull requests build and test the site in ci.yml (`ci-site`);
     deploy-site has no `pull_request` trigger. Only its `Check secrets` and `Deploy to
     Cloudflare Pages` steps receive `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID`;
   - reads only: app installation, environment secrets and variables (present or not), crates.io and
     npm packages (first publish needed or not).
-- Release: no secrets; crates.io and npm use trusted publishing (OIDC). Environment `release`
+- Release: no publish secrets (crates.io and npm use trusted publishing, OIDC); the one
+  release secret is `RELEASE_TAG_KEY`, created and sealed by `hoist apply` (above). Environment `release`
   has no required reviewer (D-022), so anyone with write access can dispatch release.yml or
   cargo-deny-npm.yml (an npm publish of the cargo-deny packages) from main; the environment's
   default-branch-only rule keeps both on main. Retired with the old
@@ -100,10 +115,6 @@ then the gates run again from the fixed main. Once a monorepo release (> 0.21.0)
 
 ## Follow-ups (not done here)
 
-- Narrower tag bypass without a new App: a deploy key as the only bypass actor of `hoist: tags`,
-  its private key kept in environment `release`, release.yml pushing tags over SSH. Needs a hoist
-  model change (a deploy-key bypass actor) and an owner-created key.
-
 - Download URLs: installers (`hoard/scripts/install.sh`, `hoard/circleci/hoard.yml` and its hull
   template copy, `hoard/action/src/binary.ts`, `hoist/release/action.yml`) send versions > 0.21.0 to
   this repository and <= 0.21.0 to the old ones; release.yml refuses to release a version <= 0.21.0.
@@ -113,7 +124,8 @@ then the gates run again from the fixed main. Once a monorepo release (> 0.21.0)
   as `splice-action-selftest.yml`, hoard `self-test.yml` as `hoard-self-test.yml` (its R2 leg needs
   the `R2_*` secrets of environment `hoard-r2`, else it is skipped with a notice). Deleted, not ported (manual
   tools, in git history): hoard `bench.yml` and `r2-checks.yml`; splice `release.yml` with
-  `scripts/release-tag.mjs` and `scripts/release-major.mjs` and their tests (the root release.yml
-  tags, releases and moves the major tag). Still inert in its folder: hoard `release.yml` (its
+  `scripts/release-tag.mjs` and `scripts/release-major.mjs` (the root release.yml tags, releases
+  and moves the major tag; `splice/scripts/release-tag.test.mjs` and `release-major.test.mjs` stay
+  and test the root release.yml). Still inert in its folder: hoard `release.yml` (its
   tests in `hoard/action/test/release-workflow.test.ts` read it). Not ported: the splice update-bot
   `splice.yml` copies (decisions are in-repo).

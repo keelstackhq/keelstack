@@ -27,6 +27,29 @@ pub enum SecretScope {
     Environment,
 }
 
+/// `[github] tags_bypass`: who may bypass the `hoist: tags` ruleset (spec §5, §6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TagsBypass {
+    /// The GitHub Actions app (any workflow job with `contents: write`); the default.
+    #[default]
+    Actions,
+    /// Only the repo's write deploy keys: hoist adds one (`hoist: release tags`) and seals its
+    /// private key into the release environment's secret `RELEASE_TAG_KEY`.
+    DeployKey,
+}
+
+impl<'de> Deserialize<'de> for TagsBypass {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        match String::deserialize(d)?.as_str() {
+            "actions" => Ok(TagsBypass::Actions),
+            "deploy_key" => Ok(TagsBypass::DeployKey),
+            other => Err(serde::de::Error::custom(format!(
+                "`tags_bypass` must be \"actions\" or \"deploy_key\" (got {other:?})"
+            ))),
+        }
+    }
+}
+
 /// `[github.environments.<name>]`: how hoist treats one GitHub environment.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
@@ -73,6 +96,10 @@ pub struct GithubCfg {
     pub apps: Vec<String>,
     /// `[github.tag_ruleset]`: the `hoist: tags` ruleset protecting release tags.
     pub tag_ruleset: Option<TagRulesetCfg>,
+    /// Who bypasses the `hoist: tags` ruleset: `actions` (default) or `deploy_key`.
+    pub tags_bypass: TagsBypass,
+    /// Opt-in: the repository admin role may merge a PR past the default-branch ruleset.
+    pub admin_bypass: bool,
 }
 
 /// `[github.tag_ruleset]`: tags only the bypass actor may create, move or delete.
@@ -104,6 +131,8 @@ impl Default for GithubCfg {
             environments: BTreeMap::new(),
             apps: Vec::new(),
             tag_ruleset: None,
+            tags_bypass: TagsBypass::Actions,
+            admin_bypass: false,
         }
     }
 }
@@ -308,20 +337,39 @@ pub fn load_root(dir: &Path) -> Result<RootConfig, HoistError> {
     Ok(cfg)
 }
 
-/// `[github.tag_ruleset]`: at least one pattern; the only bypass actor is `github-actions`.
+/// `[github.tag_ruleset]`: at least one pattern; the bypass is `github-actions`, or, with
+/// `tags_bypass = "deploy_key"`, the release-tags deploy key (then `bypass` stays unset).
 fn validate_tag_ruleset(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
-    let Some(t) = &g.tag_ruleset else {
-        return Ok(());
-    };
     let bad = |message: String| HoistError::Config {
         file: dir.join(FILE_NAME).display().to_string(),
         message,
+    };
+    let Some(t) = &g.tag_ruleset else {
+        if g.tags_bypass == TagsBypass::DeployKey {
+            return Err(bad(
+                "`github.tags_bypass = \"deploy_key\"` needs a `[github.tag_ruleset]` with \
+                 `patterns`; add it or remove `tags_bypass`"
+                    .to_string(),
+            ));
+        }
+        return Ok(());
     };
     if t.patterns.is_empty() || t.patterns.iter().any(|p| p.trim().is_empty()) {
         return Err(bad(
             "`github.tag_ruleset.patterns` needs at least one tag pattern such as `v*`; fix it"
                 .to_string(),
         ));
+    }
+    if g.tags_bypass == TagsBypass::DeployKey {
+        if !t.bypass.is_empty() {
+            return Err(bad(format!(
+                "`github.tag_ruleset.bypass` must be unset with `github.tags_bypass = \
+                 \"deploy_key\"` (got {:?}): the release-tags deploy key is the bypass; remove \
+                 `bypass`",
+                t.bypass
+            )));
+        }
+        return Ok(());
     }
     if t.bypass != ["github-actions"] {
         return Err(bad(format!(

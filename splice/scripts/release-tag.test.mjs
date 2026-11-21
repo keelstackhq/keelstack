@@ -4,7 +4,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fakeGh, gitEnv, job, releaseYml, runStep, stepScript } from "./release-yml.mjs";
@@ -25,6 +25,9 @@ function sandbox({ version = "0.22.0", previous = "", gh = {} } = {}) {
   const origin = join(dir, "origin.git");
   const work = join(dir, "work");
   g(dir, "init", "-q", "--bare", origin);
+  // The step reads and pushes git@github.com:$GH_REPO.git (SSH, the tag deploy key): here that
+  // URL is the bare origin.
+  appendFileSync(env.GIT_CONFIG_GLOBAL, `[url "${origin}"]\n\tinsteadOf = git@github.com:o/r.git\n`);
   g(dir, "init", "-q", "-b", "main", work);
   g(work, "remote", "add", "origin", origin);
   mkdirSync(join(work, "hoard/action/src"), { recursive: true });
@@ -195,9 +198,17 @@ test("release.yml tags only on the dispatched run on main, behind the release en
   // The tag comes from the plan (Cargo.toml's version), never from the event.
   assert.match(release, /TAG: \$\{\{ needs\.plan\.outputs\.tag \}\}/);
   assert.doesNotMatch(release, /github\.ref_name|github\.event\.|inputs\./);
-  // Only the tag is pushed, never forced.
-  assert.match(TAG_STEP, /git push origin "refs\/tags\/\$TAG"\n/);
-  assert.doesNotMatch(TAG_STEP, /--force|push origin (main|HEAD)/);
+  // Only the tag is pushed, never forced, over SSH with the tag deploy key (the tags ruleset's
+  // only bypass actor), before the release is published: the API never creates the tag.
+  assert.match(TAG_STEP, /remote="git@github\.com:\$GH_REPO\.git"\n/);
+  assert.match(TAG_STEP, /git push "\$remote" "refs\/tags\/\$TAG"\n/);
+  assert.doesNotMatch(TAG_STEP, /--force|\+refs|push (origin|"\$remote") (main|HEAD)/);
+  assert.doesNotMatch(TAG_STEP, /extraheader|GH_TOKEN/, "the token never reaches git");
+  assert.ok(
+    TAG_STEP.indexOf('git push "$remote"') < TAG_STEP.lastIndexOf('publish "$rid"'),
+    "the tag is pushed before the release is published",
+  );
+  assert.match(release, /RELEASE_TAG_KEY: \$\{\{ secrets\.RELEASE_TAG_KEY \}\}/);
   assert.match(TAG_STEP, /--notes-start-tag "\$PREVIOUS"/);
 });
 

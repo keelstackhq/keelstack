@@ -25,12 +25,19 @@ name: release
 #
 # Needs, all configured outside this file:
 #   - environment `release`: deployment branches = default branch only, no required reviewer.
-#   - secrets: none. npm and crates.io use OIDC trusted publishing: every package on npm and
-#     every crate on crates.io needs a trusted publisher for keelstackhq/keelstack, workflow
-#     release.yml, environment release. A crate that is not on crates.io yet has to be published
-#     once by hand first (trusted publishing cannot create a crate).
-#   - repository variables: none. The repository must be public (npm provenance).
-#   - tags: a ruleset on `v*` must let github-actions create `vX.Y.Z` and move `v<major>`.
+#   - secrets: RELEASE_TAG_KEY only, a secret of the environment `release` (written by hoist):
+#     the private half (ed25519, OpenSSH format) of a deploy key with write access. Jobs
+#     `release` and `major` load it into ssh-agent (never onto disk) and push the tags vX.Y.Z and
+#     v<major> with `git push git@github.com:<repo>.git` over SSH (github.com's host key pinned
+#     below). The GitHub API and the Actions token never create or move a tag. npm and crates.io
+#     use OIDC trusted publishing: every package on npm and every crate on crates.io needs a
+#     trusted publisher for keelstackhq/keelstack, workflow release.yml, environment release. A
+#     crate that is not on crates.io yet has to be published once by hand first (trusted
+#     publishing cannot create a crate).
+#   - repository variables: none. The repository must be public (npm provenance; the plan's
+#     partial clone also fetches blobs anonymously).
+#   - tags: a ruleset on `v*` whose only bypass actor is that deploy key (it creates `vX.Y.Z` and
+#     moves `v<major>`; nothing else may).
 #
 # Compatibility notes (not changed here, they are code):
 #   - Assets keep each tool's old name, now on release vX.Y.Z of keelstackhq/keelstack:
@@ -99,8 +106,9 @@ jobs:
           ref: ${{ github.event.pull_request.merge_commit_sha || inputs.sha || github.sha }}
           fetch-depth: 0
           filter: blob:none
-          # The first parent's Cargo.toml is a blob this partial clone fetches on demand.
-          persist-credentials: true
+          # The first parent's Cargo.toml is a blob this partial clone fetches on demand
+          # (anonymously: the repository is public). Nothing here pushes.
+          persist-credentials: false
       - name: Did the workspace version change?
         id: plan
         env:
@@ -112,8 +120,14 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # The [workspace.package] version of Cargo.toml at commit $1; empty when that commit has
+          # no Cargo.toml or no workspace version. Any git or fetch error fails (nonzero).
           cargo_version() {
-            git show "$1:Cargo.toml" | awk -F'"' '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version *=/ { print $2; exit }'
+            local tree toml
+            tree=$(git ls-tree --name-only "$1" -- Cargo.toml) || return 1
+            [ -n "$tree" ] || return 0
+            toml=$(git show "$1:Cargo.toml") || return 1
+            awk -F'"' '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version *=/ { print $2; exit }' <<<"$toml"
           }
           sha=$(git rev-parse "$SHA^{commit}")
           version=$(cargo_version "$sha")
@@ -133,7 +147,12 @@ jobs:
           else
             # The merge commit's first parent is main before the merge (merge and squash merges;
             # a rebase merge puts several commits on main, so use merge or squash for bump PRs).
-            prev=$(cargo_version "$sha^1" 2>/dev/null || true)
+            # Only an absent version may be empty: a git or fetch error fails the job, never
+            # passes as "nothing to release".
+            parent=$(git rev-parse --verify -q "$sha^1^{commit}") \
+              || { echo "::error::cannot read the first parent of $sha"; exit 1; }
+            prev=$(cargo_version "$parent") \
+              || { echo "::error::cannot read Cargo.toml at the first parent $parent (git or fetch error)"; exit 1; }
             echo "workspace version: ${prev:-none} -> $version"
             if [ "$version" != "$prev" ]; then release=true; fi
             if [ -z "$prev" ]; then
@@ -454,8 +473,8 @@ jobs:
       TAG: ${{ needs.plan.outputs.tag }}
       SHA: ${{ needs.plan.outputs.sha }}
     steps:
-      # No stored credentials, and no dependency code runs in this job: the write token is passed
-      # only to the git steps that push (as an http.extraheader via GIT_CONFIG_*).
+      # No stored credentials, and no dependency code runs in this job: tags are pushed over SSH
+      # with the deploy key (RELEASE_TAG_KEY), which only the push steps load into ssh-agent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.sha }}
@@ -533,6 +552,44 @@ jobs:
             | sort -V | awk -v t="$TAG" '$0 == t { print p; exit } { p = $0 }')
           echo "previous release: ${prev:-none}"
           echo "PREVIOUS=$prev" >>"$GITHUB_ENV"
+      # The tag deploy key (the tags ruleset's only bypass actor) goes into ssh-agent for the
+      # tag step only; the agent is stopped in an always() step. Same two steps as in `major`.
+      - name: Load the tag deploy key
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG_KEY:-}" ]; then
+            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            exit 1
+          fi
+          # github.com's published ed25519 host key, checked against its published fingerprint
+          # (docs.github.com, "GitHub's SSH key fingerprints"). Never StrictHostKeyChecking=no.
+          kh="$RUNNER_TEMP/release-known_hosts"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >"$kh"
+          fp=$(ssh-keygen -lf "$kh" | awk '{ print $2 }')
+          if [ "$fp" != "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU" ]; then
+            echo "::error::the pinned github.com host key has fingerprint $fp, not GitHub's published one"
+            exit 1
+          fi
+          sock="$RUNNER_TEMP/release-ssh-agent.sock"
+          eval "$(ssh-agent -s -a "$sock")" >/dev/null
+          # Through a pipe from a builtin: the key is never on disk or in a process's argv.
+          if ! printf '%s\n' "$RELEASE_TAG_KEY" | ssh-add -q - 2>/dev/null; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY is not a usable private key (ed25519, OpenSSH format, no passphrase): write it again with hoist"
+            exit 1
+          fi
+          if ! ssh-add -L | grep -q '^ssh-ed25519 '; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY must be an ed25519 key"
+            exit 1
+          fi
+          {
+            echo "SSH_AUTH_SOCK=$sock"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
+          } >>"$GITHUB_ENV"
       - name: Release commit, tag and GitHub release
         id: release
         env:
@@ -540,13 +597,11 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          # Push auth for this step's git commands only, via env (not argv); git >= 2.31.
-          # core.hooksPath: belt and braces, so a stray hook in the checkout never runs here.
-          export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=http.https://github.com/.extraheader
-          export GIT_CONFIG_KEY_1=core.hooksPath GIT_CONFIG_VALUE_1=/dev/null
-          basic=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)
-          echo "::add-mask::$basic"
-          export GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $basic"
+          # The tag is read and pushed over SSH with the deploy key in ssh-agent; the Actions
+          # token is only gh's (releases), never git's. core.hooksPath: belt and braces, so a
+          # stray hook in the checkout never runs here.
+          remote="git@github.com:$GH_REPO.git"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -561,7 +616,11 @@ jobs:
           read -r rid rstate <<<"$(find_release)" || true
           rid=${rid:-}; rstate=${rstate:-none}
 
-          at=$(git ls-remote origin "refs/tags/$TAG^{}" "refs/tags/$TAG" | awk '{ print $1 }' | tail -n1)
+          # The peeled commit of the tag on the remote, or nothing.
+          at=$(git ls-remote "$remote" "refs/tags/$TAG^{}" "refs/tags/$TAG" | awk '{ print $1 }' | tail -n1)
+          if [ -n "$at" ] && ! git cat-file -e "$at^{commit}" 2>/dev/null; then
+            git fetch -q "$remote" "refs/tags/$TAG"
+          fi
           if [ -n "$at" ]; then
             # The tag must be this release's commit: a release commit whose parent is SHA.
             if [ "$(git rev-parse "$at^")" != "$SHA" ] || [ "$(git log -1 --format=%s "$at")" != "chore(release): $TAG" ]; then
@@ -574,7 +633,7 @@ jobs:
               exit 0
             fi
             if [ "$rstate" != draft ]; then
-              echo "::error::tag $TAG exists without a release. The baked hoard checksums belong to the assets of the run that pushed it, which are gone. Delete the tag (gh api -X DELETE repos/$GH_REPO/git/refs/tags/$TAG) and run this workflow again"
+              echo "::error::tag $TAG exists without a release. The baked hoard checksums belong to the assets of the run that pushed it, which are gone. Delete the tag: the tag ruleset blocks deletion and its only bypass actor is the deploy key, so a repository admin must first edit or disable the ruleset (or use the deploy key) to delete $TAG; agents never do (D-006). Then run this workflow again"
               exit 1
             fi
             # A draft of an earlier run: its assets are the original ones. Check them against the
@@ -605,11 +664,17 @@ jobs:
           git tag -a "$TAG" -m "$TAG" "$commit"
           start=()
           if [ -n "$PREVIOUS" ]; then start=(--notes-start-tag "$PREVIOUS"); fi
-          # A draft has no tag yet: --target pins the commit it is notes-generated from.
+          # A draft creates no tag (GitHub creates a missing tag only when a release is
+          # published); --target pins the commit its notes are generated from.
           gh release create "$TAG" --draft --target "$SHA" --title "$TAG" \
             --notes-file notes.md --generate-notes "${start[@]}" release/*
-          # Only the tag: never main. A plain (non-forced) push fails if the tag already exists.
-          git push origin "refs/tags/$TAG"
+          # The tag is created here, by git over SSH with the deploy key: only the tag, never
+          # main. A plain (non-forced) push fails if the tag already exists.
+          git push "$remote" "refs/tags/$TAG"
+          # Publish only a release whose tag exists at the release commit, so publishing never
+          # creates (or re-points) the tag through the API.
+          pushed=$(git ls-remote "$remote" "refs/tags/$TAG^{}" | awk '{ print $1 }')
+          [ "$pushed" = "$commit" ] || { echo "::error::tag $TAG is at '${pushed:-nothing}' on the remote, not at $commit: not published"; exit 1; }
           read -r rid _ <<<"$(find_release)" || true
           [ -n "${rid:-}" ] || { echo "::error::the draft release of $TAG was not found after creating it"; exit 1; }
           publish "$rid"
@@ -625,6 +690,11 @@ jobs:
           { cat expected.txt; echo SHA256SUMS; } | LC_ALL=C sort | diff - live.txt \
             || { echo "::error::release $TAG does not have exactly the expected assets"; exit 1; }
           [ "$(wc -l <live.txt)" -eq 31 ]
+      - name: Stop the ssh-agent
+        if: always()
+        run: |
+          if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null || true; fi
+          rm -f "$RUNNER_TEMP/release-ssh-agent.sock" "$RUNNER_TEMP/release-known_hosts"
 
   crates:
     needs: [plan, release]
@@ -845,31 +915,81 @@ jobs:
       group: release-major-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
     environment: release
-    permissions:
-      contents: write
+    # The deploy key moves the tag: the job's token needs no permission.
+    permissions: {}
     env:
       TAG: ${{ needs.plan.outputs.tag }}
       VERSION: ${{ needs.plan.outputs.version }}
-      GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
+      # Same two steps as in `release`: the deploy key in ssh-agent, stopped in an always() step.
+      - name: Load the tag deploy key
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG_KEY:-}" ]; then
+            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            exit 1
+          fi
+          # github.com's published ed25519 host key, checked against its published fingerprint
+          # (docs.github.com, "GitHub's SSH key fingerprints"). Never StrictHostKeyChecking=no.
+          kh="$RUNNER_TEMP/release-known_hosts"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >"$kh"
+          fp=$(ssh-keygen -lf "$kh" | awk '{ print $2 }')
+          if [ "$fp" != "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU" ]; then
+            echo "::error::the pinned github.com host key has fingerprint $fp, not GitHub's published one"
+            exit 1
+          fi
+          sock="$RUNNER_TEMP/release-ssh-agent.sock"
+          eval "$(ssh-agent -s -a "$sock")" >/dev/null
+          # Through a pipe from a builtin: the key is never on disk or in a process's argv.
+          if ! printf '%s\n' "$RELEASE_TAG_KEY" | ssh-add -q - 2>/dev/null; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY is not a usable private key (ed25519, OpenSSH format, no passphrase): write it again with hoist"
+            exit 1
+          fi
+          if ! ssh-add -L | grep -q '^ssh-ed25519 '; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY must be an ed25519 key"
+            exit 1
+          fi
+          {
+            echo "SSH_AUTH_SOCK=$sock"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
+          } >>"$GITHUB_ENV"
       - name: Move v<major> to the release commit
         run: |
           set -euo pipefail
+          remote="git@github.com:$GH_REPO.git"
           major="v${VERSION%%.*}"
+          # Every tag of the remote, peeled ones as <name>^{}: one read over SSH.
+          refs=$(git ls-remote --tags "$remote")
           # Only forward: a backport release below the newest stable v<major>.* leaves it alone.
-          newest=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$major." --paginate --jq '.[].ref' \
-            | sed 's#^refs/tags/##' | { grep -E "^$major\.[0-9]+\.[0-9]+$" || true; } | sort -V | tail -n1)
+          newest=$(awk '{ print $2 }' <<<"$refs" | sed -n 's#^refs/tags/##p' \
+            | { grep -E "^$major\.[0-9]+\.[0-9]+$" || true; } | sort -V | tail -n1)
           if [ "$newest" != "$TAG" ]; then
             echo "newest stable $major.* tag is ${newest:-none}, not $TAG: $major not moved"
             exit 0
           fi
-          commit=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha)
-          if gh api "repos/$GH_REPO/git/ref/tags/$major" >/dev/null 2>&1; then
-            gh api -X PATCH "repos/$GH_REPO/git/refs/tags/$major" -f sha="$commit" -F force=true >/dev/null
-          else
-            gh api -X POST "repos/$GH_REPO/git/refs" -f ref="refs/tags/$major" -f sha="$commit" >/dev/null
-          fi
-          now=$(gh api "repos/$GH_REPO/commits/$major" --jq .sha)
+          # The release commit: the peeled tag (annotated), else the tag itself (lightweight).
+          commit=$(awk -v t="refs/tags/$TAG" '$2 == t "^{}" { p = $1 } $2 == t { l = $1 } END { print (p != "" ? p : l) }' <<<"$refs")
+          [ -n "$commit" ] || { echo "::error::no commit for $TAG on the remote"; exit 1; }
+          # A scratch repository holding the release commit, so git can push v<major> to it.
+          work="$RUNNER_TEMP/major-tag"
+          trap 'rm -rf "$work"' EXIT
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" fetch -q --depth=1 --no-tags "$remote" "refs/tags/$TAG"
+          git -C "$work" tag -f "$major" "$commit" >/dev/null
+          # The forced move of v<major> (and only that ref), by the deploy key.
+          git -C "$work" push -q "$remote" "+refs/tags/$major"
+          now=$(git ls-remote "$remote" "refs/tags/$major" | awk '{ print $1 }')
           [ "$now" = "$commit" ] || { echo "::error::$major is at $now, not at $commit"; exit 1; }
           echo "$major -> $TAG ($commit)"
+      - name: Stop the ssh-agent
+        if: always()
+        run: |
+          if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null || true; fi
+          rm -f "$RUNNER_TEMP/release-ssh-agent.sock" "$RUNNER_TEMP/release-known_hosts"

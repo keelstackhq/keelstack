@@ -254,13 +254,21 @@ fn excluded_paths_always_need_the_owner() {
             "{file}: {v}"
         );
         // A plain owner signature still counts where signatures do; never on a trust file
-        // (`[approvals]` in .bosun/bosun.toml and the trust list itself, D-022).
+        // (`[approvals]` in .bosun/bosun.toml, the trust list itself and what applies it: the
+        // risk rules, risk-check and its workflow, D-022).
         let s = sig(&k, &format!("bosun-approve v1 acme/widget#1 {HEAD}"));
         post(
             &fake,
             &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {s}"),
         );
-        let trust = [".bosun/bosun.toml", "src/core/approve.rs"].contains(&file);
+        let trust = [
+            ".bosun/bosun.toml",
+            ".bosun/risk.toml",
+            "src/cli/risk_check.rs",
+            "src/core/approve.rs",
+            ".github/workflows/risk.yml",
+        ]
+        .contains(&file);
         assert_eq!(check(&fake, IN).0, if trust { 5 } else { 0 }, "{file}");
     }
 }

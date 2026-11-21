@@ -21,6 +21,9 @@ paths = [
     "hoard/.bosun/**", "hoard/governance/**", "hoard/CODEOWNERS", "hoard/docs/CODEOWNERS", "hoard/.github/CODEOWNERS", "hoard/.claude/**", "hoard/.splice/**", "hoard/docs/setup-script.sh", "hoard/REVIEW.md", "hoard/src/core/session_rules.rs", "hoard/src/core/session_rules/**", "hoard/src/hooks/session_rules.rs", "hoard/src/hooks/session_rules/**", "hoard/.claude-plugin/**", "hoard/docs/agents/**",
     # hoist's own R-gov rule (its old .bosun/risk.toml), re-rooted under hoist/.
     "hoist/.bosun/**", "hoist/governance/**", "hoist/CODEOWNERS", "hoist/docs/CODEOWNERS", "hoist/.github/CODEOWNERS", "hoist/.claude/**", "hoist/.splice/**", "hoist/docs/setup-script.sh", "hoist/REVIEW.md", "hoist/src/core/session_rules.rs", "hoist/src/core/session_rules/**", "hoist/src/hooks/session_rules.rs", "hoist/src/hooks/session_rules/**", "hoist/.claude-plugin/**", "hoist/docs/agents/**",
+    # The site's governance paths (D-024), re-rooted under site/ like the folders above; the
+    # site's copy of bosun's setup script is served for pasting and runs as root too.
+    "site/.bosun/**", "site/governance/**", "site/CODEOWNERS", "site/docs/CODEOWNERS", "site/.github/CODEOWNERS", "site/.claude/**", "site/.splice/**", "site/docs/setup-script.sh", "site/REVIEW.md", "site/src/core/session_rules.rs", "site/src/core/session_rules/**", "site/src/hooks/session_rules.rs", "site/src/hooks/session_rules/**", "site/.claude-plugin/**", "site/docs/agents/**", "site/apps/site/src/data/bosun/setup-script.sh",
 ]
 
 [[rule]]
@@ -31,9 +34,6 @@ why = "CI decides what is verified."
 # loosens a folder's old rule). One id per rule, so the same holds for bosun's paths here.
 paths = [
     ".github/workflows/**", ".github/actions/**", ".github/dependabot.yml", "scripts/**", "Makefile", "**/Makefile", "justfile", "**/justfile", "Dockerfile", "**/Dockerfile", ".husky/**", "**/action.yml", "**/action.yaml", ".circleci/**", ".gitlab-ci.yml", ".gitlab/ci/**", ".buildkite/**", "**/jenkinsfile", "azure-pipelines.y*ml", "bitbucket-pipelines.yml", ".travis.yml", ".drone.yml", "**/deny.toml", "**/.deny.toml", "**/deny.exceptions.toml", "**/.deny.exceptions.toml", "**/deny.local.toml", "**/.deny.local.toml", "scripts/deny.mjs", "rust-toolchain.toml", "rust-toolchain",
-    # `.github/workflows/**` above also guards the tag ruleset: its bypass actor is the whole
-    # GitHub Actions integration, so any job with `contents: write` (release.yml, budget-report.yml)
-    # can move `v0`; adding that permission to a workflow needs the owner (hoist.toml).
     # affected.sh decides which folders CI builds and tests.
     ".github/scripts/**",
     # splice's own R-ci rule (its old .bosun/risk.toml), re-rooted under splice/.
@@ -44,6 +44,9 @@ paths = [
     "hoard/.github/workflows/**", "hoard/.github/actions/**", "hoard/.github/dependabot.yml", "hoard/scripts/**", "hoard/Makefile", "hoard/justfile", "hoard/Dockerfile", "hoard/.husky/**", "hoard/.circleci/**", "hoard/.gitlab-ci.yml", "hoard/.gitlab/ci/**", "hoard/.buildkite/**", "hoard/azure-pipelines.y*ml", "hoard/bitbucket-pipelines.yml", "hoard/.travis.yml", "hoard/.drone.yml", "hoard/rust-toolchain.toml", "hoard/.npmrc",
     # hoist's own R-ci rule (its old .bosun/risk.toml), re-rooted under hoist/.
     "hoist/.github/workflows/**", "hoist/.github/actions/**", "hoist/.github/dependabot.yml", "hoist/scripts/**", "hoist/Makefile", "hoist/justfile", "hoist/Dockerfile", "hoist/.husky/**", "hoist/.circleci/**", "hoist/.gitlab-ci.yml", "hoist/.gitlab/ci/**", "hoist/.buildkite/**", "hoist/azure-pipelines.y*ml", "hoist/bitbucket-pipelines.yml", "hoist/.travis.yml", "hoist/.drone.yml", "hoist/rust-toolchain.toml",
+    # berth's imported workflows (inert in its folder, like the folders above): a copy back to
+    # the root would run them.
+    "berth/.github/workflows/**",
 ]
 
 [[rule]]

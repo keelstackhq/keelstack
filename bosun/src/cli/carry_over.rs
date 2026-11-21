@@ -8,7 +8,7 @@ use super::risk_check::{
     Found, decisive_review, delegation_blocked, review_models, submitted, verdict_inputs, withdrawn,
 };
 use super::verdict::CONTEXT;
-use crate::core::approve::TRUST_FILES;
+use crate::core::approve::trust_files_in;
 use crate::core::carry::{
     self, CarryFacts, Entry, FileChange, Hop, Kind, LockTexts, RawTree, Refusal,
 };
@@ -163,6 +163,12 @@ pub fn check(
         Ok::<_, String>(t)
     };
     let (tree_b, tree_m, tree_h, tree_h2) = (tr(&b)?, tr(&m)?, tr(h)?, tr(h2)?);
+    // Rule 4: the trust files at the root and under bosun's code roots, read at the base `D`
+    // (a PR cannot move them), as risk-check reads them.
+    let roots = super::risk_check::code_roots_at(gh, d)
+        .map_err(|_| "cannot read bosun's code roots at the base".to_string())?;
+    let trust = trust_files_in(&roots);
+    let trust: Vec<&str> = trust.iter().map(String::as_str).collect();
     let mut facts = CarryFacts {
         base_is_default: true,
         h: h.into(),
@@ -178,7 +184,7 @@ pub fn check(
         tree_m,
         tree_h,
         tree_h2,
-        trust_files: &TRUST_FILES,
+        trust_files: &trust,
         lock_texts: BTreeMap::new(),
     };
     // Rule 6 reads each lockfile both sides changed in place, at each commit by its sha. A text

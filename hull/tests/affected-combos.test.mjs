@@ -114,6 +114,45 @@ test("CLI run from the monorepo root diffs hull-relative paths", () => {
   assert.deepEqual(JSON.parse(r.stdout), ["site"]);
 });
 
+test("CLI: a file moved between two pieces selects the combos of both (--no-renames)", () => {
+  const root = mkdtempSync(join(tmpdir(), "affected-mv-"));
+  cpSync(fileURLToPath(new URL("../scripts/", import.meta.url)), join(root, "hull/scripts"), {
+    recursive: true,
+  });
+  const git = (...args) =>
+    execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], {
+      cwd: root,
+      encoding: "utf8",
+    });
+  git("init", "-q", "-b", "main");
+  mkdirSync(join(root, "hull/template/pieces/astro-site/files"), { recursive: true });
+  writeFileSync(join(root, "hull/template/pieces/astro-site/files/moved.txt"), "a\nb\nc\nd\n");
+  git("add", "-A");
+  git("commit", "-qm", "base");
+  mkdirSync(join(root, "hull/template/pieces/secrets/files"), { recursive: true });
+  git(
+    "mv",
+    "hull/template/pieces/astro-site/files/moved.txt",
+    "hull/template/pieces/secrets/files/moved.txt",
+  );
+  git("commit", "-qm", "move");
+  // git's own rename detection would list only the new path.
+  assert.equal(
+    git("diff", "--name-only", "-M", "HEAD~1...HEAD").trim(),
+    "hull/template/pieces/secrets/files/moved.txt",
+  );
+  const r = spawnSync(
+    "node",
+    [join(root, "hull/scripts/affected-combos.mjs"), "--base", "HEAD~1"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(JSON.parse(r.stdout), ["site", "web-secrets"]);
+});
+
 test("scheduled combos are never selected, even for base or all-changing files", () => {
   const withScheduled = [
     ...combos,

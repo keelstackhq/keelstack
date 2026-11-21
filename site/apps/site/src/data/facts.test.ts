@@ -13,6 +13,7 @@ import {
   workspaceMembers,
 } from "./facts";
 import { terminal } from "./content";
+import { readyDocs } from "./docs";
 import { tools } from "./tools";
 import { bare, links, sources, versions } from "./versions";
 
@@ -240,27 +241,55 @@ const walk = (d: string): string[] =>
   readdirSync(d, { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)],
   );
-const ARCHIVED =
-  /github\.com\/keelstackhq\/(hull|splice|hoard|bosun|hoist|berth|keel|decisions|site)\b|gh:keelstackhq\/(?!keelstack\/)[\w-]+\/\/|(?<![@\w])keelstackhq\/(splice|hoard|hoist|bosun)(\/[\w-]+)?@/;
-// History lines that name an archived source on purpose (keep this list small).
-const HISTORY = [
+// The archived repos (D-023). Only legacy.ts may name them; the docs get them through tokens.
+const OLD = "(?:bosun|splice|hull|hoist|hoard|berth|keel|decisions|site)";
+const ARCHIVED = new RegExp(
+  [
+    `github\\.com\\/keelstackhq\\/${OLD}\\b`,
+    `raw\\.githubusercontent\\.com\\/keelstackhq\\/${OLD}\\b`,
+    `gh:keelstackhq\\/(?!keelstack\\/)[\\w-]+\\/`,
+    // Action refs and repo slugs, with or without `@<ref>` (not npm's `@keelstackhq/<tool>`).
+    `(?<![@\\w./-])keelstackhq\\/${OLD}\\b`,
+  ].join("|"),
+);
+// History lines that name an archived source on purpose (keep this list small), by output page.
+const HISTORY: Record<string, string> = {
   // troubleshooting.md: a fix for repos rendered from the old hull repo's v0.1.x.
-  "### `splice channel add gh:keelstackhq/hull//rigging` refuses in a repo from hull v0.1.x",
+  troubleshooting:
+    "### `splice channel add gh:keelstackhq/hull//rigging` refuses in a repo from hull v0.1.x",
+};
+// History: verbatim copies, each checked against its sha256 (adopt, start-checklist, docs tests),
+// by the docs page that embeds them. A line of one of them may name what the copy names, and the
+// built page (and its section of llms-full.txt) may show the copy's own pins and links.
+const COPY_PAGES: Record<string, string> = {
+  adopt: "src/data/hull/adopt.md",
+  "start-project": "src/data/hull/start-checklist.md",
+  cloud: "src/data/bosun/setup-script.sh",
+};
+const COPY_TEXT: Record<string, string> = Object.fromEntries(
+  [...new Set([...Object.keys(COPY_PAGES), ...Object.keys(HISTORY)])].map((slug) => [
+    slug,
+    [COPY_PAGES[slug] ? read(COPY_PAGES[slug]) : "", HISTORY[slug] ?? ""].join("\n"),
+  ]),
+);
+const VERBATIM = new Set(Object.values(COPY_TEXT).flatMap((t) => t.split("\n")));
+/** Values `re` finds in the verbatim copies of page `slug`: allowed on that page only (history). */
+const inCopies = (slug: string | undefined, re: RegExp): Set<string> =>
+  new Set(
+    slug && COPY_TEXT[slug] ? [...decode(COPY_TEXT[slug]).matchAll(re)].map((m) => m[1]!) : [],
+  );
+
+// docs-src lines that state a version as history in a form the prose scan does not recognise.
+const HISTORY_SEMVER: string[] = [
+  "0.2.0 both CIs ran everything", // ci.md: "(In" ends the line before.
+  "records `0.0.0+g<sha>`", // getting-started.md: splice's placeholder version.
+  "as a placeholder `0.0.0`", // releases.md: the npm placeholder.
+  "(for example `cli-v1.2.0`)", // releases.md: an example tag.
+  "pnpm add -D docspack@1.5.0", // getting-started.md: the third-party docspack CLI (docs.test.ts).
+  "`2026.10.27` on npm is an older build", // getting-started.md: an old docspack build.
+  'version (such as "bosun 0.4.0")', // start-project.md: names the copy's own example.
+  "bosun 0.2.3's channel still", // getting-started.md: what the old channel did.
 ];
-// History: verbatim copies, each checked against its sha256 (adopt, start-checklist, docs tests).
-// A docs line that is a line of one of them may name what the copy names.
-const COPIES = [
-  "src/data/hull/adopt.md",
-  "src/data/hull/start-checklist.md",
-  "src/data/bosun/setup-script.sh",
-]
-  .map((p) => read(p))
-  .concat(HISTORY)
-  .join("\n");
-const VERBATIM = new Set(COPIES.split("\n"));
-/** Values `re` finds in the verbatim copies: allowed in the built docs (history). */
-const inCopies = (re: RegExp): Set<string> =>
-  new Set([...decode(COPIES).matchAll(re)].map((m) => m[1]!));
 
 describe("no hand-typed fact in the docs sources", () => {
   // History lives in one file, src/data/legacy.ts (the archived repos' last releases); not scanned.
@@ -269,6 +298,7 @@ describe("no hand-typed fact in the docs sources", () => {
     .map((f) => relative(appDir, f));
   const tsFiles = [
     "src/data/versions.ts",
+    "src/data/derive.ts",
     "src/data/scenarios.ts",
     "src/data/docs.ts",
     "src/data/migrate.ts",
@@ -297,6 +327,42 @@ describe("no hand-typed fact in the docs sources", () => {
     expect(text.match(/\bv?\d+\.\d+\.\d+\b/g) ?? []).toEqual([]);
   });
 
+  test.each(docsSrc)("%s writes every token whole: {{ks.NAME}}", (f) => {
+    // A formatter must not split a token (`{ { ks.x } }` renders as literal text).
+    const hits = read(f)
+      .split("\n")
+      .filter((l) => /\{\s+\{|\}\s+\}|(?<![\w.-])ks\./.test(l.replace(/\{\{ks\.[\w.]+\}\}/g, "")));
+    expect(hits).toEqual([]);
+  });
+
+  test.each(docsSrc)("%s states a version in prose only as history", (f) => {
+    // A semver in docs-src prose is a token, a verbatim copy's line, or history: a version floor
+    // or the release that changed something ("since bosun 0.10.0", "0.2.1 or later", "before
+    // 0.2.2", "in 0.2.0"). What a page was checked against is a token (`checked.bosun`).
+    const SEMVER = /\bv?\d+\.\d+\.\d+\b/g;
+    const before =
+      /(?:\b(?:since|before|after|until|from|in|to|older than|needs|added in)\s+|>=\s*|\(\s*)(?:(?:bosun|hull|splice|hoist|hoard|berth|npm)\s+)?$/i;
+    // "<tool> X.Y.Z adds/ships/seeds ...": the release that introduced a feature.
+    const after =
+      /^(?:'s)?\s*(?:or later|and later|to v?\d|\(|\)|opt-in\b|(?:adds|ships|seeds|also|tries|ran|run|can run|and \w+ v?\d+\.\d+\.\d+ (?:can )?run)\b)/i;
+    const hits: string[] = [];
+    read(f)
+      .split("\n")
+      .forEach((l, i) => {
+        if (VERBATIM.has(l)) return;
+        for (const m of l.matchAll(SEMVER)) {
+          const pre = l.slice(0, m.index);
+          const post = l.slice(m.index + m[0].length);
+          if (before.test(pre) || after.test(post) || HISTORY_SEMVER.some((h) => l.includes(h)))
+            continue;
+          hits.push(
+            `${f}:${i + 1}: ${m[0]} in "${l.slice(Math.max(0, m.index - 40), m.index + 20)}"`,
+          );
+        }
+      });
+    expect(hits).toEqual([]);
+  });
+
   test.each(docsSrc)("%s types no command pin", (f) => {
     const pin = /@keelstackhq\/[a-z-]+@\d|--ref v\d|\/assess\/v\d|@[0-9a-f]{40}\b/;
     expect(
@@ -318,40 +384,70 @@ const builtFiles = (): (readonly [string, string])[] =>
           decode(readFileSync(f, "utf8")).replace(/&lt;/g, "<").replace(/&gt;/g, ">"),
         ] as const,
     );
-/** `[file, first group]` for every match of `re` in the build. */
-const all = (re: RegExp): [string, string][] =>
-  builtFiles().flatMap(([f, src]) =>
-    [...src.matchAll(re)].map((m) => [f, m[1]!] as [string, string]),
+/** `dist/docs/<slug>.md` and `dist/docs/<slug>/index.html` -> `<slug>`. */
+const slugOf = (rel: string): string | undefined =>
+  /^dist[/\\]docs[/\\](.+?)(?:[/\\]index\.html|\.md)$/.exec(rel)?.[1]?.replace(/\\/g, "/");
+type Unit = readonly [file: string, slug: string | undefined, text: string];
+/** The build in units of one docs page each: llms-full.txt is split into its pages' sections. */
+const builtUnits = (): Unit[] =>
+  builtFiles().flatMap(([f, src]): Unit[] => {
+    if (!f.endsWith("llms-full.txt")) return [[f, slugOf(f), src]];
+    const starts: [string, number][] = [];
+    let pos = 0;
+    for (const d of readyDocs()) {
+      const i = src.indexOf(`\n# ${d.title}\n`, pos);
+      if (i < 0) throw new Error(`llms-full.txt has no section "${d.title}"`);
+      starts.push([d.slug, i]);
+      pos = i + 1;
+    }
+    return [
+      [f, undefined, src.slice(0, starts[0]![1])],
+      ...starts.map(([s, i], k): Unit => [
+        `${f}#${s}`,
+        s,
+        src.slice(i, starts[k + 1]?.[1] ?? src.length),
+      ]),
+    ];
+  });
+/** `[file, first group, page]` for every match of `re` in the build. */
+const all = (re: RegExp): [string, string, string | undefined][] =>
+  builtUnits().flatMap(([f, slug, src]) =>
+    [...src.matchAll(re)].map((m) => [f, m[1]!, slug] as [string, string, string | undefined]),
   );
+
+/** A pin without its sentence's trailing punctuation. */
+const v0 = (v: string): string => v.replace(/[.:;]+$/, "");
+/** The words of a text, as the archived-repo scan cuts them. */
+const words = (text: string): Set<string> =>
+  new Set(text.split(/[\s"'`<>()[\]|]+/).map((w) => w.replace(/[.,;:]+$/, "")));
 
 describe("the built docs show only commands that resolve", () => {
   test("every npm pin is the pinned version", () => {
     const re = /@keelstackhq\/(?:splice|bosun|hoist|berth)@(<new>|[^\s`'"),\]<]+)/g;
     const pins = all(re);
     expect(pins.length).toBeGreaterThan(10);
-    const ok = new Set([...Object.values(versions).map(bare), "<new>", ...inCopies(re)]);
-    expect(pins.filter(([, v]) => !ok.has(v.replace(/[.:;]+$/, "")))).toEqual([]);
+    const ok = new Set([...Object.values(versions).map(bare), "<new>"]);
+    expect(pins.filter(([, v, s]) => !ok.has(v0(v)) && !inCopies(s, re).has(v0(v)))).toEqual([]);
   });
 
   test("every --ref is the pinned hull ref or a placeholder", () => {
     const re = /--ref (v[0-9][^\s`'"),]*|vX\.Y\.Z)/g;
     const refs = all(re);
     expect(refs.length).toBeGreaterThan(3);
-    const ok = new Set([versions.hull, "vX.Y.Z", ...inCopies(re)]);
-    expect(refs.filter(([, r]) => !ok.has(r))).toEqual([]);
+    const ok = new Set([versions.hull, "vX.Y.Z"]);
+    expect(refs.filter(([, r, s]) => !ok.has(r) && !inCopies(s, re).has(r))).toEqual([]);
   });
 
   test("every gh: source is the pinned hull or decisions source", () => {
     const re = /(gh:[\w.-]+\/[\w.-]+\/\/(?:[\w./-]|<template>)*)/g;
     const srcs = all(re);
     expect(srcs.length).toBeGreaterThan(5);
-    const copied = inCopies(re);
-    const ok = (s: string): boolean =>
+    const ok = (s: string, page: string | undefined): boolean =>
       s.startsWith(`${sources.hull}/`) ||
       s === sources.decisions ||
       s === sources.bosunChannel ||
-      copied.has(s);
-    expect(srcs.filter(([, s]) => !ok(s))).toEqual([]);
+      inCopies(page, re).has(s);
+    expect(srcs.filter(([, s, page]) => !ok(s, page))).toEqual([]);
   });
 
   test("every keelstack action is the pinned one", () => {
@@ -363,8 +459,7 @@ describe("the built docs show only commands that resolve", () => {
 
   test("every GitHub link points at an existing monorepo path or the org", () => {
     const re = /(https:\/\/github\.com\/[^\s)"'`<>\]]+)/g;
-    const copied = inCopies(re);
-    const urls = all(re).filter(([, u]) => !copied.has(u));
+    const urls = all(re).filter(([, u, page]) => !inCopies(page, re).has(u));
     expect(urls.length).toBeGreaterThan(20);
     const rootDir = findRoot();
     const refs = new Set(["main", facts.tag, links.hullRef, links.scriptRef]);
@@ -384,5 +479,46 @@ describe("the built docs show only commands that resolve", () => {
       if (!ok) bad.add(`${f}: ${u}`);
     }
     expect([...bad]).toEqual([]);
+  });
+
+  test("no build file names an archived repo, outside the verbatim copies' own pages", () => {
+    // What legacy.ts holds reaches the build through tokens (versions.ts); anything else that
+    // names an old repo must be a word of the copy embedded in that page (history).
+    const word = /[^\s"'`<>()[\]|]*/y;
+    const prefixes = [
+      `${sources.hull}/`,
+      sources.decisions,
+      sources.bosunChannel,
+      sources.spliceActionUses,
+      sources.hoardAction,
+      sources.hoardMajor,
+      sources.hoistSecrets,
+    ];
+    const bad: string[] = [];
+    for (const [f, slug, text] of builtUnits()) {
+      const copy = slug && COPY_TEXT[slug] ? words(decode(COPY_TEXT[slug])) : new Set<string>();
+      for (const m of text.matchAll(new RegExp(ARCHIVED.source, "g"))) {
+        // The whole word around the match.
+        let s = m.index;
+        while (s > 0 && !/[\s"'`<>()[\]|]/.test(text[s - 1]!)) s--;
+        word.lastIndex = s;
+        const w = (word.exec(text)?.[0] ?? m[0]).replace(/[.,;:]+$/, "");
+        const ok = w === sources.hullRepo || prefixes.some((p) => w.startsWith(p)) || copy.has(w);
+        if (!ok) bad.push(`${f}: ${w}`);
+      }
+    }
+    expect([...new Set(bad)]).toEqual([]);
+  });
+
+  test("no build file keeps an unrendered token (ks.NAME, {{ or a split { {)", () => {
+    // Inline CSS and JS of the HTML pages are not docs text (their braces are code).
+    const bad = builtUnits().flatMap(([f, , text]) =>
+      [
+        ...text
+          .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "")
+          .matchAll(/.{0,30}(?:\{\s*\{|\}\s*\}|(?<![\w.-])ks\.[A-Za-z]).{0,30}/g),
+      ].map((m) => `${f}: ${m[0]}`),
+    );
+    expect(bad).toEqual([]);
   });
 });

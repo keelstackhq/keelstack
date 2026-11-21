@@ -132,10 +132,8 @@ fn setup_needles() -> Vec<String> {
         "risk-check",
         "review-verdict",
         "main-open",
-        "merge queue",
         "hoist: tags",
         "v*",
-        "github-actions",
         "release",
         "bosun-app",
         "bosun-signer",
@@ -218,6 +216,21 @@ fn plan_lists_every_setup_item_and_exits_5_without_writing() {
         assert!(text.contains(&n), "missing from items/checklist: {n}");
     }
     assert!(v["items"][0]["step"] == "settings");
+    // The tag deploy key (`tags_bypass = "deploy_key"`): its own item, naming the secret and
+    // the environment, not a bare substring somewhere in the report.
+    let key = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "tag_deploy_key" && i["key"] == "hoist: release tags")
+        .expect("tag deploy key item");
+    assert_eq!(
+        (key["area"].as_str(), key["action"].as_str()),
+        (Some("github"), Some("create"))
+    );
+    let reason = key["reason"].as_str().unwrap();
+    assert!(reason.contains("RELEASE_TAG_KEY"), "{reason}");
+    assert!(reason.contains("environment `release`"), "{reason}");
     assert_eq!(v["human_step"]["id"], v["checklist"][0]["id"]);
     let c = v["checklist"].as_array().unwrap();
     // Computer entries first, then phone; trust ids are phone entries that need --confirm.

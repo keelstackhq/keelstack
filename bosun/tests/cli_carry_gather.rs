@@ -149,6 +149,27 @@ fn truncation_and_trust_files_are_refused() {
     }
 }
 
+/// Rule 4 uses the code-root-aware trust list: the code that applies it (under bosun's folder,
+/// a code root at the base `D`) and the repo-root rules and gate workflows are trust files.
+#[test]
+fn carry_over_refuses_the_code_and_files_that_apply_the_trust_list() {
+    for name in [".bosun/risk.toml", ".github/workflows/risk.yml", ".github/workflows/verdict.yml",
+        ".github/workflows/signer.yml", "bosun/src/cli/risk_check.rs", "bosun/src/core/folders.rs",
+        "bosun/src/core/glob.rs", "bosun/src/core/approve.rs", "bosun/src/core/risk.rs",
+        // The code and workflows that set and apply the verdict quorum and the carry-over.
+        ".github/workflows/main-open.yml", ".github/workflows/review.yml", "bosun/src/core/verdict.rs",
+        "bosun/src/cli/verdict.rs", "bosun/src/core/carry.rs", "bosun/src/cli/carry_over.rs"] {
+        let w = honest();
+        w.fake.content("bosun/src/cli/risk_check.rs", D, "// bosun");
+        w.cmp(B, H, "ahead", None, &[file("src/pr.rs", None), file(name, None)]);
+        assert!(w.refused().contains("trust file"), "{name}");
+    }
+    // Without bosun's code at the base, another folder's `src/core/glob.rs` is no trust file.
+    let w = honest();
+    w.cmp(B, H, "ahead", None, &[file("src/pr.rs", None), file("splice/src/core/glob.rs", None)]);
+    assert!(w.check().is_ok());
+}
+
 #[test]
 fn a_base_off_the_default_branch_or_an_approved_head_is_refused() {
     let mut w = honest();
@@ -203,12 +224,23 @@ fn github_errors_and_missing_objects_refuse_without_leaking() {
 fn every_read_is_by_full_sha_and_a_short_sha_refuses() {
     let w = honest();
     assert!(w.check().is_ok());
+    let full = |i: &str| i.len() == 40 && i.bytes().all(|b| b.is_ascii_hexdigit());
+    let mut contents = 0;
     for r in w.fake.requests() {
-        let p = r.path.split('?').next().unwrap();
+        let p = r.path.as_str();
+        if p.starts_with("/repos/acme/widget/contents/") {
+            // A file read (the base config, rule 4's code roots, rule 6's lockfiles) names its
+            // commit in `ref`: a full sha, never a branch or a short sha.
+            let at = r.query.split('&').find_map(|kv| kv.strip_prefix("ref="));
+            assert!(at.is_some_and(full), "{p}?{}", r.query);
+            contents += 1;
+            continue;
+        }
         let ids: Vec<&str> = p.rsplit('/').next().unwrap().split("...").collect();
-        let pinned = ids.iter().all(|i| i.len() == 40 && i.bytes().all(|b| b.is_ascii_hexdigit()));
+        let pinned = ids.iter().all(|i| full(i));
         assert!(pinned || p.ends_with(&format!("/compare/{D}...refs%2Fheads%2Fmain")), "{p}");
     }
+    assert!(contents > 0, "the check reads files at the base");
     let mut w = honest(); w.pull.head_sha = "d000000".into();
     assert!(w.refused().contains("not a full sha"));
     let w = honest(); w.commit(H2, TH2, &[H, "c000000"]); // GitHub names a parent by a short sha

@@ -94,4 +94,4 @@ Nothing merges until the owner merges. `--dry-run` writes nothing.
 
 - This file: https://keelstack.dev/agents.md
 - One scenario each: https://keelstack.dev/docs/start/a.md to f.md
-- hull adopt guide at the tag: https://raw.githubusercontent.com/keelstackhq/hull/{{ks.hull}}/docs/adopt.md
+- hull adopt guide at the pinned hull release: {{ks.link.hull}}/docs/adopt.md

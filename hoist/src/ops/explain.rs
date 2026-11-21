@@ -68,16 +68,34 @@ pub fn items(desired: &Desired, release: &ReleaseModel) -> Vec<Item> {
         &source,
     ));
     if let Some(t) = &gh.tag_ruleset {
+        let who = if t.deploy_key() {
+            "the repo's write deploy keys"
+        } else {
+            "github-actions"
+        };
         items.push(item(
             "github",
             "tag_ruleset",
             &t.name,
             &format!(
-                "tags {}: only github-actions may create, move or delete",
+                "tags {}: only {who} may create, move or delete",
                 t.refs().join(", ")
             ),
             &t.source,
         ));
+        if t.deploy_key() {
+            items.push(item(
+                "github",
+                "tag_deploy_key",
+                crate::desired::TAG_KEY_TITLE,
+                &format!(
+                    "write deploy key; private key in secret {} of environment `{}`",
+                    crate::desired::TAG_KEY_SECRET,
+                    t.key_env
+                ),
+                "hoist.toml:github.tags_bypass",
+            ));
+        }
     }
     let mq = &gh.ruleset.merge_queue;
     items.push(item(

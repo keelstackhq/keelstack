@@ -39,12 +39,22 @@ pub enum Change {
         branch: String,
         required_checks: Vec<String>,
         merge_queue: bool,
+        /// Add the repository admin role as a `pull_request` bypass actor when it is missing
+        /// (`[github] admin_bypass = true`, never under --adopt). Live actors are kept.
+        admin_bypass: bool,
     },
     /// The `hoist: tags` ruleset (`[github.tag_ruleset]`).
     TagRuleset {
         existing_id: Option<u64>,
         /// Tag name patterns; the ruleset includes `refs/tags/<pattern>`.
         patterns: Vec<String>,
+        /// `[github] tags_bypass`: the Actions app or the deploy keys.
+        bypass: crate::config::TagsBypass,
+    },
+    /// `tags_bypass = "deploy_key"`: add the write deploy key `hoist: release tags` and seal
+    /// its private key into secret `RELEASE_TAG_KEY` of environment `env`.
+    TagDeployKey {
+        env: String,
     },
     ActionsPermissions {
         default: String,
@@ -111,6 +121,11 @@ impl Change {
                 "github",
                 "tag_ruleset",
                 crate::desired::TAG_RULESET_NAME.into(),
+            ),
+            Change::TagDeployKey { .. } => (
+                "github",
+                "tag_deploy_key",
+                crate::desired::TAG_KEY_TITLE.into(),
             ),
             Change::ActionsPermissions { .. } => {
                 ("github", "actions_permissions", "default".into())
@@ -358,6 +373,16 @@ pub fn plan_changes(
             branch: rs.branch.clone(),
             required_checks: rs.required_checks.iter().map(|c| c.value.clone()).collect(),
             merge_queue: rs.merge_queue.value,
+            admin_bypass: rs.admin_bypass && !d.adopt,
+        });
+    }
+
+    // The key (and its secret) before the ruleset that lets it push tags.
+    if let Some(t) = d.github.tag_ruleset.as_ref().filter(|t| t.deploy_key())
+        && todo(&gh_items, "tag_deploy_key", crate::desired::TAG_KEY_TITLE).is_some()
+    {
+        out.push(Change::TagDeployKey {
+            env: t.key_env.clone(),
         });
     }
 
@@ -371,6 +396,7 @@ pub fn plan_changes(
         out.push(Change::TagRuleset {
             existing_id,
             patterns: t.patterns.clone(),
+            bypass: t.bypass,
         });
     }
 

@@ -210,6 +210,10 @@ fn weaker(rules: &Value, checks: &[String], branch: &str) -> Option<String> {
         !branch.is_empty() && *r != named && !name.is_empty() && name.chars().all(plain)
     };
     let excluded = refs("exclude").iter().any(|r| !other(r));
+    // Any bypass actor weakens the secrets-repo ruleset (it guards the encrypted secrets and
+    // their access list; nobody may skip its review). This differs on purpose from the
+    // default-branch ruleset, where `[github] admin_bypass = true` wants the admin role in
+    // `pull_request` mode (spec §6).
     let bypass = rules["bypass_actors"]
         .as_array()
         .is_some_and(|a| !a.is_empty());

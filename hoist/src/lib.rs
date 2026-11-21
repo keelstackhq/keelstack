@@ -24,6 +24,7 @@ pub mod repo;
 pub mod report;
 pub mod seal;
 pub mod secrets;
+pub mod sshkey;
 pub mod timeutil;
 pub mod verify;
 

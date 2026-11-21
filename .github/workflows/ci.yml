@@ -108,6 +108,8 @@ jobs:
           "$RUNNER_TEMP/actionlint"
       - name: affected-folder detection test
         run: bash .github/scripts/affected.test.sh
+      - name: root workflows test (checkout credentials, deploy-site, release plan and tag key)
+        run: bash .github/scripts/workflows.test.sh
       - name: gate workflows test (bosun build fails closed, rust-cache settings)
         run: bash .github/scripts/gate-workflows.test.sh
       - name: version-bump script test
@@ -671,8 +673,12 @@ jobs:
       run:
         working-directory: site
     steps:
+      # Full history, no blobs up front: the docs test checks that the setup-script copy's ref is
+      # an ancestor of HEAD and reads the file at that ref (it skips on a shallow clone).
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
+          filter: blob:none
           persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:

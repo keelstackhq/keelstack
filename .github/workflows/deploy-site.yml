@@ -5,9 +5,13 @@ name: deploy-site
 #   - a push to main touches site/ or a folder it depends on (.bosun/bosun.toml, folder `site`),
 #   - release.yml finishes (the version bump reached main earlier; this deploys the released state),
 #   - someone runs it by hand on main.
-# Pull requests are checked and built by ci.yml (job ci-site), not here. Job `decide` deploys only
-# a released version: when the root Cargo.toml `[workspace.package] version` has no tag vX.Y.Z
-# yet (a version-bump push), it skips, and the release run's completion deploys it. Job `deploy`
+# Pull requests are checked and built by ci.yml (job ci-site), not here. Job `decide` resolves the
+# commit to build once and deploys only a released version: when the root Cargo.toml
+# `[workspace.package] version` has no tag vX.Y.Z yet (a version-bump push), it skips, and the
+# release run's completion deploys it. A released version (> 0.21.0) builds the TAG's commit (the
+# release commit lives only on the tag; main never moves), so a later push to main is never
+# deployed labelled vX.Y.Z. Versions <= 0.21.0 predate the monorepo's tags (D-024) and always
+# deploy the resolved main commit. `deploy` checks out exactly the commit `decide` resolved. Job `deploy`
 # runs in the environment `site` (deployment branches: default branch only), which holds
 # CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (.github/SETUP.md). Only the steps `Check
 # secrets` and `Deploy to Cloudflare Pages` see them: pnpm install, the build and the tests run
@@ -34,29 +38,35 @@ on:
     branches: [main]
   workflow_dispatch:
 
-# ci-minutes: allow concurrency a deploy is queued, never cancelled half-way
+# ci-minutes: allow concurrency deploys queue in one group and never cancel one half-way
 concurrency:
-  # A deploy is queued, never cancelled half-way.
   group: deploy-site
   cancel-in-progress: false
 
 permissions:
   contents: read
 
-env:
-  # The state to build: main's head after a release run (the release commit moved it), else this run's commit.
-  SITE_REF: ${{ github.event_name == 'workflow_run' && github.event.repository.default_branch || github.sha }}
-
 jobs:
-  # Deploy only a released version: the tag v<root Cargo.toml version> must exist (read-only API).
+  # Resolve the commit to build once, and deploy it only when its version is released: <= 0.21.0,
+  # or the tag v<root Cargo.toml version> exists (read-only API). A release run counts only when it
+  # is this repository's dispatched run (the one that publishes; a PR's `plan` run and a fork's
+  # run never count) and it succeeded.
   decide:
     if: >-
-      (github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success') &&
+      (github.event_name != 'workflow_run' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'workflow_dispatch' &&
+      github.event.workflow_run.head_repository.full_name == github.repository)) &&
       (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       deploy: ${{ steps.tag.outputs.deploy }}
+      sha: ${{ steps.tag.outputs.sha }}
+    env:
+      # After a release run, main's head (only to read the version; the release commit lives on the
+      # tag, main never moves); else this run's commit. A released version builds the tag's commit.
+      SITE_REF: ${{ github.event_name == 'workflow_run' && github.event.repository.default_branch || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -71,8 +81,20 @@ jobs:
         run: |
           v="$(awk '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version[[:space:]]*=/ { gsub(/.*=[[:space:]]*"|".*/, ""); print; exit }' Cargo.toml)"
           [ -n "$v" ] || { echo "::error::no [workspace.package] version in Cargo.toml"; exit 1; }
+          [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]] || { echo "::error::version '$v' in Cargo.toml is not X.Y.Z"; exit 1; }
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
+          # <= 0.21.0: released before the monorepo's tags (D-024), deployed without a tag check.
+          if [ "$major" -eq 0 ] && { [ "$minor" -lt 21 ] || { [ "$minor" -eq 21 ] && [ "$patch" -eq 0 ]; }; }; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           refs="$(gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$v" --jq '.[].ref')"
           if grep -qxF "refs/tags/v$v" <<<"$refs"; then
+            # Build the tagged commit (peeled, also for an annotated tag), not main's head.
+            tagsha="$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/v$v" --jq .sha)"
+            [[ "$tagsha" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tag v$v does not resolve to a commit"; exit 1; }
+            echo "sha=$tagsha" >> "$GITHUB_OUTPUT"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           else
             echo "::notice::v$v has no tag yet (version bump before its release): not deployed; the release run's completion deploys it"
@@ -100,9 +122,10 @@ jobs:
             echo "::error::CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID must be secrets of the environment site (.github/SETUP.md)"
             exit 1
           fi
+      # Exactly the commit decide resolved and checked, not main's head a second time.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ env.SITE_REF }}
+          ref: ${{ needs.decide.outputs.sha }}
           persist-credentials: false
       - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:

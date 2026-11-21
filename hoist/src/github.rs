@@ -50,9 +50,8 @@ pub struct Ruleset {
     pub merge_queue: bool,
     /// `active`, `evaluate` or `disabled`; `None` when the detail omits it.
     pub enforcement: Option<String>,
-    /// What hoist's own default-branch PUT would drop: rule types it does not write, a strict
-    /// status-check policy, pinned check sources, an exclude list, targets beside the default
-    /// branch, or bypass actors other than the repository admin role.
+    /// What hoist's default-branch update (a read-merge-write that keeps live rules,
+    /// conditions and bypass actors) would still drop: a target other than branches.
     pub unmodelled: Vec<String>,
     /// `branch` or `tag`; `None` when the detail omits it.
     pub target: Option<String>,
@@ -62,6 +61,14 @@ pub struct Ruleset {
     pub rule_types: Vec<String>,
     /// `<actor_type>:<actor_id>:<bypass_mode>` per bypass actor, sorted.
     pub bypass: Vec<String>,
+}
+
+/// A repository deploy key (`GET /repos/{o}/{r}/keys`); the key text itself is not kept.
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeployKey {
+    pub id: u64,
+    pub title: String,
+    pub read_only: bool,
 }
 
 /// A repository or organization variable (values are not secret).
@@ -118,6 +125,11 @@ pub struct LiveGithub {
     pub repo_strays: Vec<String>,
     /// Slugs of the desired apps that are installed on this repo (others are not checked).
     pub apps: Fetch<Vec<String>>,
+    /// `tags_bypass = "deploy_key"` only: the repo's deploy keys.
+    pub deploy_keys: Option<Fetch<Vec<DeployKey>>>,
+    /// `tags_bypass = "deploy_key"` only: whether the release environment holds
+    /// `RELEASE_TAG_KEY` (a missing environment holds none).
+    pub tag_key_secret: Option<Fetch<bool>>,
 }
 
 /// Whether a 403 message says the plan lacks the feature: GitHub Free refuses rulesets and the
@@ -373,32 +385,17 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
                     .and_then(Value::as_array)
                     .map(Vec::as_slice)
                     .unwrap_or_default();
+                // Its strict policy and pinned check sources survive an update (read-merge-write).
                 required_checks.extend(names(checks.to_vec(), "context"));
-                let strict = rule.pointer("/parameters/strict_required_status_checks_policy");
-                if strict == Some(&Value::Bool(true)) {
-                    unmodelled.push("a strict status-check policy".to_string());
-                }
-                if checks.iter().any(|c| c.get("integration_id").is_some()) {
-                    unmodelled.push("pinned check sources".to_string());
-                }
             }
-            Some("merge_queue") => {
-                merge_queue = true;
-                // Settings other than hoist's own would be replaced by its PUT.
-                let ours = crate::github_write::merge_queue_parameters();
-                let differs = rule
-                    .get("parameters")
-                    .and_then(Value::as_object)
-                    .is_some_and(|p| p.iter().any(|(k, v)| ours.get(k) != Some(v)));
-                if differs {
-                    unmodelled.push("merge queue settings".to_string());
-                }
-            }
-            // hoist writes these two (no parameters) on the default branch.
-            Some("deletion" | "non_fast_forward") => {}
-            other => unmodelled.push(format!("rule `{}`", other.unwrap_or("?"))),
+            // Its live settings survive an update.
+            Some("merge_queue") => merge_queue = true,
+            // Other rule types are kept by an update too.
+            _ => {}
         }
     }
+    // The default-branch update keeps the live rules, conditions and bypass actors; it writes
+    // the target `branch`, so only another target would be lost.
     if v.get("target")
         .and_then(Value::as_str)
         .is_some_and(|t| t != "branch")
@@ -406,12 +403,6 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
         unmodelled.push("a target other than branches".to_string());
     }
     let include = strings(v.pointer("/conditions/ref_name/include"));
-    if include.iter().any(|i| i != "~DEFAULT_BRANCH") {
-        unmodelled.push("other branch targets".to_string());
-    }
-    if !strings(v.pointer("/conditions/ref_name/exclude")).is_empty() {
-        unmodelled.push("excluded branches".to_string());
-    }
     let mut rule_types: Vec<String> = rules
         .iter()
         .filter_map(|r| r.get("type").and_then(Value::as_str).map(str::to_string))
@@ -436,10 +427,6 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
         })
         .unwrap_or_default();
     bypass.sort();
-    // hoist's default-branch PUT writes only the repository admin role.
-    for actor in bypass.iter().filter(|b| *b != crate::desired::ADMIN_BYPASS) {
-        unmodelled.push(format!("bypass actor `{actor}`"));
-    }
     Ruleset {
         id,
         target: v.get("target").and_then(Value::as_str).map(str::to_string),
@@ -756,6 +743,7 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         Fetch::Got(items) => reviewers_of(items),
         Fetch::Unknown(_) => Default::default(),
     };
+    let (deploy_keys, tag_key_secret) = read_tag_key(http, d, &base)?;
     Ok(LiveGithub {
         settings,
         rulesets: read_rulesets(http, &base)?,
@@ -810,7 +798,62 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         org_secrets_note,
         api_token_updated_at,
         apps: read_apps(http, d)?,
+        deploy_keys,
+        tag_key_secret,
     })
+}
+
+/// `tags_bypass = "deploy_key"`: the repo's deploy keys and whether the release environment
+/// holds `RELEASE_TAG_KEY`. GET-only; nothing is read in `actions` mode.
+#[allow(clippy::type_complexity)]
+fn read_tag_key(
+    http: &Http,
+    d: &Desired,
+    base: &str,
+) -> Result<(Option<Fetch<Vec<DeployKey>>>, Option<Fetch<bool>>), HttpError> {
+    let Some(t) = d.github.tag_ruleset.as_ref().filter(|t| t.deploy_key()) else {
+        return Ok((None, None));
+    };
+    let keys = match list(http, "deploy keys", &format!("{base}/keys"), None)? {
+        Fetch::Got(items) => Fetch::Got(
+            items
+                .iter()
+                .map(|k| DeployKey {
+                    id: k.get("id").and_then(Value::as_u64).unwrap_or(0),
+                    title: k
+                        .get("title")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    // Unknown: count it as a write key (the stricter reading).
+                    read_only: k.get("read_only").and_then(Value::as_bool).unwrap_or(false),
+                })
+                .collect(),
+        ),
+        Fetch::Unknown(why) => Fetch::Unknown(why),
+    };
+    let path = format!(
+        "{base}/environments/{}/secrets",
+        crate::http::seg(&t.key_env)
+    );
+    let secret = match http.get_all(&path, Some("secrets"))? {
+        Fetched::Ok(Value::Array(items)) => Fetch::Got(
+            names(items, "name")
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(crate::desired::TAG_KEY_SECRET)),
+        ),
+        Fetched::Ok(_) => Fetch::Unknown(format!(
+            "cannot read the secrets of environment {}: unexpected response",
+            t.key_env
+        )),
+        // No such environment: it holds no secret.
+        Fetched::NotFound => Fetch::Got(false),
+        Fetched::Forbidden(hint) => Fetch::Unknown(format!(
+            "cannot read the secrets of environment {}: {hint}",
+            t.key_env
+        )),
+    };
+    Ok((Some(keys), Some(secret)))
 }
 
 #[cfg(test)]

@@ -49,7 +49,7 @@ git add -A && git commit -m "chore: initial commit from hull"
 hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
 `circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
 `secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist's
-`keelstackhq/hoist/secrets` action; see
+`{{ks.src.hoistSecrets}}` action; see
 [Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
 `splice add circleci`, then `splice add circleci-only`.
 
@@ -205,7 +205,7 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 
 ```yaml
 - run: pnpm install --frozen-lockfile
-- uses: { { ks.src.hoardMajor } } # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
+- uses: {{ks.src.hoardMajor}} # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
 - run: pnpm turbo run build test lint
 ```
 

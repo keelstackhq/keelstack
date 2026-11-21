@@ -163,6 +163,8 @@ pub struct Logged {
     pub method: String,
     /// Path without the query, still percent-encoded.
     pub path: String,
+    /// The query after `?`, still percent-encoded (empty when none).
+    pub query: String,
     pub body: Option<String>,
     /// Authorization, Accept, X-GitHub-Api-Version and User-Agent as received.
     pub headers: [Option<String>; 4],
@@ -1799,6 +1801,7 @@ fn serve(server: tiny_http::Server, state: Arc<Mutex<State>>, stop: Arc<AtomicBo
         s.log.push(Logged {
             method: method.clone(),
             path: path.into(),
+            query: raw_query.into(),
             body: (!raw.is_empty()).then(|| raw.clone()),
             headers,
         });

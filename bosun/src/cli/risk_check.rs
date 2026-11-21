@@ -990,6 +990,11 @@ pub(crate) fn rules_from(src: &dyn Files, base: &str) -> Result<Rules> {
     rules_rooted(src, base, &roots)
 }
 
+/// [`code_roots`] read from GitHub at `base`.
+pub(crate) fn code_roots_at(gh: &dyn Github, base: &str) -> Result<Vec<String>> {
+    code_roots(&Remote(gh), base)
+}
+
 /// Where bosun's own code lives at `base` (spec §8 monorepo): `""` when the root has
 /// [`BOSUN_CODE_MARKER`], and each folder (the `[[folders]]` of the base config, plus `bosun`
 /// always, so a base without the table still protects it) that has it. Read from the base only:

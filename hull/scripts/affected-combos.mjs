@@ -65,10 +65,11 @@ if (isMain(import.meta.url)) {
   if (!values.all) {
     try {
       // --relative is relative to git's cwd: run in hull's folder so paths are hull-relative
-      // wherever the script is started from (hull is a folder of the monorepo).
+      // wherever the script is started from (hull is a folder of the monorepo). --no-renames:
+      // a file moved between pieces lists its old path too, so the old piece's combos run.
       const out = execFileSync(
         "git",
-        ["diff", "--relative", "--name-only", `${values.base}...HEAD`],
+        ["diff", "--no-renames", "--relative", "--name-only", `${values.base}...HEAD`],
         {
           cwd: fileURLToPath(new URL("..", import.meta.url)),
           encoding: "utf8",

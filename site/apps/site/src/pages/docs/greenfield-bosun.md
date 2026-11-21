@@ -6,7 +6,7 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull v0.13.0, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. It was last checked line by line against bosun 0.19.0; links point at the monorepo's `main`. The example plan was re-checked with `bosun plan check` 0.20.0 (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull v0.13.0 and was not re-run for 0.20.0. Every
+plan turns into work. It was last checked line by line against bosun 0.19.0; links point at the monorepo's `main`. The example plan was re-checked with `bosun plan check` 0.21.0 (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull v0.13.0 and was not re-run for 0.21.0. Every
 command and flag below was checked, at bosun 0.19.0, against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
@@ -63,7 +63,7 @@ bosun reads only `plans/*.md`. It has no convention for a brief or a product spe
 - The plan goes in `plans/<name>.md`, in bosun's format
   ([plan-format.md](https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/plan-format.md)). Its
   `project:` must equal `project` in `.bosun/bosun.toml`. A minimal plan, which
-  `bosun plan check` (0.20.0) accepts with no warnings. A task that touches `apps/api/src/` also
+  `bosun plan check` (0.21.0) accepts with no warnings. A task that touches `apps/api/src/` also
   lists a test under `apps/api/tests/`, or `plan check` warns:
 
 ```markdown
@@ -95,7 +95,7 @@ docs/superpowers/specs/2026-10-29-notes.md.
 - UC-N1-2: DELETE /notes/:id removes the note, and a second DELETE returns 404.
 ```
 
-The real output of `bosun plan check plans/notes.md` (0.20.0, exit 0, reformatted for reading), with no warnings:
+The real output of `bosun plan check plans/notes.md` (0.21.0, exit 0, reformatted for reading), with no warnings:
 
 ```json
 {

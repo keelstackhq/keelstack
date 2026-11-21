@@ -144,7 +144,7 @@ hoist 0.3.0 adds `hoist secrets`:
 values encrypted with sops and age in a private secrets repo, mapped into each consumer repo by a
 `secrets.toml` that holds no values. hull v0.4.0's opt-in `secrets` piece seeds that file and a
 `deploy.yml` that runs on push to `main` in the environment `prod` and decrypts through the
-`keelstackhq/hoist/secrets` action.
+`{{ks.src.hoistSecrets}}` action.
 
 | Command                                    | Who and where                                                                   |
 | ------------------------------------------ | ------------------------------------------------------------------------------- |

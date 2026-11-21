@@ -21,6 +21,13 @@ pub const ACTIONS_APP_ID: u64 = 15368;
 pub const ADMIN_ROLE_ID: u64 = 5;
 /// The default-branch bypass actor as `<actor_type>:<actor_id>:<bypass_mode>`.
 pub const ADMIN_BYPASS: &str = "RepositoryRole:5:pull_request";
+/// With `tags_bypass = "deploy_key"`: the deploy keys bypass of the `hoist: tags` ruleset
+/// (GitHub's `DeployKey` actor has no id: it stands for every write deploy key of the repo).
+pub const DEPLOY_KEY_BYPASS: &str = "DeployKey:0:always";
+/// The title of the write deploy key hoist adds for release tags.
+pub const TAG_KEY_TITLE: &str = "hoist: release tags";
+/// The environment secret holding that key's OpenSSH private key.
+pub const TAG_KEY_SECRET: &str = "RELEASE_TAG_KEY";
 const ACCOUNT_ENV: &str = "CLOUDFLARE_ACCOUNT_ID";
 const DEPLOY_TOKEN: &str = "CLOUDFLARE_API_TOKEN";
 
@@ -38,6 +45,8 @@ pub struct DesiredRuleset {
     pub branch: String,
     pub required_checks: Vec<Sourced<String>>,
     pub merge_queue: Sourced<bool>,
+    /// `[github] admin_bypass`: the repository admin role may merge a PR past the rules.
+    pub admin_bypass: bool,
 }
 
 /// `[github.tag_ruleset]`: the `hoist: tags` ruleset.
@@ -48,9 +57,18 @@ pub struct DesiredTagRuleset {
     pub patterns: Vec<String>,
     /// `hoist.toml:github.tag_ruleset`
     pub source: String,
+    /// `[github] tags_bypass`.
+    pub bypass: crate::config::TagsBypass,
+    /// The environment the release-tags deploy key's secret goes to (`[release] environment`).
+    pub key_env: String,
 }
 
 impl DesiredTagRuleset {
+    /// `tags_bypass = "deploy_key"`.
+    pub fn deploy_key(&self) -> bool {
+        self.bypass == crate::config::TagsBypass::DeployKey
+    }
+
     /// `conditions.ref_name.include` of the ruleset, sorted.
     pub fn refs(&self) -> Vec<String> {
         let mut refs: Vec<String> = self
@@ -629,11 +647,14 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             branch: default_branch.clone(),
             required_checks,
             merge_queue: merge_queue(&raw, root.github.merge_queue, &workflows),
+            admin_bypass: root.github.admin_bypass,
         },
         tag_ruleset: root.github.tag_ruleset.as_ref().map(|t| DesiredTagRuleset {
             name: TAG_RULESET_NAME.to_string(),
             patterns: t.patterns.clone(),
             source: "hoist.toml:github.tag_ruleset".to_string(),
+            bypass: root.github.tags_bypass,
+            key_env: root.release.environment.clone(),
         }),
         actions_permissions: pick(
             &raw,

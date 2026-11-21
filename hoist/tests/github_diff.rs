@@ -216,7 +216,7 @@ fn merge_queue_false_with_no_live_queue_is_ok() {
 
 #[test]
 fn a_ruleset_without_deletion_force_push_rules_or_admin_bypass_is_update() {
-    let (_dir, d) = desired("");
+    let (_dir, d) = desired("[github]\nadmin_bypass = true\n");
     let api = fake_with(&[(
         "GET /repos/acme/x/rulesets/11",
         200,
@@ -234,26 +234,48 @@ fn a_ruleset_without_deletion_force_push_rules_or_admin_bypass_is_update() {
 }
 
 #[test]
-fn an_extra_bypass_actor_is_kept_out_of_an_adopt_update() {
-    // In sync otherwise: the extra actor alone is no drift.
-    let (_dir, d) = desired("");
+fn an_extra_bypass_actor_is_drift_in_both_modes() {
     let api = fake_with(&[(
         "GET /repos/acme/x/rulesets/11",
         200,
         "github/ruleset_extra_bypass.json",
         &[],
     )]);
+    for adopt in [false, true] {
+        let (_dir, mut d) = desired("");
+        d.adopt = adopt;
+        let (items, _) = run(&api, &d);
+        let item = find(&items, "ruleset", "hoist: default branch");
+        assert_eq!(item.action, Action::Drift, "{item:#?}");
+        assert!(
+            item.reason
+                .contains("bypass actors not wanted: `Team:7:always`"),
+            "{}",
+            item.reason
+        );
+    }
+    // Needing an update too: the update keeps the actor (read-merge-write), the reason says it.
+    let (_dir, d) = desired("[github]\nmerge_queue = false\n");
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Update, "{item:#?}");
+    assert!(item.reason.contains("`Team:7:always`"), "{}", item.reason);
+}
+
+#[test]
+fn the_admin_role_is_wanted_only_with_admin_bypass() {
+    let live = r#"{"id":11,"name":"hoist: default branch","target":"branch","enforcement":"active","conditions":{"ref_name":{"include":["~DEFAULT_BRANCH"],"exclude":[]}},"rules":[{"type":"deletion"},{"type":"non_fast_forward"},{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"ci-ok"}]}},{"type":"merge_queue","parameters":{}}],"bypass_actors":[{"actor_id":5,"actor_type":"RepositoryRole","bypass_mode":"pull_request"}]}"#;
+    let api = fake_with(&[("GET /repos/acme/x/rulesets/11", 200, live, &[])]);
+    let (_dir, d) = desired("[github]\nadmin_bypass = true\n");
     let (items, _) = run(&api, &d);
     let item = find(&items, "ruleset", "hoist: default branch");
     assert_eq!(item.action, Action::Ok, "{item:#?}");
-    // Needing an update under --adopt: drift naming the actor an update would drop.
-    let (_dir, mut d) = desired("[github]\nmerge_queue = false\n");
-    d.adopt = true;
+    let (_dir, d) = desired("");
     let (items, _) = run(&api, &d);
     let item = find(&items, "ruleset", "hoist: default branch");
     assert_eq!(item.action, Action::Drift, "{item:#?}");
     assert!(
-        item.reason.contains("bypass actor `Team:7:always`"),
+        item.reason.contains("admin_bypass = true"),
         "{}",
         item.reason
     );
@@ -627,6 +649,8 @@ fn live_github_is_constructible_for_unit_use() {
         api_token_updated_at: None,
         repo_strays: Vec::new(),
         apps: Fetch::Unknown("x".into()),
+        deploy_keys: None,
+        tag_key_secret: None,
     };
     let (_dir, d) = desired("");
     let (items, _) = diff_github(&d, &live, None);

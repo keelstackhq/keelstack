@@ -59,8 +59,9 @@ jobs:
   report:
     needs: nightly
     # A fork PR from a branch named main also fires workflow_run: only pushes of this repo count.
+    # It holds the App key: a manual run from another branch never reaches it.
     if: >-
-      always() && (github.event_name != 'workflow_run' ||
+      always() && github.ref == 'refs/heads/main' && (github.event_name != 'workflow_run' ||
       (github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_repository.full_name == github.repository))
     runs-on: ubuntu-latest

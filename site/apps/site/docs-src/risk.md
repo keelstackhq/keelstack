@@ -4,7 +4,7 @@ layout: ../../layouts/Docs.astro
 
 Agents write the code; the owner decides what is risky and approves the risky changes. bosun
 checks every pull request against risk rules, collects a review verdict from a fresh reviewer, and
-turns `risk-check` green only when the rules are met. This page was last checked line by line against bosun 0.19.0; its links point at {{ks.link.pinnedLabel}}.
+turns `risk-check` green only when the rules are met. This page was last checked line by line against bosun {{ks.checked.bosun}}; its links point at {{ks.link.pinnedLabel}}.
 Long details live in bosun's
 [risk spec]({{ks.link.pinned}}/bosun/docs/spec/08-risk.md).
 

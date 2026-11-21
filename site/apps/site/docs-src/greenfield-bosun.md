@@ -4,8 +4,8 @@ layout: ../../layouts/Docs.astro
 
 A new repo, rendered from hull {{ks.hull}}, that bosun runs from the first task. This page shows the
 files you end up with, where the product spec and the plan go, who does which step, and how the
-plan turns into work. It was last checked line by line against bosun 0.19.0; links point at {{ks.link.pinnedLabel}}. The example plan was re-checked with `bosun plan check` {{ks.bare.bosun}} (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull {{ks.hull}} and was not re-run for {{ks.bare.bosun}}. Every
-command and flag below was checked, at bosun 0.19.0, against `bosun --help`, each subcommand's `--help` and bosun's
+plan turns into work. It was last checked line by line against bosun {{ks.checked.bosun}}; links point at {{ks.link.pinnedLabel}}. The example plan was re-checked with `bosun plan check` {{ks.bare.bosun}} (same output as before). The file tree comes from an earlier `bosun init --no-pr` run on a repo rendered from hull {{ks.hull}} and was not re-run for {{ks.bare.bosun}}. Every
+command and flag below was checked, at bosun {{ks.checked.bosun}}, against `bosun --help`, each subcommand's `--help` and bosun's
 docs. Every owner step, with the check that
 verifies it, is in [Start a project](/docs/start-project/); the details of each step are in
 [Getting started](/docs/getting-started/).

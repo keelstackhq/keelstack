@@ -186,24 +186,56 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     if !missing.is_empty() {
         problems.push(format!("rules: missing {}", quoted(&missing)));
     }
-    if !live
+    // Bypass actors: only `[github] admin_bypass = true` wants one (the admin role, in
+    // `pull_request` mode). hoist adds it (never under --adopt: a bypass loosens) and never
+    // removes a live actor: an unwanted one is drift, kept by every update.
+    let admin = crate::desired::ADMIN_BYPASS;
+    let mut drift = Vec::new();
+    if want.admin_bypass && !live.bypass.iter().any(|b| b == admin) {
+        let missing = "bypass actors: missing the repository admin role (pull_request)";
+        if d.adopt {
+            drift.push(format!(
+                "{missing}; not written: adding a bypass loosens the ruleset (--adopt never \
+                 loosens)"
+            ));
+        } else {
+            problems.push(missing.to_string());
+        }
+    }
+    let unwanted: Vec<String> = live
         .bypass
         .iter()
-        .any(|b| b == crate::desired::ADMIN_BYPASS)
-    {
-        problems.push("bypass actors: missing the repository admin role (pull_request)".into());
+        .filter(|b| !(want.admin_bypass && *b == admin))
+        .cloned()
+        .collect();
+    if !unwanted.is_empty() {
+        let hint = if unwanted.iter().any(|b| b == admin) {
+            ", or set `[github] admin_bypass = true` to keep the admin role"
+        } else {
+            ""
+        };
+        drift.push(format!(
+            "bypass actors not wanted: {}; hoist never removes one: remove it in the ruleset \
+             settings{hint}",
+            quoted(&unwanted)
+        ));
     }
-    if problems.is_empty() {
+    if problems.is_empty() && drift.is_empty() {
         cx.push("ruleset", name, Action::Ok, in_sync, &source);
+    } else if problems.is_empty() {
+        cx.push("ruleset", name, Action::Drift, drift.join("; "), &source);
     } else if d.adopt && !live.unmodelled.is_empty() {
-        // hoist's PUT replaces the whole ruleset: adopting must not drop what it cannot write.
-        let why = format!(
+        // hoist's update writes the target `branch`: adopting must not drop another one.
+        let mut why = vec![format!(
             "{}; not written: an update would drop {} (--adopt never loosens)",
             problems.join("; "),
             live.unmodelled.join(", ")
-        );
-        cx.push("ruleset", name, Action::Drift, why, &source);
+        )];
+        why.extend(drift);
+        cx.push("ruleset", name, Action::Drift, why.join("; "), &source);
     } else {
+        // The update fixes `problems`; what is drift stays (the next check reports it).
+        problems.extend(drift);
         cx.push(
             "ruleset",
             name,
@@ -221,8 +253,13 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
         return;
     };
     let (name, source, refs) = (&want.name, &want.source, want.refs());
+    let who = if want.deploy_key() {
+        "the repo's write deploy keys (`hoist: release tags`)"
+    } else {
+        "github-actions"
+    };
     let in_sync = format!(
-        "tags {} may be created, moved and deleted only by github-actions",
+        "tags {} may be created, moved and deleted only by {who}",
         quoted(&refs)
     );
     let rulesets = match l.rulesets.as_got() {
@@ -276,15 +313,42 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     if !missing_rules.is_empty() {
         problems.push(format!("rules: missing {}", quoted(&missing_rules)));
     }
+    // The Actions app is hoist's own actor (Integration 15368): in `deploy_key` mode it is
+    // removed; any other actor is the owner's and stays.
     let app = format!("Integration:{}:", crate::desired::ACTIONS_APP_ID);
     let ours = format!("{app}always");
-    match live.bypass.iter().find(|b| b.starts_with(&app)) {
-        None => problems.push("bypass actors: missing the GitHub Actions app".to_string()),
-        Some(b) if *b != ours => problems.push(format!(
-            "bypass actors: the GitHub Actions app has mode `{}`, want `always`",
-            b.trim_start_matches(&app)
-        )),
-        Some(_) => {}
+    let keys = "DeployKey:";
+    let apps: Vec<&String> = live.bypass.iter().filter(|b| b.starts_with(&app)).collect();
+    if want.deploy_key() {
+        if !apps.is_empty() {
+            problems.push(
+                "bypass actors: the GitHub Actions app is still listed; `tags_bypass = \
+                 \"deploy_key\"` replaces it with the deploy keys"
+                    .to_string(),
+            );
+        }
+        match live.bypass.iter().find(|b| b.starts_with(keys)) {
+            None => problems
+                .push("bypass actors: missing the deploy keys (`hoist: release tags`)".to_string()),
+            Some(b) if b != crate::desired::DEPLOY_KEY_BYPASS => problems.push(format!(
+                "bypass actors: the deploy keys have mode `{}`, want `always`",
+                b.rsplit(':').next().unwrap_or("?")
+            )),
+            Some(_) => {}
+        }
+    } else {
+        match apps.first() {
+            None => problems.push("bypass actors: missing the GitHub Actions app".to_string()),
+            Some(b) if **b != ours => problems.push(format!(
+                "bypass actors: the GitHub Actions app has mode `{}`, want `always`",
+                b.trim_start_matches(&app)
+            )),
+            Some(_) if apps.len() > 1 => problems.push(format!(
+                "bypass actors: the GitHub Actions app is listed {} times",
+                apps.len()
+            )),
+            Some(_) => {}
+        }
     }
     let extra_refs: Vec<String> = live
         .include
@@ -301,7 +365,7 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     let extra_bypass: Vec<String> = live
         .bypass
         .iter()
-        .filter(|b| !b.starts_with(&app))
+        .filter(|b| !b.starts_with(&app) && !(want.deploy_key() && b.starts_with(keys)))
         .cloned()
         .collect();
     let mut kept = Vec::new();
@@ -318,8 +382,8 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
         let mut in_sync = in_sync;
         if !extra_bypass.is_empty() {
             in_sync = format!(
-                "tags {} may be created, moved and deleted only by github-actions and the \
-                 bypass actors the owner added",
+                "tags {} may be created, moved and deleted only by {who} and the bypass actors \
+                 the owner added",
                 quoted(&refs)
             );
         }
@@ -344,6 +408,94 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             source,
         );
     }
+}
+
+/// `tags_bypass = "deploy_key"`: the write deploy key `hoist: release tags` and its private key
+/// in the release environment's secret `RELEASE_TAG_KEY`. Both or neither: hoist never guesses
+/// which key a lone secret holds, nor recovers a lost private key. Every write deploy key
+/// bypasses the tag ruleset (GitHub's `DeployKey` actor has no id), so another one is drift.
+fn tag_deploy_key(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
+    use crate::desired::{TAG_KEY_SECRET, TAG_KEY_TITLE};
+    let Some(want) = d.github.tag_ruleset.as_ref().filter(|t| t.deploy_key()) else {
+        return;
+    };
+    let source = "hoist.toml:github.tags_bypass";
+    let env = &want.key_env;
+    let (keys, secret) = match (&l.deploy_keys, &l.tag_key_secret) {
+        (Some(k), Some(s)) => (k, s),
+        _ => return cx.unknown("tag_deploy_key", TAG_KEY_TITLE, "not read", source),
+    };
+    let keys = match keys.as_got() {
+        Ok(k) => k,
+        Err(why) => return cx.unknown("tag_deploy_key", TAG_KEY_TITLE, why, source),
+    };
+    let secret = match secret.as_got() {
+        Ok(s) => *s,
+        Err(why) => return cx.unknown("tag_deploy_key", TAG_KEY_TITLE, why, source),
+    };
+    let ours: Vec<_> = keys.iter().filter(|k| k.title == TAG_KEY_TITLE).collect();
+    let others: Vec<String> = keys
+        .iter()
+        .filter(|k| k.title != TAG_KEY_TITLE && !k.read_only)
+        .map(|k| k.title.clone())
+        .collect();
+    let fix = "delete the deploy key (Settings → Deploy keys) and the secret, then run `hoist \
+               apply` again";
+    let (mut action, mut reason) = match (ours.as_slice(), secret) {
+        ([], false) => (
+            Action::Create,
+            format!(
+                "missing; would add the write deploy key `{TAG_KEY_TITLE}` and seal its private \
+                 key into secret {TAG_KEY_SECRET} of environment `{env}`"
+            ),
+        ),
+        ([], true) => (
+            Action::Drift,
+            format!(
+                "secret {TAG_KEY_SECRET} is in environment `{env}` but there is no deploy key \
+                 `{TAG_KEY_TITLE}`: hoist cannot tell which key it holds; delete the secret \
+                 and run `hoist apply` again"
+            ),
+        ),
+        ([_], false) => (
+            Action::Drift,
+            format!(
+                "deploy key `{TAG_KEY_TITLE}` exists but secret {TAG_KEY_SECRET} is missing in \
+                 environment `{env}`: its private key is gone; delete the deploy key \
+                 (Settings → Deploy keys) and run `hoist apply` again"
+            ),
+        ),
+        ([k], true) if k.read_only => (
+            Action::Drift,
+            format!("deploy key `{TAG_KEY_TITLE}` is read-only, so it cannot push tags; {fix}"),
+        ),
+        ([_], true) => (
+            Action::Ok,
+            format!(
+                "write deploy key `{TAG_KEY_TITLE}` present; its private key is in secret \
+                 {TAG_KEY_SECRET} (environment `{env}`)"
+            ),
+        ),
+        (_, _) => (
+            Action::Drift,
+            format!(
+                "{} deploy keys are titled `{TAG_KEY_TITLE}`: hoist cannot tell which one \
+                 secret {TAG_KEY_SECRET} holds; {fix}",
+                ours.len()
+            ),
+        ),
+    };
+    if !others.is_empty() {
+        reason = format!(
+            "{reason}; other write deploy keys can also create, move and delete release tags: \
+             {}; delete them or make them read-only",
+            quoted(&others)
+        );
+        if action == Action::Ok {
+            action = Action::Drift;
+        }
+    }
+    cx.push("tag_deploy_key", TAG_KEY_TITLE, action, reason, source);
 }
 
 /// The tag ruleset item's reason when the GitHub plan refuses rulesets (Free, private repo).
@@ -827,6 +979,7 @@ pub fn diff_github(
 
     ruleset(&mut cx, d, l);
     tag_ruleset(&mut cx, d, l);
+    tag_deploy_key(&mut cx, d, l);
 
     let want = &g.actions_permissions;
     match l.actions_permissions.as_got() {
@@ -920,6 +1073,12 @@ pub fn diff_github(
                 ),
                 &w.source,
             );
+            continue;
+        }
+        // The release-tags deploy key's secret is the `tag_deploy_key` item.
+        if name == crate::desired::TAG_KEY_SECRET
+            && g.tag_ruleset.as_ref().is_some_and(|t| t.deploy_key())
+        {
             continue;
         }
         // A secret hoist produces (Cloudflare token, account id) is never optional.

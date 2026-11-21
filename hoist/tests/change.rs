@@ -44,6 +44,7 @@ fn desired() -> Desired {
                 branch: "main".into(),
                 required_checks: vec![s("ci-ok".to_string())],
                 merge_queue: s(false),
+                admin_bypass: true,
             },
             tag_ruleset: None,
             actions_permissions: s("read".to_string()),
@@ -125,6 +126,8 @@ fn gh_in_sync() -> LiveGithub {
         api_token_updated_at: Some(SECRET_UPDATED.into()),
         repo_strays: Vec::new(),
         apps: Fetch::Got(Vec::new()),
+        deploy_keys: None,
+        tag_key_secret: None,
     }
 }
 
@@ -178,6 +181,8 @@ fn gh_all_missing() -> LiveGithub {
         api_token_updated_at: None,
         repo_strays: Vec::new(),
         apps: Fetch::Got(Vec::new()),
+        deploy_keys: None,
+        tag_key_secret: None,
     }
 }
 
@@ -294,6 +299,7 @@ fn existing_ruleset_is_updated_by_id() {
             branch: "main".into(),
             required_checks: vec!["ci-ok".into()],
             merge_queue: false,
+            admin_bypass: true,
         }]
     );
 }
@@ -332,6 +338,8 @@ fn unknown_yields_no_changes() {
         api_token_updated_at: None,
         repo_strays: Vec::new(),
         apps: why(),
+        deploy_keys: None,
+        tag_key_secret: None,
     };
     let cf = LiveCloudflare {
         pages: vec![("proj".into(), why())],

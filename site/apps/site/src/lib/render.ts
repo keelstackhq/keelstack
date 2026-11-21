@@ -5,6 +5,7 @@ import { readSetupScript } from "./setup-script.ts";
 import * as sc from "../data/scenarios.ts";
 import {
   bare,
+  checkedAgainst,
   links,
   MIN_BOSUN_MIGRATE,
   sources,
@@ -34,6 +35,7 @@ export function buildCtx(
     ctx[`bare.${t}`] = bare(v[t]);
   }
   ctx["min.bosunMigrate"] = MIN_BOSUN_MIGRATE;
+  ctx["checked.bosun"] = checkedAgainst.bosun;
   for (const [k, val] of Object.entries(sources)) ctx[`src.${k}`] = val;
   for (const [k, val] of Object.entries(links)) ctx[`link.${k}`] = val;
   for (const [k, val] of Object.entries(readSetupScript())) ctx[`script.${k}`] = val;

@@ -175,9 +175,16 @@ optional_variables = ["REGION"]    # may stay unset: an `optional_variable` item
 apps = ["my-gate-app"]             # `app:<slug>` human step (https://github.com/apps/<slug>/installations/new) until installed
 secret_scope = "environment"
 
-[github.tag_ruleset]               # a second ruleset, `hoist: tags`: only the GitHub Actions app may touch these tags
+admin_bypass = false               # opt-in: the repository admin role may merge a PR past `hoist: default branch` (mode `pull_request`, never a direct push)
+tags_bypass = "actions"            # who bypasses `hoist: tags`: "actions" (default) or "deploy_key"; other values exit 3
+
+[github.tag_ruleset]               # a second ruleset, `hoist: tags`
 patterns = ["v*"]
-bypass = ["github-actions"]        # the only value allowed (else exit 3)
+bypass = ["github-actions"]        # with tags_bypass = "actions": required, the only value (else exit 3); with "deploy_key": leave it unset
+
+# tags_bypass = "deploy_key": the only bypass actor of `hoist: tags` is a write deploy key, so no workflow token can
+# move a release tag. `hoist apply` adds the key `hoist: release tags` and seals its private key as the secret
+# RELEASE_TAG_KEY of the `[release] environment` (default `release`); item `github/tag_deploy_key`.
 
 [workspace]                        # root only: members beside pnpm-workspace.yaml (dirs or a trailing `/*`)
 members = ["tools/npm/tool", "site"]
