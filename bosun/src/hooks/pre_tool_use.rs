@@ -11,7 +11,8 @@ use crate::cli::stamps;
 use crate::config::Config;
 use crate::core::guard::{
     ChildTask, Script, answers_lock, bash_writes, child_task_create, config_fetch_risk, edit_lock,
-    edited_path, foreign_lock, prereqs_lock, prereqs_lock_for, pushes, script_rules, tool_rules,
+    edited_path, foreign_lock, prereqs_lock, prereqs_lock_for, pushes, script_rules, settings_rule,
+    tool_rules,
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
@@ -98,6 +99,10 @@ fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
     )
     .map(|b| b.strip_prefix("origin/").unwrap_or(&b).to_string())
     .unwrap_or_else(|| "main".into());
+    // The settings-lock starts in the hook's own directory (which may be inside `.claude`).
+    if let Some(why) = settings_rule(tool, &tool_input, &dir.to_string_lossy()) {
+        return Some(deny(&why));
+    }
     if let Some(why) = tool_rules(tool, &tool_input, &branch_at, &default, &own_session()) {
         // `own_session` is the ctx session id (the hook's input `session_id` is Claude's UUID).
         return Some(deny(&why));
