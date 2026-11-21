@@ -42,15 +42,19 @@ job_text() {
   awk -v j="  $2:" '$0 == j { on = 1; print; next } on && /^  [A-Za-z0-9_-]+:/ { exit } on' "$1"
 }
 # step_run <workflow> <job> <step name>: the de-indented `run: |` body of that step.
+# Every reader that may stop early (awk `exit`, `grep -q`) reads a variable through a
+# here-string, never a pipe: under `pipefail` a writer cut off by SIGPIPE fails the line (141).
 step_run() {
-  job_text "$1" "$2" | awk -v n="      - name: $3" '
+  local jt
+  jt="$(job_text "$1" "$2")"
+  awk -v n="      - name: $3" '
     $0 == n { want = 1; next }
     want && /^      - / { exit }
     want && /^        run: \|$/ { inrun = 1; want = 0; next }
     inrun {
       if ($0 != "" && $0 !~ /^          /) exit
       print substr($0, 11)
-    }'
+    }' <<<"$jt"
 }
 
 # --- 1. persist-credentials ---------------------------------------------------------------
@@ -83,7 +87,7 @@ ok "main-health report is guarded to refs/heads/main"
 
 # --- 3. deploy-site ------------------------------------------------------------------------
 ds="$wf/deploy-site.yml"
-decide_if="$(job_text "$ds" decide | awk '/^    if: /,/^    runs-on:/')"
+decide_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$(job_text "$ds" decide)")"
 for want in "github.event.workflow_run.event == 'workflow_dispatch'" \
   "github.event.workflow_run.head_repository.full_name == github.repository" \
   "github.event.workflow_run.conclusion == 'success'"; do
@@ -147,7 +151,7 @@ decide_case 0.22.0-rc.1 "" error
 rel="$wf/release.yml"
 plan="$(step_run "$rel" plan 'Did the workspace version change?')"
 [ -n "$plan" ] || bad "release.yml: plan step not found"
-job_text "$rel" plan | grep -qF 'persist-credentials: false' || bad "release.yml: plan checkout persists credentials"
+grep -qF 'persist-credentials: false' <<<"$(job_text "$rel" plan)" || bad "release.yml: plan checkout persists credentials"
 # plan_case <name> <parent Cargo.toml or "-" for none> <break: "" | blob> <want release=|error>
 plan_case() {
   local d="$tmp/plan-$1" out
@@ -201,10 +205,11 @@ for j in release major; do
   code="$(grep -vE '^[[:space:]]*#' <<<"$key" || true)"
   ! grep -q 'StrictHostKeyChecking=no\|accept-new\|ssh-keyscan' <<<"$code" || bad "release.yml $j: host key not pinned"
   ! grep -qE '>[^&]*(id_|\.key|private)' <<<"$key" || bad "release.yml $j: the key is written to a file"
-  job_text "$rel" "$j" | grep -qF 'RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}' || bad "release.yml $j: no RELEASE_TAG_KEY env"
-  stop="$(job_text "$rel" "$j" | awk '/^      - name: Stop the ssh-agent$/ { s = 1; next } s && /^      - / { exit } s')"
+  jt="$(job_text "$rel" "$j")"
+  grep -qF 'RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}' <<<"$jt" || bad "release.yml $j: no RELEASE_TAG_KEY env"
+  stop="$(awk '/^      - name: Stop the ssh-agent$/ { s = 1; next } s && /^      - / { exit } s' <<<"$jt")"
   grep -qx '        if: always()' <<<"$stop" || bad "release.yml $j: no always() step stops the ssh-agent"
-  job_text "$rel" "$j" | grep -qx '    environment: release' || bad "release.yml $j: not in environment release"
+  grep -qx '    environment: release' <<<"$jt" || bad "release.yml $j: not in environment release"
 done
 [ "$(step_run "$rel" release 'Load the tag deploy key')" = "$(step_run "$rel" major 'Load the tag deploy key')" ] ||
   bad "release.yml: the key steps of release and major differ"
