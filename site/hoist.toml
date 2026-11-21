@@ -5,5 +5,6 @@
 [deploy]
 provider = "cloudflare-pages"
 project = "keelstack-landing"
-dir = "dist"
+# Relative to site/: what deploy-site.yml builds and deploys (site/apps/site/dist).
+dir = "apps/site/dist"
 environment = "site"

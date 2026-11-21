@@ -53,7 +53,8 @@ Computer steps first, then phone steps. Typical first run:
   - environments `release`, `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default
     branch only, no reviewers (D-022);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
-  - Cloudflare Pages project `keelstack-landing` (`site/`), a minted deploy token sealed with the
+  - Cloudflare Pages project `keelstack-landing` (`site/hoist.toml`; deploy-site.yml builds and
+    deploys `site/apps/site/dist`), a minted deploy token sealed with the
     account id as `CLOUDFLARE_API_TOKEN` / `CLOUDFLARE_ACCOUNT_ID` into environment `site`;
   - reads only: app installation, environment secrets and variables (present or not), crates.io and
     npm packages (first publish needed or not).
