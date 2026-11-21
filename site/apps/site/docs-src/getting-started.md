@@ -1,0 +1,303 @@
+---
+layout: ../../layouts/Docs.astro
+---
+
+This page takes a GitHub repo of yours, new or existing, to the full setup: a template kept
+current by splice, the org decisions channel, bosun running the work, repo settings from hoist,
+cached CI with hoard, and berth workspaces. Do the steps in order; each one names who does it.
+
+hoard's `@v0` tag follows its 0.x releases. hull v0.4.0 and later need splice 0.3.0 or later.
+
+## Before you start
+
+- **git** on `PATH` (splice fetches templates through the git CLI).
+- **Node 24 and pnpm 12** for hull's `template` (its post step runs `pnpm install`). Running
+  splice with `pnpm dlx` needs Node 20 or later. hull's `template-rust` needs cargo, and Node for
+  its agents-index post step.
+- **A GitHub repo you administer**, with the
+  [Claude GitHub App](https://github.com/apps/claude) installed on it.
+- **A public repo, or a paid GitHub plan.** A private repo on a free plan has no rulesets: the
+  required checks are only advisory and auto-merge cannot work, so the owner merges every pull
+  request by hand.
+
+## 1. Render the template (new repo)
+
+Skip to step 2 if your repo already has code and you do not want hull.
+
+```bash
+pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} new gh:keelstackhq/hull//template my-repo \
+  --data scope=my-scope --piece preact-app:web --piece hono-worker:api
+cd my-repo
+git add -A && git commit -m "chore: initial commit from hull"
+```
+
+- `gh:keelstackhq/hull//template` means repository `keelstackhq/hull`, directory `template`.
+  Without `--ref`, splice takes the latest stable tag. This is the way to start a repo; you do not
+  need a checkout of hull.
+- `--data` keys are bare variable names (`--data scope=my-scope`); a dotted key exits 2
+  (template contract rule 9.28).
+- `base` is always rendered. `--piece ID:NAME` adds a piece and names its instance. The pieces
+  and their variables are listed in
+  [hull's pieces reference](https://github.com/keelstackhq/hull/blob/main/docs/pieces.md);
+  `scope` is the npm scope (default `acme`).
+- splice runs `git init` when needed and the template's post commands (`pnpm install`), but it
+  never commits. Commit `.splice/lock.toml` with everything else and never edit it by hand.
+- splice runs post and step commands without token- or secret-like environment variables
+  (`GH_TOKEN`, `NPM_TOKEN`, names ending in `_TOKEN`, `_SECRET`, `_KEY`, …; since 0.3.1), so a
+  post step that needs a token is not supported.
+
+hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
+`circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
+`secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist's
+`keelstackhq/hoist/secrets` action; see
+[Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
+`splice add circleci`, then `splice add circleci-only`.
+
+For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolchain to build),
+released since hull v0.3.0:
+
+```bash
+pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} new gh:keelstackhq/hull//template-rust my-repo \
+  --piece rust-cli:cli
+```
+
+A repo rendered earlier from a branch (`--ref main`) records `0.0.0+g<sha>`; splice (since 0.2.1) moves it
+with `splice update --ref <branch|sha>` when the target descends from the locked commit, and a
+plain `update` or `check` considers only stable tags that descend from it.
+
+### Check that the repo is ready (since hull v0.5.0)
+
+A repo rendered from hull v0.5.0 ships a `ready` skill and `scripts/ready.mjs` (`template-rust`
+too since hull v0.5.2); its `AGENTS.md` says to run it first. `ready` starts with seven onboarding
+questions (pieces, CI provider, update bot, approvals, GitHub Apps, bosun, and `secrets` in
+`template` or `release` in `template-rust`), asked as Claude Code forms with the recommended
+option first, and records the answers in `docs/agents/onboarding.toml`. Then
+`node scripts/ready.mjs` checks each item of hull's start checklist and prints `pass`, `fail`,
+`ask`, `manual` or `skipped`, with the fix and a link to the item; an item an answer turns off is
+`skipped`, an unanswered one `ask`. Agents start autonomous work only when it exits 0 and the owner
+has confirmed every `manual` item. The whole list, in order: [Start a project](/docs/start-project/).
+For a new repo that bosun runs from the first task (files, plan, step order, first prompt), see
+[Greenfield repo with bosun](/docs/greenfield-bosun/). For a repo that already has code, see
+[Adopt an existing repo](/docs/adopt/).
+
+## 2. Add the channels
+
+Run these in the repo root, on a clean tree:
+
+```bash
+pnpm dlx @keelstackhq/splice@{{ks.bare.splice}} channel add gh:keelstackhq/decisions//channel \
+  --track main --piece import-project
+node scripts/agents-index.mjs     # hull repos: refresh the agents index
+git add -A && git commit -m "chore: add decisions channel"
+```
+
+- **rigging** is not needed for a repo rendered from hull v0.11.0 or later: `base` ships the four
+  subagents (`.claude/agents/`). A repo rendered from hull v0.2.0 to v0.10.x that added
+  `rigging --piece claude` runs `splice update --channel rigging` first, then `splice update` for
+  the template. A repo not rendered from hull adds
+  `splice channel add gh:keelstackhq/hull//rigging --piece claude --piece core` (`core` is the
+  harness-neutral working rules as a section in `AGENTS.md`; a hull repo never adds it, since its
+  `AGENTS.md` already carries them).
+- **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
+  `--piece import-project` when the repo has `docs/agents/project.md` (hull repos do), else
+  `--piece import-claude`; `--piece import-agents` adds a pointer to `AGENTS.md`.
+- The decisions channel brings keelstackhq's own decisions, such as how merges and tags work and
+  how to save CI minutes. Most of them name keelstackhq's own repos and process.
+- **A repo in another org** adds `--piece portable` as well. It takes only the decisions scoped
+  `all orgs` (currently D-007, D-010 and D-011):
+  `splice channel add gh:keelstackhq/decisions//channel --track main --piece portable --piece import-claude`.
+- **Your org's own decisions** can live in a repo of the same shape, for example
+  `<org>/decisions`. Copy `DECISIONS.md`, `decisions/000-template.md`, `channel/` and `scripts/`,
+  rename the channel and its snapshot file as the
+  [decisions README](https://github.com/keelstackhq/decisions#your-orgs-own-decisions-repo) lists,
+  then `splice channel add gh:<org>/decisions//channel --as <org>-decisions --track main --piece import-claude`.
+  It sits next to keelstackhq's portable channel: the files and section markers differ, so
+  neither touches the other.
+- `node scripts/agents-index.mjs` exists only in hull repos.
+
+Never edit inside a `<!-- splice:NAME:begin … -->` block or an owned file; change the source
+instead. `splice explain <path>` tells you who owns a file.
+
+## 3. Set up bosun
+
+Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKEN` that can push
+and open pull requests.
+
+```bash
+npm install -g @keelstackhq/splice@{{ks.bare.splice}} @keelstackhq/bosun@{{ks.bare.bosun}}
+bosun init --stack rust --owner <your-github-login>
+```
+
+- `--stack` is `rust` or `ts-pnpm`, once per stack; a mixed repo gets one entry per stack
+  directory. `--plan FILE` copies a plan into the repo.
+- `bosun init` runs `splice channel add gh:keelstackhq/bosun//channel` on branch `bosun/init`
+  (`claude/bosun-init` in a Claude cloud session, which can push only to `claude/…` branches;
+  `--branch` sets another), commits, pushes and opens one setup pull request whose body lists the
+  owner steps. `--no-pr` stops after the commit and returns the pull request title and body.
+- Next to a hull template it detects the repo's own `ci-ok` job and names bosun's aggregate check
+  `bosun-ok` instead, does not take `CLAUDE.md`, keeps the files hull owns, and adds the missing
+  required checks to `hoist.toml` (it keeps hull's own `hoist.toml`).
+- bosun's two Claude Code hooks belong in `.claude/settings.json`. In a hull repo that file
+  belongs to hull, so `bosun init` leaves it alone. hull v0.3.0 ships the hooks, guarded so they
+  do nothing until `.bosun/bosun.toml` exists and `bosun` is on `PATH`; with an older hull,
+  run `splice update` first, or `bosun init` lists the hooks as an owner step.
+
+The setup pull request is high risk (R-gov). Its base has no bosun workflows yet, so
+`risk-check`, `review-verdict` and `main-open` cannot run on it: the owner reviews it, comments
+`/bosun approve <head sha>` and merges it by hand. This is a one-time bootstrap.
+
+## 4. Apply the repo settings
+
+Who: the owner, on their own machine, with a token that has admin on the repo, in a checkout of
+the default branch after the setup pull request merged.
+
+```bash
+npm install -g @keelstackhq/hoist@{{ks.bare.hoist}}
+hoist plan --area github          # what would change; writes nothing
+hoist apply --area github --yes   # write it, then verify like `hoist check`
+gh label create bosun:halt --color B60205
+```
+
+`hoist apply` reads `hoist.toml` and the workflows. It turns on auto-merge and
+delete-branch-on-merge, and adds a ruleset on the default branch that requires `ci-ok`,
+`risk-check`, `review-verdict` and `main-open` (plus `bosun-ok` next to hull's CI).
+
+bosun repos need auto-merge without a merge queue: `risk-check` and `review-verdict` are statuses
+on the pull request head, which a merge-queue commit would not carry. The `hoist.toml` bosun seeds
+says `merge_queue = false`. In a hull repo, `bosun init` keeps hull's `hoist.toml` and writes
+`merge_queue = false` into its `[github]` table (since bosun 0.3.0); hoist would otherwise expect a
+merge queue, because hull's and bosun's workflows have a `merge_group` trigger. An explicit
+`merge_queue = true` stays, with a warning: set it to `false` yourself.
+
+Without hoist, set the same by hand: a branch ruleset on the default branch with those required
+status checks, "Allow auto-merge" and "Automatically delete head branches".
+
+Then, still as the owner:
+
+- Check `governance/owners.toml` (the GitHub logins whose approval counts) and
+  `.github/CODEOWNERS`.
+- Give the weekly update bot a token, or the update pull requests run no CI: `SPLICE_BOT_TOKEN`,
+  a fine-grained token for this repo with Contents, Pull requests and Workflows set to read and
+  write. Store it in an environment `splice-bot` whose deployment branches are only `main`, not as
+  a repository secret: a same-repo pull request's workflow can read repository secrets. hull
+  v0.4.0 and bosun 0.3.0 run `splice.yml` in that environment; bosun 0.2.3's channel still
+  reads a repository secret. hull v0.4.0 also takes a GitHub App with the same
+  permissions instead (variable `SPLICE_APP_CLIENT_ID`, secret `SPLICE_APP_KEY`; no personal
+  token), or no bot at all: set the repository variable `SPLICE_BOT=off` and run updates from a
+  session.
+- Paste the output of `bosun setup-snippet` (bosun 0.10.0) once as the setup script of the repo's
+  Claude Code cloud environment (network allow-list and secrets: [Cloud environment](/docs/cloud/)).
+  It runs the checkout's own `docs/setup-script.sh` as root before each session, which installs Node 24, pnpm (ts-pnpm stacks), the Rust
+  toolchain with cargo-nextest and cargo-deny (rust stacks), and the pinned splice, hoist, berth
+  and bosun.
+- Create the Routines: curator (daily, Sonnet), plus notify
+  (every hour, Haiku) only with a `[slack]` table; without it bosun has no notify Routine
+  and `bosun doctor` reports Slack as skipped. `bosun doctor` prints their prompts. The janitor is optional: set `[routines] janitor = true` in .bosun/bosun.toml only if the owner wants it, then create it after confirming with the owner.
+
+`bosun doctor` reports the setup checklist as ok or missing (`--remote` also runs
+`hoist check`). It cannot see Routines: set `BOSUN_ROUTINES_OK=1` once they exist. Since bosun 0.3.0, `--remote` also checks the environment of every workflow job
+and warns unless only `main` may deploy to it.
+
+## 5. Cache CI with hoard
+
+hull's `template` already caches Turborepo through hoard, and bosun's gate workflows for
+`ts-pnpm` do too. In another Turborepo repo, add one step after the install:
+
+```yaml
+- run: pnpm install --frozen-lockfile
+- uses: keelstackhq/hoard@v0 # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
+- run: pnpm turbo run build test lint
+```
+
+Run the workflow on `push` to `main` as well, so pull requests start from a warm cache. For a
+cargo-only repo hoard does nothing; use `Swatinem/rust-cache@v2`. Since 0.6.1 the hoard action
+prints a notice when `TURBO_API`, `TURBO_TOKEN` or `TURBO_TEAM` are already set.
+
+On CircleCI (since hoard 0.4.0), `circleci/hoard.yml` installs a checksum-verified release and runs
+it with `hoard serve --detach` and `hoard stop`
+([hoard's CircleCI guide](https://github.com/keelstackhq/hoard/blob/main/docs/circleci.md)).
+CircleCI caches are not branch-scoped, so a PR could save a cache that `main` restores; hoard v0.5.0 adds a `restore` parameter: pass `restore: false` on the default branch.
+
+## 6. Use berth locally
+
+berth gives each agent or task its own worktree, ports, env files and database.
+
+```bash
+npm i -g @keelstackhq/berth@{{ks.bare.berth}}
+berth up fix-login          # worktree ../<repo>.berth/fix-login on branch berth/fix-login
+eval "$(berth env fix-login)"   # PORT, <NAME>_PORT, DATABASE_URL, …
+berth down fix-login        # after the work merged; or `berth gc` for all merged tasks
+```
+
+An optional `berth.toml` at the repo root sets the copied files, port names, the setup command
+and the database. For Claude Code, berth's hooks make `claude --worktree` and subagent worktrees
+berth worktrees; the settings snippet is in
+[berth's integration guide](https://github.com/keelstackhq/berth/blob/main/docs/integration.md).
+
+## 7. Run the first task
+
+Write a plan in `plans/<project>.md` (format:
+[plan-format.md](https://github.com/keelstackhq/bosun/blob/main/docs/plan-format.md)). Its
+`project:` line must equal `project` in `.bosun/bosun.toml`. An agent session then runs the loop;
+everything up to the verdict is what worked on the rust-canary trial:
+
+```bash
+bosun plan check plans/my-project.md    # offline validation
+bosun join                              # register the session
+bosun plan import plans/my-project.md   # epics, tasks, and one ready plan task per item
+bosun claim <plan-task>                 # commit the plan on a branch, then:
+bosun pr <plan-task>
+# after that pull request merged:
+bosun plan import plans/my-project.md   # moves the item's tasks to ready
+bosun claim <task>                      # test first, commit, then:
+bosun pr <task>
+bosun review-pack <pr>                  # input for a fresh reviewer subagent
+bosun verdict comment --from verdict.json   # from a cloud session; elsewhere `verdict post`
+bosun wait --pr <pr>
+bosun pr <task> --auto-merge            # since 0.4.0 at once; GitHub merges when the checks pass
+```
+
+`--auto-merge` needs the ruleset and auto-merge from step 4. On the trial repo (private, free
+plan, so no ruleset) every pull request was merged by hand instead.
+
+## 8. Local docs for agents (docspack)
+
+These docs are also a [docspack](https://www.npmjs.com/package/docspack) documentation package,
+[`@keelstackhq/docspack`](https://www.npmjs.com/package/@keelstackhq/docspack) on npm, built from
+the same Markdown as this site. An agent in your repo can then answer from them offline, with
+bounded output (docspack needs Node 22.5 or later):
+
+```bash
+pnpm add -D docspack@1.5.0 @keelstackhq/docspack
+pnpm exec docspack sync
+pnpm exec docspack ask "how do I approve a pull request from chat" --json
+```
+
+`sync` indexes the docs packages the repo depends on and makes no network requests; `ask` returns
+at most 3 chunks and 3,000 tokens by default. In a repo with hull's `docs` piece, also list it in
+`docs/packs.json` so `pnpm docs:packs` reports it; add this entry under `packs`, next to the
+existing ones:
+
+```json
+"keelstack": { "package": "@keelstackhq/docspack", "source": "vendor" }
+```
+
+Install from the default `latest` tag (0.1.1 or later, published with npm provenance);
+`2026.10.27` on npm is an older build. hull v0.4.0's `docs` piece already lists the pack, pinned
+with an exact `version`.
+Your lockfile keeps the docs version you installed. For newer docs, run `pnpm add -D @keelstackhq/docspack@latest`, then
+`pnpm exec docspack sync` again.
+
+## 9. Releases
+
+A repo that publishes packages releases through `hoist release` in its release workflow; agents
+never tag. The first publish needs the owner once (`hoist release bootstrap`, then a re-run of
+the failed publish job within 2 days). The steps are in
+[Releases and updates](/docs/releases/).
+
+## Next
+
+- [Tasks and sessions](/docs/tasks/), [CI and gates](/docs/ci/) and
+  [Risk and review](/docs/risk/): how bosun runs the work once it is set up.
+- [Playbook](/docs/playbook/): how to run a repo day to day with an orchestrator session.
+- [Troubleshooting](/docs/troubleshooting/): known pitfalls, with fixes.

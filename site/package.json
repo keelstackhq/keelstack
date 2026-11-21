@@ -1,0 +1,20 @@
+{
+  "name": "keelstackhq",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r run build",
+    "lint": "pnpm -r run lint",
+    "typecheck": "pnpm -r run typecheck",
+    "test": "pnpm -r run test",
+    "format": "vp fmt",
+    "format:check": "vp fmt --check package.json tsconfig.base.json vite.config.ts pnpm-workspace.yaml CLAUDE.md AGENTS.md README.md docs && pnpm -r run format:check",
+    "check": "pnpm run build && pnpm run lint && pnpm run format:check && pnpm run typecheck && pnpm run test",
+    "ci": "pnpm run check"
+  },
+  "devDependencies": {
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  },
+  "packageManager": "pnpm@12.11.2"
+}

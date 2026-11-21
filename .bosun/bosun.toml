@@ -14,6 +14,10 @@ profile = "ts-pnpm"
 path = "hoard/action"
 profile = "ts-pnpm"
 
+[[stack]]
+path = "site"
+profile = "ts-pnpm"
+
 [review]
 # "subagent" (mode a) until M8 adds the CI review (mode b).
 mode = "subagent"
@@ -69,3 +73,9 @@ depends_on = ["bosun", "splice", "hoist"]
 
 [[folders]]
 path = "decisions"
+
+# The landing site (D-024) generates every fact from the tool folders: any change to one runs
+# ci-site. affected.sh reads this line too (keep it on one line).
+[[folders]]
+path = "site"
+depends_on = ["bosun", "splice", "hull", "hoist", "hoard", "berth", "keel"]

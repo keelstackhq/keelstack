@@ -6,7 +6,7 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 
 - Required checks: `ci-ok`, `risk-check`, `review-verdict`, `main-open`.
   The per-folder jobs `ci-bosun`, `ci-splice`, `ci-hull`, `ci-hoist`, `ci-hoard`, `ci-berth`,
-  `ci-keel`, `ci-decisions`, `ci-repo` and `ci-gates` are aggregated by `ci-ok`; do not require them one by one
+  `ci-keel`, `ci-decisions`, `ci-site`, `ci-repo` and `ci-gates` are aggregated by `ci-ok`; do not require them one by one
   (a skipped job is fine inside `ci-ok`).
 - Merge queue: on (ci.yml listens to `merge_group`).
 - Merge method for version-bump PRs: merge or squash (release.yml compares the first parent).
@@ -22,6 +22,7 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 | `bosun-signer` | `main` only | none | signer.yml |
 | `review` | `main` only | none | review.yml |
 | `hoard-r2` | `main` only | none | hoard-self-test.yml (R2 storage legs) |
+| `site` | `main` only | none | deploy-site.yml (deploy job; D-024) |
 
 ## Secrets
 
@@ -29,6 +30,10 @@ Names only; values live in GitHub settings. Nothing here is set by a workflow.
 - `BOSUN_SIGNER_KEY` (environment `bosun-signer`).
 - `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (environment `hoard-r2`):
   the R2 bucket of hoard's self-test.
+- `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (environment `site`): deploy `site/` to the Cloudflare Pages
+  project `keelstack-landing` (token: Pages edit on that account). Move both from the old site repo's
+  environment `production`; PRs never read them (the deploy job runs only off a push, a release run or
+  a manual run on main).
 - `ANTHROPIC_API_KEY` (environment `review`; only when `BOSUN_REVIEW_CI` is `true`).
 - Release: none. crates.io and npm use trusted publishing (OIDC).
 

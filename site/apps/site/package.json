@@ -1,0 +1,40 @@
+{
+  "name": "@keelstackhq/site",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "gen": "node scripts/gen-docs.ts",
+    "build": "astro build",
+    "lint": "vp lint",
+    "format:check": "vp fmt --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run",
+    "preview": "astro preview",
+    "deploy:preview": "wrangler pages deploy dist --project-name keelstack-landing --branch pr-$PR_NUMBER",
+    "deploy": "wrangler pages deploy dist --project-name keelstack-landing --branch main"
+  },
+  "dependencies": {
+    "@astrojs/markdown-satteri": "catalog:",
+    "@astrojs/react": "catalog:",
+    "@cascivo/react": "catalog:",
+    "@cascivo/themes": "catalog:",
+    "@fontsource-variable/archivo": "catalog:",
+    "@fontsource/jetbrains-mono": "catalog:",
+    "@preact/signals-react": "catalog:",
+    "astro": "catalog:",
+    "react": "catalog:",
+    "react-dom": "catalog:"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "catalog:",
+    "@testing-library/react": "catalog:",
+    "@types/react": "catalog:",
+    "@types/react-dom": "catalog:",
+    "happy-dom": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "wrangler": "catalog:"
+  }
+}
