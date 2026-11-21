@@ -197,7 +197,9 @@ for j in release major; do
     bad "release.yml $j: github.com's ed25519 host key is not pinned"
   grep -qF 'SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU' <<<"$key" || bad "release.yml $j: no fingerprint check"
   grep -qF 'StrictHostKeyChecking=yes' <<<"$key" || bad "release.yml $j: host key checking is not strict"
-  ! grep -q 'StrictHostKeyChecking=no\|accept-new\|ssh-keyscan' <<<"$key" || bad "release.yml $j: host key not pinned"
+  # Code lines only: the step's own comment warns against these options by name.
+  code="$(grep -vE '^[[:space:]]*#' <<<"$key" || true)"
+  ! grep -q 'StrictHostKeyChecking=no\|accept-new\|ssh-keyscan' <<<"$code" || bad "release.yml $j: host key not pinned"
   ! grep -qE '>[^&]*(id_|\.key|private)' <<<"$key" || bad "release.yml $j: the key is written to a file"
   job_text "$rel" "$j" | grep -qF 'RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}' || bad "release.yml $j: no RELEASE_TAG_KEY env"
   stop="$(job_text "$rel" "$j" | awk '/^      - name: Stop the ssh-agent$/ { s = 1; next } s && /^      - / { exit } s')"
