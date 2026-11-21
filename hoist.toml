@@ -1,0 +1,54 @@
+# keelstack's repository setup (hoist spec §5). `keel up` (root keel.toml) applies it; every
+# item of .github/SETUP.md is a hoist item or human step from this file plus inference
+# (workflows, Cargo workspace, npm launchers).
+
+[github]
+# ci-ok aggregates the per-folder ci-* jobs; the other three are bosun's commit statuses (D-022).
+required_checks = ["ci-ok", "risk-check", "review-verdict", "main-open"]
+# Inferred from ci.yml's merge_group trigger; stated here so it never silently turns off.
+merge_queue = true
+allow_auto_merge = true
+delete_branch_on_merge = true
+# Every secret lives in the environment of the jobs that read it, never in the repository.
+secret_scope = "environment"
+# review.yml runs only when this is `true` (set with bosun `[review] mode = "ci"`); unset = off.
+optional_variables = ["BOSUN_REVIEW_CI"]
+# Needed only when BOSUN_REVIEW_CI is `true`.
+optional_secrets = ["ANTHROPIC_API_KEY"]
+# The bosun gate app posts risk-check, review-verdict and main-open.
+apps = ["keelstackhq-bosun-gate"]
+
+# release.yml creates `vX.Y.Z` and moves the major tag `v0`; nobody else may.
+[github.tag_ruleset]
+patterns = ["v*"]
+bypass = ["github-actions"]
+
+# Deployment branch: the default branch only (hoist's default), no reviewers (D-022).
+[github.environments.bosun-app]
+[github.environments.bosun-signer]
+[github.environments.review]
+[github.environments.hoard-r2]
+[github.environments.site]
+
+# Extra workspace members: the root is a Cargo workspace, not a pnpm one. The npm launchers
+# (their platform packages are found next to them) and the landing site.
+[workspace]
+members = ["bosun/npm/bosun", "splice/npm/splice", "hoist/npm/hoist", "berth/npm/berth", "keel/npm/keel", "site"]
+
+[release]
+# One version for every tool (lockstep, D-023), one tag `vX.Y.Z`.
+versioning = "fixed"
+tag_format = "v{version}"
+environment = "release"
+# The workflow named in the trusted publishers (cargo-deny-npm.yml also uses `release`).
+workflow = "release.yml"
+# No required reviewer on `release` (D-022): a version-bump merge releases with no tap.
+reviewers = []
+
+# npm packages published outside the lockstep release (their own workflow and version).
+[registry.npm."@keelstackhq/cargo-deny"]
+workflow = "cargo-deny-npm.yml"
+[registry.npm."@keelstackhq/cargo-deny-linux-x64"]
+workflow = "cargo-deny-npm.yml"
+[registry.npm."@keelstackhq/cargo-deny-linux-arm64"]
+workflow = "cargo-deny-npm.yml"

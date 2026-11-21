@@ -1,0 +1,5 @@
+# keel's manifest for keelstack itself (keel spec §4): an existing repo, so no template render.
+# `keel plan` lists every item of .github/SETUP.md; `keel up` applies them through hoist and
+# prints one checklist of the steps only a human can do (D-009).
+repo = "keelstackhq/keelstack"
+template = "none"
