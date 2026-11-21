@@ -35,6 +35,13 @@ deny.exceptions.toml     @urbanisierung
 .deny.exceptions.toml    @urbanisierung
 deny.local.toml          @urbanisierung
 .deny.local.toml         @urbanisierung
+# R-ci: files that steer how the gates build and run.
+rust-toolchain.toml      @urbanisierung
+rust-toolchain           @urbanisierung
+clippy.toml              @urbanisierung
+.clippy.toml             @urbanisierung
+rustfmt.toml             @urbanisierung
+.rustfmt.toml            @urbanisierung
 build.rs                 @urbanisierung
 # R-secrets.
 secrets.toml             @urbanisierung
