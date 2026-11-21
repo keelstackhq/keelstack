@@ -351,11 +351,12 @@ impl Manifest {
                     self.confirmed.backup = Some(app);
                 }
                 other => {
-                    if other.is_empty()
-                        || other.chars().any(|c| c.is_whitespace() || c.is_control())
-                    {
+                    let trust = ["npm-trust:", "crates-trust:"]
+                        .iter()
+                        .any(|p| other.strip_prefix(p).is_some_and(|r| !r.is_empty()));
+                    if !trust || other.chars().any(|c| c.is_whitespace() || c.is_control()) {
                         return Err(KeelError::Usage(format!(
-                            "--confirm {other:?}: expected a human step id from the checklist (`agent-env`, `dns`, `backup`, `npm-trust:<pkg>`, `crates-trust:<crate>`, ...)"
+                            "--confirm {other:?}: hoist can read back every other step, so only `agent-env`, `dns`, `backup`, `npm-trust:<pkg>` and `crates-trust:<crate>` can be confirmed"
                         )));
                     }
                     if !self.confirmed.steps.iter().any(|s| s == other) {
@@ -728,7 +729,7 @@ mod tests {
             .unwrap()
         );
         assert_eq!(m.confirmed.dns.as_deref(), Some("b.example.com"));
-        for bad in ["", "two words"] {
+        for bad in ["", "two words", "secret:X", "variable:Y", "npm-trust:", "app"] {
             assert!(
                 m.merge_flags(&UpArgs {
                     confirm: vec![bad.into()],
@@ -747,6 +748,13 @@ mod tests {
             .unwrap();
         }
         assert_eq!(m.confirmed.steps, ["npm-trust:@o/p"]);
+        m.merge_flags(&UpArgs {
+            confirm: vec!["crates-trust:c".into()],
+            ..args()
+        })
+        .unwrap();
+        assert_eq!(m.confirmed.steps, ["npm-trust:@o/p", "crates-trust:c"]);
+        m.confirmed.steps.pop();
         let t = toml::to_string(&m).unwrap();
         assert_eq!(Manifest::parse(&t).unwrap(), m);
     }

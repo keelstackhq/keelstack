@@ -56,15 +56,15 @@ fn pages_project_defaults_to_repo_dash_target() {
 }
 
 #[test]
-fn missing_account_id_exits_3() {
+fn missing_account_id_is_an_unknown_item() {
     let repo = common::fixture_repo("site", KEELSTACK);
     common::hoist()
         .args(["explain", "-C"])
         .arg(repo.path())
         .assert()
-        .code(3)
-        .stderr(predicate::str::contains("CLOUDFLARE_ACCOUNT_ID"))
-        .stderr(predicate::str::contains("[cloudflare] account_id"));
+        .code(0)
+        .stdout(predicate::str::contains("CLOUDFLARE_ACCOUNT_ID"))
+        .stdout(predicate::str::contains("[cloudflare] account_id"));
 }
 
 #[test]

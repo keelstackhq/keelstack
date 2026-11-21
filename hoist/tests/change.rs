@@ -45,6 +45,7 @@ fn desired() -> Desired {
                 required_checks: vec![s("ci-ok".to_string())],
                 merge_queue: s(false),
             },
+            tag_ruleset: None,
             actions_permissions: s("read".to_string()),
             environments: vec![s("production".to_string())],
             unresolved_environments: Vec::new(),
@@ -102,6 +103,10 @@ fn gh_in_sync() -> LiveGithub {
             merge_queue: false,
             enforcement: Some("active".into()),
             unmodelled: Vec::new(),
+            target: Some("branch".into()),
+            exclude: Vec::new(),
+            rule_types: Vec::new(),
+            bypass: Vec::new(),
         }]),
         classic_protection: Fetch::Got(false),
         actions_permissions: Fetch::Got("read".into()),
@@ -865,9 +870,11 @@ fn environment_scope_makes_the_release_environment_with_area_github() {
     }];
     d.release = Some(hoist::desired::DesiredRelease {
         environment: s("release".to_string()),
-        reviewers: Vec::new(),
+        reviewers: None,
+        workflow_name: None,
         workflow: None,
         packages: Vec::new(),
+        registry: Vec::new(),
     });
     d.github.environments.push(s("release".to_string()));
     let mut gh = gh_in_sync();

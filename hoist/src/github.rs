@@ -53,6 +53,14 @@ pub struct Ruleset {
     /// What hoist's own PUT would drop: rule types it does not write, a strict status-check
     /// policy, pinned check sources, an exclude list, or targets beside the default branch.
     pub unmodelled: Vec<String>,
+    /// `branch` or `tag`; `None` when the detail omits it.
+    pub target: Option<String>,
+    /// `conditions.ref_name.exclude`
+    pub exclude: Vec<String>,
+    /// Every rule `type`, sorted.
+    pub rule_types: Vec<String>,
+    /// `<actor_type>:<actor_id>:<bypass_mode>` per bypass actor, sorted.
+    pub bypass: Vec<String>,
 }
 
 /// A repository or organization variable (values are not secret).
@@ -369,8 +377,36 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
     if !strings(v.pointer("/conditions/ref_name/exclude")).is_empty() {
         unmodelled.push("excluded branches".to_string());
     }
+    let mut rule_types: Vec<String> = rules
+        .iter()
+        .filter_map(|r| r.get("type").and_then(Value::as_str).map(str::to_string))
+        .collect();
+    rule_types.sort();
+    let mut bypass: Vec<String> = v
+        .get("bypass_actors")
+        .and_then(Value::as_array)
+        .map(|a| {
+            a.iter()
+                .map(|b| {
+                    format!(
+                        "{}:{}:{}",
+                        b.get("actor_type").and_then(Value::as_str).unwrap_or("?"),
+                        b.get("actor_id").and_then(Value::as_u64).unwrap_or(0),
+                        b.get("bypass_mode")
+                            .and_then(Value::as_str)
+                            .unwrap_or("always"),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    bypass.sort();
     Ruleset {
         id,
+        target: v.get("target").and_then(Value::as_str).map(str::to_string),
+        exclude: strings(v.pointer("/conditions/ref_name/exclude")),
+        rule_types,
+        bypass,
         name: v
             .get("name")
             .and_then(Value::as_str)

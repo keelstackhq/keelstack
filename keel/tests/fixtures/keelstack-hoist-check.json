@@ -470,38 +470,38 @@
   },
   {
    "id": "secret:BOSUN_APP_KEY",
-   "title": "Set secret BOSUN_APP_KEY in environment bosun-app: run `hoist secrets set BOSUN_APP_KEY` (value from env BOSUN_APP_KEY or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret BOSUN_APP_KEY",
+   "url": "hoist secrets set BOSUN_APP_KEY",
    "status": "pending"
   },
   {
    "id": "secret:BOSUN_SIGNER_KEY",
-   "title": "Set secret BOSUN_SIGNER_KEY in environment bosun-signer: run `hoist secrets set BOSUN_SIGNER_KEY` (value from env BOSUN_SIGNER_KEY or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret BOSUN_SIGNER_KEY",
+   "url": "hoist secrets set BOSUN_SIGNER_KEY",
    "status": "pending"
   },
   {
    "id": "secret:R2_ACCOUNT_ID",
-   "title": "Set secret R2_ACCOUNT_ID in environment hoard-r2: run `hoist secrets set R2_ACCOUNT_ID` (value from env R2_ACCOUNT_ID or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret R2_ACCOUNT_ID",
+   "url": "hoist secrets set R2_ACCOUNT_ID",
    "status": "pending"
   },
   {
    "id": "secret:R2_ACCESS_KEY_ID",
-   "title": "Set secret R2_ACCESS_KEY_ID in environment hoard-r2: run `hoist secrets set R2_ACCESS_KEY_ID` (value from env R2_ACCESS_KEY_ID or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret R2_ACCESS_KEY_ID",
+   "url": "hoist secrets set R2_ACCESS_KEY_ID",
    "status": "pending"
   },
   {
    "id": "secret:R2_SECRET_ACCESS_KEY",
-   "title": "Set secret R2_SECRET_ACCESS_KEY in environment hoard-r2: run `hoist secrets set R2_SECRET_ACCESS_KEY` (value from env R2_SECRET_ACCESS_KEY or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret R2_SECRET_ACCESS_KEY",
+   "url": "hoist secrets set R2_SECRET_ACCESS_KEY",
    "status": "pending"
   },
   {
    "id": "secret:R2_BUCKET",
-   "title": "Set secret R2_BUCKET in environment hoard-r2: run `hoist secrets set R2_BUCKET` (value from env R2_BUCKET or a hidden prompt)",
-   "url": "https://github.com/keelstackhq/keelstack/settings/environments",
+   "title": "set secret R2_BUCKET",
+   "url": "hoist secrets set R2_BUCKET",
    "status": "pending"
   },
   {

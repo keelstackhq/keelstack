@@ -85,9 +85,14 @@ impl SettingsAll {
         if !skipped.is_empty() {
             cx.pending.push(cloudflare_token_entry(&skipped));
         }
-        cx.pending.extend(p.humans.iter().cloned());
+        // Only trust steps (hoist cannot read them back) are filtered by confirmations.
         let confirmed = &cx.manifest.confirmed.steps;
-        cx.pending.retain(|h| !confirmed.contains(&h.id));
+        cx.pending.extend(
+            p.humans
+                .iter()
+                .filter(|h| !(is_trust(&h.id) && confirmed.contains(&h.id)))
+                .cloned(),
+        );
         Ok(Ok(p))
     }
 
@@ -99,13 +104,43 @@ impl SettingsAll {
         }
         match p.code {
             0 => Check::Done("hoist check: no drift".into()),
-            1 => Check::Todo("hoist check reports drift".into()),
+            1 => {
+                let why = drift_reasons(p);
+                Check::Todo(if why.is_empty() {
+                    "hoist check reports drift".into()
+                } else {
+                    format!("hoist check reports drift: {why}")
+                })
+            }
             _ if p.humans.is_empty() => Check::Failed(
                 "`hoist` exited 2 without a human step; run it by hand to see why".into(),
             ),
             _ => Check::Done("hoist: only confirmed human steps remain".into()),
         }
     }
+}
+
+fn is_trust(id: &str) -> bool {
+    id.starts_with("npm-trust:") || id.starts_with("crates-trust:")
+}
+
+/// "kind/key: reason" for the first few items that are not in sync.
+fn drift_reasons(p: &hoist::Parsed) -> String {
+    let lines: Vec<String> = p
+        .items
+        .iter()
+        .filter(|i| !matches!(i.action.as_str(), "ok" | "unknown"))
+        .take(3)
+        .map(|i| {
+            let k = if i.key.is_empty() {
+                i.kind.clone()
+            } else {
+                format!("{}/{}", i.kind, i.key)
+            };
+            format!("{k}: {}", i.reason)
+        })
+        .collect();
+    lines.join("; ")
 }
 
 /// The checklist entry for the cloudflare items hoist would handle with the token.
@@ -145,9 +180,14 @@ impl Step for SettingsAll {
             Err(e) => Ok(Check::Failed(e)),
             Ok(p) if p.code == 0 => self.check(cx),
             Ok(p) if p.code == 2 => Ok(SettingsAll::decide(cx, &p)),
-            Ok(_) => Ok(Check::Failed(
-                "`hoist --json apply --yes` exited 1; run it by hand to see why".into(),
-            )),
+            Ok(p) => {
+                let why = drift_reasons(&p);
+                Ok(Check::Failed(if why.is_empty() {
+                    "`hoist --json apply --yes` exited 1; run it by hand to see why".into()
+                } else {
+                    format!("`hoist --json apply --yes` exited 1: {why}")
+                }))
+            }
         }
     }
 }
@@ -318,6 +358,29 @@ mod tests {
     }
 
     #[test]
+    fn confirmations_filter_only_trust_steps_and_never_keels_own_ids() {
+        let r = FakeRunner::new()
+            .on(&["hoist", "--json", "explain"], Out::ok(BODY))
+            .on(&["hoist", "--json", "check"], Out::with(2, BODY, ""));
+        let mut cx = none_ctx(&r, false, &["secret:K", "npm-trust:p", "cloudflare-token"]);
+        SettingsAll.check(&mut cx).unwrap();
+        let ids: Vec<&str> = cx.pending.iter().map(|h| h.id.as_str()).collect();
+        assert_eq!(ids, ["cloudflare-token", "secret:K"]);
+    }
+
+    #[test]
+    fn apply_exit_1_lists_the_drift_reasons() {
+        let body = r#"{"items":[{"area":"github","kind":"ruleset","key":"main","action":"drift","reason":"bypass differs"},{"area":"github","kind":"x","key":"","action":"ok","reason":"fine"}],"human_steps":[]}"#;
+        let r = FakeRunner::new().on(&["hoist"], Out::with(1, body, ""));
+        let mut cx = none_ctx(&r, true, &[]);
+        let Check::Failed(m) = SettingsAll.apply(&mut cx).unwrap() else {
+            panic!()
+        };
+        assert!(m.contains("ruleset/main: bypass differs"), "{m}");
+        assert!(!m.contains("fine"), "{m}");
+    }
+
+    #[test]
     fn none_mode_exit_codes() {
         let run = |code: i32, body: &str, confirmed: &[&str]| {
             let r = FakeRunner::new().on(&["hoist"], Out::with(code, body, ""));
@@ -330,12 +393,12 @@ mod tests {
         assert!(matches!(run(0, BODY, &[]), Check::Human(_)));
         assert!(matches!(run(2, none, &[]), Check::Failed(_)));
         assert!(matches!(
-            run(0, BODY, &["secret:K", "npm-trust:p"]),
-            Check::Done(_)
+            run(0, BODY, &["npm-trust:p"]),
+            Check::Human(_)
         ));
         assert!(matches!(
-            run(2, BODY, &["secret:K", "npm-trust:p"]),
-            Check::Done(_)
+            run(2, BODY, &["npm-trust:p"]),
+            Check::Human(_)
         ));
         assert!(matches!(run(3, "", &[]), Check::Failed(_)));
     }

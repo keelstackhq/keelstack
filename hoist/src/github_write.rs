@@ -3,7 +3,7 @@
 
 use crate::auth::Secret;
 use crate::change::{Change, Reviewers};
-use crate::desired::{Desired, RULESET_NAME};
+use crate::desired::{ACTIONS_APP_ID, Desired, RULESET_NAME, TAG_RULESET_NAME};
 use crate::error::HoistError;
 use crate::github::plan_limited;
 use crate::http::{Fetched, Http, HttpError, Method, seg};
@@ -33,6 +33,28 @@ pub fn execute_github(http: &Http, d: &Desired, change: &Change) -> Result<(), H
             merge_queue,
         } => {
             let body = ruleset_body(required_checks, *merge_queue);
+            let sent = match existing_id {
+                Some(id) => {
+                    let path = format!("{repo}/rulesets/{}", seg(&id.to_string()));
+                    http.send_json(Method::Put, &path, Some(&body))
+                }
+                None => http.send_json(Method::Post, &format!("{repo}/rulesets"), Some(&body)),
+            };
+            match sent {
+                Ok(_) => Ok(()),
+                Err(HttpError::Rejected {
+                    status: 403,
+                    message,
+                    ..
+                }) if plan_limited(&message) => Err(HoistError::PlanLimited(message)),
+                Err(err) => Err(err.into()),
+            }
+        }
+        Change::TagRuleset {
+            existing_id,
+            patterns,
+        } => {
+            let body = tag_ruleset_body(patterns);
             let sent = match existing_id {
                 Some(id) => {
                     let path = format!("{repo}/rulesets/{}", seg(&id.to_string()));
@@ -273,6 +295,24 @@ pub fn merge_queue_parameters() -> Value {
         "max_entries_to_merge": 5,
         "min_entries_to_merge_wait_minutes": 5,
         "check_response_timeout_minutes": 60
+    })
+}
+
+/// The `hoist: tags` ruleset: only the GitHub Actions app (github-actions[bot]) bypasses
+/// the creation, update and deletion rules on the matching tags.
+fn tag_ruleset_body(patterns: &[String]) -> Value {
+    let include: Vec<String> = patterns.iter().map(|p| format!("refs/tags/{p}")).collect();
+    json!({
+        "name": TAG_RULESET_NAME,
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": include, "exclude": []}},
+        "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+        "bypass_actors": [{
+            "actor_id": ACTIONS_APP_ID,
+            "actor_type": "Integration",
+            "bypass_mode": "always"
+        }]
     })
 }
 

@@ -246,7 +246,10 @@ fn github_overrides(d: &Desired, live: &LiveGithub, found: &mut Found) {
                     );
                 }
             }
-            for other in rulesets.iter().filter(|r| r.name != RULESET_NAME) {
+            for other in rulesets
+                .iter()
+                .filter(|r| r.name != RULESET_NAME && r.name != crate::desired::TAG_RULESET_NAME)
+            {
                 let text = format!("# live ruleset \"{}\" is not managed by hoist", other.name);
                 comment(found, text);
             }

@@ -168,6 +168,35 @@ API_URL = "https://api.example.com"
 optional_variables = ["REGION"]    # may stay unset: an `optional_variable` item, never a step
 ```
 
+### Monorepo keys (root `hoist.toml`)
+
+```toml
+[github]
+apps = ["my-gate-app"]             # `app:<slug>` human step (https://github.com/apps/<slug>/installations/new) until installed
+secret_scope = "environment"
+
+[github.tag_ruleset]               # a second ruleset, `hoist: tags`: only the GitHub Actions app may touch these tags
+patterns = ["v*"]
+bypass = ["github-actions"]        # the only value allowed (else exit 3)
+
+[workspace]                        # root only: members beside pnpm-workspace.yaml (dirs or a trailing `/*`)
+members = ["tools/npm/tool", "site"]
+
+[release]
+reviewers = []                     # no required reviewer on the release environment (no `release-reviewer` step)
+workflow = "release.yml"           # the workflow file in the trust commands and checked by `release/workflow`
+
+[registry.npm."@scope/other"]      # published outside the release model: trusted publisher and first publish like any package
+workflow = "other-npm.yml"
+[registry.crates."other-crate"]
+workflow = "other-crates.yml"
+```
+
+In a target's `hoist.toml`, `[deploy] environment = "site"` (with `secret_scope = "environment"`) keeps the
+deploy secrets hoist writes (`CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`) in that environment
+even before a workflow reads them; `[publish] crates = false` keeps a binaries-only crate off crates.io.
+`[workspace]` in a target file is an unknown key (exit 3). `hoist explain` lists `github/tag_ruleset hoist: tags`.
+
 ### GitHub environments
 
 Every environment a workflow names is planned, created and checked: a job's `environment:` (a

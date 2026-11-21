@@ -40,6 +40,12 @@ pub enum Change {
         required_checks: Vec<String>,
         merge_queue: bool,
     },
+    /// The `hoist: tags` ruleset (`[github.tag_ruleset]`).
+    TagRuleset {
+        existing_id: Option<u64>,
+        /// Tag name patterns; the ruleset includes `refs/tags/<pattern>`.
+        patterns: Vec<String>,
+    },
     ActionsPermissions {
         default: String,
     },
@@ -101,6 +107,11 @@ impl Change {
                 patch.keys().next().cloned().unwrap_or_default(),
             ),
             Change::Ruleset { .. } => ("github", "ruleset", crate::desired::RULESET_NAME.into()),
+            Change::TagRuleset { .. } => (
+                "github",
+                "tag_ruleset",
+                crate::desired::TAG_RULESET_NAME.into(),
+            ),
             Change::ActionsPermissions { .. } => {
                 ("github", "actions_permissions", "default".into())
             }
@@ -347,6 +358,19 @@ pub fn plan_changes(
             branch: rs.branch.clone(),
             required_checks: rs.required_checks.iter().map(|c| c.value.clone()).collect(),
             merge_queue: rs.merge_queue.value,
+        });
+    }
+
+    if let Some(t) = &d.github.tag_ruleset
+        && todo(&gh_items, "tag_ruleset", &t.name).is_some()
+    {
+        let existing_id = gh
+            .and_then(|l| l.rulesets.as_got().ok())
+            .and_then(|list| list.iter().find(|r| r.name == t.name))
+            .map(|r| r.id);
+        out.push(Change::TagRuleset {
+            existing_id,
+            patterns: t.patterns.clone(),
         });
     }
 

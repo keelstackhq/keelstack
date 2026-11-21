@@ -33,7 +33,7 @@ Computer steps first, then phone steps. Typical first run:
 | computer | `variable:BOSUN_APP_CLIENT_ID` | `gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'` |
 | computer | `secret:<NAME>` | `hoist secrets set <NAME>`: value from env `<NAME>` or a hidden prompt, sealed into its environment (never argv, files or logs). `BOSUN_APP_KEY` (bosun-app), `BOSUN_SIGNER_KEY` (bosun-signer), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (hoard-r2); `ANTHROPIC_API_KEY` (review) only with `BOSUN_REVIEW_CI = true` |
 | computer | `first-publish:<crate>` | `hoist release bootstrap` publishes every crate not on crates.io yet (trusted publishing cannot create a crate) |
-| phone | app install | install `keelstackhq-bosun-gate` on the repo: https://github.com/apps/keelstackhq-bosun-gate/installations/new |
+| phone | `app:keelstackhq-bosun-gate` | install `keelstackhq-bosun-gate` on the repo: https://github.com/apps/keelstackhq-bosun-gate/installations/new |
 | phone | `crates-trust:<crate>` | trusted publisher on `keel-bosun`, `keel-hoist`, `keel-berth`, `keel-cli`: repository `keelstackhq/keelstack`, workflow `release.yml`, environment `release` (https://crates.io/crates/<crate>/settings) |
 | phone | `npm-trust:<package>` | trusted publisher on every npm package: the bosun, splice, hoist, berth and keel launchers and their platform packages (workflow `release.yml`), the cargo-deny packages (workflow `cargo-deny-npm.yml`); environment `release` (https://www.npmjs.com/package/<package>/access). npm provenance needs a public repository |
 

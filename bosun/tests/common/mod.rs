@@ -138,7 +138,8 @@ pub fn self_copy() -> tempfile::TempDir {
     let root = bosun.join("..");
     let dir = tempfile::tempdir().expect("tempdir");
     copy_tracked(bosun, &[], dir.path());
-    copy_tracked(&root, &[".github", ".bosun"], dir.path());
+    // The repo settings (`[github]`) live in the root hoist.toml of the monorepo.
+    copy_tracked(&root, &[".github", ".bosun", "hoist.toml"], dir.path());
     let d = dir.path();
     let git = |args: &[&str]| {
         let st = std::process::Command::new("git")

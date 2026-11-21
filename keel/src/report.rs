@@ -99,11 +99,18 @@ pub fn build_checklist(steps: &[HumanStep], confirmed: &[String]) -> Vec<Checkli
             continue;
         }
         seen.push(&h.id);
+        // hoist puts a command (`hoist secrets set NAME`) where a link would go: keep links only.
+        let link = h.url.starts_with("https://") || h.url.starts_with("http://");
+        let (url, command) = match (link, h.command.is_empty()) {
+            (true, _) => (h.url.clone(), h.command.clone()),
+            (false, true) => (String::new(), h.url.clone()),
+            (false, false) => (String::new(), h.command.clone()),
+        };
         all.push(ChecklistEntry {
             id: h.id.clone(),
             title: h.title.clone(),
-            url: h.url.clone(),
-            command: h.command.clone(),
+            url,
+            command,
             device: device_of(&h.id, &h.url).into(),
             verify: verify_of(&h.id),
         });
@@ -452,5 +459,20 @@ mod tests {
         r.verify = Some(Verify::not_run("a.io"));
         let v: serde_json::Value = serde_json::from_str(&render_json(&r)).unwrap();
         assert_eq!(v["verify"]["http_status"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn checklist_moves_a_command_out_of_url() {
+        let h = HumanStep {
+            id: "secret:X".into(),
+            title: "set secret X".into(),
+            url: "hoist secrets set X".into(),
+            command: String::new(),
+        };
+        let c = build_checklist(&[h], &[]);
+        assert_eq!(
+            (c[0].url.as_str(), c[0].command.as_str()),
+            ("", "hoist secrets set X")
+        );
     }
 }

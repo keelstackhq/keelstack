@@ -67,6 +67,18 @@ pub fn items(desired: &Desired, release: &ReleaseModel) -> Vec<Item> {
         &reason,
         &source,
     ));
+    if let Some(t) = &gh.tag_ruleset {
+        items.push(item(
+            "github",
+            "tag_ruleset",
+            &t.name,
+            &format!(
+                "tags {}: only github-actions may create, move or delete",
+                t.refs().join(", ")
+            ),
+            &t.source,
+        ));
+    }
     let mq = &gh.ruleset.merge_queue;
     items.push(item(
         "github",
@@ -126,11 +138,24 @@ pub fn items(desired: &Desired, release: &ReleaseModel) -> Vec<Item> {
 
 pub fn run(dir: &Path) -> Result<Report, HoistError> {
     let desired = build_desired(dir)?;
-    desired.require_account_id()?;
     let release = read_release_model(dir)?;
+    let mut items = items(&desired, &release);
+    // Offline: a missing account id is shown, not fatal (the Cloudflare area still needs it).
+    if let Err(e) = desired.require_account_id() {
+        let mut missing = item(
+            "cloudflare",
+            "account_id",
+            "account_id",
+            &e.to_string(),
+            "hoist.toml:cloudflare.account_id",
+        );
+        missing.action = Action::Unknown;
+        items.push(missing);
+        items.sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
+    }
     Ok(Report {
         command: "explain".to_string(),
-        items: items(&desired, &release),
+        items,
         human_steps: Vec::new(),
         exit_code: 0,
         text: None,
