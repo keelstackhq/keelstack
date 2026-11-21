@@ -122,10 +122,14 @@ pub enum Command {
 
 #[derive(Debug, Subcommand)]
 pub enum SecretsCommand {
-    /// Set a secret from env NAME or a hidden prompt; never from an argument
+    /// Set a secret from --from-file, else env NAME, else a hidden prompt; never from an argument
     Set {
         /// Secret name (A-Z, 0-9, `_`)
         name: String,
+        /// Read the value from a file (one trailing newline trimmed; for a multi-line PEM).
+        /// Takes precedence over env NAME and the prompt
+        #[arg(long, value_name = "PATH")]
+        from_file: Option<std::path::PathBuf>,
         /// Catches a value typed after the name so it is refused without being echoed (R30).
         #[arg(hide = true, num_args = 0.., allow_hyphen_values = true)]
         extra: Vec<String>,

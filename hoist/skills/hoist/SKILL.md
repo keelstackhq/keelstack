@@ -20,7 +20,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 
 - Understand the setup: `hoist explain`. Existing repo without `hoist.toml`: `hoist import`.
 - Limit any of plan/apply/check with `--area github|cloudflare|npm|crates|release`.
-- Secrets: `hoist secrets set|rotate`; shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
+- Secrets: `hoist secrets set|rotate` (`set NAME --from-file key.pem` for multi-line values such as PEMs; the prompt reads one line and refuses a pasted PEM); shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
   in a repo with no `access.toml` or `secrets.toml` exits 0 (one `secrets/config` item, `ok`).
 - Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only),
   `bootstrap` (first publish, local, human).
@@ -38,7 +38,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 
 - Monorepo keys (root `hoist.toml`): `[workspace] members` (extra package/target dirs), `[github] apps`
   (human step `app:<slug>`, url `https://github.com/apps/<slug>/installations/new`), `[github.tag_ruleset]`
-  (`patterns`; `bypass = ["github-actions"]` is required with `[github] tags_bypass = "actions"`, the default, and unset with `"deploy_key"`, where `hoist apply` adds the write deploy key `hoist: release tags` and seals its private key as secret `RELEASE_TAG_KEY` of the release environment: item `github/tag_deploy_key`; item `github/tag_ruleset` key `hoist: tags`), `[github] admin_bypass = true` (opt-in: the admin role may merge a PR past `hoist: default branch`, never push), `[release]`
+  (`patterns`; `bypass = ["github-actions"]` is required with `[github] tags_bypass = "actions"`, the default, and unset with `"deploy_key"`, where `hoist apply` adds the write deploy key `hoist: release tags` and seals its private key as secret `RELEASE_TAG_KEY` of the release environment: item `github/tag_deploy_key`; human step `deploy-keys-policy` (exit 2) when the organization disallows deploy keys; item `github/tag_ruleset` key `hoist: tags`), `[github] admin_bypass = true` (opt-in: the admin role may merge a PR past `hoist: default branch`, never push), `[release]`
   `reviewers = []` (no reviewer, no `release-reviewer` step) and `workflow = "release.yml"`,
   `[registry.npm."<name>"]` / `[registry.crates."<name>"]` `workflow` (packages outside the release model:
   `npm-trust:`/`crates-trust:`/`first-publish:` steps), target `[deploy] environment` (deploy secrets live in

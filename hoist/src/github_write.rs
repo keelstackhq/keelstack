@@ -11,11 +11,25 @@ use crate::desired::{
 use crate::error::HoistError;
 use crate::github::plan_limited;
 use crate::http::{Fetched, Http, HttpError, Method, seg};
+use crate::report::HumanStep;
 use crate::seal::{put_env_secret, put_home};
 use serde_json::{Map, Value, json};
 
-/// Apply one GitHub change.
-pub fn execute_github(http: &Http, d: &Desired, change: &Change) -> Result<(), HoistError> {
+/// Apply one GitHub change. `Some(step)` is a human step instead of a write: the organization
+/// disallows deploy keys, so the tag deploy key (and its ruleset) wait for a person.
+pub fn execute_github(
+    http: &Http,
+    d: &Desired,
+    change: &Change,
+) -> Result<Option<HumanStep>, HoistError> {
+    if let Change::TagDeployKey { env } = change {
+        let repo = format!("/repos/{}/{}", seg(&d.repo.owner), seg(&d.repo.name));
+        return write_tag_key(http, d, &repo, env);
+    }
+    execute_github_plain(http, d, change).map(|()| None)
+}
+
+fn execute_github_plain(http: &Http, d: &Desired, change: &Change) -> Result<(), HoistError> {
     let repo = format!("/repos/{}/{}", seg(&d.repo.owner), seg(&d.repo.name));
     match change {
         Change::RepoSettings { patch } => {
@@ -52,7 +66,6 @@ pub fn execute_github(http: &Http, d: &Desired, change: &Change) -> Result<(), H
             let merge = |live: &Value| merged_tag_ruleset_body(live, patterns, *bypass);
             write_ruleset(http, &repo, *existing_id, TAG_RULESET_NAME, &fresh, merge)
         }
-        Change::TagDeployKey { env } => write_tag_key(http, d, &repo, env),
         Change::ActionsPermissions { default } => send(
             http,
             Method::Put,
@@ -439,11 +452,39 @@ fn write_ruleset(
     }
 }
 
+/// Whether a rejected `POST /keys` says deploy keys are not allowed here.
+fn deploy_keys_disallowed(message: &str) -> bool {
+    message.to_lowercase().contains("deploy key")
+}
+
+/// The human step id for an organization that disallows deploy keys.
+pub const DEPLOY_KEYS_POLICY: &str = "deploy-keys-policy";
+
+fn deploy_keys_policy_step(d: &Desired) -> HumanStep {
+    HumanStep {
+        id: DEPLOY_KEYS_POLICY.to_string(),
+        title: format!(
+            "allow deploy keys for {}/{} (organization settings), then re-run keel up",
+            d.repo.owner, d.repo.name
+        ),
+        url: format!(
+            "https://github.com/organizations/{}/settings",
+            seg(&d.repo.owner)
+        ),
+        status: "pending".to_string(),
+    }
+}
+
 /// `tags_bypass = "deploy_key"`: a new ed25519 key (in memory only), added as the write
 /// deploy key `hoist: release tags`, its private key sealed into secret `RELEASE_TAG_KEY` of
 /// environment `env`. The environment's public key is read first, so a missing environment
 /// writes nothing; a failed seal deletes the key just added (by the id the POST returned).
-fn write_tag_key(http: &Http, d: &Desired, repo: &str, env: &str) -> Result<(), HoistError> {
+fn write_tag_key(
+    http: &Http,
+    d: &Desired,
+    repo: &str,
+    env: &str,
+) -> Result<Option<HumanStep>, HoistError> {
     let probe = format!("{repo}/environments/{}/secrets/public-key", seg(env));
     match http.get_json(&probe)? {
         Fetched::Ok(_) => {}
@@ -462,7 +503,17 @@ fn write_tag_key(http: &Http, d: &Desired, repo: &str, env: &str) -> Result<(), 
     }
     let key = crate::sshkey::generate()?;
     let body = json!({"title": TAG_KEY_TITLE, "key": key.public, "read_only": false});
-    let added = http.send_json(Method::Post, &format!("{repo}/keys"), Some(&body))?;
+    let added = match http.send_json(Method::Post, &format!("{repo}/keys"), Some(&body)) {
+        Ok(added) => added,
+        // The organization (or enterprise) disallows deploy keys: a settings change only a
+        // person can make, not a failed write.
+        Err(HttpError::Rejected {
+            status: 422,
+            ref message,
+            ..
+        }) if deploy_keys_disallowed(message) => return Ok(Some(deploy_keys_policy_step(d))),
+        Err(err) => return Err(err.into()),
+    };
     let id = added
         .body
         .as_ref()
@@ -477,7 +528,7 @@ fn write_tag_key(http: &Http, d: &Desired, repo: &str, env: &str) -> Result<(), 
     );
     drop(key);
     let Err(err) = sealed else {
-        return Ok(());
+        return Ok(None);
     };
     // A key whose private half is lost is useless (and drift): take it back.
     let undone = match id {

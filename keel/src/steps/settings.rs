@@ -300,6 +300,22 @@ mod tests {
     }
 
     #[test]
+    fn deploy_keys_policy_step_from_hoist_apply_is_a_human_step() {
+        let body = r#"{"ok":false,"exit_code":2,"items":[{"area":"github","kind":"tag_deploy_key","key":"hoist: release tags","action":"pending","reason":"allow deploy keys for o/r (organization settings), then re-run keel up"}],"human_steps":[{"id":"deploy-keys-policy","title":"allow deploy keys for o/r (organization settings), then re-run keel up","url":"https://github.com/organizations/o/settings","status":"pending"}]}"#;
+        let r = FakeRunner::new().on(&["hoist", "--json", "apply"], Out::with(2, body, ""));
+        let Check::Human(h) = run(&r, true) else {
+            panic!("expected a human step")
+        };
+        assert!(
+            h.title.starts_with("allow deploy keys for o/r"),
+            "{}",
+            h.title
+        );
+        assert_eq!(h.url, "https://github.com/organizations/o/settings");
+        assert_eq!(h.command, "keel up");
+    }
+
+    #[test]
     fn variable_human_step_carries_the_gh_variable_set_command() {
         let body = r#"{"ok":false,"exit_code":2,"items":[{"area":"github","kind":"variable","key":"OTHER","action":"pending","reason":"gh variable set OTHER --body 'x'"},{"area":"github","kind":"variable","key":"SPLICE_BOT","action":"pending","reason":"missing; run: gh variable set SPLICE_BOT --repo o/r --body 'v1' (then rerun) "}],"human_steps":[{"id":"variable:SPLICE_BOT","title":"Set SPLICE_BOT","url":"https://github.com/o/r/settings/variables/actions","status":"pending"}]}"#;
         let r = FakeRunner::new().on(&["hoist", "--json", "apply"], Out::with(2, body, ""));

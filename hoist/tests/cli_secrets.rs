@@ -722,3 +722,78 @@ fn set_in_environment_scope_refuses_a_secret_no_environment_job_reads() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("no workflow job"));
     assert!(writes(&api).is_empty());
 }
+
+const PEM: &str = "-----BEGIN RSA PRIVATE KEY-----\nMIIBOgIBAAJBAK\n-----END RSA PRIVATE KEY-----";
+
+fn sealed_value(sk: &SecretKey, api: &FakeApi) -> String {
+    let put = api
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .unwrap();
+    let b: Value = serde_json::from_str(&put.body.unwrap()).unwrap();
+    let bytes = STANDARD
+        .decode(b["encrypted_value"].as_str().unwrap())
+        .unwrap();
+    String::from_utf8(sk.unseal(&bytes).unwrap()).unwrap()
+}
+
+#[test]
+fn from_file_wins_over_env_and_trims_one_trailing_newline() {
+    let dir = fixture_repo("site", SITE);
+    let file = dir.path().join("k.pem");
+    std::fs::write(&file, format!("{PEM}\n")).unwrap();
+    let (sk, key_json) = keypair();
+    let api = api("github/repo_admin.json", 201, &key_json);
+    let out = set(
+        &api,
+        dir.path(),
+        &[
+            "secrets",
+            "set",
+            "DEPLOY_KEY",
+            "--from-file",
+            file.to_str().unwrap(),
+            "--json",
+        ],
+    )
+    .assert()
+    .code(0)
+    .get_output()
+    .clone();
+    assert_eq!(sealed_value(&sk, &api), PEM, "file beats env DEPLOY_KEY");
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.contains("MIIBOg") && !all.contains(CANARY), "{all}");
+}
+
+#[test]
+fn a_multi_line_env_value_is_sealed_whole() {
+    let dir = fixture_repo("site", SITE);
+    let (sk, key_json) = keypair();
+    let api = api("github/repo_admin.json", 201, &key_json);
+    set(&api, dir.path(), &["secrets", "set", "DEPLOY_KEY"])
+        .env("DEPLOY_KEY", PEM)
+        .assert()
+        .code(0);
+    assert_eq!(sealed_value(&sk, &api), PEM);
+}
+
+#[test]
+fn a_missing_from_file_exits_3_naming_the_path() {
+    let dir = fixture_repo("site", SITE);
+    let (_, key_json) = keypair();
+    let api = api("github/repo_admin.json", 201, &key_json);
+    set(
+        &api,
+        dir.path(),
+        &["secrets", "set", "DEPLOY_KEY", "--from-file", "nope.pem"],
+    )
+    .assert()
+    .code(3)
+    .stderr(predicates::str::contains("nope.pem"));
+    assert!(writes(&api).is_empty());
+}

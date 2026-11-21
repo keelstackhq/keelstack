@@ -218,7 +218,43 @@ fn resolve(
     if value.is_empty() {
         return Err(HoistError::Usage(format!("no value given for {name}")));
     }
+    // The prompt reads one line: a pasted PEM would be stored as its header only.
+    if value.trim_start().starts_with("-----BEGIN") {
+        return Err(HoistError::Usage(format!(
+            "multi-line value: the prompt reads one line, so nothing was stored. Use \
+             {name}=\"$(cat file.pem)\" hoist secrets set {name}, or hoist secrets set {name} \
+             --from-file file.pem"
+        )));
+    }
     Ok((Secret::from(value), "prompt".to_string()))
+}
+
+/// The content of `path` with one trailing newline removed. Errors name the path, never the
+/// content.
+fn read_file_value(path: &Path) -> Result<Secret, HoistError> {
+    let bytes = std::fs::read(path).map_err(|e| {
+        HoistError::Usage(format!(
+            "cannot read --from-file {}: {}",
+            path.display(),
+            e.kind()
+        ))
+    })?;
+    let mut text = String::from_utf8(bytes).map_err(|_| {
+        HoistError::Usage(format!("--from-file {} is not UTF-8 text", path.display()))
+    })?;
+    if text.ends_with('\n') {
+        text.pop();
+        if text.ends_with('\r') {
+            text.pop();
+        }
+    }
+    if text.is_empty() {
+        return Err(HoistError::Usage(format!(
+            "--from-file {} is empty",
+            path.display()
+        )));
+    }
+    Ok(Secret::from(text))
 }
 
 /// The value of env var `name` if set and non-empty (never for hoist's own credential names);
@@ -241,6 +277,7 @@ pub fn secrets_set(
     dir: &Path,
     name: &str,
     extra: &[String],
+    from_file: Option<&Path>,
     verbose: bool,
 ) -> Result<Report, HoistError> {
     validate_name(name)?;
@@ -252,10 +289,21 @@ pub fn secrets_set(
              from the command line"
         )));
     }
-    // Fail before any request when no value source can exist.
+    // Fail before any request when no value source can exist. Precedence: `--from-file`, else
+    // env NAME, else the hidden prompt.
     let protected = is_own_credential(name);
+    let file_value = match from_file {
+        Some(_) if protected => {
+            return Err(HoistError::Usage(format!(
+                "{name} is also hoist's own credential; --from-file is refused, enter the \
+                 value at the prompt in a terminal"
+            )));
+        }
+        Some(path) => Some(read_file_value(path)?),
+        None => None,
+    };
     let has_env = !protected && std::env::var(name).is_ok_and(|v| !v.is_empty());
-    if !has_env && !std::io::stdin().is_terminal() {
+    if file_value.is_none() && !has_env && !std::io::stdin().is_terminal() {
         return Err(no_source(name, protected));
     }
     let desired = build_desired(dir)?;
@@ -274,7 +322,10 @@ pub fn secrets_set(
         .as_got()
         .is_ok_and(|have| have.iter().any(|n| n == name));
     // Read or prompt last, just before the write.
-    let (value, source) = read_with_source(name)?;
+    let (value, source) = match file_value {
+        Some(v) => (v, "file".to_string()),
+        None => read_with_source(name)?,
+    };
     let (exit_code, reason) = match put_home(&http, &desired, name, &value) {
         Ok(()) => (0, "set".to_string()),
         Err(err) => (1, format!("failed: {err}")),
@@ -319,6 +370,26 @@ mod tests {
     fn empty_env_falls_to_prompt() {
         let (v, src) = resolve("X", Some(String::new()), true, false, || Ok("p".into())).unwrap();
         assert_eq!((v.expose(), src.as_str()), ("p", "prompt"));
+    }
+
+    #[test]
+    fn a_pasted_pem_at_the_prompt_is_refused_without_echo() {
+        let err = resolve("BOSUN_APP_KEY", None, true, false, || {
+            Ok("-----BEGIN RSA PRIVATE KEY-----".into())
+        })
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("multi-line value"), "{err}");
+        assert!(err.contains("BOSUN_APP_KEY=\"$(cat file.pem)\" hoist secrets set BOSUN_APP_KEY"));
+        assert!(err.contains("--from-file"), "{err}");
+        assert!(!err.contains("RSA PRIVATE"), "{err}");
+    }
+
+    #[test]
+    fn a_multi_line_env_value_still_works() {
+        let pem = "-----BEGIN X-----\nabc\n-----END X-----\n";
+        let (v, _) = resolve("K", Some(pem.into()), false, false, no_prompt).unwrap();
+        assert_eq!(v.expose(), pem);
     }
 
     #[test]

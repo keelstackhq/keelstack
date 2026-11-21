@@ -90,6 +90,12 @@ impl Routes {
         self
     }
 
+    /// Append the next response for a key (route lists answer in order, the last repeats).
+    fn then(mut self, key: &str, status: u16, body: &str) -> Routes {
+        self.0.push((key.to_string(), status, body.to_string()));
+        self
+    }
+
     fn start(&self) -> FakeApi {
         let specs: Vec<common::RouteSpec> = self
             .0
@@ -475,5 +481,210 @@ fn actions_mode_dedupes_the_actions_app() {
             {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"},
             {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"}
         ])
+    );
+}
+
+#[test]
+fn disabled_deploy_keys_are_a_human_step_not_a_failure() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            POST_KEY,
+            422,
+            r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","message":"Deploy keys are disabled for this repository"}],"status":"422"}"#,
+        )
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 2);
+    let step = out.report["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "deploy-keys-policy")
+        .unwrap_or_else(|| panic!("no step in {}", out.report));
+    assert_eq!(
+        step["title"],
+        "allow deploy keys for acme/x (organization settings), then re-run keel up"
+    );
+    assert_eq!(
+        step["url"],
+        "https://github.com/organizations/acme/settings"
+    );
+    assert_eq!(step["status"], "pending");
+    for (kind, key) in [
+        ("tag_deploy_key", "hoist: release tags"),
+        ("tag_ruleset", "hoist: tags"),
+    ] {
+        let i = item(&out.report, kind, key);
+        assert_eq!(i["action"], "pending", "{i}");
+        assert!(
+            i["reason"].as_str().unwrap().contains("allow deploy keys"),
+            "{i}"
+        );
+    }
+    let w = writes(&api);
+    assert_eq!(
+        w,
+        vec![POST_KEY.to_string()],
+        "no ruleset, no secret: {w:?}"
+    );
+}
+
+#[test]
+fn a_non_policy_key_rejection_fails_with_its_errors_and_stops() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            POST_KEY,
+            422,
+            r#"{"message":"Validation Failed","errors":[{"resource":"Key","code":"custom","field":"key","message":"key is already in use"}]}"#,
+        )
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let k = item(&out.report, "tag_deploy_key", "hoist: release tags");
+    let reason = k["reason"].as_str().unwrap();
+    assert!(reason.contains("key is already in use"), "{k}");
+    assert!(reason.contains("field key"), "{k}");
+    assert_eq!(
+        item(&out.report, "tag_ruleset", "hoist: tags")["reason"],
+        "not attempted"
+    );
+    assert!(out.report["human_steps"].as_array().unwrap().is_empty());
+    assert_eq!(writes(&api), vec![POST_KEY.to_string()]);
+}
+
+#[test]
+fn disabled_deploy_keys_still_apply_repo_settings_and_actions_permissions() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            "GET /repos/acme/x/actions/permissions/workflow",
+            200,
+            r#"{"default_workflow_permissions":"write","can_approve_pull_request_reviews":false}"#,
+        )
+        .set(
+            "GET /repos/acme/x",
+            200,
+            r#"{"id":1,"name":"x","full_name":"acme/x","private":false,"visibility":"public","default_branch":"main","allow_auto_merge":false,"delete_branch_on_merge":true,"allow_squash_merge":true,"permissions":{"admin":true,"maintain":true,"push":true,"triage":true,"pull":true}}"#,
+        )
+        .then(
+            "GET /repos/acme/x/actions/permissions/workflow",
+            200,
+            "github/actions_permissions.json",
+        )
+        .then("GET /repos/acme/x", 200, "github/repo_admin.json")
+        .set("PATCH /repos/acme/x", 200, "{}")
+        .set(
+            "PUT /repos/acme/x/actions/permissions/workflow",
+            204,
+            "",
+        )
+        .set(
+            POST_KEY,
+            422,
+            r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","message":"Deploy keys are disabled for this repository"}],"status":"422"}"#,
+        )
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 2);
+    let w = writes(&api);
+    for want in [
+        "PATCH /repos/acme/x",
+        "PUT /repos/acme/x/actions/permissions/workflow",
+        POST_KEY,
+    ] {
+        assert!(w.contains(&want.to_string()), "{want}: {w:?}");
+    }
+    assert!(
+        !w.iter()
+            .any(|x| x.contains("/rulesets") || x.starts_with("PUT") && x.contains("/secrets/")),
+        "{w:?}"
+    );
+    for (kind, key) in [
+        ("tag_deploy_key", "hoist: release tags"),
+        ("tag_ruleset", "hoist: tags"),
+    ] {
+        assert_eq!(item(&out.report, kind, key)["action"], "pending");
+    }
+    assert!(
+        out.report["human_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "deploy-keys-policy")
+    );
+}
+
+const POLICY_422: &str = r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","message":"Deploy keys are disabled for this repository"}],"status":"422"}"#;
+
+#[test]
+fn a_drifted_tag_ruleset_stays_drift_when_deploy_keys_are_disabled() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            "GET /repos/acme/x/rulesets",
+            403,
+            r#"{"message":"Upgrade to GitHub Pro or make this repository public to enable this feature."}"#,
+        )
+        .set(POST_KEY, 422, POLICY_422)
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    assert_eq!(
+        item(&out.report, "tag_ruleset", "hoist: tags")["action"],
+        "drift"
+    );
+    assert_eq!(
+        item(&out.report, "tag_deploy_key", "hoist: release tags")["action"],
+        "pending"
+    );
+    assert!(
+        !writes(&api).iter().any(|w| w.contains("/rulesets")),
+        "{:?}",
+        writes(&api)
+    );
+}
+
+#[test]
+fn a_failed_write_after_the_policy_step_stops_and_the_tag_items_stay_pending() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            "GET /repos/acme/x",
+            200,
+            r#"{"id":1,"name":"x","full_name":"acme/x","private":false,"visibility":"public","default_branch":"main","allow_auto_merge":false,"delete_branch_on_merge":true,"allow_squash_merge":true,"permissions":{"admin":true,"maintain":true,"push":true,"triage":true,"pull":true}}"#,
+        )
+        .set(
+            "GET /repos/acme/x/actions/permissions/workflow",
+            200,
+            r#"{"default_workflow_permissions":"write","can_approve_pull_request_reviews":false}"#,
+        )
+        .set(POST_KEY, 422, POLICY_422)
+        .set("PATCH /repos/acme/x", 500, r#"{"message":"boom"}"#)
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    for (kind, key) in [
+        ("tag_deploy_key", "hoist: release tags"),
+        ("tag_ruleset", "hoist: tags"),
+    ] {
+        assert_eq!(item(&out.report, kind, key)["action"], "pending", "{kind}");
+    }
+    assert!(
+        item(&out.report, "repo_setting", "allow_auto_merge")["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("failed")
+    );
+    assert_eq!(
+        item(&out.report, "actions_permissions", "default")["reason"],
+        "not attempted"
+    );
+    let w = writes(&api);
+    assert!(
+        !w.iter()
+            .any(|x| x.contains("/rulesets") || x.contains("actions/permissions")),
+        "{w:?}"
     );
 }

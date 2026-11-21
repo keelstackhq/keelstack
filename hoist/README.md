@@ -28,7 +28,7 @@ hoist plan [--adopt] [--area github|cloudflare|npm|crates|release]  # diff desir
 hoist check [--adopt] [--area ...]  # plan plus verification (required checks, Pages URL)
 hoist apply [--yes] [--prune | --adopt] [--area ...] [--secrets-to SINK | --emit-secrets]  # write the plan, then verify like check
 hoist auth check              # what each token can read vs what hoist needs
-hoist secrets set NAME        # seal env NAME or a hidden prompt into an Actions secret
+hoist secrets set NAME        # seal --from-file PATH, else env NAME, else a hidden prompt (one line) into an Actions secret; PEMs: --from-file
 hoist secrets rotate [NAME]   # mint, verify and seal a new CLOUDFLARE_API_TOKEN, revoke the old
 hoist secrets check [--remote] # secrets repo or secrets.toml; never decrypts (spec §15.9)
 hoist secrets exec --env E --keys A,B -- cmd  # CI only: run cmd with those secrets (spec §15.7)
@@ -185,6 +185,7 @@ bypass = ["github-actions"]        # with tags_bypass = "actions": required, the
 # tags_bypass = "deploy_key": the only bypass actor of `hoist: tags` is a write deploy key, so no workflow token can
 # move a release tag. `hoist apply` adds the key `hoist: release tags` and seals its private key as the secret
 # RELEASE_TAG_KEY of the `[release] environment` (default `release`); item `github/tag_deploy_key`.
+# If the organization disallows deploy keys, `apply` exits 2 with the step `deploy-keys-policy` (allow them, apply again).
 
 [workspace]                        # root only: members beside pnpm-workspace.yaml (dirs or a trailing `/*`)
 members = ["tools/npm/tool", "site"]
