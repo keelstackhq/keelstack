@@ -701,7 +701,7 @@ permission to one project; §13), named `hoist:<owner>/<repo>:deploy`, and store
 workflows reference (`CLOUDFLARE_API_TOKEN`, plus `CLOUDFLARE_ACCOUNT_ID`). The name is the key;
 no id is stored anywhere.
 
-`hoist secrets set NAME` takes the value from env `NAME`, else a hidden prompt on a terminal, else
+`hoist secrets set NAME` takes the value from `--from-file <path>` (one trailing newline trimmed; wins over env and prompt; refused for hoist's own credential names), else env `NAME`, else a hidden prompt on a terminal (one line: a value starting `-----BEGIN` is refused with exit 3, nothing stored; use `NAME="$(cat f.pem)"` or `--from-file`), else
 exits 3; there is no value flag. Nothing typed after `NAME` is accepted or echoed: extra
 arguments exit 3 with a fixed message, and an invalid name shows only the text before a `=`
 (`NAME=VALUE`). `NAME` must match `^[A-Z_][A-Z0-9_]*$` and not start with

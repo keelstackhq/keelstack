@@ -20,7 +20,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 
 - Understand the setup: `hoist explain`. Existing repo without `hoist.toml`: `hoist import`.
 - Limit any of plan/apply/check with `--area github|cloudflare|npm|crates|release`.
-- Secrets: `hoist secrets set|rotate`; shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
+- Secrets: `hoist secrets set|rotate` (`set NAME --from-file key.pem` for multi-line values such as PEMs; the prompt reads one line and refuses a pasted PEM); shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
   in a repo with no `access.toml` or `secrets.toml` exits 0 (one `secrets/config` item, `ok`).
 - Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only),
   `bootstrap` (first publish, local, human).

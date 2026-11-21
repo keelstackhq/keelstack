@@ -31,7 +31,7 @@ Computer steps first, then phone steps. Typical first run:
 | --- | --- | --- |
 | computer | `cloudflare-token` | only when the prerequisite 2 is missing |
 | computer | `variable:BOSUN_APP_CLIENT_ID` | `gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'` |
-| computer | `secret:<NAME>` | `hoist secrets set <NAME>`: value from env `<NAME>` or a hidden prompt, sealed into its environment (never argv, files or logs). `BOSUN_APP_KEY` (bosun-app), `BOSUN_SIGNER_KEY` (bosun-signer), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (hoard-r2); `ANTHROPIC_API_KEY` (review) only with `BOSUN_REVIEW_CI = true` |
+| computer | `secret:<NAME>` | `hoist secrets set <NAME>`: value from env `<NAME>` or a hidden prompt (PEMs such as `BOSUN_APP_KEY`: `--from-file key.pem`), sealed into its environment (never argv, files or logs). `BOSUN_APP_KEY` (bosun-app), `BOSUN_SIGNER_KEY` (bosun-signer), `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET` (hoard-r2); `ANTHROPIC_API_KEY` (review) only with `BOSUN_REVIEW_CI = true` |
 | computer | `deploy-keys-policy` | allow deploy keys for the organization (https://github.com/organizations/keelstackhq/settings), then re-run `keel up` |
 | computer | `first-publish:<crate>` | `hoist release bootstrap` publishes every crate not on crates.io yet (trusted publishing cannot create a crate) |
 | phone | `app:keelstackhq-bosun-gate` | install `keelstackhq-bosun-gate` on the repo: https://github.com/apps/keelstackhq-bosun-gate/installations/new |
