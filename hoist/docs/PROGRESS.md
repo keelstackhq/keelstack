@@ -22,6 +22,7 @@ Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.
 - 2026-11-21 Changesets CS-2 (ported, opt-in): `hoist changeset add|init` (ids from branch or words, names checked against the release model), `status` stub exit 3; CS-1 follow-ups (skip AGENTS/CLAUDE/GEMINI.md, tuple `changelog`). No HTTP, no release change.
 - 2026-11-21 Changesets CS-3a (ported, opt-in): the release model keeps every internal dependency edge with its kind (normal, build, dev, peer) and range; `src/changeset/range.rs` checks npm ranges and Cargo requirements (0.x caret rules) and rewrites them keeping the operator. `deps` is unchanged (release plan output the same).
 - 2026-11-21 Changesets CS-3 (ported, opt-in): `release plan` plans from `.changeset/*.md` only when `.changeset/config.json` exists (`changeset::plan`: highest type, dependents by range, peer minor -> major, `fixed`/`linked`, `ignore`, launchers follow, pins/skips/awaiting publish as before); without it plan and prepare are unchanged (no `release/source` item). `NextVersion` gains `changesets`, `dep_updates`; spec §9.1, README. `prepare` still commit-based (later task).
+- 2026-11-21 Changesets CS-3b (ported, opt-in): npm comparator lists, `||`, `< <= >`, Cargo comma lists; dev ranges of packages that do not release are rewritten (`plan_with_rewrites`).
 
 ## Blocked
 
