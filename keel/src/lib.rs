@@ -68,6 +68,7 @@ pub fn run_with(
     };
     let doctor = matches!(cli.command, Command::Doctor);
     let changed = manifest.merge_flags(&args)?;
+    manifest.validate()?;
     if manifest.repo.is_none() {
         return Err(KeelError::Fix {
             message: "no repo: pass --repo OWNER/NAME or set `repo` in keel.toml".into(),
@@ -111,10 +112,12 @@ pub fn run_with(
                 .filter(|v| !v.trim().is_empty()),
         },
         verify: None,
+        items: Vec::new(),
+        pending: Vec::new(),
         sleep,
         stdin,
     };
-    let mut steps = steps::all_steps();
+    let mut steps = steps::steps_for(&cx.manifest);
     if doctor {
         // Preflight (check only) and the doctor check.
         steps.retain(|s| matches!(s.id(), "preflight" | "doctor"));

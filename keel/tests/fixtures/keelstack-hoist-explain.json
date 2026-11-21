@@ -1,0 +1,465 @@
+{
+ "version": 1,
+ "command": "explain",
+ "ok": true,
+ "exit_code": 0,
+ "items": [
+  {
+   "area": "github",
+   "kind": "ruleset",
+   "key": "hoist: default branch",
+   "action": "create",
+   "reason": "ruleset missing on main: required checks ci-ok, risk-check, review-verdict, main-open; merge queue on (merge method merge)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "tag_ruleset",
+   "key": "hoist: tags",
+   "action": "create",
+   "reason": "ruleset missing: patterns v*; bypass github-actions",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "release",
+   "action": "create",
+   "reason": "environment release missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "bosun-app",
+   "action": "create",
+   "reason": "environment bosun-app missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "bosun-signer",
+   "action": "create",
+   "reason": "environment bosun-signer missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "review",
+   "action": "create",
+   "reason": "environment review missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "hoard-r2",
+   "action": "create",
+   "reason": "environment hoard-r2 missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "environment",
+   "key": "site",
+   "action": "create",
+   "reason": "environment site missing (default branch only, no reviewers)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "variable",
+   "key": "BOSUN_APP_CLIENT_ID",
+   "action": "pending",
+   "reason": "missing; run: gh variable set BOSUN_APP_CLIENT_ID --repo keelstackhq/keelstack --body '<client id of keelstackhq-bosun-gate>'",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "variable",
+   "key": "BOSUN_REVIEW_CI",
+   "action": "ok",
+   "reason": "optional: unset keeps review.yml off",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "BOSUN_APP_KEY",
+   "action": "pending",
+   "reason": "missing in environment bosun-app; run: hoist secrets set BOSUN_APP_KEY",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "BOSUN_SIGNER_KEY",
+   "action": "pending",
+   "reason": "missing in environment bosun-signer; run: hoist secrets set BOSUN_SIGNER_KEY",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "R2_ACCOUNT_ID",
+   "action": "pending",
+   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCOUNT_ID",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "R2_ACCESS_KEY_ID",
+   "action": "pending",
+   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_ACCESS_KEY_ID",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "R2_SECRET_ACCESS_KEY",
+   "action": "pending",
+   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_SECRET_ACCESS_KEY",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "R2_BUCKET",
+   "action": "pending",
+   "reason": "missing in environment hoard-r2; run: hoist secrets set R2_BUCKET",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "secret",
+   "key": "ANTHROPIC_API_KEY",
+   "action": "ok",
+   "reason": "optional: only with BOSUN_REVIEW_CI = true",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "github",
+   "kind": "app",
+   "key": "keelstackhq-bosun-gate",
+   "action": "pending",
+   "reason": "app not installed on the repository",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun-linux-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun-linux-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun-darwin-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun-darwin-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/bosun-win32-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/splice",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist-linux-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist-linux-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist-darwin-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist-darwin-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/hoist-win32-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth-linux-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth-linux-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth-darwin-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth-darwin-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/berth-win32-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel-linux-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel-linux-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel-darwin-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel-darwin-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/keel-win32-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/cargo-deny",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/cargo-deny-linux-x64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "npm",
+   "kind": "trusted_publisher",
+   "key": "@keelstackhq/cargo-deny-linux-arm64",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow cargo-deny-npm.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "first_publish",
+   "key": "keel-bosun",
+   "action": "pending",
+   "reason": "not on crates.io yet",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "trusted_publisher",
+   "key": "keel-bosun",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "first_publish",
+   "key": "keel-hoist",
+   "action": "pending",
+   "reason": "not on crates.io yet",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "trusted_publisher",
+   "key": "keel-hoist",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "first_publish",
+   "key": "keel-berth",
+   "action": "pending",
+   "reason": "not on crates.io yet",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "trusted_publisher",
+   "key": "keel-berth",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "first_publish",
+   "key": "keel-cli",
+   "action": "pending",
+   "reason": "not on crates.io yet",
+   "source": "registry"
+  },
+  {
+   "area": "crates",
+   "kind": "trusted_publisher",
+   "key": "keel-cli",
+   "action": "pending",
+   "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
+   "source": "registry"
+  },
+  {
+   "area": "cloudflare",
+   "kind": "pages_project",
+   "key": "keelstack-landing",
+   "action": "create",
+   "reason": "Pages project missing (site/)",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "cloudflare",
+   "kind": "secret",
+   "key": "CLOUDFLARE_API_TOKEN",
+   "action": "create",
+   "reason": "minted deploy token sealed into environment site",
+   "source": "hoist.toml"
+  },
+  {
+   "area": "cloudflare",
+   "kind": "secret",
+   "key": "CLOUDFLARE_ACCOUNT_ID",
+   "action": "create",
+   "reason": "account id sealed into environment site",
+   "source": "hoist.toml"
+  }
+ ],
+ "human_steps": []
+}

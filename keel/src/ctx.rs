@@ -39,6 +39,10 @@ pub struct Ctx<'a> {
     pub opts: Opts,
     /// Set by the verify step.
     pub verify: Option<crate::report::Verify>,
+    /// hoist items read by the steps (reported as `items`).
+    pub items: Vec<crate::report::ReportItem>,
+    /// Pending human steps beyond the first one (reported in the `checklist`).
+    pub pending: Vec<crate::report::HumanStep>,
     pub sleep: &'a dyn Fn(Duration),
     pub stdin: &'a dyn Fn() -> std::io::Result<Zeroizing<String>>,
 }

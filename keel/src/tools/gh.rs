@@ -17,6 +17,24 @@ pub fn login(r: &dyn Runner) -> Option<String> {
     (o.code == 0 && !l.is_empty()).then(|| l.to_string())
 }
 
+/// Whether the logged-in user has admin on `repo` (`gh api repos/R --jq .permissions.admin`).
+pub fn is_admin(r: &dyn Runner, repo: &str) -> Result<bool, String> {
+    let c = Cmd::new(
+        "gh",
+        &[
+            "api",
+            &format!("repos/{repo}"),
+            "--jq",
+            ".permissions.admin",
+        ],
+    );
+    let o = r.run(&c);
+    if o.code != 0 {
+        return Err(failure(&c, &o));
+    }
+    Ok(o.stdout.trim() == "true")
+}
+
 /// The repo's default branch; an error detail when the repo does not exist or is not readable.
 pub fn default_branch(r: &dyn Runner, repo: &str) -> Result<String, String> {
     let c = Cmd::new("gh", &["repo", "view", repo, "--json", "defaultBranchRef"]);

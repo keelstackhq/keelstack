@@ -26,7 +26,7 @@ Node 24+ (checked in preflight).
 
 Global flags: `-C DIR` (checkout, default `.`), `--json`, `-v`. `up` and `plan` also take
 `--repo`, `--template rust|ts|SOURCE`, `--template-ref REF`, `--pieces ID[:NAME],...`, `--plan FILE`, `--wait SECS`,
-`--token-stdin`, `--confirm agent-env|dns|backup` (record a human step as done: the cloud setup script attached, DNS records or backup bucket made by hand).
+`--token-stdin`, `--confirm ID` (record a human step as done: `agent-env`, `dns`, `backup`, or any checklist id hoist cannot read back, such as `npm-trust:<pkg>` or `crates-trust:<crate>`; stored in `[confirmed] steps`).
 `KEEL_POLL_SECS` sets the gate poll interval; `KEEL_TOOL_TIMEOUT_SECS` (default 600) kills a `hoist`, `fly-setup.sh` or `smoke.sh` call that runs longer.
 
 ## Steps
@@ -84,6 +84,21 @@ account_id = "..."                # optional; 32 lowercase hex chars; env CLOUDF
 Unknown keys are an error. keel never reads or prints `CLOUDFLARE_API_TOKEN` or a Fly token: it
 only checks that the Cloudflare one is set, and hoist and the hull script move the secrets.
 
+## Existing repo (`template = "none"`)
+
+`keel.toml` with `repo = "OWNER/NAME"` and `template = "none"` sets up a repo that already exists
+(no render; `pieces` is an error, `template_ref` and `plan` are not needed). The steps are
+`preflight` (gh logged in with admin on the repo, git `origin` is the repo, `hoist --version`
+runs; no pin install) and `settings` (`hoist --json check`, `hoist --json apply --yes`, all areas).
+Without `CLOUDFLARE_API_TOKEN` and when `hoist --json explain` lists `cloudflare` items, hoist runs
+with `--area github --area npm --area crates --area release` and the checklist gets
+`cloudflare-token`. Every human step of every step goes into one batched checklist (D-009):
+computer entries first, then phone ones (trusted publishers, app installs). Steps hoist cannot
+read back are marked with `keel up --confirm <id>` and listed under `[confirmed] steps`.
+Exit 5 while the checklist is not empty, 0 when it is empty and hoist reports no drift. `keel plan`
+only reads (hoist check/explain, gh reads). Text output ends with `checklist:`, one numbered line
+per entry.
+
 ## Exit codes
 
 0 done · 1 a step failed or drift remains · 2 usage error (clap errors too) · 3 manifest,
@@ -100,6 +115,11 @@ environment or API error · 5 a human step is pending. `keel --json --help` prin
  "human_step":{"id":"apps","title":"Install the Renovate GitHub App on owner/name",
                "url":"https://github.com/apps/renovate/installations/new","command":"keel up"}}
 ```
+
+Every report also has `"items"` (hoist items: `{step,area,kind,key,action,reason}`) and
+`"checklist"` (every pending human step, deduped by id, minus `[confirmed] steps`:
+`{id,title,url,command,device,verify}`, `device` `computer`|`phone`, computer first);
+`human_step` is `checklist[0]`.
 
 With `[deploy.fly]` the object also has `"verify":{"url":"https://HOST","healthz":"ok","http_status":200,"smoke":"none"}`
 (`healthz`: `ok`|`failed`|`not-run`; `smoke`: `passed`|`failed`|`none`|`not-run`).

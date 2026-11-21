@@ -1,6 +1,6 @@
 use crate::ctx::Ctx;
 use crate::error::KeelError;
-use crate::report::{Action, HumanStep, Report, Status, StepResult};
+use crate::report::{Action, HumanStep, Report, Status, StepResult, build_checklist};
 use crate::step::{Check, Step};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,6 +68,21 @@ pub fn run_steps(cx: &mut Ctx, steps: &[Box<dyn Step>], mode: Mode) -> Result<Re
             detail: String::new(),
         });
     }
+    // The batched checklist (D-009): the human step first, then every other pending one.
+    let mut raw: Vec<HumanStep> = human.iter().cloned().collect();
+    raw.extend(cx.pending.iter().cloned());
+    let checklist = build_checklist(&raw, &cx.manifest.confirmed.steps);
+    if human.is_none()
+        && !failed
+        && let Some(e) = checklist.first()
+    {
+        human = Some(HumanStep {
+            id: e.id.clone(),
+            title: e.title.clone(),
+            url: e.url.clone(),
+            command: e.command.clone(),
+        });
+    }
     let (status, exit_code) = if failed {
         (Status::Failed, 1)
     } else if human.is_some() {
@@ -88,6 +103,8 @@ pub fn run_steps(cx: &mut Ctx, steps: &[Box<dyn Step>], mode: Mode) -> Result<Re
         steps: results,
         human_step: human,
         exit_code,
+        items: cx.items.clone(),
+        checklist,
         verify,
     })
 }
@@ -152,6 +169,8 @@ mod tests {
             pins: Pins::default(),
             opts: Opts::default(),
             verify: None,
+            items: Vec::new(),
+            pending: Vec::new(),
             sleep: &sleep,
             stdin: &stdin,
         };
