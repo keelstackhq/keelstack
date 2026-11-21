@@ -1,0 +1,4 @@
+id = "claude"
+description = "Moved to hull's base: the subagents ship with template/ and template-rust/ now"
+multiple = false
+requires = ["meta"]

@@ -1,0 +1,1155 @@
+//! `bosun approve`: lists the PRs that wait for an owner. The default approval (D-012): the
+//! session asks the owner with a form in the Claude Code chat and the orchestrator records the
+//! answer with `--chat` (D-018; it uses the session's own token, and a signature with `--sign-key`
+//! stays optional). The fallback: the owner, on their own machine, posts the comment `/bosun approve <head>` (spec section 8).
+//! Apart from `--chat`, every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
+//! a plain user token, which agent sessions do not have. `--list` only reads: without the owner
+//! token it reads with no token at all and lists what it can. The owner names the head sha of each
+//! PR (`<pr>@<sha>`, from `--list`), so a push after the listing is never approved unseen.
+
+use std::path::Path;
+
+use serde_json::{Value, json};
+
+use super::ApproveArgs;
+use crate::app::App;
+use crate::app::{Result, default_ref, kill_switch, main_red};
+use crate::cli::risk_check::{
+    autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
+    owner_comment, owner_logins, review_models,
+};
+use crate::cli::{pr_no_ci::provider_default, risk_check::chat_counted};
+use crate::config::{CONFIG_FILE, CiProvider, Config};
+use crate::core::approve::{
+    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, Readiness, Role, Run, Stat,
+    TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line, ci_green,
+    in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness, signed_comment,
+    signed_message, signed_message_autonomous, signed_message_bootstrap, signed_message_v2,
+    summary_readiness,
+};
+use crate::core::ask;
+use crate::core::records::{PrHead, Record};
+use crate::core::risk;
+use crate::ctx::{Ctx, Origin};
+use crate::gates::main_open::{is_mainfix, judge};
+use crate::github::{Github, IssueState, LiveGithub, Pull, b64};
+use crate::hooks::answers;
+use crate::output::{BosunError, CmdResult, Outcome};
+use crate::registry;
+
+const TOKEN_VAR: &str = "BOSUN_OWNER_TOKEN";
+const MAIN_OPEN_WORKFLOW: &str = ".github/workflows/main-open.yml";
+
+pub(crate) struct Ready {
+    pub(crate) pr: u64,
+    pub(crate) title: String,
+    pub(crate) head_sha: String,
+    pub(crate) base_sha: String,
+    pub(crate) risk: Vec<String>,
+    pub(crate) files: Vec<String>,
+    /// The newest Actions `review-verdict` description on the head.
+    pub(crate) verdict: String,
+}
+
+/// GitHub's compare API lists at most this many files and does not say when it cut the list.
+const COMPARE_FILES_CAP: usize = 300;
+
+/// Why a PR is not ready when an owner's newest decisive review on the head requests changes.
+const WITHDRAWN: &str = "an owner's review requests changes on this head; that owner approves again with a GitHub review, or another owner approves with a GitHub review";
+
+/// The same when that review was dismissed.
+const WITHDRAWN_DISMISSED: &str = "an owner's request for changes on this head was dismissed; it needs a fresh plain owner comment (`bosun approve <pr>@<head>`, with the owner token), a signature bound to the dismissed review (`bosun approve <pr>@<head> --sign-key <pem>`), or a GitHub review from that owner, or a GitHub review from another owner";
+
+/// Why an owner's approval of the head is withdrawn, if it is, and whether a fresh plain owner
+/// comment ends it (only after a dismissal). A request for changes wins.
+fn withdrawn(gh: &dyn Github, p: &Pull) -> Result<Option<(&'static str, bool)>> {
+    let owners = owner_logins(gh, &p.base_sha)?;
+    let reviews = gh.list_reviews(p.number)?;
+    let states: Vec<_> = owners
+        .iter()
+        .map(|o| decisive_review(&reviews, o, &p.head_sha))
+        .collect();
+    let has = |s: &str| states.iter().any(|x| x.as_deref() == Some(s));
+    Ok(if has("CHANGES_REQUESTED") {
+        Some((WITHDRAWN, false))
+    } else if has("DISMISSED") {
+        Some((WITHDRAWN_DISMISSED, true))
+    } else {
+        None
+    })
+}
+
+/// What to do instead in a Claude cloud session.
+const CLOUD_FIX: &str = "ask the owner with a form in the Claude Code chat; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs `bosun approve` on their own machine, or comments `/bosun approve <sha>` in the GitHub web or mobile app";
+
+/// Shown with every list: an approval comment counts only when posted with a plain user token, as
+/// this command does (an owner review counts too). The Claude GitHub tool posts through an app and
+/// adds a footer, so its comments never count.
+const LIST_HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; approve or hold; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs data.approve_command (bosun approve) on their own machine or approves in the GitHub UI; an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+
+#[derive(Default)]
+pub(crate) struct Board {
+    pub(crate) ready: Vec<Ready>,
+    waiting: Vec<(u64, &'static str)>,
+    /// Waiting PRs whose dismissed withdrawal a fresh `bosun approve` comment ends: (pr, head, base).
+    dismissed: Vec<(u64, String, String)>,
+    /// What a tokenless listing could not read: (pr, or `None` for the PR list; why).
+    pub(crate) skipped: Vec<(Option<u64>, String)>,
+}
+
+/// Why a tokenless listing may miss PRs, and the fix.
+const SKIPPED_FIX: &str = "these were read without a token (a private repo, or GitHub's 60 requests an hour, refuse them); set BOSUN_OWNER_TOKEN for a full list";
+
+/// Put `p` in `waiting` when an owner's approval of it is withdrawn.
+fn hold(gh: &dyn Github, p: &Pull, board: &mut Board) -> Result<bool> {
+    let Some((why, by_comment)) = withdrawn(gh, p)? else {
+        return Ok(false);
+    };
+    board.waiting.push((p.number, why));
+    if by_comment {
+        let (head, base) = (p.head_sha.clone(), p.base_sha.clone());
+        board.dismissed.push((p.number, head, base));
+    }
+    Ok(true)
+}
+
+/// The open PRs whose risk-check waits for an owner, split into ready and waiting, by number.
+/// Statuses, check runs and files all describe the head sha read with the PR. With `lenient`
+/// (a tokenless listing) a failed read skips that PR, or the whole list, into `skipped`.
+pub(crate) fn board(gh: &dyn Github, ctx: &Ctx, lenient: bool) -> Result<Board> {
+    let mut pulls = match gh.list_pulls(None, IssueState::Open) {
+        Ok(p) => p,
+        Err(e) if lenient => {
+            let why = format!("cannot list the open PRs: {}", e.message);
+            let skipped = vec![(None, why)];
+            return Ok(Board {
+                skipped,
+                ..Board::default()
+            });
+        }
+        Err(e) => return Err(e),
+    };
+    pulls.sort_by_key(|p| p.number);
+    if !lenient {
+        return board_of(gh, ctx, pulls);
+    }
+    let mut all = Board::default();
+    for p in pulls {
+        let n = p.number;
+        match board_of(gh, ctx, vec![p]) {
+            Ok(b) => {
+                all.ready.extend(b.ready);
+                all.waiting.extend(b.waiting);
+                all.dismissed.extend(b.dismissed);
+            }
+            Err(e) => all.skipped.push((Some(n), e.message)),
+        }
+    }
+    Ok(all)
+}
+
+/// The verdict line of `p`'s newest ready summary of the head by a writer or the gate App. Only a
+/// hint that the author finished `--ready`: the readiness is recomputed from trusted data.
+fn summary_hint(gh: &dyn Github, p: &Pull) -> Result<Option<String>> {
+    for c in gh.list_comments(p.number)?.iter().rev() {
+        if !parse_ready_summary(&c.body, &p.head_sha) {
+            continue;
+        }
+        let bot = crate::github::gate::record_author(&c.user).eq_ignore_ascii_case(TRUSTED_CREATOR);
+        if bot || matches!(gh.permission(&c.user)?.as_deref(), Some("admin" | "write")) {
+            return Ok(Some(summary_readiness(Some(&c.body)).1));
+        }
+    }
+    Ok(None)
+}
+
+/// No-CI readiness of `p`, judged now with the base's rules (never the summary's words): high
+/// risk with no approval of this head waits for the owner.
+fn no_ci_readiness(gh: &dyn Github, ctx: &Ctx, p: &Pull) -> Result<Readiness> {
+    Ok(match crate::cli::risk_check::evaluate_with(gh, ctx, p) {
+        Ok(_) => Readiness::NotWaiting,
+        Err(e)
+            if e.exit == crate::output::Exit::NeedsHuman
+                && e.data.as_ref().is_some_and(|d| d["level"] == "high") =>
+        {
+            let d = e.data.unwrap_or_default();
+            let ids = d["matches"].as_array().into_iter().flatten();
+            Readiness::Ready(
+                ids.filter_map(|m| m["rule"].as_str().map(String::from))
+                    .collect(),
+            )
+        }
+        Err(e) => return Err(e),
+    })
+}
+
+/// The board of `pulls`, in their order. A PR whose base has no CI is read from its ready summary.
+fn board_of(gh: &dyn Github, ctx: &Ctx, pulls: Vec<Pull>) -> Result<Board> {
+    let mut board = Board::default();
+    for p in pulls {
+        if provider_default(gh)? == CiProvider::None {
+            let Some(verdict) = summary_hint(gh, &p)? else {
+                continue;
+            };
+            if let Readiness::Ready(risk) = no_ci_readiness(gh, ctx, &p)?
+                && !chat_counted(gh, &p)?
+                && !hold(gh, &p, &mut board)?
+            {
+                board.ready.push(ready_of(gh, p, risk, verdict)?);
+            }
+            continue;
+        }
+        let statuses: Vec<Stat> = crate::github::gate::gate_history(gh, &p.head_sha)?
+            .into_iter()
+            .map(|s| Stat {
+                context: s.context,
+                state: s.state,
+                description: s.description,
+                creator: s.creator,
+            })
+            .collect();
+        let runs: Vec<Run> = gh
+            .check_runs(&p.head_sha)?
+            .into_iter()
+            .map(|r| Run {
+                id: r.id,
+                name: r.name,
+                conclusion: r.conclusion,
+                at: r.completed_at.or(r.started_at).unwrap_or_default(),
+                app: r.app,
+            })
+            .collect();
+        match readiness(&statuses, &runs) {
+            Readiness::NotWaiting => {}
+            Readiness::Waiting(why) => board.waiting.push((p.number, why)),
+            Readiness::Ready(_) if hold(gh, &p, &mut board)? => {}
+            Readiness::Ready(risk) => board.ready.push(Ready {
+                verdict: (statuses.iter())
+                    .find(|s| s.context == "review-verdict" && s.creator == TRUSTED_CREATOR)
+                    .map(|s| s.description.clone())
+                    .unwrap_or_default(),
+                pr: p.number,
+                title: p.title.clone(),
+                files: gh
+                    .compare_files(&p.base_sha, &p.head_sha)?
+                    .into_iter()
+                    .map(|f| f.filename)
+                    .collect(),
+                head_sha: p.head_sha,
+                base_sha: p.base_sha,
+                risk,
+            }),
+        }
+    }
+    Ok(board)
+}
+
+fn ready_of(gh: &dyn Github, p: Pull, risk: Vec<String>, verdict: String) -> Result<Ready> {
+    let files = gh.compare_files(&p.base_sha, &p.head_sha)?;
+    Ok(Ready {
+        verdict,
+        pr: p.number,
+        title: p.title.clone(),
+        files: files.into_iter().map(|f| f.filename).collect(),
+        head_sha: p.head_sha,
+        base_sha: p.base_sha,
+        risk,
+    })
+}
+
+pub fn run(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
+    if !args.list && args.main_open.is_none() && args.prs.is_empty() {
+        return Err(BosunError::usage(
+            "approve needs PR@HEAD arguments, --list or --main-open PR",
+            "run `bosun approve --list`, then the command in its data.approve_command",
+        ));
+    }
+    if args.via_signer {
+        return via_signer(dir, args);
+    }
+    if args.chat {
+        crate::ctx::trusted_identity()?;
+        return super::approve_chat::run(dir, args);
+    }
+    if let Some(key) = &args.sign_key {
+        return sign(dir, args, key);
+    }
+    let mut targets = Vec::new();
+    for a in &args.prs {
+        targets.push(parse_target(a).ok_or_else(|| {
+            BosunError::usage(
+                format!("{a:?} is not <pr>@<40-hex head sha>"),
+                "run `bosun approve --list` and run the command in its data.approve_command",
+            )
+        })?);
+    }
+    let cloud = in_cloud(
+        std::env::var("CCR_AGENT_PROXY_ENABLED").ok().as_deref(),
+        std::env::var("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE")
+            .ok()
+            .as_deref(),
+    );
+    if cloud && !args.list {
+        return Err(BosunError::needs_human(
+            "a Claude cloud session's agent proxy rewrites GitHub writes (app attribution and a footer), so an approval from here never counts",
+            CLOUD_FIX,
+        ));
+    }
+    if args.list && !std::env::var(TOKEN_VAR).is_ok_and(|t| !t.trim().is_empty()) {
+        // Read-only and tokenless: no secret is sent, so any BOSUN_GITHUB_API will do.
+        let ctx = Ctx::load(dir)?;
+        let gh = LiveGithub::anonymous(&ctx.repo.owner, &ctx.repo.name);
+        return exec(&gh, args, targets, &ctx, cloud, true);
+    }
+    let token = std::env::var(TOKEN_VAR)
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .ok_or_else(|| {
+            BosunError::needs_human(
+                format!("the owner's token is missing: {TOKEN_VAR} is not set"),
+                format!(
+                    "run bosun approve on your own machine (a local shell or a local Claude Code session) with {TOKEN_VAR} set; see docs/PROGRESS.md, Blocked 9. It never uses GITHUB_TOKEN"
+                ),
+            )
+        })?;
+    let token = token.trim().to_string();
+    let api = crate::github::http::api_base();
+    if !api_url_ok(&api) {
+        return Err(BosunError::error(
+            "BOSUN_GITHUB_API is not https://, so the owner token is not sent",
+            "unset BOSUN_GITHUB_API (or set it to an https:// URL) in the owner's environment",
+        ));
+    }
+    let ctx = Ctx::load(dir)?;
+    let gh = LiveGithub::with_token(&token, &ctx.repo.owner, &ctx.repo.name);
+    redact(&token, exec(&gh, args, targets, &ctx, cloud, false))
+}
+
+fn exec(
+    gh: &dyn Github,
+    args: &ApproveArgs,
+    mut targets: Vec<(u64, String)>,
+    ctx: &Ctx,
+    cloud: bool,
+    tokenless: bool,
+) -> CmdResult {
+    let now = &ctx.now.to_string();
+    if args.list {
+        let mut b = board(gh, ctx, tokenless)?;
+        // Held by the owner at this head (PostToolUse answers): not asked again until it moves.
+        let (held, ready): (Vec<Ready>, Vec<Ready>) = std::mem::take(&mut b.ready)
+            .into_iter()
+            .partition(|r| answers::held(&ctx.dir, &ctx.repo.to_string(), r.pr, &r.head_sha));
+        b.ready = ready;
+        let heads: Vec<(u64, String)> =
+            b.ready.iter().map(|r| (r.pr, r.head_sha.clone())).collect();
+        let items: Vec<(u64, String, String)> = b
+            .ready
+            .iter()
+            .map(|r| (r.pr, r.head_sha.clone(), r.title.clone()))
+            .collect();
+        let (message_id, message, message_pairs) = match batch_message(&items) {
+            Some(m) => (json!(m.id), json!(m.text), json!(m.pairs)),
+            None => (Value::Null, Value::Null, Value::Null),
+        };
+        let mut data = json!({
+            "message_id": message_id,
+            "message": message,
+            "message_pairs": message_pairs,
+            "ready": b.ready.iter().map(ready_json).collect::<Vec<_>>(),
+            "held": held.iter().map(|r| json!({"pr": r.pr, "head_sha": r.head_sha}))
+                .collect::<Vec<_>>(),
+            "waiting": b.waiting.iter().map(|(pr, why)| json!({"pr": pr, "why": why}))
+                .collect::<Vec<_>>(),
+            "approve_command": approve_command(&heads),
+            "cloud": cloud,
+            "auth": if tokenless { "none" } else { "owner-token" },
+            "skipped": b.skipped.iter().map(|(pr, why)| json!({"pr": pr, "why": why}))
+                .collect::<Vec<_>>(),
+            "hint": if cloud {
+                format!("{LIST_HINT}; in a Claude cloud session an approval posted here never counts: {CLOUD_FIX}")
+            } else {
+                LIST_HINT.to_string()
+            },
+        });
+        if !b.skipped.is_empty() {
+            data["skipped_fix"] = json!(SKIPPED_FIX);
+        }
+        return Ok(ask_next(ctx, &b.ready, data));
+    }
+    kill_switch(gh)?;
+    if let Some(n) = args.main_open {
+        let head = post_main_open(gh, n)?;
+        write_record(gh, &[], std::slice::from_ref(&head), now)?;
+        return Ok(Outcome::data(
+            json!({"main_open": {"pr": n, "head_sha": head.head_sha}}),
+        ));
+    }
+
+    let b = board(gh, ctx, false)?;
+    targets.sort_unstable();
+    targets.dedup();
+    let mut not_ready = Vec::new();
+    for (n, sha) in &targets {
+        let why = match b.ready.iter().find(|r| r.pr == *n) {
+            Some(r) if r.head_sha == *sha => continue,
+            Some(r) => format!("head changed (now {})", r.head_sha),
+            None => match b.dismissed.iter().find(|d| d.0 == *n) {
+                Some(d) if d.1 == *sha => continue,
+                Some(d) => format!("head changed (now {})", d.1),
+                None => why_not(gh, &b, *n)?,
+            },
+        };
+        not_ready.push(json!({"pr": n, "why": why}));
+    }
+    if !not_ready.is_empty() {
+        return Err(BosunError::conflict(
+            "some of the PRs are not ready at the head you named; nothing was posted",
+            "run `bosun approve --list` again and run the command in its data.approve_command",
+        )
+        .with_data(json!({"not_ready": not_ready})));
+    }
+    let mut approved = Vec::new();
+    let mut heads = Vec::new();
+    let mut failed = None;
+    for (pr, sha) in targets {
+        let base = b
+            .ready
+            .iter()
+            .find(|r| r.pr == pr)
+            .map(|r| &r.base_sha)
+            .or_else(|| b.dismissed.iter().find(|d| d.0 == pr).map(|d| &d.2))
+            .expect("checked above");
+        match approve_one(gh, pr, &sha, base) {
+            Ok((id, repost)) => {
+                let mut entry = json!({"pr": pr, "head_sha": sha, "comment_id": id});
+                if repost {
+                    entry["repost"] = json!(true);
+                }
+                approved.push(entry);
+                heads.push(PrHead { pr, head_sha: sha });
+            }
+            Err(e) => {
+                failed = Some(e);
+                break;
+            }
+        }
+    }
+    // The comments that were posted are recorded even when a later one failed.
+    let recorded = if heads.is_empty() {
+        Ok(())
+    } else {
+        write_record(gh, &heads, &[], now)
+    };
+    if let Some(e) = failed {
+        return Err(e.with_data(json!({"approved": approved})));
+    }
+    recorded.map_err(|e| e.with_data(json!({"approved": approved})))?;
+    Ok(Outcome::data(json!({"approved": approved})))
+}
+
+/// Post `/bosun approve <sha>`, also when one that counts already exists: the new comment
+/// re-runs risk-check if its run was lost. Returns the new comment's id and whether one existed.
+fn approve_one(gh: &dyn Github, pr: u64, sha: &str, base: &str) -> Result<(u64, bool)> {
+    let comments = gh.list_comments(pr)?;
+    let existed = owner_logins(gh, base)?
+        .iter()
+        .any(|o| owner_comment(&comments, o, sha).is_some());
+    Ok((
+        gh.add_comment(pr, &format!("/bosun approve {sha}"))?.id,
+        existed,
+    ))
+}
+
+/// Each ready item gains its `ask`; `next` asks the owner: one AskUserQuestion, or a Claude Tag
+/// thread post. Nothing ready, no `next`.
+fn ask_next(ctx: &Ctx, ready: &[Ready], mut data: Value) -> Outcome {
+    let repo = ctx.repo.to_string();
+    let unix = ctx.now.0;
+    let items: Vec<ask::Item> = (ready.iter())
+        .map(|r| ask::Item {
+            pr: r.pr,
+            title: &r.title,
+            head: &r.head_sha,
+            risk: &r.risk,
+            verdict: &r.verdict,
+        })
+        .collect();
+    for (i, item) in items.iter().enumerate() {
+        data["ready"][i]["ask"] = ask::ask(&repo, item, unix);
+    }
+    // A spawned or routine session does not ask the owner: it hands the question up.
+    if matches!(ctx.origin, Origin::Spawned | Origin::Routine) {
+        data["handoff"] = json!(
+            "hand this question to the orchestrator: send data.ready[].ask (question id, text, options) to the orchestrator session, which asks the owner; a child session never asks"
+        );
+        return Outcome::data(data);
+    }
+    let out = if ctx.origin == Origin::Slack {
+        // The asks this post issues are remembered: `--chat --slack-user` needs one of them.
+        let asks: Vec<(String, u64, String)> = (items.iter())
+            .map(|i| {
+                (
+                    crate::core::approve::question_id(i.pr, i.head, unix),
+                    i.pr,
+                    i.head.to_string(),
+                )
+            })
+            .collect();
+        if !asks.is_empty() {
+            let now = ctx.now.to_string();
+            answers::record_asks(&ctx.dir, &repo, &ctx.session, &now, &asks);
+        }
+        ask::slack_text(&repo, &items, unix).map(|text| {
+            let mut a = json!({"text": text});
+            let channel = ctx.config.slack.as_ref().map(|s| s.channel.trim());
+            if let Some(c) = channel.filter(|c| !c.is_empty()) {
+                a["channel"] = json!(c);
+            }
+            ("slack_post", a)
+        })
+    } else {
+        data["ask_more"] = json!(items.len().saturating_sub(ask::MAX_ASKED));
+        ask::ask_user_question(&repo, &items, unix).map(|a| ("AskUserQuestion", a))
+    };
+    let o = Outcome::data(data);
+    match out {
+        Some((tool, a)) => o.with_next(tool, a),
+        None => o,
+    }
+}
+
+fn ready_json(r: &Ready) -> Value {
+    json!({"pr": r.pr, "title": r.title, "head_sha": r.head_sha,
+        "risk_from_status": r.risk, "files": r.files,
+        "files_truncated": r.files.len() >= COMPARE_FILES_CAP})
+}
+
+/// Why `n` is not in the ready list.
+fn why_not(gh: &dyn Github, b: &Board, n: u64) -> Result<String> {
+    if let Some((_, why)) = b.waiting.iter().find(|(pr, _)| *pr == n) {
+        return Ok((*why).to_string());
+    }
+    Ok(match gh.get_pull(n)? {
+        None => "not found".into(),
+        Some(p) if p.state != "open" => "closed".into(),
+        Some(_) => "not waiting for an owner".into(),
+    })
+}
+
+/// `bosun gate main-open --pr N`, posted with the owner token: the same `judge`. Only for a PR
+/// that changes the main-open workflow (the base workflow cannot judge it). Exit 4 when main is
+/// red and the PR is no mainfix; exit 3 when the PR is closed, missing or changes no such file.
+fn post_main_open(gh: &dyn Github, n: u64) -> Result<PrHead> {
+    if crate::github::gate::checks_mode() {
+        // The owner's token cannot write the gate App's check run (spec §15, O4).
+        return Err(BosunError::conflict(
+            "`bosun approve --main-open` cannot post main-open in [checks] mode \"checks\"",
+            "re-run the main-open workflow (it posts main-open as the gate App)",
+        ));
+    }
+    let pull = gh
+        .get_pull(n)?
+        .filter(|p| p.state == "open")
+        .ok_or_else(|| {
+            BosunError::conflict(
+                format!("PR #{n} is not an open PR"),
+                "name an open PR; `bosun approve --list` lists the PRs that wait for an owner",
+            )
+        })?;
+    if !gh
+        .pull_files(n)?
+        .iter()
+        .any(|f| f.filename == MAIN_OPEN_WORKFLOW)
+    {
+        return Err(BosunError::conflict(
+            format!("PR #{n} does not change {MAIN_OPEN_WORKFLOW}"),
+            "the main-open workflow posts this status for other PRs; re-run it, or wait for it",
+        ));
+    }
+    let red = main_red(gh)?;
+    let mainfix = red.is_some() && is_mainfix(gh, &pull)?;
+    let v = judge(red, mainfix);
+    let state = if v.pass { "success" } else { "failure" };
+    let description = format!("{} (posted by bosun approve --main-open)", v.description);
+    gh.create_status(&pull.head_sha, "main-open", state, &description, None)?;
+    if v.pass {
+        return Ok(PrHead {
+            pr: n,
+            head_sha: pull.head_sha,
+        });
+    }
+    let red = red.unwrap_or_default();
+    Err(BosunError::halted(
+        v.description,
+        format!("fix main with a bosun:kind/mainfix PR, or wait for #{red} to close"),
+    )
+    .with_data(json!({"pr": n, "head_sha": pull.head_sha, "main_red": red, "pass": false})))
+}
+
+/// One `approve` record on the registry issue: an audit hint, never authority.
+fn write_record(gh: &dyn Github, prs: &[PrHead], main_open: &[PrHead], at: &str) -> Result<()> {
+    let (issue, _) = registry::ensure(gh)?;
+    let record = Record::Approve {
+        prs: prs.to_vec(),
+        main_open: main_open.to_vec(),
+        at: at.into(),
+    };
+    gh.add_comment(issue, &record.to_line())?;
+    Ok(())
+}
+
+/// Belt and braces: a server that echoes the token in a message or a title never gets it to
+/// stdout or stderr.
+fn redact(token: &str, result: CmdResult) -> CmdResult {
+    let scrub = |s: &str| s.replace(token, "[redacted]");
+    let scrub_json = |v: Value| serde_json::from_str(&scrub(&v.to_string())).unwrap_or(Value::Null);
+    match result {
+        Ok(mut o) => {
+            // Only list mode sets `next` (the owner question); it is scrubbed like `data`.
+            o.data = scrub_json(o.data);
+            for n in &mut o.next {
+                n.args = scrub_json(n.args.take());
+            }
+            Ok(o)
+        }
+        Err(mut e) => {
+            e.message = scrub(&e.message);
+            e.fix = scrub(&e.fix);
+            e.data = e.data.map(scrub_json);
+            Err(e)
+        }
+    }
+}
+
+/// The workflow the CI signer runs from (D-017, keyless fast lane).
+const SIGNER_WORKFLOW: &str = "signer.yml";
+
+/// A session id the signer workflow accepts as `requester`: `^[A-Za-z0-9._/:-]{1,200}$`.
+fn requester_ok(s: &str) -> bool {
+    (1..=200).contains(&s.len())
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._/:-".contains(&b))
+}
+
+/// `bosun approve <pr>@<head> --via-signer`: asks the CI signer for an approval. Posts nothing;
+/// the session dispatches the workflow with the call in `next` (D29).
+fn via_signer(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
+    let (pr, pinned) = match args.prs.as_slice() {
+        [target] => parse_target(target),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        BosunError::usage(
+            "--via-signer takes one <pr>@<40-hex head sha>: the head to approve",
+            "run `bosun approve --list`, then `bosun approve <pr>@<head> --via-signer`",
+        )
+    })?;
+    let app = App::load(dir)?;
+    let gh = app.gh.as_ref();
+    kill_switch(gh)?;
+    let pull = gh
+        .get_pull(pr)?
+        .filter(|p| p.state == "open")
+        .ok_or_else(|| {
+            BosunError::conflict(format!("PR #{pr} is not an open PR"), "name an open PR")
+        })?;
+    if pinned != pull.head_sha {
+        return Err(BosunError::conflict(
+            format!(
+                "PR #{pr} head changed (now {}); nothing was requested",
+                pull.head_sha
+            ),
+            "check the new head, then ask again with `bosun approve <pr>@<head> --via-signer`",
+        ));
+    }
+    // The reviewer-independence check in CI excludes the session that asked.
+    let requester = app.ctx.session.trim().to_string();
+    if !requester_ok(&requester) {
+        return Err(BosunError::usage(
+            format!("BOSUN_SESSION {requester:?} is empty or not a plain session id"),
+            "set BOSUN_SESSION to this session's id (A-Z a-z 0-9 . _ / : -, at most 200 characters)",
+        ));
+    }
+    let branch = crate::app::default_branch(gh)?;
+    let (owner, repo) = (&app.ctx.repo.owner, &app.ctx.repo.name);
+    let args = json!({"method": "run_workflow", "owner": owner, "repo": repo,
+        "workflow_id": SIGNER_WORKFLOW, "ref": branch,
+        "inputs": {"pr": pr.to_string(), "head": pinned, "requester": requester}});
+    Ok(Outcome::data(json!({"pr": pr, "head_sha": pull.head_sha, "requested": true,
+        "workflow": SIGNER_WORKFLOW, "ref": branch,
+        "message": "nothing was posted: make the tool call in `next`, then run `bosun risk-check` on the PR once the workflow is done"}))
+    .with_next("mcp__github__actions_run_trigger", args))
+}
+
+/// What the head's `ci-ok` is for the CI signer: the newest GitHub Actions check run (in
+/// `[checks] mode = "checks"` is required: the gate App's), as
+/// `ci_green` reads it (a commit status never counts). Returns (green, what was seen).
+fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
+    let runs: Vec<Run> = gh
+        .check_runs(sha)?
+        .into_iter()
+        .map(|r| Run {
+            id: r.id,
+            name: r.name,
+            conclusion: r.conclusion,
+            at: r.completed_at.or(r.started_at).unwrap_or_default(),
+            // Only the gate App's run counts (`checks` mode is required for the signer): read as
+            // the trusted creator for `ci_green`; every other creator, GitHub Actions too, is
+            // nobody. A push workflow on any branch can post a github-actions `ci-ok`.
+            app: match crate::github::gate::trusted_app_id() {
+                Some(id) if r.app_id == id => crate::core::approve::TRUSTED_APP.into(),
+                _ => String::new(),
+            },
+        })
+        .collect();
+    let seen = (runs.iter())
+        .filter(|r| r.name == "ci-ok")
+        .max_by(|a, b| (&a.at, a.id).cmp(&(&b.at, b.id)))
+        .map_or("missing".to_string(), |r| {
+            format!(
+                "{} by {}",
+                r.conclusion.as_deref().unwrap_or("not completed"),
+                r.app
+            )
+        });
+    Ok((ci_green(&runs), seen))
+}
+
+/// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session, on the owner's
+/// word in chat) signs `signed_message` for the PR's current head and posts the comment with
+/// the session's own token. It works in a Claude cloud session: the signature, not the author,
+/// is what risk-check checks. The key is never printed or logged.
+fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
+    // The owner approves the head they saw: a bare PR number would sign whatever was pushed
+    // in between.
+    let (pr, pinned) = match args.prs.as_slice() {
+        [target] => parse_target(target),
+        _ => None,
+    }
+    .ok_or_else(|| {
+        BosunError::usage(
+            "--sign-key takes one <pr>@<40-hex head sha>: the head the owner approved",
+            "run `bosun approve --list` (it works in the cloud), confirm the head with the owner, then `bosun approve <pr>@<head> --sign-key <pem>`",
+        )
+    })?;
+    let api = crate::github::http::api_base();
+    if !api_url_ok(&api) {
+        return Err(BosunError::error(
+            "BOSUN_GITHUB_API is not https://, so the head it reports is not trusted for signing",
+            "unset BOSUN_GITHUB_API (or set it to an https:// URL)",
+        ));
+    }
+    let pair = read_key(key_path)?;
+    let app = App::load(dir)?;
+    let gh = app.gh.as_ref();
+    // Also for --print: a printed body could be posted by hand while bosun is halted.
+    kill_switch(gh)?;
+    let pull = gh
+        .get_pull(pr)?
+        .filter(|p| p.state == "open")
+        .ok_or_else(|| {
+            BosunError::conflict(format!("PR #{pr} is not an open PR"), "name an open PR")
+        })?;
+    let head = pull.head_sha.clone();
+    if pinned != head {
+        return Err(BosunError::conflict(
+            format!("PR #{pr} head changed (now {head}); nothing was signed"),
+            "show the owner the new head and sign it only on their word",
+        ));
+    }
+    let role = match args.role.as_deref() {
+        Some("delegate") => Role::Delegate,
+        Some("signer") => Role::Signer,
+        _ => Role::Owner,
+    };
+    match (&args.requester, role == Role::Signer) {
+        (Some(r), true) if requester_ok(r) => {}
+        (None, false) => {}
+        (_, true) => {
+            return Err(BosunError::usage(
+                "--as signer needs --requester <session id> (A-Z a-z 0-9 . _ / : -, at most 200 characters)",
+                "pass the session that asked: the signer workflow does it from its `requester` input",
+            ));
+        }
+        (Some(_), false) => {
+            return Err(BosunError::usage(
+                "--requester goes with --as signer only",
+                "drop --requester",
+            ));
+        }
+    }
+    if role == Role::Signer && !args.bootstrap {
+        return Err(BosunError::usage(
+            "--as signer signs only the autonomous form (D-017): it needs --bootstrap",
+            "add --bootstrap (the policy at the default branch must be autonomous)",
+        ));
+    }
+    if role == Role::Signer {
+        let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
+        let config = match text {
+            Some(t) => Config::parse(&t, CONFIG_FILE)?,
+            None => Config::default(),
+        };
+        let policy = config.approvals.policy();
+        if policy != Policy::Autonomous {
+            return Err(BosunError::error(
+                format!(
+                    "--as signer signs only under the autonomous policy (D-017); the default branch's policy is {}",
+                    policy.name()
+                ),
+                "set `[approvals] policy = \"autonomous\"` (or the booster mode) on the default branch with a PR the owner approves, or ask the owner",
+            ));
+        }
+        if !config.approvals.signer {
+            return Err(BosunError::error(
+                "the CI signer is off: `[approvals] signer` is not true on the default branch; nothing was signed",
+                "the owner decides: set `[approvals] signer = true` in .bosun/bosun.toml with a PR (R-weaken, owner-approved); the default is the orchestrator-held key (`--sign-key` as owner)",
+            ));
+        }
+        let gate_app = config.checks.mode == crate::config::CheckMode::Checks
+            && config.checks.app_id.is_some()
+            && crate::github::gate::trusted_app_id() == config.checks.app_id;
+        if !gate_app {
+            return Err(BosunError::error(
+                "the CI signer needs `[checks] mode = \"checks\"` with the gate App on the default branch (and in this checkout): in statuses mode any push workflow can post a ci-ok; nothing was signed",
+                "set `[checks] mode = \"checks\"`, `app_id` and `app_slug` (spec section 15), or sign with the orchestrator-held key",
+            ));
+        }
+    }
+    let boot = match args.bootstrap {
+        true if role == Role::Delegate => {
+            return Err(BosunError::usage(
+                "--bootstrap signs with an owner key, not --as delegate",
+                "drop --as delegate, or drop --bootstrap",
+            ));
+        }
+        true => Some(bootstrap_mode(
+            &app,
+            &app.ctx.now.to_string()[..10],
+            &pull,
+            args.requester.as_deref(),
+        )?),
+        false => None,
+    };
+    if role == Role::Signer {
+        let (green, ci_ok) = ci_ok_state(gh, &head)?;
+        if !green {
+            return Err(BosunError::error(
+                format!(
+                    "the head's ci-ok is not green ({ci_ok}; only the newest GitHub Actions check run counts); nothing was signed"
+                ),
+                "wait for ci-ok to pass on this head, then run the signer again",
+            )
+            .with_data(json!({"ci_ok": ci_ok, "head_sha": head})));
+        }
+    }
+    // A request for changes, and any withdrawal for a delegate, cannot be signed away. After a
+    // dismissal an owner key signs v2, bound to each dismissed owner review (spec section 8).
+    let mut reviews = vec![None];
+    match withdrawn(gh, &pull)? {
+        Some((_, true)) if role == Role::Owner && boot.is_none() => {
+            let all = gh.list_reviews(pr)?;
+            reviews = owner_logins(gh, &pull.base_sha)?
+                .iter()
+                .filter_map(|o| dismissed_review(&all, o, &head))
+                .map(Some)
+                .collect();
+            if reviews.is_empty() || reviews.contains(&Some(0)) {
+                return Err(BosunError::conflict(
+                    format!("PR #{pr}: the dismissed review cannot be named, nothing was signed"),
+                    "the owner posts a plain `/bosun approve <head>` comment or submits a GitHub approving review",
+                ));
+            }
+        }
+        Some((why, _)) => {
+            return Err(BosunError::conflict(
+                format!("PR #{pr}: a signature would not count, nothing was signed: {why}"),
+                "the owner submits a GitHub approving review (or, after a dismissal, posts a plain `/bosun approve <head>` comment); only an owner key signs after a dismissal, and a request for changes ends only with a review",
+            ));
+        }
+        None => {}
+    }
+    let public = b64::encode(ring::signature::KeyPair::public_key(&pair).as_ref());
+    let keys = enrolled_keys(gh).map_err(|why| {
+        BosunError::error(
+            format!("signed approvals are off: {why}"),
+            format!(
+                "fix {APPROVERS_PATH} on the default branch with a PR the owner approves on GitHub"
+            ),
+        )
+    })?;
+    let key = keys
+        .into_iter()
+        .find(|k| b64::decode(&k.ed25519).map(|b| b64::encode(&b)) == Some(public.clone()))
+        .ok_or_else(|| {
+            BosunError::error(
+                format!("the key is not enrolled in {APPROVERS_PATH} on the default branch"),
+                format!(
+                    "enroll the public key {public} in {APPROVERS_PATH} with a PR the owner approves on GitHub"
+                ),
+            )
+        })?;
+    if key.role != role {
+        return Err(BosunError::error(
+            format!(
+                "key {} is enrolled as {}, not {}; nothing was signed",
+                key.id,
+                key.role.name(),
+                role.name()
+            ),
+            format!(
+                "pass `--as {}`, or enroll the key with that role",
+                key.role.name()
+            ),
+        ));
+    }
+    let key_id = key.id;
+    let (owner, repo) = (&app.ctx.repo.owner, &app.ctx.repo.name);
+    let policy = boot.as_ref().map(|b| b.2.name());
+    let policy_source = boot.as_ref().map(|b| b.3);
+    let mut signed = Vec::new();
+    let note = boot.as_ref().map(|b| b.1.as_str());
+    let until = boot.as_ref().and_then(|b| b.0.clone());
+    for after in reviews {
+        let (form, msg) = match (after, &boot) {
+            (Some(r), _) => (Form::V2(r), signed_message_v2(owner, repo, pr, &head, r)),
+            (None, Some((_, _, Policy::Autonomous, _))) => (
+                Form::Autonomous,
+                signed_message_autonomous(owner, repo, pr, &head),
+            ),
+            (None, Some(_)) => (
+                Form::Bootstrap,
+                signed_message_bootstrap(owner, repo, pr, &head),
+            ),
+            (None, None) => (Form::V1, signed_message(role, owner, repo, pr, &head)),
+        };
+        let sig = b64::encode(pair.sign(msg.as_bytes()).as_ref());
+        let body = signed_comment(&head, form, note, &key_id, &sig);
+        signed.push((after, body));
+    }
+    if args.print {
+        let all: Vec<Value> = (signed.iter())
+            .map(|(after, body)| json!({"after_review": after, "body": body}))
+            .collect();
+        return Ok(Outcome::data(
+            json!({"pr": pr, "head_sha": head, "key_id": key_id, "role": role.name(),
+                "bootstrap_until": until, "policy": policy, "policy_source": policy_source, "body": signed[0].1, "bodies": all}),
+        ));
+    }
+    let mut approved = Vec::new();
+    for (after, body) in signed {
+        // The comments already posted stay listed when a later one fails.
+        let id = match gh.add_comment(pr, &body) {
+            Ok(c) => c.id,
+            Err(e) => return Err(e.with_data(json!({"approved": approved}))),
+        };
+        let mut entry = json!({"pr": pr, "head_sha": head, "key_id": key_id,
+            "role": role.name(), "comment_id": id, "policy": policy,
+            "policy_source": policy_source});
+        if let Some(r) = after {
+            entry["after_review"] = json!(r);
+        }
+        approved.push(entry);
+    }
+    Ok(Outcome::data(json!({"approved": approved})))
+}
+
+/// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
+type Boot = (Option<String>, String, Policy, &'static str);
+
+/// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
+/// and its note line, or (after it) the note line of the approval policy (D-014) and no date. The
+/// setting is read on the default branch, which risk-check reads at the PR's base.
+fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) -> Result<Boot> {
+    let gh = app.gh.as_ref();
+    let (pr, head) = (pull.number, pull.head_sha.as_str());
+    let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
+    let approvals = match text {
+        Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals,
+        None => Default::default(),
+    };
+    let (policy, src) = (approvals.policy(), approvals.policy_source());
+    if policy == Policy::Autonomous {
+        autonomous_ok(app, pull, requester)?;
+        return Ok((None, AUTONOMOUS_LINE.into(), policy, src));
+    }
+    let end = approvals
+        .bootstrap_until
+        .map(|u| u.min(BOOTSTRAP_END.to_string()));
+    if let Some(d) = end.as_ref().filter(|d| today <= d.as_str()) {
+        return Ok((Some(d.clone()), bootstrap_line(d), policy, src));
+    }
+    let window = match &end {
+        Some(d) => format!("bootstrap mode ended on {d} (D-012)"),
+        None => format!(
+            "bootstrap mode is off: `[approvals] bootstrap_until` is not set in {CONFIG_FILE} on the default branch (D-012)"
+        ),
+    };
+    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer (D-012)";
+    let refuse = |why: String| Err(BosunError::error(format!("{why}; {window}"), fix));
+    let ok = match policy {
+        Policy::Orchestrator | Policy::Autonomous => true,
+        Policy::Owner => return refuse("approval policy owner: only the owner approves".into()),
+        Policy::OwnerGated => {
+            let stats: Vec<Stat> = (crate::github::gate::gate_statuses(gh, head)?.into_iter())
+                .map(|s| Stat {
+                    context: s.context,
+                    state: s.state,
+                    description: s.description,
+                    creator: s.creator,
+                })
+                .collect();
+            let files: Vec<_> = gh.pull_files(pr)?;
+            let paths: Vec<_> = (files.iter())
+                .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+                .collect();
+            only_r_ci(&stats) && risk::workflow_files(&paths).is_empty()
+        }
+    };
+    if !ok {
+        return refuse("approval policy owner-gated: only R-ci changes outside workflows are signed; the owner approves this PR".into());
+    }
+    Ok((None, policy_line(policy), policy, src))
+}
+
+/// D-017: signs only when no excluded path changed and a reviewer other than the task's leaseholders
+/// and this signer has a clean verdict on the head. risk-check cannot see the signer's session, so
+/// this is where signer != reviewer is enforced.
+fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> {
+    let gh = app.gh.as_ref();
+    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer";
+    let files = gh.pull_files(pull.number)?;
+    let paths: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+        .collect();
+    // The base rules, as risk-check reads them: a rule match in the deny set (R-gov) refuses too.
+    let rules = match gh.file_at(".bosun/risk.toml", &pull.base_sha)? {
+        Some(t) => risk::Rules::parse(&t)
+            .map_err(|e| BosunError::error(format!(".bosun/risk.toml at base: {e}"), fix))?,
+        None => risk::Rules::defaults(),
+    };
+    let changed: Vec<_> = (files.iter())
+        .filter(|f| {
+            !crate::core::touch::plan_tick_file(
+                &f.filename,
+                &f.status,
+                f.previous_filename.as_deref(),
+                f.patch.as_deref(),
+            )
+        })
+        .map(|f| risk::ChangedFile {
+            path: f.filename.clone(),
+            previous_path: f.previous_filename.clone(),
+            added_lines: f
+                .patch
+                .as_deref()
+                .map(risk::added_lines)
+                .unwrap_or_default(),
+        })
+        .collect();
+    // R-weaken and capabilities, as risk-check computes them: a weakening is the owner's.
+    let findings =
+        crate::cli::risk_check::weaken_findings(gh, &files, &pull.base_sha, &pull.head_sha)?;
+    if !findings.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "autonomous mode (D-017) never covers a PR with R-weaken findings: the owner approves ({})",
+                findings.join("; ")
+            ),
+            fix,
+        ));
+    }
+    let mut capabilities = risk::capability_labels(&pull.labels);
+    let mut one_off = false;
+    for i in crate::core::meta::linked_issues_in(&pull.body, &app.ctx.repo.to_string()) {
+        if let Some(issue) = gh.get_issue(i)?
+            && let Some(meta) = crate::app::task_meta(&issue)
+        {
+            one_off |= crate::cli::risk_check::is_one_off(
+                gh,
+                &issue,
+                &meta,
+                &pull.base_sha,
+                &app.ctx.config.project,
+            )?;
+            capabilities.extend(meta.capabilities);
+        }
+    }
+    let mut matches = risk::evaluate(&rules, &changed, &[], &capabilities);
+    let lines: u64 = files.iter().map(|f| f.additions + f.deletions).sum();
+    matches.extend(risk::oneoff_size_match(one_off, lines));
+    let allow = crate::cli::risk_check::autonomous_allow(gh, &pull.base_sha)?;
+    let mut hit = risk::autonomous_excluded(&paths, &matches, allow.as_deref());
+    let patches: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.patch.as_deref()))
+        .collect();
+    hit.extend(risk::path_attributes(&patches));
+    if !hit.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "autonomous mode (D-017) never covers {}: the owner approves",
+                hit.join(", ")
+            ),
+            fix,
+        ));
+    }
+    // A decoy link (no open task the author leased) leaves no author to exclude: nothing counts.
+    let inputs = autonomous_inputs(gh, pull, &app.ctx.repo.to_string())?;
+    let models = review_models(gh, &pull.base_sha)?;
+    let clean = inputs.map_or(vec![], |(comments, mut excluded)| {
+        excluded.push(app.ctx.session.clone());
+        // The CI signer's own session is no reviewer's: the session that asked is excluded too.
+        excluded.extend(requester.map(String::from));
+        autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+    });
+    if clean.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "autonomous mode (D-017) needs a clean verdict on head {} from a reviewer who is neither the author (a task lease holder) nor this session, and an open linked task (`Closes #N`) with a lease record by the PR author",
+                pull.head_sha
+            ),
+            "get one independent clean verdict (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in a reviewer session (without CI add `--sign-key <reviewer.pem>`), then sign again",
+        ));
+    }
+    Ok(())
+}
+
+/// An ed25519 key from a PKCS#8 PEM (`openssl genpkey -algorithm ed25519`). Errors name the
+/// path only, never the content.
+pub(crate) fn read_key(path: &Path) -> Result<ring::signature::Ed25519KeyPair> {
+    let bad = || {
+        BosunError::error(
+            format!(
+                "{} is not an ed25519 PKCS#8 PEM private key",
+                path.display()
+            ),
+            "pass the file `openssl genpkey -algorithm ed25519 -out key.pem` wrote",
+        )
+    };
+    let text = std::fs::read_to_string(path).map_err(|e| {
+        BosunError::error(
+            format!("cannot read {}: {}", path.display(), e.kind()),
+            "pass a readable PEM file to --sign-key",
+        )
+    })?;
+    #[cfg(unix)]
+    if let Ok(meta) = std::fs::metadata(path) {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            eprintln!(
+                "bosun: approve: {} is readable by group or others; chmod 600 it",
+                path.display()
+            );
+        }
+    }
+    let mut lines = text.lines().map(str::trim).filter(|l| !l.is_empty());
+    if lines.next() != Some("-----BEGIN PRIVATE KEY-----") {
+        return Err(bad());
+    }
+    let b64_body: String = lines
+        .take_while(|l| *l != "-----END PRIVATE KEY-----")
+        .collect();
+    let der = b64::decode(&b64_body).ok_or_else(bad)?;
+    ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der).map_err(|_| bad())
+}

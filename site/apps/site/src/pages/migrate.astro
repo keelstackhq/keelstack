@@ -1,0 +1,91 @@
+---
+import Footer from "../components/Footer.astro";
+import Nav from "../components/Nav.astro";
+import { APPENDIX_URL, migrate, QUICKSTART_URL, RUNBOOK_URL } from "../data/migrate";
+import Base from "../layouts/Base.astro";
+import "../styles/docs.css";
+
+const { local, web, slack, quick, does } = migrate;
+---
+
+<Base title={`${migrate.title} · keelstack`} description={migrate.summary}>
+  <Nav />
+  <main id="main" class="prose migrate">
+    <h1>{migrate.title}</h1>
+    <p>{migrate.forWho}</p>
+    <p>{migrate.owner}</p>
+    <nav aria-label="On this page">
+      <ul>
+        <li><a href="#quick">Quick start</a></li>
+        <li><a href="#does">What bosun migrate does</a></li>
+        <li><a href="#local">{local.heading}</a></li>
+        <li><a href="#web">{web.heading}</a></li>
+        <li><a href="#slack">{slack.heading}</a></li>
+        <li><a href="#changes">The mode ladder</a></li>
+        <li><a href="#manual">The manual path</a></li>
+      </ul>
+    </nav>
+
+    <h2 id="quick">Quick start</h2>
+    <p>{quick.setupLabel} <a href={`/docs/start/#${quick.setupId}`}>Start, block {quick.setupId.toUpperCase()}</a>.</p>
+    <p>{quick.promptLabel}</p>
+    <pre><code>{quick.prompt}</code></pre>
+    <p>{quick.promptNote}</p>
+    <p>{quick.approve}</p>
+
+    <h2 id="does">What bosun migrate does</h2>
+    <p>{does.intro} <a href={`/docs/start/#${does.startId}`}>Start, block {does.startId.toUpperCase()}</a>.</p>
+    <ul>{does.notes.map((n) => <li>{n}</li>)}</ul>
+
+    <h2 id="local">{local.heading}</h2>
+    <ol>{local.steps.map((n) => <li>{n}</li>)}</ol>
+
+    <h2 id="web">{web.heading}</h2>
+    <ol>{web.steps.map((n) => <li>{n}</li>)}</ol>
+    <p>The setup script and network rules: <a href="/docs/start/#e">Start, block E</a>; the long form: <a href="/docs/cloud/">Cloud environment</a>.</p>
+
+    <h2 id="slack">{slack.heading}</h2>
+    <ol>{slack.steps.map((n) => <li>{n}</li>)}</ol>
+
+    <h2 id="changes">The mode ladder</h2>
+    <table tabindex="0">
+      <thead>
+        <tr>{migrate.ladderHead.map((h) => <th>{h}</th>)}</tr>
+      </thead>
+      <tbody>
+        {migrate.ladder.map((row) => (
+          <tr>
+            <td><code>{row[0]}</code></td>
+            <td>{row[1]}</td>
+            <td>{row[2]}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    <ul>{migrate.notes.map((n) => <li>{n}</li>)}</ul>
+    <p>
+      Every knob, per mode: <a href={migrate.knobsUrl}>the knob table in bosun's quickstart</a>.
+    </p>
+    <p>{migrate.fastLane}</p>
+
+    <h2 id="manual">The manual path</h2>
+    <p>
+      For a release without <code>bosun migrate</code>, or when a step needs a hand, the long path is{" "}
+      <a href={APPENDIX_URL}>Appendix A of the guide</a>. Full guide: <a href={RUNBOOK_URL}><code>docs/migrate-booster.md</code></a>.
+      Setup: <a href={QUICKSTART_URL}><code>docs/quickstart.md</code></a>.
+    </p>
+
+    <p class="docs-foot">
+      Source: <a href={RUNBOOK_URL}>bosun <code>docs/migrate-booster.md</code></a> · <a href="/">keelstack</a>
+    </p>
+  </main>
+  <Footer />
+</Base>
+
+<style>
+  .migrate {
+    max-width: 72ch;
+    margin: 0 auto;
+    padding: 48px 24px 64px;
+  }
+</style>

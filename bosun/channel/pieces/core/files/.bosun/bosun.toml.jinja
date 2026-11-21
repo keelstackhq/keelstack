@@ -1,0 +1,43 @@
+# bosun's project config (spec §3). Unknown keys are an error. The bosun channel merges its
+# changes to this file key by key; your own values stay.
+project = "{{ project }}"
+{% if intake %}{% if bosun_version %}{% else %}intake = true
+{% endif %}{% endif %}{% if "rust" in pieces %}
+[[stack]]
+path = "{{ rust_path }}"
+profile = "rust"
+{% endif %}{% if "ts-pnpm" in pieces %}
+[[stack]]
+path = "{{ ts_path }}"
+profile = "ts-pnpm"
+{% endif %}{% if ci_provider %}{% if bosun_version %}{% if ci_pin_checked %}
+[ci]
+# Which CI the repo runs (spec §9): github, circleci or none (bosun then checks locally).
+provider = "{{ ci_provider }}"
+{% else %}
+# `provider = "{{ ci_provider }}"` under [ci] is not written: the explicit bosun_version pin may
+# predate it (0.22.0) and a release that cannot parse it fails every gate. Add it by hand (spec §9).
+{% endif %}{% else %}
+[ci]
+# Which CI the repo runs (spec §9): github, circleci or none (bosun then checks locally).
+provider = "{{ ci_provider }}"
+{% endif %}{% endif %}
+[review]
+# "subagent" (mode a): a fresh subagent reviews each PR (spec §7).
+mode = "subagent"
+{% if bosun_version %}{% if policy %}{% if policy_pin_checked %}
+[approvals]
+# Who may approve (spec §8); the pinned release must know this value.
+policy = "{{ policy }}"
+{% else %}
+# `policy = "{{ policy }}"` under [approvals] is not written: the explicit bosun_version pin
+# may predate it (owner, owner-gated, orchestrator: 0.5.0; autonomous: 0.8.0) and a release that
+# cannot parse it fails every gate. Add it by hand once the pin reads it (spec §8).
+{% endif %}{% endif %}{% else %}
+[approvals]
+# Bootstrap mode (D-012, spec §8): until this day (UTC, inclusive) an owner key's
+# `--bootstrap` signature counts as the owner on owner-class PRs outside the excluded paths.
+# Rendered while this repo pins the channel's own bosun release (0.3.0 or later); drop it to opt out.
+bootstrap_until = "2026-11-30"
+{% if policy %}policy = "{{ policy }}"
+{% endif %}{% endif %}

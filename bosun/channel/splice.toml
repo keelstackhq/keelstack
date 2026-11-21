@@ -1,0 +1,40 @@
+# The splice channel that `bosun init` adds (spec D16): `splice channel add
+# gh:keelstackhq/keelstack//bosun/channel --as bosun --piece rust --piece claude-md` (`bosun init` picks the
+# pieces and vars; see spec §3). A channel version is a bosun release
+# tag, so the channel and the pinned binary move together; the splice update bot brings each new
+# version to a consumer as one R-gov PR.
+format = 1
+name = "bosun"
+min_splice = "0.3.0"
+base = "core"
+
+[vars]
+project = { prompt = "project name", default = "app", pattern = "^[A-Za-z0-9._-]+$" }
+owner = { prompt = "GitHub login of the owner (empty: fill governance/owners.toml later)", default = "", pattern = "^([A-Za-z0-9-]+)?$" }
+# Empty: pin the channel version. A branch or sha ref has no release version, so it must name one.
+bosun_version = { prompt = "bosun release to pin (empty: the channel version)", default = "", pattern = "^([0-9]+\\.[0-9]+\\.[0-9]+)?$" }
+rust_path = { prompt = "directory of the rust stack", default = ".", pattern = "^[A-Za-z0-9._/-]+$" }
+ts_path = { prompt = "directory of the ts-pnpm stack", default = ".", pattern = "^[A-Za-z0-9._/-]+$" }
+# Non-empty when the repo already has its own ci.yml with a `ci-ok` job (a hull template, for
+# example): bosun.yml then names its aggregate job `bosun-ok`, a second required check.
+own_ci = { prompt = "the repo has its own ci.yml and ci-ok job (1 or empty)", default = "", pattern = "^1?$" }
+# Non-empty to render `intake = true` in .bosun/bosun.toml (spec section 3), and only while the repo
+# pins the channel's own release (empty bosun_version): a pinned release that predates the key
+# rejects it. Default empty: the render is unchanged.
+intake = { prompt = "require a valid .bosun/intake.toml before spawn (1 or empty)", default = "", pattern = "^1?$" }
+# Non-empty when the repo has the bosun GitHub App (spec section 15, O5): the gate jobs of risk,
+# verdict, main-open and main-health run in the `bosun-app` environment with an App token step.
+# Default empty: the workflows are unchanged (statuses mode).
+bosun_app = { prompt = "the gate jobs use the bosun App token from the bosun-app environment (1 or empty)", default = "", pattern = "^1?$" }
+# Non-empty to render `[approvals] policy` in .bosun/bosun.toml (spec section 8): owner,
+# owner-gated, orchestrator (release 0.5.0 on) or autonomous (0.8.0 on). With an explicit
+# bosun_version, the template cannot compare versions, so the policy is written only with
+# policy_pin_checked; else a comment asks for it by hand. Default empty: the render is unchanged.
+policy = { prompt = "approval policy (empty: none written, the default owner)", default = "", pattern = "^(owner|owner-gated|orchestrator|autonomous)?$" }
+# Non-empty when the caller has checked that the explicit bosun_version reads `policy` (`bosun adopt`
+# does, exit 2 otherwise). Without it, an explicit pin renders a comment and no policy.
+policy_pin_checked = { prompt = "the pinned bosun_version reads the policy (1 or empty)", default = "", pattern = "^1?$" }
+# Non-empty to render `[ci] provider` in .bosun/bosun.toml (spec section 9): github, circleci or
+# none. With an explicit bosun_version it is written only with ci_pin_checked (0.22.0 on; `bosun adopt` sets it), else a comment. Default empty: unchanged.
+ci_pin_checked = { prompt = "the pinned bosun_version reads [ci] (1 or empty)", default = "", pattern = "^1?$" }
+ci_provider = { prompt = "CI provider (empty: none written, the default github)", default = "", pattern = "^(github|circleci|none)?$" }

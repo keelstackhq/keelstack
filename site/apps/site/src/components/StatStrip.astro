@@ -1,0 +1,60 @@
+---
+import { stats } from "../data/content";
+---
+
+<section class="strip">
+  <div class="grid">
+    {
+      stats.map((s) => (
+        <div class="cell">
+          <div class="value">{s.value}</div>
+          <div class="caption">{s.caption}</div>
+        </div>
+      ))
+    }
+  </div>
+</section>
+
+<style>
+  .strip {
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+  }
+  .grid {
+    max-width: 1240px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1px;
+    background: var(--line);
+  }
+  @media (min-width: 600px) {
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (min-width: 1000px) {
+    .grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+    .grid .value {
+      font-size: 32px;
+    }
+  }
+  .cell {
+    padding: 28px 24px;
+    background: var(--surface);
+  }
+  .value {
+    font-weight: 900;
+    font-stretch: 112%;
+    font-size: 40px;
+    letter-spacing: -0.03em;
+    line-height: 1.05;
+  }
+  .caption {
+    color: var(--muted);
+    margin-top: 4px;
+  }
+</style>

@@ -1,0 +1,8 @@
+# Env for every process cargo starts (tests, `cargo run`); built binaries are unaffected.
+# `force`: some agent sandboxes export TMPDIR=/, and a plain [env] entry never overrides it.
+[env]
+# bosun tests need a writable TMPDIR outside the repo (inside it, bosun finds the repo's own
+# .bosun config).
+TMPDIR = { value = "/tmp", force = true }
+# Hermetic git env is set per command by each crate's tests (berth: tests/common), not here:
+# a global [env] would also apply to `cargo run` and drop the user's git config.

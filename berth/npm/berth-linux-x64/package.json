@@ -1,0 +1,23 @@
+{
+  "name": "@keelstackhq/berth-linux-x64",
+  "version": "0.21.0",
+  "description": "The berth binary for Linux x64 (static musl)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/keelstackhq/keelstack.git",
+    "directory": "berth/npm/berth-linux-x64"
+  },
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  }
+}

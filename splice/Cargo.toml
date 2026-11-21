@@ -1,0 +1,46 @@
+[package]
+name = "keel-splice"
+version.workspace = true
+edition = "2024"
+description = "Bootstrap a repo from versioned template pieces and keep it current"
+license = "MIT"
+publish = false
+
+[lib]
+name = "splice"
+path = "src/lib.rs"
+
+[[bin]]
+name = "splice"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+dialoguer.workspace = true
+diffy.workspace = true
+dirs.workspace = true
+globset.workspace = true
+indexmap = { workspace = true, features = ["serde"] }
+minijinja.workspace = true
+regex.workspace = true
+semver.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+walkdir.workspace = true
+yaml_serde.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+serde_json.workspace = true
+insta = { workspace = true, features = ["json"] }
+
+# SpliceError carries a Report; boxing it would touch every error site for no gain.
+[lints.clippy]
+result_large_err = "allow"

@@ -1,0 +1,272 @@
+//! The `git` CLI behind one wrapper. No network crates: all fetching goes through git.
+
+use crate::error::SpliceError;
+use std::path::Path;
+use std::process::{Command, Output};
+
+/// Namespace for git operations.
+pub struct Git;
+
+fn command() -> Command {
+    let mut cmd = Command::new("git");
+    cmd.args(["-c", "core.autocrlf=false", "-c", "core.eol=lf"])
+        .env("GIT_TERMINAL_PROMPT", "0");
+    cmd
+}
+
+fn run(mut cmd: Command, what: &str) -> Result<Output, SpliceError> {
+    let out = cmd.output().map_err(|e| {
+        SpliceError::Env(format!(
+            "cannot run git ({e}); install git and put it on PATH"
+        ))
+    })?;
+    if out.status.success() {
+        Ok(out)
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr);
+        let detail = match err.trim() {
+            "" => format!("exit status {}", out.status.code().unwrap_or(-1)),
+            e => e.to_string(),
+        };
+        Err(SpliceError::Env(format!("git {what} failed: {detail}")))
+    }
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+impl Git {
+    /// Tags of a remote as `(tag, sha)`, in git's order. The peeled sha (the commit) is
+    /// preferred over an annotated tag object's sha.
+    pub fn ls_remote_tags(url: &str) -> Result<Vec<(String, String)>, SpliceError> {
+        let mut cmd = command();
+        cmd.args(["ls-remote", "--tags", "--", url]);
+        let out = run(cmd, "ls-remote")?;
+        let mut tags: Vec<(String, String)> = Vec::new();
+        for line in stdout(&out).lines() {
+            let Some((sha, name)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some(tag) = name.strip_prefix("refs/tags/") else {
+                continue;
+            };
+            if let Some(base) = tag.strip_suffix("^{}") {
+                if let Some(entry) = tags.iter_mut().find(|t| t.0 == base) {
+                    entry.1 = sha.to_string();
+                } else {
+                    tags.push((base.to_string(), sha.to_string()));
+                }
+            } else if !tags.iter().any(|t| t.0 == tag) {
+                tags.push((tag.to_string(), sha.to_string()));
+            }
+        }
+        Ok(tags)
+    }
+
+    /// Create a bare mirror of `url` at `mirror`, or bring an existing one up to date.
+    pub fn ensure_mirror(url: &str, mirror: &Path) -> Result<(), SpliceError> {
+        if mirror.join("HEAD").exists() {
+            let mut cmd = command();
+            cmd.arg("--git-dir")
+                .arg(mirror)
+                .args(["fetch", "--quiet", "--tags", "--prune", "origin"]);
+            run(cmd, "fetch")?;
+        } else {
+            if let Some(parent) = mirror.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut cmd = command();
+            cmd.args(["clone", "--quiet", "--mirror", "--", url])
+                .arg(mirror);
+            run(cmd, "clone --mirror")?;
+        }
+        Ok(())
+    }
+
+    /// Resolve `rev` to a full commit sha.
+    pub fn rev_parse(git_dir: &Path, rev: &str) -> Result<String, SpliceError> {
+        let mut cmd = command();
+        cmd.arg("--git-dir")
+            .arg(git_dir)
+            .args(["rev-parse", "--verify", "--quiet"])
+            .arg(format!("{rev}^{{commit}}"));
+        let out = cmd.output().map_err(|e| {
+            SpliceError::Env(format!(
+                "cannot run git ({e}); install git and put it on PATH"
+            ))
+        })?;
+        if !out.status.success() {
+            return Err(SpliceError::Env(format!(
+                "unknown revision `{rev}` in the template repository"
+            )));
+        }
+        Ok(stdout(&out).trim().to_string())
+    }
+
+    /// The tree id of `commit` (`<commit>^{tree}`), or of `subdir` in it (`<commit>:<subdir>`).
+    pub fn tree_id(
+        git_dir: &Path,
+        commit: &str,
+        subdir: Option<&str>,
+    ) -> Result<String, SpliceError> {
+        let rev = match subdir {
+            Some(sub) => format!("{commit}:{sub}"),
+            None => format!("{commit}^{{tree}}"),
+        };
+        let mut cmd = command();
+        cmd.arg("--git-dir")
+            .arg(git_dir)
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options"])
+            .arg(&rev);
+        let out = cmd.output().map_err(|e| {
+            SpliceError::Env(format!(
+                "cannot run git ({e}); install git and put it on PATH"
+            ))
+        })?;
+        if !out.status.success() {
+            return Err(SpliceError::Env(format!(
+                "no tree `{rev}` in the template repository"
+            )));
+        }
+        Ok(stdout(&out).trim().to_string())
+    }
+
+    /// `git merge-base --is-ancestor <ancestor> <descendant>`: exit 0 is true, 1 is false, anything
+    /// else an error. A commit is its own ancestor.
+    pub fn is_ancestor(
+        git_dir: &Path,
+        ancestor: &str,
+        descendant: &str,
+    ) -> Result<bool, SpliceError> {
+        let mut cmd = command();
+        cmd.arg("--git-dir")
+            .arg(git_dir)
+            .args(["merge-base", "--is-ancestor", "--end-of-options"])
+            .arg(ancestor)
+            .arg(descendant);
+        let out = cmd.output().map_err(|e| {
+            SpliceError::Env(format!(
+                "cannot run git ({e}); install git and put it on PATH"
+            ))
+        })?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(SpliceError::Env(format!(
+                "git merge-base --is-ancestor {ancestor} {descendant} failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))),
+        }
+    }
+
+    /// Write the tree of `commit` to `dest` (no `.git`). Uses a throwaway index and work
+    /// tree so the repository is untouched, then renames the work tree into place.
+    pub fn extract_tree(git_dir: &Path, commit: &str, dest: &Path) -> Result<(), SpliceError> {
+        let parent = dest.parent().unwrap_or_else(|| Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let work = tempfile::Builder::new()
+            .prefix(".splice-tree-")
+            .tempdir_in(parent)?;
+        let scratch = tempfile::tempdir()?;
+        let mut cmd = command();
+        cmd.arg("--git-dir")
+            .arg(git_dir)
+            .arg("--work-tree")
+            .arg(work.path())
+            .env("GIT_INDEX_FILE", scratch.path().join("index"))
+            .args(["checkout", "--quiet", commit, "--", "."]);
+        run(cmd, "checkout")?;
+        let tmp = work.keep();
+        std::fs::rename(&tmp, dest).inspect_err(|_| {
+            let _ = std::fs::remove_dir_all(&tmp);
+        })?;
+        Ok(())
+    }
+
+    /// `None` when `repo` is not inside a git work tree, else whether it has no changes
+    /// (untracked files count as changes).
+    pub fn is_clean(repo: &Path) -> Result<Option<bool>, SpliceError> {
+        let mut cmd = command();
+        cmd.arg("-C")
+            .arg(repo)
+            .args(["rev-parse", "--is-inside-work-tree"]);
+        let Ok(out) = cmd.output() else {
+            return Err(SpliceError::Env(
+                "cannot run git; install git and put it on PATH".into(),
+            ));
+        };
+        if !out.status.success() || stdout(&out).trim() != "true" {
+            return Ok(None);
+        }
+        let mut cmd = command();
+        cmd.arg("-C").arg(repo).args(["status", "--porcelain"]);
+        let out = run(cmd, "status")?;
+        Ok(Some(out.stdout.is_empty()))
+    }
+
+    /// Whether the enclosing repo of `dir` ignores `rel` (a path under `dir`, which may not
+    /// exist yet). `None` when `dir` is not inside a git work tree.
+    pub fn ignored(dir: &Path, rels: &[String]) -> Result<Option<Vec<String>>, SpliceError> {
+        use std::io::Write;
+        use std::process::Stdio;
+        if Git::is_clean(dir)?.is_none() {
+            return Ok(None);
+        }
+        let mut cmd = command();
+        cmd.arg("-C")
+            .arg(dir)
+            .args(["check-ignore", "--no-index", "-z", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| SpliceError::Env(format!("cannot run git ({e})")))?;
+        let mut input = rels.join("\0").into_bytes();
+        input.push(0);
+        // Feed stdin from a thread: git streams matches while it reads, so writing everything
+        // before draining stdout would deadlock once both pipes fill.
+        let mut stdin = child.stdin.take().expect("piped");
+        let writer = std::thread::spawn(move || stdin.write_all(&input));
+        let out = child.wait_with_output()?;
+        // A broken pipe just means git exited early; its status is judged below.
+        let _ = writer.join();
+        // 0 = some ignored, 1 = none; anything else is a real failure.
+        match out.status.code() {
+            Some(0) | Some(1) => Ok(Some(
+                String::from_utf8_lossy(&out.stdout)
+                    .split('\0')
+                    .filter(|p| !p.is_empty())
+                    .map(str::to_string)
+                    .collect(),
+            )),
+            _ => Err(SpliceError::Env(format!(
+                "git check-ignore failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ))),
+        }
+    }
+
+    /// `git init` in `dir` (created if missing).
+    pub fn init(dir: &Path) -> Result<(), SpliceError> {
+        std::fs::create_dir_all(dir)?;
+        let mut cmd = command();
+        cmd.args(["init", "--quiet"]).arg(dir);
+        run(cmd, "init")?;
+        Ok(())
+    }
+
+    /// Stage everything and commit with `msg`.
+    pub fn commit_all(dir: &Path, msg: &str) -> Result<(), SpliceError> {
+        let mut cmd = command();
+        cmd.arg("-C").arg(dir).args(["add", "-A", "--", "."]);
+        run(cmd, "add")?;
+        let mut cmd = command();
+        cmd.arg("-C")
+            .arg(dir)
+            .args(["commit", "--quiet", "-m", msg, "--", "."]);
+        run(cmd, "commit")?;
+        Ok(())
+    }
+}

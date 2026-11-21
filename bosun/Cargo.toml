@@ -1,0 +1,39 @@
+[package]
+name = "keel-bosun"
+version.workspace = true
+edition = "2024"
+rust-version = "1.97"
+description = "Orchestration helper for repos where agents write all the code"
+license = "MIT"
+repository = "https://github.com/keelstackhq/keelstack"
+readme = "README.md"
+keywords = ["ai-agents", "orchestration", "github", "cli", "developer-tools"]
+categories = ["command-line-utilities", "development-tools"]
+# Only what builds the crate: no tests, fixtures, npm packages or docs in the .crate file.
+# profiles/ is embedded with include_str!.
+include = ["/src/**", "/profiles/**", "/channel/pieces/core/files/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE"]
+
+[lib]
+name = "bosun"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bosun"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true, features = ["derive"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+# Already in the tree through rustls: ed25519 for signed owner approvals (spec §8).
+ring.workspace = true
+toml.workspace = true
+ureq = { workspace = true, features = ["platform-verifier"] }
+
+[dev-dependencies]
+assert_cmd.workspace = true
+predicates.workspace = true
+tempfile.workspace = true
+tiny_http.workspace = true

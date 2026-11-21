@@ -1,0 +1,4 @@
+id = "portable"
+description = "Only decisions with scope `all orgs` (for a repo outside keelstackhq)"
+multiple = false
+requires = ["snapshot"]

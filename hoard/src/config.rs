@@ -1,0 +1,894 @@
+//! CLI flags, `HOARD_*` environment variables and defaults. Precedence: flag > env > default.
+
+use std::ffi::OsString;
+use std::fmt;
+use std::path::PathBuf;
+
+use clap::{Args, ValueEnum};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Storage {
+    Github,
+    R2,
+    Fs,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum Mode {
+    ReadWrite,
+    Read,
+    Off,
+}
+
+/// `write-behind`: answer PUTs once the body is spooled to disk and upload in the background.
+/// `auto` is on for `storage=github` (slow, rate-limited uploads) and off for `r2`/`fs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum WriteBehindMode {
+    Auto,
+    On,
+    Off,
+}
+
+/// `pack`: pack Turborepo artifacts into a few large entries plus an index (spec §6.5).
+/// `auto` is on for `storage=github`; ignored (always off) for `r2`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum PackMode {
+    Auto,
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum LifecycleMode {
+    Auto,
+    Verify,
+    Manual,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ConfigError {
+    #[error("invalid size {0:?}: use a number with an optional KB, MB, GB or TB suffix, e.g. 5GB")]
+    BadSize(String),
+    #[error("storage=r2 needs {}; set the flag or its HOARD_* env var", .0.join(", "))]
+    MissingR2(Vec<String>),
+    #[error(
+        "cache-version {0:?} must be one segment of A-Z a-z 0-9 . _ - (not . or .., no /); \
+         set --cache-version or HOARD_CACHE_VERSION (default v1)"
+    )]
+    BadCacheVersion(String),
+    #[error(
+        "r2-prefix {0:?} must be segments of A-Z a-z 0-9 . _ - joined by / and must end with / \
+         (no leading /, //, spaces, . or .. segments); for example cache/"
+    )]
+    BadPrefix(String),
+    #[error(
+        "r2-endpoint {0:?} must start with http:// or https:// (for example http://127.0.0.1:9000)"
+    )]
+    BadEndpoint(String),
+    #[error(
+        "max-age-days {0} must be between 1 and 36500; set --max-age-days or HOARD_MAX_AGE_DAYS"
+    )]
+    BadMaxAge(u32),
+}
+
+/// Parse a size such as `5GB`, `750MB` or `1024` (powers of 1000).
+pub fn parse_size(s: &str) -> Result<u64, ConfigError> {
+    let bad = || ConfigError::BadSize(s.to_string());
+    let t = s.trim();
+    let split = t.find(|c: char| !c.is_ascii_digit()).unwrap_or(t.len());
+    let (digits, unit) = t.split_at(split);
+    let n: u64 = digits.parse().map_err(|_| bad())?;
+    let mult: u64 = match unit.to_ascii_uppercase().as_str() {
+        "" | "B" => 1,
+        "KB" => 1_000,
+        "MB" => 1_000_000,
+        "GB" => 1_000_000_000,
+        "TB" => 1_000_000_000_000,
+        _ => return Err(bad()),
+    };
+    n.checked_mul(mult).ok_or_else(bad)
+}
+
+/// An r2 prefix is one or more segments of `[A-Za-z0-9._-]` (not `.` or `..`), each followed
+/// by `/`. Anything else could be rewritten by OpenDAL's path normalisation (leading `/`,
+/// `//`, whitespace) and reach keys outside the prefix, e.g. `/` = the whole bucket.
+fn valid_prefix(p: &str) -> bool {
+    let Some(body) = p.strip_suffix('/') else {
+        return false;
+    };
+    body.split('/').all(valid_segment)
+}
+
+/// One key segment: `[A-Za-z0-9._-]+`, not `.` or `..`. Used for r2-prefix segments and for
+/// cache-version, which become key path segments (on fs, `..` would leave fs-root).
+pub fn valid_segment(seg: &str) -> bool {
+    !seg.is_empty()
+        && seg != "."
+        && seg != ".."
+        && seg
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+}
+
+fn runner_temp_or(file: &str, fallback: &str) -> PathBuf {
+    match std::env::var_os("RUNNER_TEMP") {
+        Some(dir) if !dir.is_empty() => PathBuf::from(dir).join(file),
+        _ => PathBuf::from(fallback),
+    }
+}
+
+pub fn default_port_file() -> PathBuf {
+    runner_temp_or("hoard.port", "./.hoard/port")
+}
+
+pub fn default_token_file() -> PathBuf {
+    runner_temp_or("hoard.token", "./.hoard/token")
+}
+
+pub fn default_summary_file() -> PathBuf {
+    runner_temp_or("hoard-summary.md", "./.hoard/summary.md")
+}
+pub fn default_pid_file() -> PathBuf {
+    runner_temp_or("hoard.pid", "./.hoard/pid")
+}
+pub fn default_log_file() -> PathBuf {
+    runner_temp_or("hoard.log", "./.hoard/log")
+}
+
+/// Port and token file locations; enough for `hoard env` to find a running server.
+#[derive(Args, Debug, Clone)]
+pub struct TokenPaths {
+    /// File that holds the listening port.
+    #[arg(long, env = "HOARD_PORT_FILE")]
+    pub port_file: Option<PathBuf>,
+    /// File that holds the bearer token.
+    #[arg(long, env = "HOARD_TOKEN_FILE")]
+    pub token_file: Option<PathBuf>,
+}
+
+#[derive(clap::Parser, Clone)]
+pub struct ServeArgs {
+    /// Where artifacts live: github, r2 or fs.
+    #[arg(long, env = "HOARD_STORAGE", value_enum, default_value = "github")]
+    pub storage: Storage,
+    /// read-write, read (no uploads) or off (every request misses).
+    #[arg(long, env = "HOARD_MODE", value_enum, default_value = "read-write")]
+    pub mode: Mode,
+    /// Every GET/HEAD misses; uploads still happen.
+    #[arg(long, env = "HOARD_NO_READS", value_parser = clap::builder::BoolishValueParser::new())]
+    pub no_reads: bool,
+    /// Part of every key; bump to purge.
+    #[arg(long, env = "HOARD_CACHE_VERSION", default_value = "v1")]
+    pub cache_version: String,
+    /// 0 picks a free port.
+    #[arg(long, env = "HOARD_PORT", default_value_t = 0)]
+    pub port: u16,
+    #[command(flatten)]
+    pub paths: TokenPaths,
+    /// Bearer token; random when unset. Environment only (the binary rejects `--token`).
+    #[arg(long, env = "HOARD_TOKEN", hide = true)]
+    pub token: Option<String>,
+    /// Markdown summary written on shutdown.
+    #[arg(long, env = "HOARD_SUMMARY_FILE")]
+    pub summary_file: Option<PathBuf>,
+    /// Directory for storage=fs.
+    #[arg(long, env = "HOARD_FS_ROOT", default_value = "./.hoard/store")]
+    pub fs_root: PathBuf,
+    /// Cloudflare account ID (r2).
+    #[arg(long, env = "HOARD_R2_ACCOUNT_ID")]
+    pub r2_account_id: Option<String>,
+    /// S3 endpoint override, e.g. MinIO (r2); replaces r2-account-id.
+    #[arg(long, env = "HOARD_R2_ENDPOINT")]
+    pub r2_endpoint: Option<String>,
+    /// R2 access key ID (r2).
+    #[arg(long, env = "HOARD_R2_ACCESS_KEY_ID")]
+    pub r2_access_key_id: Option<String>,
+    /// Environment only (the binary rejects `--r2-secret-access-key`).
+    #[arg(long, env = "HOARD_R2_SECRET_ACCESS_KEY", hide = true)]
+    pub r2_secret_access_key: Option<String>,
+    /// R2 bucket name (r2).
+    #[arg(long, env = "HOARD_R2_BUCKET")]
+    pub r2_bucket: Option<String>,
+    /// Key prefix in the bucket, ending in / (r2).
+    #[arg(long, env = "HOARD_R2_PREFIX", default_value = "cache/")]
+    pub r2_prefix: String,
+    /// auto sets the expiry rule, verify fails if it is missing, manual skips it (r2).
+    #[arg(long, env = "HOARD_R2_LIFECYCLE", value_enum, default_value = "auto")]
+    pub r2_lifecycle: LifecycleMode,
+    /// Days after the last write that R2 objects expire, 1-36500 (r2).
+    #[arg(long, env = "HOARD_MAX_AGE_DAYS", default_value_t = 7)]
+    pub max_age_days: u32,
+    /// R2 prefix size cap, e.g. 5GB; the oldest objects go first (r2).
+    #[arg(long, env = "HOARD_MAX_SIZE", default_value = "5GB")]
+    pub max_size: String,
+    /// Upload in the background after spooling to disk (auto: on for github).
+    #[arg(long, env = "HOARD_WRITE_BEHIND", value_enum, default_value = "auto")]
+    pub write_behind: WriteBehindMode,
+    /// Pack artifacts into few large entries (auto: on for github; never for r2).
+    #[arg(long, env = "HOARD_PACK", value_enum, default_value = "auto")]
+    pub pack: PackMode,
+    /// R2: re-write hit objects older than half of max-age-days; default on, =false turns off.
+    #[arg(
+        long,
+        env = "HOARD_REFRESH_ON_HIT",
+        value_parser = clap::builder::BoolishValueParser::new(),
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "true"
+    )]
+    pub refresh_on_hit: Option<bool>,
+}
+
+fn redact<T>(v: &Option<T>) -> Option<&'static str> {
+    v.as_ref().map(|_| "<redacted>")
+}
+
+impl fmt::Debug for ServeArgs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ServeArgs")
+            .field("storage", &self.storage)
+            .field("mode", &self.mode)
+            .field("no_reads", &self.no_reads)
+            .field("cache_version", &self.cache_version)
+            .field("port", &self.port)
+            .field("paths", &self.paths)
+            .field("token", &redact(&self.token))
+            .field("summary_file", &self.summary_file)
+            .field("fs_root", &self.fs_root)
+            .field("r2_account_id", &self.r2_account_id)
+            .field("r2_endpoint", &self.r2_endpoint)
+            .field("r2_access_key_id", &redact(&self.r2_access_key_id))
+            .field("r2_secret_access_key", &redact(&self.r2_secret_access_key))
+            .field("r2_bucket", &self.r2_bucket)
+            .field("r2_prefix", &self.r2_prefix)
+            .field("r2_lifecycle", &self.r2_lifecycle)
+            .field("max_age_days", &self.max_age_days)
+            .field("max_size", &self.max_size)
+            .field("write_behind", &self.write_behind)
+            .field("pack", &self.pack)
+            .field("refresh_on_hit", &self.refresh_on_hit)
+            .finish()
+    }
+}
+
+/// Names of `HOARD_*` variables whose value is empty. CI systems export empty values for
+/// unset secrets; those must behave as unset.
+fn empty_hoard_keys<I: IntoIterator<Item = (OsString, OsString)>>(vars: I) -> Vec<OsString> {
+    vars.into_iter()
+        .filter(|(k, v)| v.is_empty() && k.to_string_lossy().starts_with("HOARD_"))
+        .map(|(k, _)| k)
+        .collect()
+}
+
+/// Secrets never go in argv: reject `--token` and `--r2-secret-access-key` (also `--flag=value`)
+/// and name the environment variable to use. Never echoes the value.
+pub fn reject_secret_flags<I: IntoIterator<Item = OsString>>(args: I) -> Result<(), String> {
+    for a in args {
+        // Lossy on purpose: non-UTF-8 argv must not panic, and the flag name is ASCII.
+        let a = a.to_string_lossy();
+        let name = a.split('=').next().unwrap_or("");
+        let env = match name {
+            "--token" => "HOARD_TOKEN",
+            "--r2-secret-access-key" => "HOARD_R2_SECRET_ACCESS_KEY",
+            _ => continue,
+        };
+        return Err(format!(
+            "{name} is not accepted: a secret on the command line is visible to other processes. Set {env} instead"
+        ));
+    }
+    Ok(())
+}
+
+/// Remove empty `HOARD_*` variables from the process environment. Call first thing in `main`,
+/// before any thread or runtime exists.
+pub fn drop_empty_hoard_env() {
+    for key in empty_hoard_keys(std::env::vars_os()) {
+        // SAFETY: called at the start of main, while the process is still single-threaded.
+        unsafe { std::env::remove_var(key) };
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct R2Config {
+    /// `None` only when `endpoint` overrides the R2 endpoint.
+    pub account_id: Option<String>,
+    /// Endpoint override (`r2-endpoint`), e.g. a MinIO URL.
+    pub endpoint: Option<String>,
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    pub bucket: String,
+    pub prefix: String,
+}
+
+impl R2Config {
+    /// The `r2-endpoint` override if set, else `https://<account_id>.r2.cloudflarestorage.com`.
+    pub fn endpoint(&self) -> String {
+        match (&self.endpoint, &self.account_id) {
+            (Some(e), _) => e.trim_end_matches('/').to_string(),
+            (None, a) => format!(
+                "https://{}.r2.cloudflarestorage.com",
+                a.as_deref().unwrap_or_default()
+            ),
+        }
+    }
+}
+
+impl fmt::Debug for R2Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("R2Config")
+            .field("account_id", &self.account_id)
+            .field("endpoint", &self.endpoint)
+            .field("access_key_id", &"<redacted>")
+            .field("secret_access_key", &"<redacted>")
+            .field("bucket", &self.bucket)
+            .field("prefix", &self.prefix)
+            .finish()
+    }
+}
+
+#[derive(Clone)]
+pub struct Config {
+    pub storage: Storage,
+    pub mode: Mode,
+    /// GET/HEAD and the batch query always miss without reading the store.
+    pub no_reads: bool,
+    pub cache_version: String,
+    pub port: u16,
+    pub port_file: PathBuf,
+    pub token_file: PathBuf,
+    pub token: Option<String>,
+    pub summary_file: Option<PathBuf>,
+    pub fs_root: PathBuf,
+    pub r2: Option<R2Config>,
+    pub r2_lifecycle: LifecycleMode,
+    pub max_age_days: u32,
+    pub max_size: u64,
+    /// PUTs are spooled and uploaded in the background (`write-behind`, `auto` resolved).
+    pub write_behind: bool,
+    /// Turborepo artifacts are packed (`pack`, `auto` resolved; always false for `r2`).
+    pub pack: bool,
+    /// `refresh-on-hit` as set (`None` = not set: on where it applies); only `storage=r2` with
+    /// `mode=read-write` acts on it (spec §7.3).
+    pub refresh_on_hit: Option<bool>,
+}
+
+impl fmt::Debug for Config {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Config")
+            .field("storage", &self.storage)
+            .field("mode", &self.mode)
+            .field("no_reads", &self.no_reads)
+            .field("cache_version", &self.cache_version)
+            .field("port", &self.port)
+            .field("port_file", &self.port_file)
+            .field("token_file", &self.token_file)
+            .field("token", &self.token.as_ref().map(|_| "<redacted>"))
+            .field("summary_file", &self.summary_file)
+            .field("fs_root", &self.fs_root)
+            .field("r2", &self.r2)
+            .field("r2_lifecycle", &self.r2_lifecycle)
+            .field("max_age_days", &self.max_age_days)
+            .field("max_size", &self.max_size)
+            .field("write_behind", &self.write_behind)
+            .field("pack", &self.pack)
+            .field("refresh_on_hit", &self.refresh_on_hit)
+            .finish()
+    }
+}
+
+impl TryFrom<ServeArgs> for Config {
+    type Error = ConfigError;
+
+    fn try_from(a: ServeArgs) -> Result<Self, ConfigError> {
+        if !valid_segment(&a.cache_version) {
+            return Err(ConfigError::BadCacheVersion(a.cache_version));
+        }
+        let max_size = parse_size(&a.max_size)?;
+        if !(1..=36_500).contains(&a.max_age_days) {
+            return Err(ConfigError::BadMaxAge(a.max_age_days));
+        }
+        let r2 = if a.storage == Storage::R2 {
+            let non_empty = |v: Option<String>| v.filter(|s| !s.is_empty());
+            let endpoint = non_empty(a.r2_endpoint);
+            let (account_id, access_key_id, secret_access_key, bucket) = (
+                non_empty(a.r2_account_id),
+                non_empty(a.r2_access_key_id),
+                non_empty(a.r2_secret_access_key),
+                non_empty(a.r2_bucket),
+            );
+            let account_ok = account_id.is_some() || endpoint.is_some();
+            let (true, Some(access_key_id), Some(secret_access_key), Some(bucket)) = (
+                account_ok,
+                access_key_id.clone(),
+                secret_access_key.clone(),
+                bucket.clone(),
+            ) else {
+                let missing = [
+                    ("r2-account-id (or r2-endpoint)", !account_ok),
+                    ("r2-access-key-id", access_key_id.is_none()),
+                    ("r2-secret-access-key", secret_access_key.is_none()),
+                    ("r2-bucket", bucket.is_none()),
+                ]
+                .into_iter()
+                .filter(|(_, m)| *m)
+                .map(|(n, _)| n.to_string())
+                .collect();
+                return Err(ConfigError::MissingR2(missing));
+            };
+            if let Some(e) = &endpoint
+                && !(e.starts_with("http://") || e.starts_with("https://"))
+            {
+                return Err(ConfigError::BadEndpoint(e.clone()));
+            }
+            if !valid_prefix(&a.r2_prefix) {
+                return Err(ConfigError::BadPrefix(a.r2_prefix));
+            }
+            Some(R2Config {
+                account_id,
+                endpoint,
+                access_key_id,
+                secret_access_key,
+                bucket,
+                prefix: a.r2_prefix,
+            })
+        } else {
+            None
+        };
+        Ok(Config {
+            storage: a.storage,
+            mode: a.mode,
+            no_reads: a.no_reads,
+            cache_version: a.cache_version,
+            port: a.port,
+            port_file: a.paths.port_file.unwrap_or_else(default_port_file),
+            token_file: a.paths.token_file.unwrap_or_else(default_token_file),
+            token: a.token,
+            summary_file: Some(a.summary_file.unwrap_or_else(default_summary_file)),
+            fs_root: a.fs_root,
+            r2,
+            r2_lifecycle: a.r2_lifecycle,
+            max_age_days: a.max_age_days,
+            max_size,
+            write_behind: match a.write_behind {
+                WriteBehindMode::Auto => a.storage == Storage::Github,
+                WriteBehindMode::On => true,
+                WriteBehindMode::Off => false,
+            },
+            pack: match a.pack {
+                _ if a.storage == Storage::R2 => false,
+                PackMode::Auto => a.storage == Storage::Github,
+                PackMode::On => true,
+                PackMode::Off => false,
+            },
+            refresh_on_hit: a.refresh_on_hit,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `--help` stays scannable: every visible option has a one-line description (<= 90 chars).
+    #[test]
+    fn every_flag_has_a_one_line_help() {
+        use clap::CommandFactory;
+        for a in ServeArgs::command().get_arguments() {
+            if a.is_hide_set() {
+                continue;
+            }
+            let id = a.get_id().as_str();
+            let help = a.get_help().map(|h| h.to_string()).unwrap_or_default();
+            assert!(!help.is_empty(), "--{id} has no help text");
+            assert!(
+                !help.contains('\n') && help.len() <= 90,
+                "--{id} help is not one short line: {help:?}"
+            );
+        }
+    }
+
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn parses_sizes() {
+        assert_eq!(parse_size("5GB").unwrap(), 5_000_000_000);
+        assert_eq!(parse_size("750MB").unwrap(), 750_000_000);
+        assert_eq!(parse_size("1TB").unwrap(), 1_000_000_000_000);
+        assert_eq!(parse_size("1024").unwrap(), 1024);
+        assert!(parse_size("5 parsecs").is_err());
+    }
+    #[test]
+    fn r2_requires_all_fields() {
+        let args = ServeArgs::parse_from(["serve", "--storage", "r2", "--r2-bucket", "b"]);
+        let err = Config::try_from(args).unwrap_err().to_string();
+        assert!(err.contains("r2-account-id"));
+    }
+    #[test]
+    fn prefix_must_end_with_slash() {
+        let args = ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "a",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+            "--r2-prefix",
+            "cache",
+        ]);
+        assert!(
+            Config::try_from(args)
+                .unwrap_err()
+                .to_string()
+                .contains("must end with /")
+        );
+    }
+    fn r2_with_prefix(prefix: &str) -> Result<Config, ConfigError> {
+        Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "a",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+            "--r2-prefix",
+            prefix,
+        ]))
+    }
+    #[test]
+    fn prefix_must_be_plain_segments() {
+        for bad in [
+            "/", "//", "/cache/", "cache//", " cache/", "cache/ ", "a/../b/", "../", "./", "a/./",
+            "ca che/", "ca\tche/", "c\u{7}/", "cache",
+        ] {
+            let err = r2_with_prefix(bad).unwrap_err().to_string();
+            assert!(err.contains("r2-prefix"), "{bad:?}: {err}");
+            assert!(err.contains("cache/"), "{bad:?}: {err}");
+        }
+        for good in ["cache/", "team-a/turbo_v1/", "a.b/c/", "X9/"] {
+            assert_eq!(r2_with_prefix(good).unwrap().r2.unwrap().prefix, good);
+        }
+    }
+    #[test]
+    fn debug_redacts_secrets() {
+        let args = ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "a",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "topsecret",
+            "--r2-bucket",
+            "b",
+            "--token",
+            "tok123",
+        ]);
+        let dbg = format!("{:?}", Config::try_from(args).unwrap());
+        assert!(!dbg.contains("topsecret") && !dbg.contains("tok123"));
+        assert!(!dbg.contains("\"k\""));
+        let args = ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-access-key-id",
+            "akid-xyz",
+            "--r2-secret-access-key",
+            "topsecret",
+            "--token",
+            "tok123",
+        ]);
+        let dbg = format!("{args:?}");
+        for s in ["topsecret", "tok123", "akid-xyz"] {
+            assert!(!dbg.contains(s), "{s} leaked");
+        }
+    }
+    #[test]
+    fn cache_version_must_be_one_plain_segment() {
+        let parse = |v: &str| {
+            Config::try_from(ServeArgs::parse_from([
+                "serve",
+                "--storage",
+                "fs",
+                "--cache-version",
+                v,
+            ]))
+        };
+        for ok in ["v1", "v2.1", "2026-10_a", "..v"] {
+            assert_eq!(parse(ok).unwrap().cache_version, ok);
+        }
+        for bad in [
+            "..", ".", "../../..", "a/b", "v1/", "/v1", "v 1", "v\\1", "v1\n",
+        ] {
+            let e = parse(bad).unwrap_err().to_string();
+            assert!(e.contains("cache-version"), "{bad:?}: {e}");
+            assert!(e.contains("A-Z a-z 0-9 . _ -"), "{bad:?}: {e}");
+        }
+    }
+
+    #[test]
+    fn empty_values_rejected() {
+        let a = ServeArgs::parse_from(["serve", "--storage", "fs", "--cache-version", ""]);
+        assert!(
+            Config::try_from(a)
+                .unwrap_err()
+                .to_string()
+                .contains("cache-version")
+        );
+        let a = ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "a",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "",
+        ]);
+        assert!(
+            Config::try_from(a)
+                .unwrap_err()
+                .to_string()
+                .contains("r2-bucket")
+        );
+    }
+    #[test]
+    fn finds_only_empty_hoard_vars() {
+        let vars = [
+            ("HOARD_PORT", ""),
+            ("HOARD_TOKEN", "x"),
+            ("OTHER", ""),
+            ("HOARD_R2_BUCKET", ""),
+        ]
+        .map(|(k, v)| (OsString::from(k), OsString::from(v)));
+        assert_eq!(
+            empty_hoard_keys(vars),
+            vec!["HOARD_PORT", "HOARD_R2_BUCKET"]
+        );
+    }
+    #[test]
+    fn r2_endpoint_defaults_to_account() {
+        let c = Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "acc123",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+        ]))
+        .unwrap();
+        assert_eq!(
+            c.r2.unwrap().endpoint(),
+            "https://acc123.r2.cloudflarestorage.com"
+        );
+    }
+    #[test]
+    fn r2_endpoint_override_replaces_account_id() {
+        let c = Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-endpoint",
+            "http://127.0.0.1:9000",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+        ]))
+        .unwrap();
+        let r2 = c.r2.unwrap();
+        assert_eq!(r2.endpoint(), "http://127.0.0.1:9000");
+        assert!(format!("{r2:?}").contains("http://127.0.0.1:9000"));
+        // Without the override the account id is still required.
+        let err = Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+        ]))
+        .unwrap_err()
+        .to_string();
+        assert!(err.contains("r2-account-id"), "{err}");
+    }
+    #[test]
+    fn r2_endpoint_must_be_http_url() {
+        for bad in ["127.0.0.1:9000", "ftp://x", "minio"] {
+            let err = Config::try_from(ServeArgs::parse_from([
+                "serve",
+                "--storage",
+                "r2",
+                "--r2-endpoint",
+                bad,
+                "--r2-access-key-id",
+                "k",
+                "--r2-secret-access-key",
+                "s",
+                "--r2-bucket",
+                "b",
+            ]))
+            .unwrap_err()
+            .to_string();
+            assert!(
+                err.contains("r2-endpoint") && err.contains("http://127.0.0.1:9000"),
+                "{err}"
+            );
+        }
+    }
+    #[test]
+    fn r2_endpoint_override_debug_redacts_secrets() {
+        let c = Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-endpoint",
+            "http://127.0.0.1:9000",
+            "--r2-access-key-id",
+            "akid-xyz",
+            "--r2-secret-access-key",
+            "topsecret",
+            "--r2-bucket",
+            "b",
+        ]))
+        .unwrap();
+        let dbg = format!("{c:?}");
+        for s in ["topsecret", "akid-xyz"] {
+            assert!(!dbg.contains(s), "{s} leaked");
+        }
+    }
+    #[test]
+    fn max_age_days_must_be_in_range() {
+        for bad in ["0", "36501"] {
+            let a = ServeArgs::parse_from(["serve", "--storage", "fs", "--max-age-days", bad]);
+            let err = Config::try_from(a).unwrap_err().to_string();
+            assert!(
+                err.contains("max-age-days") && err.contains("36500"),
+                "{err}"
+            );
+        }
+        for ok in ["1", "36500"] {
+            let a = ServeArgs::parse_from(["serve", "--storage", "fs", "--max-age-days", ok]);
+            assert!(Config::try_from(a).is_ok());
+        }
+    }
+    #[test]
+    fn refresh_on_hit_flag() {
+        let parse = |args: &[&str]| {
+            Config::try_from(ServeArgs::parse_from(args.iter().copied()))
+                .unwrap()
+                .refresh_on_hit
+        };
+        // Unset: the default (on where it applies, spec §7.3); set: as given.
+        assert_eq!(parse(&["serve", "--storage", "fs"]), None);
+        assert_eq!(
+            parse(&["serve", "--storage", "fs", "--refresh-on-hit"]),
+            Some(true)
+        );
+        for v in ["true", "yes", "1"] {
+            let arg = format!("--refresh-on-hit={v}");
+            assert_eq!(parse(&["serve", "--storage", "fs", &arg]), Some(true));
+        }
+        for v in ["false", "no", "0"] {
+            let arg = format!("--refresh-on-hit={v}");
+            assert_eq!(parse(&["serve", "--storage", "fs", &arg]), Some(false));
+        }
+    }
+    #[test]
+    fn no_reads_flag() {
+        let parse = |args: &[&str]| {
+            Config::try_from(ServeArgs::parse_from(args.iter().copied()))
+                .unwrap()
+                .no_reads
+        };
+        assert!(!parse(&["serve", "--storage", "fs"]));
+        assert!(parse(&["serve", "--storage", "fs", "--no-reads"]));
+    }
+    #[test]
+    fn write_behind_auto_is_on_only_for_github() {
+        let parse = |args: &[&str]| {
+            Config::try_from(ServeArgs::parse_from(args.iter().copied()))
+                .unwrap()
+                .write_behind
+        };
+        assert!(parse(&["serve", "--storage", "github"]));
+        assert!(!parse(&["serve", "--storage", "fs"]));
+        assert!(parse(&["serve", "--storage", "fs", "--write-behind", "on"]));
+        assert!(!parse(&[
+            "serve",
+            "--storage",
+            "github",
+            "--write-behind",
+            "off"
+        ]));
+        assert!(parse(&[
+            "serve",
+            "--storage",
+            "github",
+            "--write-behind",
+            "auto"
+        ]));
+    }
+    #[test]
+    fn pack_auto_is_on_only_for_github() {
+        let parse = |args: &[&str]| {
+            Config::try_from(ServeArgs::parse_from(args.iter().copied()))
+                .unwrap()
+                .pack
+        };
+        assert!(parse(&["serve", "--storage", "github"]));
+        assert!(!parse(&["serve", "--storage", "fs"]));
+        assert!(parse(&["serve", "--storage", "fs", "--pack", "on"]));
+        assert!(!parse(&["serve", "--storage", "github", "--pack", "off"]));
+        assert!(parse(&["serve", "--storage", "github", "--pack", "auto"]));
+    }
+    #[test]
+    fn pack_env_off_and_empty_env_is_unset() {
+        // `HOARD_PACK=off` is read through clap's env support; an empty value is removed by
+        // `drop_empty_hoard_env` before parsing, so it behaves as unset (auto).
+        let keys = empty_hoard_keys([(OsString::from("HOARD_PACK"), OsString::new())]);
+        assert_eq!(keys, vec![OsString::from("HOARD_PACK")]);
+        let a = ServeArgs::try_parse_from(["serve", "--storage", "github"]).unwrap();
+        assert_eq!(a.pack, PackMode::Auto);
+        let off =
+            ServeArgs::try_parse_from(["serve", "--storage", "github", "--pack=off"]).unwrap();
+        assert_eq!(off.pack, PackMode::Off);
+    }
+    #[test]
+    fn pack_is_false_for_r2() {
+        let c = Config::try_from(ServeArgs::parse_from([
+            "serve",
+            "--storage",
+            "r2",
+            "--r2-account-id",
+            "acct",
+            "--r2-access-key-id",
+            "k",
+            "--r2-secret-access-key",
+            "s",
+            "--r2-bucket",
+            "b",
+            "--pack",
+            "on",
+        ]))
+        .unwrap();
+        assert!(!c.pack);
+    }
+    #[test]
+    fn defaults() {
+        let c = Config::try_from(ServeArgs::parse_from(["serve", "--storage", "fs"])).unwrap();
+        assert_eq!(
+            (
+                c.mode,
+                c.cache_version.as_str(),
+                c.port,
+                c.max_age_days,
+                c.max_size
+            ),
+            (Mode::ReadWrite, "v1", 0, 7, 5_000_000_000)
+        );
+    }
+}

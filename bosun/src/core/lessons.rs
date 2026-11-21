@@ -1,0 +1,477 @@
+//! The lessons store `docs/lessons.toml` (spec §6): entries, caps, ids, hits and scope match.
+
+use serde::{Deserialize, Serialize};
+
+use super::glob::Glob;
+use crate::time::Timestamp;
+
+/// At most this many entries.
+pub const MAX: usize = 40;
+/// At most this many entries without a scope.
+pub const MAX_GLOBAL: usize = 8;
+/// A rule is at most this many characters.
+pub const MAX_RULE: usize = 160;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Lesson {
+    pub id: String,
+    pub rule: String,
+    #[serde(default)]
+    pub why: String,
+    #[serde(default)]
+    pub scope: Vec<String>,
+    #[serde(default)]
+    pub evidence: Vec<String>,
+    /// Hand-written entries may omit it.
+    #[serde(default)]
+    pub added: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_hit: Option<String>,
+    #[serde(default)]
+    pub hits: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Store {
+    #[serde(default)]
+    pub lesson: Vec<Lesson>,
+}
+
+/// Which cap stopped an add.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CapError {
+    /// True when the global cap (8) stopped it, false for the total cap (40).
+    pub global: bool,
+}
+
+impl Store {
+    pub fn global_count(&self) -> usize {
+        self.lesson.iter().filter(|l| l.scope.is_empty()).count()
+    }
+}
+
+/// The store of a `lessons.toml` text; no text means no lessons.
+pub fn parse(text: Option<&str>) -> Result<Store, String> {
+    match text {
+        None => Ok(Store::default()),
+        Some(t) => toml::from_str(t).map_err(|e| format!("docs/lessons.toml is not valid: {e}")),
+    }
+}
+
+/// The next free `L-NNN`: highest number plus one.
+pub fn next_id(store: &Store) -> String {
+    let max = store
+        .lesson
+        .iter()
+        .filter_map(|l| l.id.strip_prefix("L-")?.parse::<u32>().ok())
+        .max()
+        .unwrap_or(0);
+    format!("L-{:03}", max + 1)
+}
+
+/// Why an add was refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AddError {
+    /// The rule is longer than [`MAX_RULE`] characters (usage, exit 2).
+    TooLong,
+    /// A cap stopped it (exit 6).
+    Cap(CapError),
+}
+
+/// What [`add`] did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Added {
+    /// The new entry, or the existing one a duplicate hit.
+    pub id: String,
+    /// True when the rule equalled an existing one: a hit was recorded and scope and
+    /// evidence merged, nothing was added.
+    pub dup: bool,
+}
+
+/// Add a lesson; refuse a rule over [`MAX_RULE`] or a store at a cap. A rule equal to an
+/// existing one (see [`normalise`]) records a hit on it instead, even at a cap, and merges the
+/// new scope globs and evidence into it. A global entry stays global: merging a scope into it
+/// would narrow it.
+pub fn add(
+    store: &mut Store,
+    text: &str,
+    scope: Vec<String>,
+    why: &str,
+    evidence: Vec<String>,
+    today: &str,
+) -> Result<Added, AddError> {
+    if text.chars().count() > MAX_RULE {
+        return Err(AddError::TooLong);
+    }
+    if let Some(dup) = find_dup(store, text).map(str::to_string) {
+        hit(store, &dup, today);
+        let l = store
+            .lesson
+            .iter_mut()
+            .find(|l| l.id == dup)
+            .expect("dup exists");
+        if !l.scope.is_empty() {
+            merge(&mut l.scope, scope);
+        }
+        merge(&mut l.evidence, evidence);
+        return Ok(Added { id: dup, dup: true });
+    }
+    if store.lesson.len() >= MAX {
+        return Err(AddError::Cap(CapError { global: false }));
+    }
+    if scope.is_empty() && store.global_count() >= MAX_GLOBAL {
+        return Err(AddError::Cap(CapError { global: true }));
+    }
+    let id = next_id(store);
+    store.lesson.push(Lesson {
+        id: id.clone(),
+        rule: text.to_string(),
+        why: why.to_string(),
+        scope,
+        evidence,
+        added: today.to_string(),
+        last_hit: None,
+        hits: 0,
+    });
+    Ok(Added { id, dup: false })
+}
+
+fn merge(into: &mut Vec<String>, more: Vec<String>) {
+    for x in more {
+        if !into.contains(&x) {
+            into.push(x);
+        }
+    }
+}
+
+/// Record a hit; false when the id is unknown.
+pub fn hit(store: &mut Store, id: &str, today: &str) -> bool {
+    match store.lesson.iter_mut().find(|l| l.id == id) {
+        Some(l) => {
+            l.hits += 1;
+            l.last_hit = Some(today.to_string());
+            true
+        }
+        None => false,
+    }
+}
+
+/// Lessons for a task that touches `paths`: global ones plus those whose scope matches any path.
+pub fn matching<'a>(store: &'a Store, paths: &[String]) -> Vec<&'a Lesson> {
+    store
+        .lesson
+        .iter()
+        .filter(|l| {
+            l.scope.is_empty()
+                || l.scope
+                    .iter()
+                    .filter_map(|g| Glob::parse(g).ok())
+                    .any(|g| paths.iter().any(|p| g.matches(p)))
+        })
+        .collect()
+}
+
+/// Compact form for a pack or claim (control characters dropped, whitespace collapsed, the
+/// rule cut to [`MAX_RULE`] with a trailing `…`): `L-012 src/gates/** Run cargo metadata once.`
+pub fn line(l: &Lesson) -> String {
+    let scope = if l.scope.is_empty() {
+        "*".to_string()
+    } else {
+        l.scope.join(",")
+    };
+    let clean: String = l
+        .rule
+        .chars()
+        .filter(|c| !c.is_control() || c.is_whitespace())
+        .collect();
+    let mut rule = clean.split_whitespace().collect::<Vec<_>>().join(" ");
+    if rule.chars().count() > MAX_RULE {
+        rule = rule.chars().take(MAX_RULE - 1).collect::<String>() + "…";
+    }
+    format!("{} {} {}", l.id, scope, rule)
+}
+
+/// A rule for comparing: lowercase, whitespace collapsed, no trailing dots.
+pub fn normalise(rule: &str) -> String {
+    let words = rule.split_whitespace().collect::<Vec<_>>().join(" ");
+    words
+        .to_lowercase()
+        .trim_end_matches('.')
+        .trim_end()
+        .to_string()
+}
+
+/// The id of the entry whose rule equals `rule` after normalising.
+pub fn find_dup<'a>(store: &'a Store, rule: &str) -> Option<&'a str> {
+    let n = normalise(rule);
+    store
+        .lesson
+        .iter()
+        .find(|l| normalise(&l.rule) == n)
+        .map(|l| l.id.as_str())
+}
+
+/// Lessons without a scope.
+pub fn globals(store: &Store) -> Vec<&Lesson> {
+    store.lesson.iter().filter(|l| l.scope.is_empty()).collect()
+}
+
+/// Global lessons plus those whose scope overlaps any touch glob.
+pub fn relevant<'a>(store: &'a Store, touch: &[Glob]) -> Vec<&'a Lesson> {
+    store
+        .lesson
+        .iter()
+        .filter(|l| {
+            l.scope.is_empty()
+                || l.scope
+                    .iter()
+                    .filter_map(|g| Glob::parse(g).ok())
+                    .any(|g| touch.iter().any(|t| g.overlaps(t)))
+        })
+        .collect()
+}
+
+/// Label of a lesson triaged as advice (spec §6).
+pub const ADVICE_LABEL: &str = "bosun:lesson/advice";
+
+/// Label of a lesson triaged as mechanizable (spec §6).
+pub const MECHANIZABLE_LABEL: &str = "bosun:lesson/mechanizable";
+
+/// A lesson issue is mechanized when it was triaged as mechanizable and closed as `completed`
+/// (its mechanism landed). Advice and untriaged lessons never are (spec §6).
+pub fn is_mechanized(state: &str, state_reason: Option<&str>, labels: &[String]) -> bool {
+    state == "closed"
+        && state_reason == Some("completed")
+        && labels.iter().any(|l| l == MECHANIZABLE_LABEL)
+        && !labels.iter().any(|l| l == ADVICE_LABEL)
+}
+
+/// Hits per week for the last `weeks` weeks ending at `now`, oldest first. Week `i` is
+/// `[now - (weeks - i) * 7d, now - (weeks - i - 1) * 7d)`; the last week also holds `now`.
+/// Returns `(week_start, hits)`.
+pub fn hits_by_week(hits: &[Timestamp], now: Timestamp, weeks: usize) -> Vec<(Timestamp, usize)> {
+    const WEEK: i64 = 7 * 86_400;
+    (0..weeks)
+        .map(|i| {
+            let start = now.minus_secs((weeks - i) as i64 * WEEK);
+            let end = start.plus_secs(WEEK);
+            let last = i + 1 == weeks;
+            let n = hits
+                .iter()
+                .filter(|t| **t >= start && (**t < end || (last && **t == end)))
+                .count();
+            (start, n)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mechanized_means_closed_completed_and_not_advice() {
+        let none: Vec<String> = vec![];
+        let mech = vec![MECHANIZABLE_LABEL.to_string()];
+        assert!(is_mechanized("closed", Some("completed"), &mech));
+        assert!(!is_mechanized("closed", Some("completed"), &none));
+        assert!(!is_mechanized("open", None, &mech));
+        assert!(!is_mechanized("closed", Some("not_planned"), &mech));
+        assert!(!is_mechanized(
+            "closed",
+            Some("completed"),
+            &[MECHANIZABLE_LABEL.into(), ADVICE_LABEL.into()]
+        ));
+    }
+
+    #[test]
+    fn weeks_split_the_window() {
+        let now = Timestamp(100 * 86_400);
+        let day = |d: i64| now.minus_secs(d * 86_400);
+        let w = hits_by_week(&[day(0), day(3), day(8), day(27), day(40)], now, 4);
+        let n: Vec<usize> = w.iter().map(|x| x.1).collect();
+        assert_eq!(n, [1, 0, 1, 2]);
+        assert_eq!(w[3].0, day(7));
+    }
+
+    fn add_n(s: &mut Store, scope: &[&str]) -> Result<String, AddError> {
+        let n = s.lesson.len();
+        add_rule(s, &format!("rule {n}"), scope, &[]).map(|a| a.id)
+    }
+
+    fn add_rule(
+        s: &mut Store,
+        rule: &str,
+        scope: &[&str],
+        evidence: &[&str],
+    ) -> Result<Added, AddError> {
+        add(
+            s,
+            rule,
+            scope.iter().map(|x| x.to_string()).collect(),
+            "why",
+            evidence.iter().map(|x| x.to_string()).collect(),
+            "2026-10-22",
+        )
+    }
+
+    #[test]
+    fn add_refuses_an_over_long_rule() {
+        let mut s = Store::default();
+        let ok = "x".repeat(MAX_RULE);
+        assert!(add_rule(&mut s, &ok, &[], &[]).is_ok());
+        let long = "y".repeat(MAX_RULE + 1);
+        assert_eq!(add_rule(&mut s, &long, &[], &[]), Err(AddError::TooLong));
+        assert_eq!(s.lesson.len(), 1);
+    }
+
+    #[test]
+    fn a_duplicate_hits_and_merges_scope_and_evidence() {
+        let mut s = Store::default();
+        add_rule(&mut s, "Run it once", &["a/**"], &["#1"]).unwrap();
+        let a = add_rule(&mut s, "run it ONCE.", &["a/**", "b/**"], &["#1", "#2"]).unwrap();
+        assert_eq!((a.id.as_str(), a.dup), ("L-001", true));
+        assert_eq!(s.lesson.len(), 1);
+        assert_eq!(s.lesson[0].hits, 1);
+        assert_eq!(s.lesson[0].scope, ["a/**", "b/**"]);
+        assert_eq!(s.lesson[0].evidence, ["#1", "#2"]);
+    }
+
+    #[test]
+    fn a_duplicate_keeps_a_global_entry_global() {
+        let mut s = Store::default();
+        add_rule(&mut s, "Run it once", &[], &[]).unwrap();
+        add_rule(&mut s, "Run it once", &["a/**"], &["#3"]).unwrap();
+        assert!(s.lesson[0].scope.is_empty());
+        assert_eq!(s.lesson[0].evidence, ["#3"]);
+    }
+
+    #[test]
+    fn a_duplicate_is_taken_even_at_a_cap() {
+        let mut s = Store::default();
+        for _ in 0..8 {
+            add_n(&mut s, &[]).unwrap();
+        }
+        let a = add_rule(&mut s, "rule 3", &[], &[]).unwrap();
+        assert!(a.dup);
+    }
+
+    #[test]
+    fn line_strips_controls_collapses_space_and_shortens() {
+        let mut l = Lesson {
+            id: "L-001".into(),
+            rule: "a\u{1b}[31m  b\n\tc\u{7}".into(),
+            why: String::new(),
+            scope: vec![],
+            evidence: vec![],
+            added: String::new(),
+            last_hit: None,
+            hits: 0,
+        };
+        assert_eq!(line(&l), "L-001 * a[31m b c");
+        l.rule = "z".repeat(300);
+        let out = line(&l);
+        let rule = out.strip_prefix("L-001 * ").unwrap();
+        assert_eq!(rule.chars().count(), MAX_RULE);
+        assert!(rule.ends_with('…'));
+    }
+
+    #[test]
+    fn hand_written_entries_without_added_load() {
+        let s = parse(Some("[[lesson]]\nid = \"L-001\"\nrule = \"r\"\n")).unwrap();
+        assert_eq!(s.lesson[0].added, "");
+        assert!(parse(None).unwrap().lesson.is_empty());
+        assert!(parse(Some("[[lesson]]\nid = 1")).is_err());
+    }
+
+    #[test]
+    fn ids_count_up_from_the_highest() {
+        let mut s = Store::default();
+        assert_eq!(add_n(&mut s, &["a/**"]).unwrap(), "L-001");
+        assert_eq!(add_n(&mut s, &["a/**"]).unwrap(), "L-002");
+        s.lesson.remove(0);
+        assert_eq!(next_id(&s), "L-003");
+    }
+
+    #[test]
+    fn total_cap_is_40_and_global_cap_is_8() {
+        let mut s = Store::default();
+        for _ in 0..8 {
+            add_n(&mut s, &[]).unwrap();
+        }
+        assert_eq!(
+            add_n(&mut s, &[]),
+            Err(AddError::Cap(CapError { global: true }))
+        );
+        for _ in 0..32 {
+            add_n(&mut s, &["x/**"]).unwrap();
+        }
+        assert_eq!(
+            add_n(&mut s, &["x/**"]),
+            Err(AddError::Cap(CapError { global: false }))
+        );
+    }
+
+    #[test]
+    fn hit_counts_and_unknown_id_is_false() {
+        let mut s = Store::default();
+        add_n(&mut s, &[]).unwrap();
+        assert!(hit(&mut s, "L-001", "2026-10-23"));
+        assert_eq!(s.lesson[0].hits, 1);
+        assert_eq!(s.lesson[0].last_hit.as_deref(), Some("2026-10-23"));
+        assert!(!hit(&mut s, "L-009", "2026-10-23"));
+    }
+
+    #[test]
+    fn matching_takes_global_and_scoped() {
+        let mut s = Store::default();
+        add_n(&mut s, &[]).unwrap();
+        add_n(&mut s, &["src/gates/**"]).unwrap();
+        add_n(&mut s, &["docs/**"]).unwrap();
+        let ids: Vec<_> = matching(&s, &["src/gates/mod.rs".into()])
+            .iter()
+            .map(|l| l.id.clone())
+            .collect();
+        assert_eq!(ids, ["L-001", "L-002"]);
+    }
+
+    #[test]
+    fn line_normalise_dup_and_relevant() {
+        let mut s = Store::default();
+        add(
+            &mut s,
+            "Run  metadata once.",
+            vec!["src/gates/**".into(), "a/**".into()],
+            "w",
+            vec![],
+            "d",
+        )
+        .unwrap();
+        add(&mut s, "Global rule", vec![], "w", vec![], "d").unwrap();
+        add(
+            &mut s,
+            "Docs rule",
+            vec!["docs/**".into()],
+            "w",
+            vec![],
+            "d",
+        )
+        .unwrap();
+        assert_eq!(
+            line(&s.lesson[0]),
+            "L-001 src/gates/**,a/** Run metadata once."
+        );
+        assert_eq!(line(&s.lesson[1]), "L-002 * Global rule");
+        let mut multi = s.lesson[1].clone();
+        multi.rule = "Two\nlines\t here\r\n".into();
+        assert_eq!(line(&multi), "L-002 * Two lines here");
+        assert_eq!(normalise("  Run   Metadata ONCE. "), "run metadata once");
+        assert_eq!(find_dup(&s, "run metadata once"), Some("L-001"));
+        assert_eq!(find_dup(&s, "other"), None);
+        assert_eq!(globals(&s).len(), 1);
+        let t = Glob::parse("src/gates/runner.rs").unwrap();
+        let ids: Vec<_> = relevant(&s, &[t]).iter().map(|l| l.id.clone()).collect();
+        assert_eq!(ids, ["L-001", "L-002"]);
+        assert_eq!(MAX_RULE, 160);
+    }
+}

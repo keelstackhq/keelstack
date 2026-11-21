@@ -1,0 +1,713 @@
+name: ci
+
+# One workflow for the monorepo (D-023). Job `detect` reads the diff and says which folders it
+# touches; each folder has one job `ci-<folder>` (bosun's main-open reads these names) that runs
+# that folder's old checks and is skipped on a PR when the folder is not affected (a skipped job
+# counts as passed for ci-ok). A push to main and a merge queue run every folder job: bosun's
+# main health reads every folder's latest real result on the main head and counts a skipped
+# ci-<folder> as no result (bosun spec §9). `ci-repo` runs the repo-wide checks (cargo-deny
+# once, actionlint, pinned actions, the version-bump test); `ci-gates` runs bosun's repo-wide
+# gates (test-integrity, ci-minutes) with the base's bosun. `ci-ok` is the one required check: it fails if any job failed or was
+# cancelled, or on a draft PR.
+#
+# CI minutes (D-007, decisions/decisions/007-ci-minutes.md): Linux only (Windows and macOS run
+# only in release.yml), no comment/label/edit triggers, every job skips non-command events with
+# a job-level `if:`. Run the same commands locally first (each folder's CLAUDE.md, Commands).
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  detect:
+    # A draft PR runs nothing; ci-ok fails it at once (never skipped: a skipped required check
+    # counts as passed).
+    if: >-
+      (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+      (github.event_name != 'pull_request' ||
+       contains(fromJSON('["opened","synchronize","reopened","ready_for_review"]'), github.event.action))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      bosun: ${{ steps.affected.outputs.bosun }}
+      splice: ${{ steps.affected.outputs.splice }}
+      hull: ${{ steps.affected.outputs.hull }}
+      hoist: ${{ steps.affected.outputs.hoist }}
+      hoard: ${{ steps.affected.outputs.hoard }}
+      berth: ${{ steps.affected.outputs.berth }}
+      keel: ${{ steps.affected.outputs.keel }}
+      decisions: ${{ steps.affected.outputs.decisions }}
+      site: ${{ steps.affected.outputs.site }}
+      rust: ${{ steps.affected.outputs.rust }}
+      base: ${{ steps.affected.outputs.base }}
+      all: ${{ steps.affected.outputs.all }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - id: affected
+        env:
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          QUEUE_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: bash .github/scripts/affected.sh
+
+  # Repo-wide checks: run on every non-draft event (cheap), cargo-deny only when Rust is affected.
+  ci-repo:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - name: diff check (whitespace errors, conflict markers)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ needs.detect.outputs.base }}
+        run: git diff --check "$BASE...HEAD"
+      # The workflows and every composite or JavaScript action of the repo (hoard, hoist/*, splice).
+      - name: Fail on any action not pinned to a full SHA
+        run: |
+          bad=$(grep -rnE '^[[:space:]]*(-[[:space:]]+)?uses:' .github hoard/action.yml hoist/*/action.yml splice/action/action.yml --include='*.yml' --include='*.yaml' \
+            | grep -vE 'uses:[[:space:]]+(\./|[^@[:space:]]+@[0-9a-f]{40}([[:space:]]|$))' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::pin these to a full commit SHA with a version comment:"
+            echo "$bad"
+            exit 1
+          fi
+      - name: actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          tarball="actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/${tarball}"
+          echo "${ACTIONLINT_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xzf "${tarball}" -C "$RUNNER_TEMP" actionlint
+          rm "${tarball}"
+          "$RUNNER_TEMP/actionlint"
+      - name: affected-folder detection test
+        run: bash .github/scripts/affected.test.sh
+      - name: root workflows test (checkout credentials, deploy-site, release plan and tag key)
+        run: bash .github/scripts/workflows.test.sh
+      - name: gate workflows test (bosun build fails closed, rust-cache settings)
+        run: bash .github/scripts/gate-workflows.test.sh
+      - name: version-bump script test
+        run: bash scripts/bump-version.test.sh
+      - if: needs.detect.outputs.rust == 'true'
+        uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-deny
+      - name: cargo deny (once for the workspace)
+        if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
+        run: cargo deny check
+
+  # bosun's repo-wide gates (test-integrity, ci-minutes), run by bosun built from the BASE commit
+  # with the base's copies of the files that decide what runs, never by the change under test, so
+  # a change to bosun or its config cannot pass its own gates (bosun spec §11). Runs no PR code.
+  ci-gates:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # checks/issues/pull-requests: read let `task allow list` read the PR body and its linked task.
+    permissions:
+      contents: read
+      checks: read
+      issues: read
+      pull-requests: read
+    env:
+      # rustup takes RUSTUP_TOOLCHAIN over any toolchain file, and cargo these RUSTC* settings over
+      # its config, so the PR's toolchain file or .cargo cannot run a compiler of its own.
+      RUSTUP_TOOLCHAIN: "1.97"
+      RUSTC: rustc
+      RUSTC_WRAPPER: ""
+      RUSTC_WORKSPACE_WRAPPER: ""
+      CARGO_BUILD_RUSTC_WRAPPER: ""
+      CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER: ""
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      # The base is a worktree outside the checkout; with no base (first push) the head is used.
+      # Setup PR (D-023): a base without the root workspace has no bosun to build, so the gates use
+      # bosun from keelstackhq/bosun at 6fe5305 (branch claude/monorepo-scope, applied here as
+      # c42ac110; pinned, not this change's code). Not the imported main b8029e1 (MIGRATION.md): it
+      # lacks [[folders]] support, so it cannot read the root .bosun/bosun.toml. The gates judge
+      # the change against the commit that holds the plain imports (pinned, an ancestor of HEAD):
+      # the imported repos' own tests are the baseline, not "no tests".
+      - name: bosun of the base
+        id: base
+        env:
+          BASE: ${{ needs.detect.outputs.base }}
+          SETUP_BOSUN_SHA: 6fe5305b49330f46cf0b87bbf4f7a2125d2bed31
+          SETUP_IMPORTS_SHA: 3a1975b477ee262c38a15803258a78a858d48e9b
+        run: |
+          sha="${BASE:-$GITHUB_SHA}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          if git cat-file -e "$sha:Cargo.toml" 2>/dev/null; then
+            echo "gate_base=$sha" >> "$GITHUB_OUTPUT"
+            git worktree add --detach "$RUNNER_TEMP/base" "$sha"
+            exit 0
+          fi
+          git merge-base --is-ancestor "$SETUP_IMPORTS_SHA" HEAD \
+            || { echo "::error::setup PR: $SETUP_IMPORTS_SHA (the imports) is not an ancestor of HEAD"; exit 1; }
+          echo "::warning::the base has no root Cargo.toml (setup PR): gates use keelstackhq/bosun@$SETUP_BOSUN_SHA and judge against $SETUP_IMPORTS_SHA"
+          echo "gate_base=$SETUP_IMPORTS_SHA" >> "$GITHUB_OUTPUT"
+          git init -q "$RUNNER_TEMP/base"
+          git -C "$RUNNER_TEMP/base" fetch -q --depth 1 https://github.com/keelstackhq/bosun.git "$SETUP_BOSUN_SHA"
+          git -C "$RUNNER_TEMP/base" checkout -q --detach FETCH_HEAD
+          [ "$(git -C "$RUNNER_TEMP/base" rev-parse HEAD)" = "$SETUP_BOSUN_SHA" ] || { echo "::error::fetched bosun is not $SETUP_BOSUN_SHA"; exit 1; }
+      # Before anything runs rustc or cargo: the gates use the base commit's .bosun/, every .cargo
+      # directory, every rust-toolchain(.toml), .npmrc, .pnpmfile and deny.toml. Files the base
+      # lacks are deleted. A PR's changes to them take effect after it merges (R-gov or R-ci).
+      - name: the base's config for the gates
+        env:
+          BASE: ${{ steps.base.outputs.sha }}
+        run: |
+          pat='(^|/)\.cargo(/|$)|(^|/)rust-toolchain(\.toml)?$|(^|/)\.npmrc$|(^|/)\.pnpmfile\.[cm]?js$|(^|/)\.?deny(\.exceptions)?\.toml$|^\.bosun(/|$)'
+          if ! git cat-file -e "$BASE:.bosun/bosun.toml" 2>/dev/null; then
+            echo "::warning::the base has no root .bosun yet (setup PR): this change's .bosun is used"
+            pat='(^|/)\.cargo(/|$)|(^|/)rust-toolchain(\.toml)?$|(^|/)\.npmrc$|(^|/)\.pnpmfile\.[cm]?js$|(^|/)\.?deny(\.exceptions)?\.toml$'
+          fi
+          changed="$(git diff --name-only -z "$BASE" HEAD | { grep -zE "$pat" || true; } | tr '\0' ' ')"
+          if [ -n "$changed" ]; then
+            echo "::notice::this change edits ${changed}; its gates run with the base's copies (they apply after merge)"
+          fi
+          git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            rm -rf -- "$p"
+          done
+          git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            mkdir -p -- "$(dirname -- "$p")"
+            git show "$BASE:$p" > "$p"
+          done
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      # Only main saves this cache, so a PR run cannot leave a build behind for the next base.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: bosun-base
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: ${{ runner.temp }}/base -> target
+      - name: build bosun (base, workspace)
+        working-directory: ${{ runner.temp }}/base
+        run: cargo build --release --locked -p keel-bosun --bin bosun
+      - id: binhash
+        run: echo "sha256=$(sha256sum "$RUNNER_TEMP/base/target/release/bosun" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      # The kinds test-integrity may allow come from the PR's linked task (the plan's `allow:`).
+      # Only known kinds pass; any failure allows nothing.
+      - if: github.event_name == 'pull_request'
+        id: allow
+        name: task allow list
+        env:
+          BOSUN: ${{ runner.temp }}/base/target/release/bosun
+          BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          echo "$BOSUN_SHA256  $BOSUN" | sha256sum -c --quiet || { echo "::error::$BOSUN changed"; exit 1; }
+          kinds="$("$BOSUN" test-integrity --pr "$PR" 2>/dev/null \
+            | jq -r '[.data.allow // [] | .[] | select(IN("delete-test","skip","only","fewer-asserts"))] | join(",")' 2>/dev/null)" || kinds=""
+          echo "test-integrity allows: ${kinds:-nothing}"
+          echo "kinds=$kinds" >> "$GITHUB_OUTPUT"
+      - name: bosun gates (test-integrity, ci-minutes)
+        env:
+          BOSUN: ${{ runner.temp }}/base/target/release/bosun
+          BOSUN_SHA256: ${{ steps.binhash.outputs.sha256 }}
+          BOSUN_INTEGRITY_ALLOW: ${{ steps.allow.outputs.kinds }}
+          # test-integrity reads the snapshot-change line from the PR body.
+          BOSUN_PR_BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ steps.base.outputs.gate_base }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          # A PR runs each gate on what it changed; main and the queue run it on everything.
+          if [ "$EVENT" = pull_request ]; then scope=(--base "$BASE"); else scope=(--all); fi
+          for g in test-integrity ci-minutes; do
+            echo "::group::bosun gate $g"
+            echo "$BOSUN_SHA256  $BOSUN" | sha256sum -c --quiet || { echo "::error::$BOSUN changed"; exit 1; }
+            "$BOSUN" gate "$g" "${scope[@]}" || { echo "::error::gate $g failed"; exit 1; }
+            echo "::endgroup::"
+          done
+
+  ci-bosun:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.bosun == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: bosun
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: cargo fmt -p keel-bosun --check
+      - run: cargo clippy -p keel-bosun --all-targets --locked -- -D warnings
+      - run: cargo test -p keel-bosun --locked
+      - name: npm launcher tests
+        working-directory: bosun
+        run: node --test npm/*/test/*.test.js
+      # The declarations `bosun schema --format ts` prints must compile: that test skips without tsc
+      # on PATH, so put a pinned one there and require it, and fail unless exactly one test ran.
+      - name: types (tsc on the declarations bosun schema prints)
+        env:
+          BOSUN_REQUIRE_TSC: "1"
+        run: |
+          npm install --prefix "$RUNNER_TEMP/tsc" --no-save --ignore-scripts typescript@6.0.2
+          export PATH="$RUNNER_TEMP/tsc/node_modules/.bin:$PATH"
+          tsc --version | grep -qx 'Version 6.0.2'
+          cargo test -p keel-bosun --locked --test cli_schema_ts -- --exact ts_compiles_when_tsc_is_there | tee "$RUNNER_TEMP/tsc.log"
+          grep -q '^test result: ok. 1 passed; 0 failed' "$RUNNER_TEMP/tsc.log"
+
+  ci-splice:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.splice == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+          targets: x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: splice
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-nextest
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: cargo fmt -p keel-splice --check
+      - run: cargo clippy -p keel-splice --all-targets --locked -- -D warnings
+      - run: cargo nextest run -p keel-splice --locked
+      # Windows runs only at release (D-007): check the target compiles here instead.
+      - name: Check the Windows target compiles
+        run: cargo check -p keel-splice --locked --all-targets --target x86_64-pc-windows-msvc
+      - name: Node tests
+        working-directory: splice
+        run: node --test "npm/**/*.test.mjs" "action/**/*.test.mjs" "scripts/**/*.test.mjs"
+      - name: No OpenSSL or TLS crates
+        run: "! cargo tree -p keel-splice -e normal --target all --locked | grep -E 'openssl|rustls|native-tls'"
+      - name: shellcheck
+        run: shellcheck splice/scripts/smoke.sh
+
+  ci-hull:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hull == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: hull
+    steps:
+      - name: Start timer
+        working-directory: ${{ github.workspace }}
+        run: echo "CI_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: hull/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: hull/.node-version
+          cache: pnpm
+          cache-dependency-path: hull/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Lint
+        run: pnpm lint
+      - name: Format
+        run: pnpm format:check
+      # hull depends on splice: its parity tests run the workspace's splice, not a release.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: hull
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: |
+            . -> target
+            ${{ runner.temp }}/combos/cli -> target
+            ${{ runner.temp }}/combos/rust -> target
+      - name: Build splice (workspace)
+        working-directory: .
+        run: |
+          cargo build --release --locked -p keel-splice --bin splice
+          echo "SPLICE_BIN=$GITHUB_WORKSPACE/target/release/splice" >> "$GITHUB_ENV"
+      - name: Install sops and age-keygen (tests/bootstrap-secrets.test.mjs)
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/secrets-bin"
+          mkdir -p "$d"
+          curl -fsSL -o "$d/sops" https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  $d/sops" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/age.tgz" https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $RUNNER_TEMP/age.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/age.tgz" -C "$RUNNER_TEMP" age/age-keygen
+          mv "$RUNNER_TEMP/age/age-keygen" "$d/"
+          chmod +x "$d/sops" "$d/age-keygen"
+          echo "$d" >> "$GITHUB_PATH"
+      - name: Test
+        run: pnpm test
+      # Only hull's own files pick combos; a change outside hull (splice, root files) runs all.
+      - name: Affected combos
+        id: combos
+        env:
+          BASE: ${{ needs.detect.outputs.base }}
+          ALL: ${{ needs.detect.outputs.all }}
+        run: |
+          set -e
+          if [ -z "$BASE" ] || [ "$ALL" = true ] || git -C "$GITHUB_WORKSPACE" diff --no-renames --name-only "$BASE...HEAD" -- ':!hull' | grep -q .; then
+            list=$(node scripts/affected-combos.mjs --all)
+          else
+            list=$(node scripts/affected-combos.mjs --base "$BASE")
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          args=$(jq -r 'map("--combo " + .) | join(" ")' <<<"$list")
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+      - name: Rust needed?
+        id: rust
+        env:
+          LIST: ${{ steps.combos.outputs.list }}
+        run: |
+          if node -e 'process.exit(JSON.parse(process.argv[1]).some((c) => JSON.parse(process.argv[2]).combos.find((x) => x.name === c)?.pieces.some((p) => ["rust-tool", "rust-cli"].includes(p.split(":")[0]))) ? 0 : 1)' "$LIST" "$(node -e 'import("./scripts/lib/combos.mjs").then((m) => process.stdout.write(JSON.stringify(m.loadCombos())))')"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # The rendered combos pin their own toolchain (stable), outside this workspace.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-28
+        if: steps.rust.outputs.needed == 'true'
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        if: steps.rust.outputs.needed == 'true'
+        with:
+          tool: cargo-nextest@0.9.148,cargo-deny@0.20.2
+      # The workspace's hoard action (hoard/action.yml). It runs the hoard binary baked into
+      # hoard/action/src/checksums.generated.ts: 0.6.1 from keelstackhq/hoard until the first
+      # monorepo release rewrites it (binary.ts: <= 0.21.0 comes from the old repo).
+      - uses: ./hoard
+        if: steps.combos.outputs.args != ''
+      - name: Dogfood combos
+        if: steps.combos.outputs.args != ''
+        env:
+          ARGS: ${{ steps.combos.outputs.args }}
+        run: |
+          read -ra args <<<"$ARGS"
+          node scripts/dogfood.mjs "${args[@]}" --root "$RUNNER_TEMP/combos"
+      - name: Job duration
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "ci-hull job: $(( $(date +%s) - ${CI_START:-$(date +%s)} ))s" >> "$GITHUB_STEP_SUMMARY"
+
+  ci-hoist:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hoist == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: hoist
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
+        with:
+          tool: cargo-nextest
+      - id: sigsum
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: ${{ runner.temp }}/sigsum-verify
+          key: sigsum-verify-v0.13.1-${{ runner.os }}
+      - if: steps.sigsum.outputs.cache-hit != 'true'
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: "1.25"
+          cache: false
+      - if: steps.sigsum.outputs.cache-hit != 'true'
+        run: GOBIN="$RUNNER_TEMP/sigsum-verify" go install sigsum.org/sigsum-go/cmd/sigsum-verify@v0.13.1
+      - name: Install sops 3.13.3 and age 1.3.2
+        env:
+          SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+          SIGSUM_VERIFY: ${{ runner.temp }}/sigsum-verify/sigsum-verify
+          AGE_SHA256: cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+        run: |
+          set -euo pipefail
+          dir="$RUNNER_TEMP/secrets-tools" && mkdir -p "$dir/bin" && cd "$dir"
+          curl -fsSLo sops https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "$SOPS_SHA256  sops" | sha256sum -c -
+          age="age-v1.3.2-linux-amd64.tar.gz"
+          curl -fsSLO "https://github.com/FiloSottile/age/releases/download/v1.3.2/$age"
+          curl -fsSLO "https://github.com/FiloSottile/age/releases/download/v1.3.2/$age.proof"
+          echo "$AGE_SHA256  $age" | sha256sum -c -
+          printf '%s\n' \
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM1WpnEswJLPzvXJDiswowy48U+G+G1kmgwUE2eaRHZG" \
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAz2WM5CyPLqiNjk7CLl4roDXwKhQ0QExXLebukZEZFS" \
+            > age-sigsum-key.pub
+          "$SIGSUM_VERIFY" -k age-sigsum-key.pub -P sigsum-generic-2025-1 "$age.proof" < "$age"
+          tar -xzf "$age"
+          install -m 0755 sops age/age age/age-keygen "$dir/bin/"
+          echo "$dir/bin" >> "$GITHUB_PATH"
+      - run: sops --version --disable-version-check && age --version && age-keygen --version
+      - run: cargo fmt -p keel-hoist --check
+      - run: cargo clippy -p keel-hoist --all-targets --locked -- -D warnings
+      - run: cargo nextest run -p keel-hoist --locked
+      - run: cargo test -p keel-hoist --locked --doc
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - working-directory: hoist
+        run: node --test npm/hoist/test/*.test.js
+        env:
+          HOIST_E2E_BIN: ${{ github.workspace }}/target/debug/hoist
+
+  ci-hoard:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.hoard == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HOARD_TEST_S3_ENDPOINT: http://127.0.0.1:9000
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: hoard
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: hoard/action/pnpm-lock.yaml
+      - run: docker compose -f hoard/docker-compose.yml up -d --wait minio
+      - run: cargo fmt -p keel-hoard --check
+      - run: cargo clippy -p keel-hoard --all-targets --locked -- -D warnings
+      - run: cargo test -p keel-hoard --locked
+      - run: cargo build -p keel-hoard --bin hoard --release --locked
+      - name: action (lint, typecheck, test, build)
+        working-directory: hoard
+        run: |
+          pnpm --dir action install --frozen-lockfile
+          pnpm --dir action lint
+          pnpm --dir action typecheck
+          pnpm --dir action test
+          pnpm --dir action build
+          node --test "scripts/bench/*.test.mjs"
+      - name: Check action/dist is rebuilt
+        working-directory: hoard
+        run: |
+          git add -N action/dist
+          if ! git diff --exit-code --stat action/dist; then
+            echo "::error::hoard/action/dist is out of date: run 'pnpm --dir hoard/action build' and commit hoard/action/dist"
+            exit 1
+          fi
+      - name: Check action/dist size
+        working-directory: hoard
+        run: |
+          size=$(du -sb action/dist | cut -f1)
+          echo "action/dist is $size bytes (limit 204800)"
+          if [ "$size" -gt 204800 ]; then
+            echo "::error::action/dist is $size bytes, over the 200 KB limit: trim dependencies or bundle settings in hoard/action/"
+            exit 1
+          fi
+      - name: Action against the real binary (dist/main.js, dist/post.js)
+        working-directory: hoard
+        run: pnpm --dir action exec vitest run test/integration.test.ts
+        env:
+          HOARD_TEST_BIN: ${{ github.workspace }}/target/release/hoard
+      - name: e2e turbo (fs, pack, r2 on MinIO)
+        working-directory: hoard
+        env:
+          HOARD_BIN: ${{ github.workspace }}/target/release/hoard
+        run: |
+          tests/e2e/turbo.sh
+          PACK=on tests/e2e/turbo.sh
+          STORAGE=r2 tests/e2e/turbo.sh
+
+  ci-berth:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.berth == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      INSTA_UPDATE: "no"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: berth
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: cargo fmt -p keel-berth --check
+      - run: cargo clippy -p keel-berth --all-targets --locked -- -D warnings
+      - run: cargo test -p keel-berth --locked --no-fail-fast
+      - working-directory: berth
+        run: node --test npm/berth/test/*.test.js
+
+  ci-keel:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.keel == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: keel
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - run: cargo fmt -p keel-cli --check
+      - run: cargo clippy -p keel-cli --all-targets --locked -- -D warnings
+      - run: cargo test -p keel-cli --locked
+      - name: Launcher tests
+        working-directory: keel
+        run: |
+          if ls npm/keel/test/*.test.js >/dev/null 2>&1; then node --test npm/keel/test/*.test.js; fi
+
+  ci-decisions:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.decisions == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check DECISIONS.md
+        working-directory: decisions
+        run: bash scripts/check-index.sh
+
+  # The landing site (D-024): every fact it shows is generated from the tool folders it depends on
+  # (.bosun/bosun.toml), so any of them runs this job. The site's tests build it, check the
+  # rendered page against the generated facts and check its links.
+  ci-site:
+    needs: detect
+    if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.site == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      # Full history, no blobs up front: the docs test checks that the setup-script copy's ref is
+      # an ancestor of HEAD and reads the file at that ref (it skips on a shallow clone).
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          filter: blob:none
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.node-version
+          cache: pnpm
+          cache-dependency-path: site/pnpm-lock.yaml
+      - name: Install
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Check (build, lint, format, typecheck, tests incl. facts and link checks)
+        run: pnpm run ci
+
+  # The one required check. Skipped folder jobs are fine; failed or cancelled ones are not.
+  ci-ok:
+    needs: [detect, ci-repo, ci-gates, ci-bosun, ci-splice, ci-hull, ci-hoist, ci-hoard, ci-berth, ci-keel, ci-decisions, ci-site]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: All CI jobs succeeded or were skipped
+        env:
+          DRAFT: ${{ github.event.pull_request.draft || false }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          if [ "$DRAFT" = true ]; then echo "::error::draft: CI not run, mark ready for review"; exit 1; fi
+          echo "$NEEDS" | jq -r 'to_entries[] | "\(.key): \(.value.result)"'
+          test "$(echo "$NEEDS" | jq -r '.detect.result')" = success || { echo "::error::detect did not succeed"; exit 1; }
+          bad="$(echo "$NEEDS" | jq -r '[to_entries[] | select(.value.result != "success" and .value.result != "skipped") | .key] | join(", ")')"
+          if [ -n "$bad" ]; then echo "::error::failed or cancelled: $bad"; exit 1; fi

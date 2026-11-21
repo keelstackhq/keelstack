@@ -1,0 +1,536 @@
+//! `bosun verdict post|comment|apply`: record the reviewer's verdict as the `review-verdict`
+//! status, directly or through a verdict comment that the verdict workflow applies (spec §7).
+
+use crate::github::gate::GateWriter;
+use std::io::Read;
+use std::path::Path;
+
+use serde_json::json;
+
+use super::review_ci::flat;
+use super::{ApplyArg, CommentArgs, FromArg, VerdictCmd};
+use crate::app::default_branch;
+use crate::app::{App, kill_switch, set_state};
+use crate::config::{CONFIG_FILE, Config};
+use crate::core::mode::ModeName;
+use crate::core::records::Record;
+use crate::core::risk::BOT_SESSION;
+use crate::core::state::{State, state_of, transition_allowed};
+use crate::core::verdict::{
+    COMMENT_MARKER, Verdict, bot_verdict_json, closes_issue, comment_chunks, comment_json,
+    comment_model, comment_relayed_by, comment_session, effective, relayed_comment_body,
+    valid_model,
+};
+use crate::github::{Comment, Github, IssuePatch, IssueState, Pull};
+use crate::output::{BosunError, CmdResult, Outcome};
+
+pub const CONTEXT: &str = "review-verdict";
+/// The description prefix of an escalated verdict; risk-check clears it on an owner approval.
+pub const ESCALATED: &str = "escalated to the owner";
+/// The description prefix of an escalation that would otherwise approve (judged unrounded);
+/// only this form is cleared. Older releases wrote `escalated to the owner; ` for every one.
+pub const APPROVABLE: &str = "escalated to the owner (approvable): ";
+
+fn read_input(from: &str) -> Result<String, BosunError> {
+    let mut text = String::new();
+    let res = if from == "-" {
+        std::io::stdin().read_to_string(&mut text).map(|_| ())
+    } else {
+        std::fs::read_to_string(from).map(|t| text = t)
+    };
+    res.map_err(|e| {
+        BosunError::usage(
+            format!("cannot read the verdict from {from}: {e}"),
+            "pass the reviewer's JSON on stdin or with --from FILE",
+        )
+    })?;
+    Ok(text)
+}
+
+pub fn run(dir: Option<&Path>, cmd: &VerdictCmd) -> CmdResult {
+    crate::ctx::trusted_identity()?;
+    let app = App::load(dir)?;
+    let gh = app.gh.as_ref();
+    kill_switch(gh)?;
+    match cmd {
+        VerdictCmd::Post(FromArg { from }) => {
+            if crate::github::gate::checks_mode() {
+                // A session's token cannot write the gate App's check run (spec §15).
+                return Err(BosunError::error(
+                    "`bosun verdict post` cannot post review-verdict in [checks] mode \"checks\"",
+                    "post the verdict with `bosun verdict comment --from <file>`; the verdict workflow applies it",
+                ));
+            }
+            let verdict = parse(&read_input(from)?)?;
+            let pull = current_pull(gh, &verdict)?;
+            require_all_chunks(gh, &app.ctx.repo.to_string(), &verdict)?;
+            record(
+                &app,
+                &pull,
+                &verdict,
+                &app.ctx.session,
+                env_model().as_deref(),
+                None,
+            )
+        }
+        VerdictCmd::Comment(CommentArgs {
+            from: FromArg { from },
+            sign_key,
+        }) => {
+            // A verdict comment body relayed by another session keeps its reviewer and model.
+            let text = read_input(from)?;
+            let me = app.ctx.session.as_str();
+            // JSON input stays JSON even when a string in it holds the marker.
+            let body = (!text.trim_start().starts_with('{')).then_some(text.as_str());
+            let relay = body.and_then(comment_json);
+            let (json, reviewer, model) = match relay {
+                Some(j) => (
+                    j,
+                    comment_session(&text).unwrap_or(me),
+                    comment_model(&text),
+                ),
+                None => (text.as_str(), me, None),
+            };
+            let mut verdict = parse(json)?;
+            // The chunks line belongs to a comment body; plain JSON lists its own.
+            if relay.is_some() && verdict.chunks_reviewed.is_empty() {
+                verdict.chunks_reviewed = comment_chunks(&text);
+            }
+            current_pull(gh, &verdict)?;
+            require_all_chunks(gh, &app.ctx.repo.to_string(), &verdict)?;
+            let relayed_by = (reviewer != me).then_some(me);
+            // A key signs only its holder's own review: a relay never launders another's.
+            if relayed_by.is_some() && sign_key.is_some() {
+                return Err(BosunError::usage(
+                    format!(
+                        "--sign-key signs only this session's own verdict; this body is {reviewer}'s"
+                    ),
+                    "relay without --sign-key, or have the reviewer sign its own verdict with `bosun verdict comment --sign-key`",
+                ));
+            }
+            // A relay keeps the body's model only: the relaying session's env is not the reviewer's.
+            let model = match relayed_by {
+                Some(_) => model.map(str::to_string),
+                None => model.map(str::to_string).or_else(env_model),
+            };
+            let mut body = relayed_comment_body(&verdict, reviewer, model.as_deref(), relayed_by);
+            if let Some(path) = sign_key {
+                body = signed(&app, &verdict, body, path)?;
+            }
+            let c = gh.add_comment(verdict.pr, &body)?;
+            let mut data = json!({"pr": verdict.pr, "head_sha": verdict.head_sha,
+                "comment_id": c.id, "applied_by": "the verdict workflow", "reviewer": reviewer,
+                "signed": sign_key.is_some()});
+            if let Some(r) = relayed_by {
+                data["relayed_by"] = json!(r);
+            }
+            Ok(Outcome::data(data))
+        }
+        VerdictCmd::Apply(ApplyArg { comment_id }) => apply(&app, *comment_id),
+    }
+}
+
+/// `body` plus the `bosun-sig` line of the enrolled key at `path` (spec §4, no-CI trust).
+fn signed(app: &App, v: &Verdict, body: String, path: &Path) -> Result<String, BosunError> {
+    use crate::github::b64;
+    let pair = super::approve::read_key(path)?;
+    let public = b64::encode(ring::signature::KeyPair::public_key(&pair).as_ref());
+    let keys = super::risk_check::enrolled_keys(app.gh.as_ref()).map_err(|why| {
+        BosunError::error(
+            format!("signed verdicts are off: {why}"),
+            "enroll the key in .bosun/approvers.toml on the default branch",
+        )
+    })?;
+    let key = (keys.iter())
+        .find(|k| b64::decode(&k.ed25519).map(|b| b64::encode(&b)) == Some(public.clone()))
+        .ok_or_else(|| {
+            BosunError::error(
+                "this key is not enrolled in .bosun/approvers.toml on the default branch",
+                "sign with an enrolled key",
+            )
+        })?;
+    if !matches!(key.role, crate::core::approve::Role::Reviewer) {
+        return Err(BosunError::error(
+            format!(
+                "key {} is a {} key: only reviewer keys sign verdicts",
+                key.id,
+                key.role.name()
+            ),
+            "sign with a reviewer key (never the orchestrator's owner key) enrolled in .bosun/approvers.toml",
+        ));
+    }
+    let r = &app.ctx.repo;
+    let msg = crate::core::verdict::signed_message(&r.owner, &r.name, v.pr, &v.head_sha, &body);
+    let sig = b64::encode(pair.sign(msg.as_bytes()).as_ref());
+    Ok(format!("{body}\nbosun-sig ed25519 {} {sig}", key.id))
+}
+
+/// The reviewer model this session declares: `BOSUN_MODEL`, else `ANTHROPIC_MODEL` (as the
+/// commit trailers do).
+fn env_model() -> Option<String> {
+    ["BOSUN_MODEL", "ANTHROPIC_MODEL"]
+        .iter()
+        .find_map(|k| std::env::var(k).ok().filter(|v| valid_model(v).is_some()))
+}
+
+fn parse(text: &str) -> Result<Verdict, BosunError> {
+    let v = Verdict::parse(text).map_err(|m| {
+        BosunError::usage(
+            format!("invalid verdict: {m}"),
+            "return the JSON shape in spec §7 (see `bosun review-pack` instructions)",
+        )
+    })?;
+    if counted_approval(&v, text) {
+        return Err(BosunError::usage(COUNTED, COUNTED_FIX));
+    }
+    Ok(v)
+}
+
+/// An approval whose `chunks_reviewed` is a count (`chunk_count`) claims every chunk unread:
+/// post, comment, apply and review-loop refuse it; it must list each chunk it reviewed.
+pub(crate) fn counted_approval(v: &Verdict, text: &str) -> bool {
+    let raw: serde_json::Value = serde_json::from_str(text).unwrap_or_default();
+    v.verdict == "approve" && raw["chunks_reviewed"].is_number()
+}
+
+const COUNTED: &str =
+    "an approving verdict lists the chunks it reviewed: `chunks_reviewed` is a count";
+const COUNTED_FIX: &str =
+    "review each chunk of `bosun review-pack <pr>` and add its number to \"chunks_reviewed\"";
+
+/// The verdict's PR; exit 3 when the verdict is for another head than the current one.
+pub(crate) fn current_pull(gh: &dyn Github, verdict: &Verdict) -> Result<Pull, BosunError> {
+    let n = verdict.pr;
+    let pull = gh.get_pull(n)?.ok_or_else(|| {
+        BosunError::error(
+            format!("PR #{n} does not exist"),
+            "check the number in the verdict",
+        )
+    })?;
+    if pull.head_sha != verdict.head_sha {
+        return Err(BosunError::conflict(
+            format!(
+                "stale verdict for {}; PR #{n} is now at {}",
+                verdict.head_sha, pull.head_sha
+            ),
+            format!("review the new head: run `bosun review-pack {n}` again"),
+        ));
+    }
+    Ok(pull)
+}
+
+/// Check a verdict comment (unedited, by a member, on its own PR, for the current head) and
+/// record its verdict.
+pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
+    let gh = app.gh.as_ref();
+    let refuse = |why: String| {
+        BosunError::error(
+            format!("verdict comment {id} is refused: {why}"),
+            "post the verdict again with `bosun verdict comment --from -`, unedited, on the PR",
+        )
+    };
+    let c = gh
+        .get_comment(id)?
+        .ok_or_else(|| refuse("it does not exist".into()))?;
+    if !c.unedited() {
+        return Err(refuse("it was edited".into()));
+    }
+    let bot = c.user_type == "Bot";
+    let (why, text, bot_verdict, cfg) = neutral_refusal(gh, &c)?;
+    if let Some(why) = why {
+        eprintln!("bosun: verdict apply: comment {id} is refused: {why}");
+        return Ok(Outcome::data(
+            json!({"comment_id": id, "author": c.user, "refused": why, "status": null}),
+        ));
+    }
+    let text = text.ok_or_else(|| refuse(format!("no {COMMENT_MARKER}")))?;
+    let mut verdict = Verdict::parse(text).map_err(|m| refuse(format!("invalid verdict: {m}")))?;
+    if counted_approval(&verdict, text) {
+        return Err(BosunError::error(COUNTED, COUNTED_FIX));
+    }
+    if verdict.chunks_reviewed.is_empty() {
+        verdict.chunks_reviewed = comment_chunks(&c.body);
+    }
+    if !c.issue_url.ends_with(&format!("/issues/{}", verdict.pr)) {
+        return Err(refuse(format!("it is not on PR #{}", verdict.pr)));
+    }
+    let pull = current_pull(gh, &verdict)?;
+    // Comments apply in order: a newer verdict comment of the same reviewer session for the
+    // same head replaces this one. Another session's is a second verdict (two-verdict
+    // approval), not a replacement; a comment without a session counts as "unknown".
+    let session = comment_session(&c.body).unwrap_or("unknown");
+    // A bot names any session it likes: all its verdicts are one session, so it is one vote.
+    let bot_session = format!("{BOT_SESSION}{}", c.user);
+    let recorded = if bot_verdict {
+        bot_session.as_str()
+    } else {
+        session
+    };
+    // Only the same bot's newer comment for the head replaces a bot verdict, whatever marker
+    // either carries; another author's never does.
+    let same = |o: &Comment| {
+        if bot_verdict {
+            o.user.eq_ignore_ascii_case(&c.user)
+        } else {
+            comment_session(&o.body).unwrap_or("unknown") == session
+        }
+    };
+    let newer = gh.list_comments(verdict.pr)?.into_iter().any(|o| {
+        o.id > c.id
+            && same(&o)
+            && comment_json(&o.body)
+                .or_else(|| {
+                    (bot_verdict && bot)
+                        .then(|| bot_verdict_json(&o.body))
+                        .flatten()
+                })
+                .and_then(|t| Verdict::parse(t).ok())
+                .is_some_and(|v| v.head_sha == verdict.head_sha)
+    });
+    if newer {
+        return Err(refuse(format!(
+            "a newer verdict comment for {} replaces it",
+            verdict.head_sha
+        )));
+    }
+    require_all_chunks(gh, &app.ctx.repo.to_string(), &verdict)?;
+    let relayed_by = comment_relayed_by(&c.body);
+    let mut out = record(
+        app,
+        &pull,
+        &verdict,
+        recorded,
+        comment_model(&c.body),
+        relayed_by,
+    )?;
+    if let Some(r) = relayed_by {
+        out.data["relayed_by"] = json!(r);
+    }
+    if verdict.verdict == "request-changes" && cfg.mode_effective().mode == ModeName::Autonomous {
+        // The verdict is recorded: a failed write is reported, never an error.
+        out.data["fix_task"] = match fix_task(gh, &verdict) {
+            Ok(n) => json!(n),
+            Err(e) => json!({"error": e.message, "fix": "open the fix task by hand"}),
+        };
+    }
+    Ok(out)
+}
+
+/// What `neutral_refusal` finds: why the comment is refused neutrally (if it is), its verdict
+/// text, whether it is a bot verdict, and the trusted config.
+pub(crate) type Neutral<'c> = (Option<String>, Option<&'c str>, bool, Config);
+
+/// Whether verdict comment `c` is refused neutrally, as verdict.yml ignores it: a bot verdict
+/// (no writer, or a Bot's marker-less ```json verdict) not by a listed Bot with a valid verdict
+/// for the head on a PR into the default branch. Its text is read as `verdict apply` reads it.
+pub(crate) fn neutral_refusal<'c>(
+    gh: &dyn Github,
+    c: &'c Comment,
+) -> Result<Neutral<'c>, BosunError> {
+    // author_association is no proof: a workflow token sees an org member as CONTRIBUTOR.
+    let permission = gh.permission(&c.user)?.unwrap_or_else(|| "none".into());
+    let (cfg, on_default) = trusted_config(gh, &c.issue_url)?;
+    let writer = matches!(permission.as_str(), "admin" | "write");
+    // A bot's comment needs no markers: its one top-level ```json verdict counts (spec §7).
+    // A marker-less comment of a Bot account is a bot verdict even with write access.
+    let bot = c.user_type == "Bot";
+    let marked = comment_json(&c.body);
+    let bot_verdict = !writer || (bot && marked.is_none());
+    let text = marked.or_else(|| bot.then(|| bot_verdict_json(&c.body)).flatten());
+    if !bot_verdict {
+        return Ok((None, text, bot_verdict, cfg));
+    }
+    let bots = cfg.approvals.verdict_bots.as_deref().unwrap_or_default();
+    let listed = bots.iter().any(|b| b.eq_ignore_ascii_case(&c.user));
+    // A bot verdict that cannot apply is neutral too: nothing written, no failed workflow.
+    let head = |text| match Verdict::parse(text) {
+        Err(_) => "an invalid bot verdict".to_string(),
+        Ok(n) => match gh.get_pull(n.pr) {
+            Ok(Some(p)) if p.head_sha == n.head_sha => String::new(),
+            _ => format!("a bot verdict for {}, not the head", n.head_sha),
+        },
+    };
+    let why = if !listed || !bot {
+        format!("{} has {permission} access, not write", c.user)
+    } else if !on_default {
+        "a bot verdict counts only on a PR into the default branch".into()
+    } else if let Some(text) = text {
+        head(text)
+    } else {
+        "no single verdict in the comment".into()
+    };
+    Ok(((!why.is_empty()).then_some(why), text, bot_verdict, cfg))
+}
+
+/// `.bosun/bosun.toml` on the default branch (as signed keys and owners), and whether the PR the
+/// comment sits on targets it. Defaults when missing or unparsable (fail closed: no bots, no
+/// autonomous mode).
+pub(crate) fn trusted_config(
+    gh: &dyn Github,
+    issue_url: &str,
+) -> Result<(Config, bool), BosunError> {
+    let branch = default_branch(gh)?;
+    let pr = issue_url.rsplit('/').next().and_then(|n| n.parse().ok());
+    let pull = pr.map(|n| gh.get_pull(n)).transpose()?.flatten();
+    let on_default = pull.is_some_and(|p| p.base_ref == branch);
+    let text = gh
+        .file_at(CONFIG_FILE, &format!("refs/heads/{branch}"))?
+        .unwrap_or_default();
+    let cfg = Config::parse(&text, CONFIG_FILE).or_else(|_| Config::parse("", CONFIG_FILE))?;
+    Ok((cfg, on_default))
+}
+
+const FIX_LABEL: &str = "bosun:fix-task";
+
+/// Open, or update, the one fix task of the PR with the findings (autonomous mode, spec §7).
+fn fix_task(gh: &dyn Github, v: &Verdict) -> Result<u64, BosunError> {
+    let marker = format!("<!-- bosun:fix-task #{} -->", v.pr);
+    let findings: Vec<String> = (v.findings.iter())
+        .map(|f| {
+            let line = f.line.map_or("?".into(), |l| l.to_string());
+            format!(
+                "- [{}] {}:{line} {}\n  evidence: {}",
+                flat(&f.severity, 20),
+                flat(&f.file, 200),
+                flat(&f.claim, 300),
+                flat(&f.evidence, 300)
+            )
+        })
+        .collect();
+    let body = format!(
+        "The review of PR #{} at {} requests changes ({}). Fix these findings on the PR's branch:\n\n```text\n{}\n```\n\n{marker}",
+        v.pr,
+        flat(&v.head_sha, 64),
+        v.summary(),
+        findings.join("\n")
+    );
+    gh.ensure_label(
+        FIX_LABEL,
+        "d93f0b",
+        "review findings to fix (bosun verdict apply)",
+    )?;
+    let open = gh.list_issues(&[FIX_LABEL], IssueState::Open)?;
+    if let Some(i) = open.iter().find(|i| i.body_text().contains(&marker)) {
+        let patch = IssuePatch {
+            body: Some(body),
+            ..Default::default()
+        };
+        gh.update_issue(i.number, patch)?;
+        return Ok(i.number);
+    }
+    let title = format!("fix: review findings on PR #{}", v.pr);
+    Ok(gh.create_issue(&title, &body, &[FIX_LABEL])?.number)
+}
+
+/// A review of a PR with several chunks must list every chunk (1-based, as in the pack).
+/// Only an approval needs it: a request-changes verdict never turns green, and may stop at the
+/// first blocker.
+pub(crate) fn require_all_chunks(
+    gh: &dyn Github,
+    repo: &str,
+    verdict: &Verdict,
+) -> Result<(), BosunError> {
+    if verdict.verdict != "approve" {
+        return Ok(());
+    }
+    let pack = super::review_pack::build(gh, repo, verdict.pr, false)?;
+    let count = pack["chunks"].as_array().map_or(0, Vec::len);
+    if count <= 1 {
+        return Ok(());
+    }
+    let missing: Vec<usize> = (1..=count)
+        .filter(|k| !verdict.chunks_reviewed.iter().any(|c| *c as usize == *k))
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    const ADD: &str = "add each one you reviewed to \"chunks_reviewed\", then post again";
+    let n = verdict.pr;
+    if missing.len() == count {
+        // No list to paste: nothing was reviewed, so no chunk is named.
+        return Err(BosunError::error(
+            format!("verdict reviews no chunks ({count} chunks)"),
+            format!("review the {count} chunks of `bosun review-pack {n}` (its `chunks`), {ADD}"),
+        ));
+    }
+    // At most `SHOWN` missing chunks are named, then "and K more".
+    const SHOWN: usize = 5;
+    let mut names = format!("{:?}", &missing[..missing.len().min(SHOWN)]);
+    if missing.len() > SHOWN {
+        names.push_str(&format!(" and {} more", missing.len() - SHOWN));
+    }
+    let mut listed = verdict.chunks_reviewed.clone();
+    listed.sort_unstable();
+    Err(BosunError::error(
+        format!("verdict lists chunks {listed:?} of {count}; missing {names}"),
+        format!(
+            "review chunks {names} of the {count} in `bosun review-pack {n}` (its `chunks`), {ADD}"
+        ),
+    ))
+}
+
+/// Post the review-verdict status and the verdict record, and move the linked task.
+pub(crate) fn record(
+    app: &App,
+    pull: &Pull,
+    verdict: &Verdict,
+    session: &str,
+    model: Option<&str>,
+    relayed_by: Option<&str>,
+) -> CmdResult {
+    let gh = app.gh.as_ref();
+    let n = verdict.pr;
+    let mut eff = effective(verdict);
+    if verdict.escalate_risk {
+        // An escalation is for the owner: never a green verdict.
+        eff.approve = false;
+        eff.reasons.push("escalated to the owner".into());
+    }
+    let state = if eff.approve { "success" } else { "failure" };
+    // Only an otherwise approving escalation reads [`APPROVABLE`]: the owner can
+    // clear that one (risk-check); a failing one stays red.
+    let description = if verdict.escalate_risk && eff.reasons.len() == 1 {
+        format!("{APPROVABLE}{}", verdict.summary())
+    } else if verdict.escalate_risk {
+        format!("{ESCALATED} (not approving): {}", verdict.summary())
+    } else {
+        verdict.summary()
+    };
+    let w = GateWriter::for_ctx(gh, &app.ctx);
+    w.post(&verdict.head_sha, CONTEXT, state, &description)?;
+    let record = Record::Verdict {
+        session: session.to_string(),
+        head_sha: verdict.head_sha.clone(),
+        approved: eff.approve,
+        confidence: Some(verdict.confidence),
+        major: Some(verdict.count("major") as u32),
+        model: model.map(str::to_string),
+        relayed_by: relayed_by.map(str::to_string),
+    };
+    let human = format!("Review verdict: {}.", verdict.summary());
+    w.add_record(n, &format!("{human}\n\n{}", record.to_line()))?;
+
+    let target = if verdict.escalate_risk {
+        Some(State::NeedsHuman)
+    } else if !eff.approve {
+        Some(State::Fixing)
+    } else {
+        None
+    };
+    let mut task_state = None;
+    if let (Some(to), Some(issue_no)) = (target, closes_issue(&pull.body))
+        && let Some(issue) = gh.get_issue(issue_no)?
+        && state_of(&issue.labels).is_none_or(|from| transition_allowed(from, to))
+    {
+        set_state(gh, issue_no, &issue, to)?;
+        task_state = Some(to.name());
+    }
+    let mut data = json!({
+        "pr": n, "head_sha": verdict.head_sha, "approved": eff.approve,
+        "reasons": eff.reasons, "status": state, "task_state": task_state,
+    });
+    if w.checks_skipped() {
+        data["checks_skipped"] = json!(true);
+    }
+    Ok(Outcome::data(data))
+}

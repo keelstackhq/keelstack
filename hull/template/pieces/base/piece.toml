@@ -1,0 +1,38 @@
+id = "base"
+description = "Workspace root: pnpm, Turborepo, TypeScript, Vite+, CI and AI layer"
+
+[files]
+shared = ["package.json", "pnpm-workspace.yaml", "turbo.json", "packages/shared/package.json"]
+owned = [".claude/agents/*.md", "docs/agents/guard.md", ".github/scripts/workflows.mjs", ".github/workflows/ci.yml", ".github/workflows/preview.yml", ".github/workflows/preview-deploy.yml", ".github/scripts/preview.mjs", ".github/workflows/desktop.yml", ".github/scripts/affected.mjs", ".github/scripts/rust-affected.mjs", ".github/workflows/release.yml", ".github/workflows/splice.yml", ".github/scripts/release-plan.mjs", "scripts/agents-index.mjs", "scripts/ready.mjs", "scripts/deny.mjs", "scripts/licenses.mjs", "Cargo.toml", "rust-toolchain.toml", "renovate.json"]
+seed = ["CHANGELOG.md", "docs/agents/index.md", "AGENTS.md", "docs/agents/onboarding.toml", "scripts/ci-pre.sh", "scripts/ci-extra.sh", "README.md", "docs/agents/project.md", "packages/shared/src/**"]
+
+[merge]
+"package.json" = "json"
+"pnpm-workspace.yaml" = "yaml"
+"turbo.json" = "json"
+"packages/shared/package.json" = "json"
+
+[[post]]
+run = "pnpm install --no-frozen-lockfile"
+when = ["new"]
+
+# A catalog bump arrives via the pnpm-workspace.yaml merge; refresh pnpm-lock.yaml so the update
+# PR passes `pnpm install --frozen-lockfile`. Lockfile only, no install scripts.
+[[post]]
+run = "pnpm install --lockfile-only --ignore-scripts"
+when = ["update"]
+
+[[post]]
+run = "node scripts/agents-index.mjs"
+when = ["new", "add", "update"]
+
+# THIRD_PARTY_LICENSES.md + third-party-licenses.json; needs node_modules.
+[[post]]
+run = "node scripts/licenses.mjs"
+when = ["new"]
+
+# The splice bot's PR carries the refreshed list. On failure the script writes nothing and says
+# why; the list stays stale and CI's check names the command, so the update itself still succeeds.
+[[post]]
+run = "pnpm install --frozen-lockfile --ignore-scripts --prefer-offline && node scripts/licenses.mjs || true"
+when = ["update"]

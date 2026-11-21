@@ -1,0 +1,24 @@
+---
+import { facts } from "../data/facts";
+
+// Generated at build time: the workspace version and the build date. Nothing typed in.
+const built = new Date().toISOString().slice(0, 10);
+---
+
+<aside class="verified" aria-label="Verification">
+  <p>
+    keelstack {facts.tag}: one version for every tool. Built {built} from <a href={facts.repoUrl}>{facts.repoSlug}</a>.
+  </p>
+</aside>
+
+<style>
+  .verified p {
+    margin: 0;
+  }
+  .verified {
+    padding: 12px 24px;
+    text-align: center;
+    font-size: 13px;
+    color: var(--muted);
+  }
+</style>

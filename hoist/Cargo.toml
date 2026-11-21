@@ -1,0 +1,48 @@
+[package]
+name = "keel-hoist"
+version.workspace = true
+edition = "2024"
+rust-version = "1.97"
+description = "Provision and verify a repo's GitHub and Cloudflare setup from what the repo already says"
+license = "MIT"
+repository = "https://github.com/keelstackhq/keelstack"
+# Only what builds the crate: no tests, fixtures, npm packages or docs in the .crate file.
+include = ["/src/**", "/Cargo.toml", "/Cargo.lock", "/README.md"]
+
+[lib]
+name = "hoist"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hoist"
+path = "src/main.rs"
+
+[dependencies]
+base64.workspace = true
+clap = { workspace = true, features = ["derive"] }
+crypto_box = { workspace = true, features = ["seal", "salsa20", "getrandom", "std"] }
+jsonc-parser = { workspace = true, features = ["serde"] }
+regex.workspace = true
+ring = { workspace = true, features = ["alloc", "dev_urandom_fallback"] }
+rpassword.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+toml_edit.workspace = true
+ureq = { workspace = true, features = ["platform-verifier"] }
+yaml_serde.workspace = true
+zeroize.workspace = true
+
+# `secrets exec` (unix only): process groups, PR_SET_DUMPABLE and signals (spec §15.7).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["process"] }
+signal-hook.workspace = true
+
+[dev-dependencies]
+assert_cmd.workspace = true
+insta = { workspace = true, features = ["json"] }
+predicates.workspace = true
+tempfile.workspace = true
+tiny_http.workspace = true

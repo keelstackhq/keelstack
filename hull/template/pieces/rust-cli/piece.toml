@@ -1,0 +1,28 @@
+id = "rust-cli"
+description = "A production Rust CLI crate: one JSON object per run, fixed exit codes, pinned toolchain, cargo-deny"
+multiple = true
+requires = ["base"]
+target = "crates/{{ name }}"
+
+[vars]
+name = { prompt = "crate and binary name", default = "cli", pattern = "^[a-z][a-z0-9-]*$" }
+
+[files]
+owned = ["turbo.json", "deny.toml", "AGENTS.md"]
+shared = ["Cargo.toml", "package.json"]
+seed = ["deny.local.toml", "src/**", "tests/**", "CLAUDE.md"]
+
+[merge]
+"Cargo.toml" = "toml"
+"package.json" = "json"
+
+[[post]]
+# Chained, not a separate post: splice ran an identical command (base's) only once. `|| true`:
+# run before base's pnpm install it fails, writing nothing, and base's own post writes the list.
+run = "cargo generate-lockfile && { node scripts/licenses.mjs || true; }"
+when = ["new"]
+
+[[post]]
+# `|| true`: without node_modules the script says what to run; CI's check catches it.
+run = "cargo update --workspace && { node scripts/licenses.mjs || true; }"
+when = ["add"]

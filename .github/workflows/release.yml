@@ -1,0 +1,995 @@
+name: release
+
+# One lockstep release for the whole monorepo (D-023): every tool at the same X.Y.Z.
+#
+#   plan      merged PR that changed [workspace.package] version in Cargo.toml (or a manual run)
+#   dispatch  a PR-triggered run starts the real release as workflow_dispatch on main (see below)
+#   build     bosun splice hoist berth keel hoard for 5 targets, one matrix row per target
+#   action    hoard's GitHub Action: bake the tarball checksums, rebuild hoard/action/dist
+#   release   release commit (baked hoard checksums + dist), tag vX.Y.Z, GitHub release (all assets)
+#   crates    crates.io, in dependency order (trusted publishing)
+#   npm       every launcher and platform package (trusted publishing + provenance)
+#   major     moves the v<major> tag for `uses: keelstackhq/keelstack/hoard@v0`
+#
+# Why a PR run only dispatches. A `pull_request` run has github.ref refs/pull/N/merge, and the
+# `release` environment only deploys from the default branch (deployment branch policy), so no
+# job of a PR run may use it. The cheap `plan` job runs on the closed PR (merged == true, nothing
+# for comments, labels or edits, D-007) and, when the version changed, starts this same workflow
+# with workflow_dispatch on main, for the exact merge commit. Everything that publishes runs in
+# that dispatched run. A manual run is the same thing:
+#   gh workflow run release.yml --ref main            # re-run the version at main's head
+#   gh workflow run release.yml --ref main -f sha=<merge commit> -f version=X.Y.Z
+# A failed run is re-run the same way: tag, release, crates and npm skip what exists.
+#
+# Version bump: `bash scripts/bump-version.sh X.Y.Z`, PR, merge. No release approval step (D-022).
+#
+# Needs, all configured outside this file:
+#   - environment `release`: deployment branches = default branch only, no required reviewer.
+#   - secrets: RELEASE_TAG_KEY only, a secret of the environment `release` (written by hoist):
+#     the private half (ed25519, OpenSSH format) of a deploy key with write access. Jobs
+#     `release` and `major` load it into ssh-agent (never onto disk) and push the tags vX.Y.Z and
+#     v<major> with `git push git@github.com:<repo>.git` over SSH (github.com's host key pinned
+#     below). The GitHub API and the Actions token never create or move a tag. npm and crates.io
+#     use OIDC trusted publishing: every package on npm and every crate on crates.io needs a
+#     trusted publisher for keelstackhq/keelstack, workflow release.yml, environment release. A
+#     crate that is not on crates.io yet has to be published once by hand first (trusted
+#     publishing cannot create a crate).
+#   - repository variables: none. The repository must be public (npm provenance; the plan's
+#     partial clone also fetches blobs anonymously).
+#   - tags: a ruleset on `v*` whose only bypass actor is that deploy key (it creates `vX.Y.Z` and
+#     moves `v<major>`; nothing else may).
+#
+# Compatibility notes (not changed here, they are code):
+#   - Assets keep each tool's old name, now on release vX.Y.Z of keelstackhq/keelstack:
+#       bosun-<target>[.exe] hoist-<target>[.exe] berth-<target>[.exe] keel-<target>[.exe],
+#       splice-<target>.tar.gz|.zip, hoard-<target>.tar.gz, and one SHA256SUMS of all of them.
+#     Consumers: hoist/release/action.yml (hoist-<target> + SHA256SUMS), hoard/action/src/binary.ts,
+#     hoard/scripts/install.sh, hoard/circleci/hoard.yml and its hull copy
+#     hull/template/pieces/circleci/files/.circleci/src/commands/hoard.yml (hoard-<target>.tar.gz,
+#     checksums from hoard/action/src/checksums.generated.ts at the tag), the npm job below.
+#   - Versions <= 0.21.0 are the old per-tool repositories' releases: the installers route them
+#     there, and `plan` refuses to release such a version from here.
+#   - The package.json `repository` of every launcher: this workflow rewrites
+#     repository.url/directory when it publishes (npm provenance requires this repository).
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Commit to release: a commit on main (empty: the head of main)"
+        required: false
+        type: string
+      version:
+        description: "Version to release, X.Y.Z (must equal Cargo.toml at that commit; empty: Cargo.toml's)"
+        required: false
+        type: string
+
+permissions: {}
+
+# ci-minutes: allow concurrency a release never cancels itself
+concurrency:
+  # A run is never cancelled. Releases of different commits do not wait for each other; a re-run
+  # of one commit waits for the first. Plan runs of different PRs never share a group (a pending
+  # run would replace another one). The version is not known here (a manual run may leave the
+  # input empty: plan reads it from Cargo.toml), so the jobs after plan that write a version's
+  # draft, tag, crates, npm packages or v<major> (release, crates, npm, major) each also hold a
+  # job-level group release-<job>-<version>: two runs of one version (two commits, or a manual
+  # run next to a dispatched one) never write the same draft or packages at once. One group per
+  # job, not one per version, so the jobs of one run never wait for each other.
+  group: ${{ github.event_name == 'workflow_dispatch' && format('release-{0}', inputs.sha || github.sha) || format('plan-{0}', github.run_id) }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  plan:
+    if: >-
+      github.repository == 'keelstackhq/keelstack' &&
+      (github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+      release: ${{ steps.plan.outputs.release }}
+      released: ${{ steps.plan.outputs.released }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha || inputs.sha || github.sha }}
+          fetch-depth: 0
+          filter: blob:none
+          # The first parent's Cargo.toml is a blob this partial clone fetches on demand
+          # (anonymously: the repository is public). Nothing here pushes.
+          persist-credentials: false
+      - name: Did the workspace version change?
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.event.pull_request.merge_commit_sha || inputs.sha || github.sha }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The [workspace.package] version of Cargo.toml at commit $1; empty when that commit has
+          # no Cargo.toml or no workspace version. Any git or fetch error fails (nonzero).
+          cargo_version() {
+            local tree toml
+            tree=$(git ls-tree --name-only "$1" -- Cargo.toml) || return 1
+            [ -n "$tree" ] || return 0
+            toml=$(git show "$1:Cargo.toml") || return 1
+            awk -F'"' '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version *=/ { print $2; exit }' <<<"$toml"
+          }
+          sha=$(git rev-parse "$SHA^{commit}")
+          version=$(cargo_version "$sha")
+          release=false
+          released=false
+          if [ "$EVENT" = workflow_dispatch ]; then
+            if [ "$REF" != refs/heads/main ]; then
+              echo "::error::run this workflow from main (got $REF): the release environment only deploys from the default branch"
+              exit 1
+            fi
+            git merge-base --is-ancestor "$sha" origin/main || { echo "::error::$sha is not a commit of main"; exit 1; }
+            if [ -n "$INPUT_VERSION" ] && [ "$INPUT_VERSION" != "$version" ]; then
+              echo "::error::version input '$INPUT_VERSION' differs from Cargo.toml '$version' at $sha"
+              exit 1
+            fi
+            release=true
+          else
+            # The merge commit's first parent is main before the merge (merge and squash merges;
+            # a rebase merge puts several commits on main, so use merge or squash for bump PRs).
+            # Only an absent version may be empty: a git or fetch error fails the job, never
+            # passes as "nothing to release".
+            parent=$(git rev-parse --verify -q "$sha^1^{commit}") \
+              || { echo "::error::cannot read the first parent of $sha"; exit 1; }
+            prev=$(cargo_version "$parent") \
+              || { echo "::error::cannot read Cargo.toml at the first parent $parent (git or fetch error)"; exit 1; }
+            echo "workspace version: ${prev:-none} -> $version"
+            if [ "$version" != "$prev" ]; then release=true; fi
+            if [ -z "$prev" ]; then
+              # The first parent has no root workspace version: the merge that created the
+              # monorepo (D-023). Its version is the imported one, released by the old repositories.
+              echo "::notice::the first parent has no [workspace.package] version in Cargo.toml (monorepo setup merge): nothing to release"
+              release=false
+            fi
+          fi
+          if [ "$release" = true ]; then
+            re='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+            [[ $version =~ $re ]] || { echo "::error::Cargo.toml version '$version' is not X.Y.Z"; exit 1; }
+            # Fail closed: installers and launchers route versions <= 0.21.0 to the old per-tool
+            # repositories, so a monorepo release must be above 0.21.0.
+            IFS=. read -r major minor patch <<<"$version"
+            if [ "$major" -eq 0 ] && { [ "$minor" -lt 21 ] || { [ "$minor" -eq 21 ] && [ "$patch" -le 0 ]; }; }; then
+              echo "::error::refusing to release $version: monorepo releases must be > 0.21.0 (installers send <= 0.21.0 to the old keelstackhq/<tool> repositories); bump with scripts/bump-version.sh"
+              exit 1
+            fi
+            # Every npm package of the lockstep carries the version, and pins its platform packages to it.
+            bad=0
+            while IFS= read -r f; do
+              if ! jq -e --arg v "$version" '.version == $v and ((.optionalDependencies // {}) | all(.[]; . == $v))' "$f" >/dev/null; then
+                echo "::error file=$f::not at $version (run scripts/bump-version.sh $version)"
+                bad=1
+              fi
+            done < <(find . -mindepth 4 -maxdepth 4 -path '*/npm/*/package.json' -not -path '*/node_modules/*' -not -path '*/tests/*' -not -path '*/cargo-deny*' | LC_ALL=C sort)
+            [ "$bad" = 0 ] || exit 1
+            if [ "$EVENT" = workflow_dispatch ] && gh release view "v$version" --json isDraft -q .isDraft 2>/dev/null | grep -qx false; then
+              released=true
+            fi
+          else
+            echo "the workspace version did not change: nothing to release"
+          fi
+          {
+            echo "version=$version"
+            echo "tag=v$version"
+            echo "sha=$sha"
+            echo "release=$release"
+            echo "released=$released"
+          } >>"$GITHUB_OUTPUT"
+          echo "version $version, sha $sha, release $release, already released $released"
+
+  dispatch:
+    needs: plan
+    if: github.event_name == 'pull_request' && needs.plan.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      # GITHUB_TOKEN may start workflow_dispatch runs (it starts no other event).
+      - name: Start the release on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SHA: ${{ needs.plan.outputs.sha }}
+          VERSION: ${{ needs.plan.outputs.version }}
+        run: gh workflow run release.yml --ref main -f sha="$SHA" -f version="$VERSION"
+
+  build:
+    needs: plan
+    if: >-
+      github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      needs.plan.outputs.released != 'true'
+    name: build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            musl: true
+            zig: true
+            smoke: true
+          # Built on an arm64 runner, so it runs here.
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
+            musl: true
+            zig: true
+            smoke: true
+          # Built on an arm64 runner; not run here (checked with `file` instead).
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            smoke: false
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            smoke: true
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            smoke: true
+    # sha256 of hoard's tarball per target (one static name per target: a leg leaves the other
+    # four empty), so `release` can compare them with the re-downloaded artifacts.
+    outputs:
+      sha_aarch64_apple_darwin: ${{ steps.stage.outputs.sha_aarch64_apple_darwin }}
+      sha_aarch64_unknown_linux_musl: ${{ steps.stage.outputs.sha_aarch64_unknown_linux_musl }}
+      sha_x86_64_apple_darwin: ${{ steps.stage.outputs.sha_x86_64_apple_darwin }}
+      sha_x86_64_pc_windows_msvc: ${{ steps.stage.outputs.sha_x86_64_pc_windows_msvc }}
+      sha_x86_64_unknown_linux_musl: ${{ steps.stage.outputs.sha_x86_64_unknown_linux_musl }}
+    env:
+      TARGET: ${{ matrix.target }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+          targets: ${{ matrix.target }}
+      # One cache per target, shared by the six binaries (each `cargo build -p` below only
+      # compiles what that crate needs; the dependencies are reused).
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-${{ matrix.target }}
+      # hoard: aws-lc-sys (rustls' crypto provider) compiles C; on Linux zig cc is the C compiler
+      # and linker for musl. Its pregenerated bindings cover all five targets, so no cmake/bindgen.
+      - if: matrix.zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.17.0
+      - if: matrix.zig
+        run: cargo install --locked cargo-zigbuild@0.23.4
+      # aws-lc-sys assembles its x86_64 Windows code with NASM; install it rather than use the
+      # crate's prebuilt NASM objects.
+      - if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@72793074d3c8cdda771dba85f6deafe00623038b # v1.5.2
+      # bosun, splice, hoist, berth, keel. One `cargo build -p` per crate, so each is built with
+      # exactly its own features (a workspace-wide build would unify them).
+      - name: Build bosun, splice, hoist, berth and keel
+        env:
+          # ring and other C code need the musl C compiler on the musl targets.
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          CC_aarch64_unknown_linux_musl: musl-gcc
+        run: |
+          set -euo pipefail
+          for pair in bosun:keel-bosun splice:keel-splice hoist:keel-hoist berth:keel-berth keel:keel-cli; do
+            cargo build -p "${pair#*:}" --bin "${pair%%:*}" --locked --release --target "$TARGET"
+          done
+      - name: Build hoard
+        env:
+          ZIG: ${{ matrix.zig || false }}
+          # Static MSVC CRT, so minimal Windows runners need no VC++ redistributable. This
+          # variable applies to the Windows target only, and only to this step (hoard).
+          CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: -C target-feature=+crt-static
+        run: |
+          set -euo pipefail
+          if [ "$ZIG" = true ]; then
+            cargo zigbuild -p keel-hoard --bin hoard --locked --release --target "$TARGET"
+          else
+            cargo build -p keel-hoard --bin hoard --locked --release --target "$TARGET"
+          fi
+      - name: Static, and the right architecture
+        if: matrix.musl || matrix.target == 'x86_64-apple-darwin'
+        run: |
+          set -euo pipefail
+          for t in bosun splice hoist berth keel hoard; do
+            out=$(file "target/$TARGET/release/$t")
+            echo "$out"
+            case "$TARGET" in
+              *linux-musl)
+                echo "$out" | grep -Eq 'statically linked|static-pie linked'
+                if echo "$out" | grep -q interpreter; then echo "::error::$t is dynamically linked"; exit 1; fi
+                ;;
+              x86_64-apple-darwin) echo "$out" | grep -q 'x86_64' ;;
+            esac
+          done
+      - name: Smoke test
+        if: matrix.smoke
+        run: |
+          set -euo pipefail
+          ext=""
+          case "$TARGET" in *-windows-*) ext=".exe" ;; esac
+          rel="target/$TARGET/release"
+          for t in bosun berth; do
+            got=$("$rel/$t$ext" --version)
+            echo "$got"
+            test "$got" = "$t $VERSION"
+          done
+          for t in hoist keel; do
+            got=$("$rel/$t$ext" --version)
+            echo "$got"
+            case "$got" in *"$VERSION"*) ;; *) echo "::error::$t --version does not name $VERSION"; exit 1 ;; esac
+          done
+          EXPECT_VERSION="$VERSION" bash splice/scripts/smoke.sh "$rel/splice$ext"
+          "$rel/hoard$ext" --help >/dev/null
+      # Asset names are each tool's old ones: bosun/hoist/berth/keel the bare binary
+      # <bin>-<target>[.exe], splice splice-<target>.tar.gz|.zip (binary, LICENSE, README.md),
+      # hoard hoard-<target>.tar.gz (the binary only).
+      - name: Stage the release assets
+        id: stage
+        env:
+          COPYFILE_DISABLE: "1" # macOS tar: no AppleDouble (._hoard) or xattr entries
+        run: |
+          set -euo pipefail
+          ext=""
+          case "$TARGET" in *-windows-*) ext=".exe" ;; esac
+          rel="target/$TARGET/release"
+          mkdir -p out stage
+          for t in bosun hoist berth keel; do
+            cp "$rel/$t$ext" "out/$t-$TARGET$ext"
+          done
+          cp "$rel/splice$ext" splice/LICENSE splice/README.md stage/
+          if [ -n "$ext" ]; then
+            (cd stage && 7z a -tzip "../out/splice-$TARGET.zip" "splice$ext" LICENSE README.md)
+          else
+            tar -C stage -czf "out/splice-$TARGET.tar.gz" splice LICENSE README.md
+          fi
+          tar -czf "out/hoard-$TARGET.tar.gz" -C "$rel" "hoard$ext"
+          tar -tzf "out/hoard-$TARGET.tar.gz"
+          ls -l out
+          f="out/hoard-$TARGET.tar.gz"
+          sum=$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -d' ' -f1)
+          echo "$sum  $f"
+          echo "sha_${TARGET//-/_}=$sum" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-${{ matrix.target }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Runs dependency code (pnpm install, build, test) with a read-only token and no stored
+  # credentials. `release` gets only its result, as an artifact.
+  action:
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 10.28.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Bake the tarball checksums into the action
+        run: |
+          set -euo pipefail
+          mkdir dist-assets
+          cp release/hoard-*.tar.gz dist-assets/
+          ls -l dist-assets
+          node hoard/scripts/write-checksums.mjs dist-assets "$VERSION"
+          cat hoard/action/src/checksums.generated.ts
+      - name: Build the action
+        run: pnpm --dir hoard/action install --frozen-lockfile && pnpm --dir hoard/action build
+      # The release commit is only reachable from the tag and runs no CI, so test the baked
+      # checksums here: a failure stops the release before anything is committed or published.
+      - name: Test the action (with the baked checksums)
+        run: pnpm --dir hoard/action test
+      - name: Check hoard/action/dist size
+        run: |
+          size=$(du -sb hoard/action/dist | cut -f1)
+          echo "hoard/action/dist is $size bytes (limit 204800)"
+          if [ "$size" -gt 204800 ]; then
+            echo "::error::hoard/action/dist is $size bytes, over the 200 KB limit: trim dependencies or bundle settings in hoard/action/"
+            exit 1
+          fi
+      - name: Stage the release bundle
+        run: |
+          mkdir release-bundle
+          cp -r hoard/action/dist release-bundle/dist
+          cp hoard/action/src/checksums.generated.ts release-bundle/
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: action-bundle
+          path: release-bundle
+          if-no-files-found: error
+          retention-days: 7
+
+  # The release commit sits on the merge commit and is reachable only from the tag: main is never
+  # pushed to (no branch-protection bypass), and merges meanwhile are harmless. It holds the baked
+  # hoard checksums and the rebuilt hoard/action/dist, so `uses: keelstackhq/keelstack/hoard@vX.Y.Z`
+  # (and @v<major>) runs a dist that only accepts these tarballs. Order: draft release with every
+  # asset, then the tag, then publish. A re-run finishes what a failed run left: it never
+  # replaces published assets (the baked checksums would no longer match them).
+  release:
+    needs: [plan, build, action]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # One run at a time per version for this job (see the top-level concurrency).
+    concurrency:
+      group: release-release-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
+    environment: release
+    permissions:
+      contents: write
+    outputs:
+      commit: ${{ steps.release.outputs.commit }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.plan.outputs.sha }}
+    steps:
+      # No stored credentials, and no dependency code runs in this job: tags are pushed over SSH
+      # with the deploy key (RELEASE_TAG_KEY), which only the push steps load into ssh-agent.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: action-bundle
+          path: release-bundle
+      - name: Check the assets and the action bundle
+        env:
+          BUILD_OUTPUTS: ${{ toJSON(needs.build.outputs) }}
+        run: |
+          set -euo pipefail
+          # Exactly the 30 assets, nothing else.
+          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            ext=""; arch=tar.gz
+            case "$tgt" in *-windows-*) ext=.exe; arch=zip ;; esac
+            for t in bosun hoist berth keel; do echo "$t-$tgt$ext"; done
+            echo "splice-$tgt.$arch"
+            echo "hoard-$tgt.tar.gz"
+          done | LC_ALL=C sort >expected.txt
+          find release -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >actual.txt
+          diff expected.txt actual.txt || { echo "::error::the build artifacts are not the expected assets"; exit 1; }
+          # Trust nothing from the action job unchecked: the tarballs are the ones the build legs
+          # hashed, the checksums equal the ones computed here, and the bundle holds only regular
+          # files in two places.
+          mkdir dist-assets
+          cp release/hoard-*.tar.gz dist-assets/
+          bash hoard/scripts/verify-build-shas.sh dist-assets
+          if [ "$(find release-bundle -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ] \
+            || [ -n "$(find release-bundle ! -type f ! -type d)" ]; then
+            echo "::error::action-bundle must hold only dist/ and checksums.generated.ts, as regular files"
+            exit 1
+          fi
+          node hoard/scripts/write-checksums.mjs dist-assets "$VERSION"
+          diff hoard/action/src/checksums.generated.ts release-bundle/checksums.generated.ts \
+            || { echo "::error::action-bundle checksums differ from the release assets"; exit 1; }
+          size=$(du -sb release-bundle/dist | cut -f1)
+          echo "hoard/action/dist is $size bytes (limit 204800)"
+          [ "$size" -le 204800 ] || { echo "::error::hoard/action/dist is $size bytes, over the 200 KB limit"; exit 1; }
+          rm -rf hoard/action/dist
+          cp -r release-bundle/dist hoard/action/dist
+      - name: SHA256SUMS and release notes
+        run: |
+          set -euo pipefail
+          # <hex>  <file>, one line per asset: what hoist's release action and the READMEs expect.
+          (cd release && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >../SHA256SUMS)
+          mv SHA256SUMS release/SHA256SUMS
+          cat release/SHA256SUMS
+          # The notes: the CHANGELOG section of each folder that has one, then GitHub's generated
+          # notes (appended by `gh release create --generate-notes`).
+          : >notes.md
+          for f in bosun hull hoist hoard; do
+            [ -f "$f/CHANGELOG.md" ] || continue
+            sec=$(awk -v v="$VERSION" '
+              /^## / { if (on) exit; h = substr($0, 4); gsub(/^\[/, "", h); gsub(/^v/, "", h)
+                       on = (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/); next }
+              on' "$f/CHANGELOG.md" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+            if [ -n "$(printf '%s' "$sec" | tr -d '[:space:]')" ]; then
+              printf '### %s\n\n%s\n\n' "$f" "$sec" >>notes.md
+            fi
+          done
+          # The start of GitHub's generated notes: the highest stable vX.Y.Z below this one.
+          prev=$({ git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$TAG" || true; echo "$TAG"; } \
+            | sort -V | awk -v t="$TAG" '$0 == t { print p; exit } { p = $0 }')
+          echo "previous release: ${prev:-none}"
+          echo "PREVIOUS=$prev" >>"$GITHUB_ENV"
+      # The tag deploy key (the tags ruleset's only bypass actor) goes into ssh-agent for the
+      # tag step only; the agent is stopped in an always() step. Same two steps as in `major`.
+      - name: Load the tag deploy key
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG_KEY:-}" ]; then
+            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            exit 1
+          fi
+          # github.com's published ed25519 host key, checked against its published fingerprint
+          # (docs.github.com, "GitHub's SSH key fingerprints"). Never StrictHostKeyChecking=no.
+          kh="$RUNNER_TEMP/release-known_hosts"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >"$kh"
+          fp=$(ssh-keygen -lf "$kh" | awk '{ print $2 }')
+          if [ "$fp" != "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU" ]; then
+            echo "::error::the pinned github.com host key has fingerprint $fp, not GitHub's published one"
+            exit 1
+          fi
+          sock="$RUNNER_TEMP/release-ssh-agent.sock"
+          eval "$(ssh-agent -s -a "$sock")" >/dev/null
+          # Through a pipe from a builtin: the key is never on disk or in a process's argv.
+          if ! printf '%s\n' "$RELEASE_TAG_KEY" | ssh-add -q - 2>/dev/null; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY is not a usable private key (ed25519, OpenSSH format, no passphrase): write it again with hoist"
+            exit 1
+          fi
+          if ! ssh-add -L | grep -q '^ssh-ed25519 '; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY must be an ed25519 key"
+            exit 1
+          fi
+          {
+            echo "SSH_AUTH_SOCK=$sock"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
+          } >>"$GITHUB_ENV"
+      - name: Release commit, tag and GitHub release
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # The tag is read and pushed over SSH with the deploy key in ssh-agent; the Actions
+          # token is only gh's (releases), never git's. core.hooksPath: belt and braces, so a
+          # stray hook in the checkout never runs here.
+          remote="git@github.com:$GH_REPO.git"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # The release for TAG, drafts included (the tag endpoint does not list drafts):
+          # "<id> <draft|published>", or nothing.
+          find_release() {
+            gh api "repos/$GH_REPO/releases?per_page=100" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(if .draft then \"draft\" else \"published\" end)\"" | head -n1
+          }
+          publish() { gh api -X PATCH "repos/$GH_REPO/releases/$1" -F draft=false >/dev/null; }
+
+          read -r rid rstate <<<"$(find_release)" || true
+          rid=${rid:-}; rstate=${rstate:-none}
+
+          # The peeled commit of the tag on the remote, or nothing.
+          at=$(git ls-remote "$remote" "refs/tags/$TAG^{}" "refs/tags/$TAG" | awk '{ print $1 }' | tail -n1)
+          if [ -n "$at" ] && ! git cat-file -e "$at^{commit}" 2>/dev/null; then
+            git fetch -q "$remote" "refs/tags/$TAG"
+          fi
+          if [ -n "$at" ]; then
+            # The tag must be this release's commit: a release commit whose parent is SHA.
+            if [ "$(git rev-parse "$at^")" != "$SHA" ] || [ "$(git log -1 --format=%s "$at")" != "chore(release): $TAG" ]; then
+              echo "::error::tag $TAG already points at $at, which is not the release commit of $SHA; nothing was released by this run"
+              exit 1
+            fi
+            if [ "$rstate" = published ]; then
+              echo "$TAG is released already: nothing to do"
+              echo "commit=$at" >>"$GITHUB_OUTPUT"
+              exit 0
+            fi
+            if [ "$rstate" != draft ]; then
+              echo "::error::tag $TAG exists without a release. The baked hoard checksums belong to the assets of the run that pushed it, which are gone. Delete the tag: the tag ruleset blocks deletion and its only bypass actor is the deploy key, so a repository admin must first edit or disable the ruleset (or use the deploy key) to delete $TAG; agents never do (D-006). Then run this workflow again"
+              exit 1
+            fi
+            # A draft of an earlier run: its assets are the original ones. Check them against the
+            # checksums baked into the tag, then publish.
+            gh api "repos/$GH_REPO/releases/$rid/assets" --paginate --jq '.[] | select(.state == "uploaded") | .name' | LC_ALL=C sort >draft.txt
+            { cat expected.txt; echo SHA256SUMS; } | LC_ALL=C sort | diff - draft.txt \
+              || { echo "::error::draft release $TAG lacks assets: delete the draft and the tag, then run again"; exit 1; }
+            mkdir draft-hoard
+            gh release download "$TAG" --dir draft-hoard --pattern 'hoard-*.tar.gz'
+            node hoard/scripts/write-checksums.mjs draft-hoard "$VERSION" draft-checksums.ts
+            git show "$at:hoard/action/src/checksums.generated.ts" | diff - draft-checksums.ts \
+              || { echo "::error::the draft's hoard tarballs differ from the checksums baked into $TAG: delete the draft and the tag, then run again"; exit 1; }
+            publish "$rid"
+            echo "published the draft of $TAG"
+            echo "commit=$at" >>"$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # No tag yet. A draft without a tag is an earlier run's leftover: replace it.
+          if [ "$rstate" = draft ]; then gh api -X DELETE "repos/$GH_REPO/releases/$rid"; fi
+          if [ "$rstate" = published ]; then
+            echo "::error::release $TAG is published but its tag is missing; fix it by hand (the release is immutable)"
+            exit 1
+          fi
+          git add hoard/action/src/checksums.generated.ts hoard/action/dist
+          git commit -q --allow-empty -m "chore(release): $TAG"
+          commit=$(git rev-parse HEAD)
+          git tag -a "$TAG" -m "$TAG" "$commit"
+          start=()
+          if [ -n "$PREVIOUS" ]; then start=(--notes-start-tag "$PREVIOUS"); fi
+          # A draft creates no tag (GitHub creates a missing tag only when a release is
+          # published); --target pins the commit its notes are generated from.
+          gh release create "$TAG" --draft --target "$SHA" --title "$TAG" \
+            --notes-file notes.md --generate-notes "${start[@]}" release/*
+          # The tag is created here, by git over SSH with the deploy key: only the tag, never
+          # main. A plain (non-forced) push fails if the tag already exists.
+          git push "$remote" "refs/tags/$TAG"
+          # Publish only a release whose tag exists at the release commit, so publishing never
+          # creates (or re-points) the tag through the API.
+          pushed=$(git ls-remote "$remote" "refs/tags/$TAG^{}" | awk '{ print $1 }')
+          [ "$pushed" = "$commit" ] || { echo "::error::tag $TAG is at '${pushed:-nothing}' on the remote, not at $commit: not published"; exit 1; }
+          read -r rid _ <<<"$(find_release)" || true
+          [ -n "${rid:-}" ] || { echo "::error::the draft release of $TAG was not found after creating it"; exit 1; }
+          publish "$rid"
+          echo "released $TAG at $commit"
+          echo "commit=$commit" >>"$GITHUB_OUTPUT"
+      - name: The release has every asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" --json assets -q '.assets[] | select(.state == "uploaded") | .name' | LC_ALL=C sort >live.txt
+          { cat expected.txt; echo SHA256SUMS; } | LC_ALL=C sort | diff - live.txt \
+            || { echo "::error::release $TAG does not have exactly the expected assets"; exit 1; }
+          [ "$(wc -l <live.txt)" -eq 31 ]
+      - name: Stop the ssh-agent
+        if: always()
+        run: |
+          if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null || true; fi
+          rm -f "$RUNNER_TEMP/release-ssh-agent.sock" "$RUNNER_TEMP/release-known_hosts"
+
+  crates:
+    needs: [plan, release]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    concurrency:
+      group: release-crates-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      # keel-splice has `publish = false` (cargo skips it). keel-hoard was never published to
+      # crates.io: its releases were GitHub release assets and the Action only.
+      SKIP_CRATES: keel-hoard
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      # No build cache in the jobs that hold an OIDC token.
+      - name: Publish the crates, dependencies first
+        run: |
+          set -euo pipefail
+          api=https://crates.io/api/v1
+          ua="keelstack-release (https://github.com/$GITHUB_REPOSITORY)"
+          # Publishable workspace crates (not `publish = false`, not SKIP_CRATES), every crate
+          # after the workspace crates it depends on by path.
+          order=$(cargo metadata --no-deps --locked --format-version 1 | python3 -c '
+          import json, os, sys
+          m = json.load(sys.stdin)
+          skip = set(os.environ.get("SKIP_CRATES", "").split())
+          pk = {p["name"]: p for p in m["packages"]}
+          want = {n for n, p in pk.items() if p.get("publish") != [] and n not in skip}
+          done, out = set(), []
+          def visit(n):
+              if n in done:
+                  return
+              done.add(n)
+              for d in pk[n]["dependencies"]:
+                  if d.get("path") and d["name"] in pk:
+                      visit(d["name"])
+              if n in want:
+                  out.append(n)
+          for n in sorted(pk):
+              visit(n)
+          print("\n".join(out))
+          ')
+          echo "publish order: $(echo "$order" | tr '\n' ' ')"
+          todo=()
+          for c in $order; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c/$VERSION")
+            if [ "$code" = 200 ]; then
+              echo "skip $c $VERSION: already on crates.io"
+              continue
+            fi
+            exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
+            if [ "$exists" != 200 ]; then
+              echo "::error::$c is not on crates.io yet; trusted publishing cannot create a crate. Publish its first version by hand (cargo publish -p $c), add its trusted publisher (keelstackhq/keelstack, release.yml, environment release), then run this workflow again"
+              exit 1
+            fi
+            todo+=("$c")
+          done
+          [ "${#todo[@]}" -gt 0 ] || { echo "nothing to publish"; exit 0; }
+          # Trusted publishing: an Actions OIDC token for audience crates.io, exchanged for a
+          # short-lived crates.io token (the same exchange rust-lang/crates-io-auth-action does),
+          # revoked at the end. Tokens go through a header file, never argv.
+          hdr=$(mktemp); chmod 600 "$hdr"
+          trap 'curl -fsS -X DELETE -A "$ua" -H @"$hdr" "$api/trusted_publishing/tokens" >/dev/null || echo "::warning::could not revoke the crates.io token (it expires on its own)"; rm -f "$hdr"' EXIT
+          printf 'Authorization: bearer %s\n' "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" >"$hdr"
+          jwt=$(curl -fsS -H @"$hdr" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=crates.io" | jq -r .value)
+          echo "::add-mask::$jwt"
+          token=$(jq -n --arg jwt "$jwt" '{jwt: $jwt}' | curl -fsS -X POST -A "$ua" -H 'Content-Type: application/json' --data-binary @- "$api/trusted_publishing/tokens" | jq -r .token)
+          echo "::add-mask::$token"
+          [ -n "$token" ] && [ "$token" != null ] || { echo "::error::crates.io gave no token: is the trusted publisher set up for these crates?"; exit 1; }
+          printf 'Authorization: Bearer %s\n' "$token" >"$hdr"
+          export CARGO_REGISTRY_TOKEN=$token
+          for c in "${todo[@]}"; do
+            cargo publish -p "$c" --locked
+          done
+
+  npm:
+    needs: [plan, release]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: release-npm-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # The checkout is only for npm/ and scripts/; no cargo runs in this job.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: refs/tags/${{ needs.plan.outputs.tag }}
+          persist-credentials: false
+      # npm >= 11.5.1 and Node >= 22.14.0 do the OIDC exchange for trusted publishing.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      - run: npm install -g npm@12.2.0
+      - name: Require a public repository (npm provenance)
+        run: |
+          private=$(gh api "repos/$GH_REPO" --jq .private)
+          if [ "$private" = true ]; then
+            echo "::error::npm provenance needs a public repository: make $GH_REPO public, then re-run"
+            exit 1
+          fi
+      # The binaries in the packages are the release's assets (checked against SHA256SUMS), so
+      # npm and the GitHub release carry the same bytes, also on a re-run.
+      - name: Download the release assets
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$TAG" --dir assets --pattern SHA256SUMS \
+            --pattern 'bosun-*' --pattern 'hoist-*' --pattern 'berth-*' --pattern 'keel-*' --pattern 'splice-*'
+          (cd assets && sha256sum -c --ignore-missing SHA256SUMS)
+          [ "$(find assets -mindepth 1 -maxdepth 1 | wc -l)" -eq 26 ] || { echo "::error::expected 25 assets and SHA256SUMS"; ls assets; exit 1; }
+      # bosun, hoist, berth and keel keep their platform packages in the repo
+      # (<tool>/npm/<tool>-<os>-<cpu>, bin/ is filled here). splice's are generated by its own
+      # script, which prints the directories, the launcher last.
+      - name: Put the binaries into the platform packages
+        run: |
+          set -euo pipefail
+          platforms="x86_64-unknown-linux-musl:linux-x64 aarch64-unknown-linux-musl:linux-arm64 x86_64-apple-darwin:darwin-x64 aarch64-apple-darwin:darwin-arm64 x86_64-pc-windows-msvc:win32-x64"
+          : >publish-dirs.txt
+          for t in bosun hoist berth keel; do
+            for pair in $platforms; do
+              tgt=${pair%%:*}; plat=${pair#*:}; ext=""
+              case "$tgt" in *-windows-*) ext=.exe ;; esac
+              dir="$t/npm/$t-$plat"
+              [ -f "$dir/package.json" ] || { echo "::error::missing $dir/package.json"; exit 1; }
+              mkdir -p "$dir/bin"
+              install -m 755 "assets/$t-$tgt$ext" "$dir/bin/$t$ext"
+              echo "./$dir" >>publish-dirs.txt
+            done
+            echo "./$t/npm/$t" >>publish-dirs.txt
+          done
+          for pair in $platforms; do
+            tgt=${pair%%:*}
+            mkdir -p "art/$tgt"
+            case "$tgt" in
+              *-windows-*) unzip -q "assets/splice-$tgt.zip" splice.exe -d "art/$tgt" ;;
+              *) tar -xzf "assets/splice-$tgt.tar.gz" -C "art/$tgt" splice ;;
+            esac
+          done
+          GITHUB_REPOSITORY="$GH_REPO" node splice/scripts/npm-stage.mjs --version "$VERSION" \
+            --artifacts "$PWD/art" --out "$RUNNER_TEMP/splice-npm" >>publish-dirs.txt
+          cat publish-dirs.txt
+      - name: Publish (trusted publishing, provenance), platform packages before their launcher
+        run: |
+          set -euo pipefail
+          [ -s publish-dirs.txt ] || { echo "::error::no packages to publish"; exit 1; }
+          # dist-tag `latest` only when this is the highest stable vX.Y.Z tag (the backport rule
+          # of job major); a backport gets `v<major>.<minor>-latest`, so `latest` never moves back.
+          newest=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
+            | sed 's#^refs/tags/##' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
+          if [ "$newest" = "$TAG" ]; then
+            dist_tag=latest
+          else
+            dist_tag="v${VERSION%.*}-latest"
+            echo "::notice::newest stable tag is ${newest:-none}, not $TAG: npm dist-tag $dist_tag, latest not moved"
+          fi
+          while read -r dir; do
+            name=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).name" "$dir")
+            got=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).version" "$dir")
+            [ "$got" = "$VERSION" ] || { echo "::error::$name in $dir is $got, not $VERSION"; exit 1; }
+            if out=$(npm view "$name@$VERSION" version 2>&1 </dev/null); then
+              echo "skip $name@$VERSION: already published"
+              continue
+            elif ! grep -q E404 <<<"$out"; then
+              echo "$out" >&2
+              exit 1
+            fi
+            # Provenance names the repository the workflow runs in; package.json must say the same.
+            (
+              cd "$dir"
+              npm pkg set "repository.type=git" "repository.url=git+https://github.com/$GH_REPO.git" </dev/null
+              case "$dir" in ./*) npm pkg set "repository.directory=${dir#./}" </dev/null ;; esac
+            )
+            npm publish "$dir" --provenance --access public --tag "$dist_tag" </dev/null
+          done <publish-dirs.txt
+
+  # The Action's major tag follows the newest stable release, and only moves once the release,
+  # crates.io and npm all have it (the splice Action installs `@keelstackhq/splice` at its
+  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist.
+  major:
+    needs: [plan, release, crates, npm]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      needs.crates.result == 'success' && needs.npm.result == 'success' &&
+      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: release-major-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
+    environment: release
+    # The deploy key moves the tag: the job's token needs no permission.
+    permissions: {}
+    env:
+      TAG: ${{ needs.plan.outputs.tag }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      # Same two steps as in `release`: the deploy key in ssh-agent, stopped in an always() step.
+      - name: Load the tag deploy key
+        env:
+          RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${RELEASE_TAG_KEY:-}" ]; then
+            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            exit 1
+          fi
+          # github.com's published ed25519 host key, checked against its published fingerprint
+          # (docs.github.com, "GitHub's SSH key fingerprints"). Never StrictHostKeyChecking=no.
+          kh="$RUNNER_TEMP/release-known_hosts"
+          echo 'github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl' >"$kh"
+          fp=$(ssh-keygen -lf "$kh" | awk '{ print $2 }')
+          if [ "$fp" != "SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU" ]; then
+            echo "::error::the pinned github.com host key has fingerprint $fp, not GitHub's published one"
+            exit 1
+          fi
+          sock="$RUNNER_TEMP/release-ssh-agent.sock"
+          eval "$(ssh-agent -s -a "$sock")" >/dev/null
+          # Through a pipe from a builtin: the key is never on disk or in a process's argv.
+          if ! printf '%s\n' "$RELEASE_TAG_KEY" | ssh-add -q - 2>/dev/null; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY is not a usable private key (ed25519, OpenSSH format, no passphrase): write it again with hoist"
+            exit 1
+          fi
+          if ! ssh-add -L | grep -q '^ssh-ed25519 '; then
+            ssh-agent -k >/dev/null || true
+            echo "::error::RELEASE_TAG_KEY must be an ed25519 key"
+            exit 1
+          fi
+          {
+            echo "SSH_AUTH_SOCK=$sock"
+            echo "SSH_AGENT_PID=$SSH_AGENT_PID"
+            echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
+          } >>"$GITHUB_ENV"
+      - name: Move v<major> to the release commit
+        run: |
+          set -euo pipefail
+          remote="git@github.com:$GH_REPO.git"
+          major="v${VERSION%%.*}"
+          # Every tag of the remote, peeled ones as <name>^{}: one read over SSH.
+          refs=$(git ls-remote --tags "$remote")
+          # Only forward: a backport release below the newest stable v<major>.* leaves it alone.
+          newest=$(awk '{ print $2 }' <<<"$refs" | sed -n 's#^refs/tags/##p' \
+            | { grep -E "^$major\.[0-9]+\.[0-9]+$" || true; } | sort -V | tail -n1)
+          if [ "$newest" != "$TAG" ]; then
+            echo "newest stable $major.* tag is ${newest:-none}, not $TAG: $major not moved"
+            exit 0
+          fi
+          # The release commit: the peeled tag (annotated), else the tag itself (lightweight).
+          commit=$(awk -v t="refs/tags/$TAG" '$2 == t "^{}" { p = $1 } $2 == t { l = $1 } END { print (p != "" ? p : l) }' <<<"$refs")
+          [ -n "$commit" ] || { echo "::error::no commit for $TAG on the remote"; exit 1; }
+          # A scratch repository holding the release commit, so git can push v<major> to it.
+          work="$RUNNER_TEMP/major-tag"
+          trap 'rm -rf "$work"' EXIT
+          rm -rf "$work"
+          git init -q "$work"
+          git -C "$work" fetch -q --depth=1 --no-tags "$remote" "refs/tags/$TAG"
+          git -C "$work" tag -f "$major" "$commit" >/dev/null
+          # The forced move of v<major> (and only that ref), by the deploy key.
+          git -C "$work" push -q "$remote" "+refs/tags/$major"
+          now=$(git ls-remote "$remote" "refs/tags/$major" | awk '{ print $1 }')
+          [ "$now" = "$commit" ] || { echo "::error::$major is at $now, not at $commit"; exit 1; }
+          echo "$major -> $TAG ($commit)"
+      - name: Stop the ssh-agent
+        if: always()
+        run: |
+          if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null || true; fi
+          rm -f "$RUNNER_TEMP/release-ssh-agent.sock" "$RUNNER_TEMP/release-known_hosts"

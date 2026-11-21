@@ -1,0 +1,764 @@
+mod common;
+
+use common::{FakeApi, fixture_repo};
+use hoist::auth::Secret;
+use hoist::change::{Change, Reviewers};
+use hoist::config::TagsBypass;
+use hoist::desired::{Desired, build_desired};
+use hoist::github_write::execute_github;
+use hoist::http::{Http, Service};
+use serde_json::{Value, json};
+
+fn desired() -> (tempfile::TempDir, Desired) {
+    let dir = fixture_repo("site", "https://github.com/acme/x.git");
+    std::fs::write(
+        dir.path().join("hoist.toml"),
+        "[cloudflare]\naccount_id = \"acc\"\n",
+    )
+    .unwrap();
+    let d = build_desired(dir.path()).expect("desired");
+    (dir, d)
+}
+
+fn http(api: &FakeApi) -> Http {
+    Http::with_base(Service::Github, Secret::from("dummy"), &api.url()).max_sleep_ms(0)
+}
+
+fn body(api: &FakeApi, index: usize) -> Value {
+    let requests = api.requests();
+    serde_json::from_str(requests[index].body.as_deref().expect("body")).unwrap()
+}
+
+fn ruleset(existing_id: Option<u64>, merge_queue: bool) -> Change {
+    Change::Ruleset {
+        existing_id,
+        branch: "main".into(),
+        required_checks: vec!["ci-ok".into()],
+        merge_queue,
+        admin_bypass: true,
+    }
+}
+
+fn base_ruleset() -> Value {
+    json!({
+        "name": "hoist: default branch",
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": [{"context": "ci-ok"}]
+            }}
+        ],
+        "bypass_actors": [
+            {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+        ]
+    })
+}
+
+#[test]
+fn settings_patch_sends_only_changed_fields() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("PATCH /repos/acme/x", 200, "empty.json", &[])]);
+    let mut patch = serde_json::Map::new();
+    patch.insert("allow_auto_merge".into(), json!(true));
+    execute_github(&http(&api), &d, &Change::RepoSettings { patch }).unwrap();
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(api.requests()[0].method, "PATCH");
+    assert_eq!(body(&api, 0), json!({"allow_auto_merge": true}));
+}
+
+#[test]
+fn ruleset_create_body_exact() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    execute_github(&http(&api), &d, &ruleset(None, false)).unwrap();
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(body(&api, 0), base_ruleset());
+}
+
+#[test]
+fn ruleset_update_uses_put_by_id() {
+    let (_dir, d) = desired();
+    let live = base_ruleset().to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/11", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/11", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &ruleset(Some(11), false)).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[1].method, "PUT");
+    assert_eq!(requests[1].path, "/repos/acme/x/rulesets/11");
+    assert_eq!(body(&api, 1), base_ruleset());
+}
+
+#[test]
+fn ruleset_create_without_admin_bypass_has_no_bypass_actor() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    let change = Change::Ruleset {
+        existing_id: None,
+        branch: "main".into(),
+        required_checks: vec!["ci-ok".into()],
+        merge_queue: false,
+        admin_bypass: false,
+    };
+    execute_github(&http(&api), &d, &change).unwrap();
+    let mut want = base_ruleset();
+    want["bypass_actors"] = json!([]);
+    assert_eq!(body(&api, 0), want);
+}
+
+#[test]
+fn ruleset_update_reads_then_keeps_what_the_owner_added() {
+    let (_dir, d) = desired();
+    // An older ruleset: owner rule, include, exclude, a team actor, a strict pinned check, a
+    // live queue hoist no longer wants, no `deletion` rule, enforcement off.
+    let live = json!({
+        "id": 11, "name": "hoist: default branch", "target": "branch",
+        "enforcement": "evaluate", "node_id": "RRS_y",
+        "conditions": {"ref_name": {"include": ["refs/heads/release"], "exclude": ["refs/heads/x"]}},
+        "rules": [
+            {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+            {"type": "non_fast_forward"},
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": true,
+                "required_status_checks": [
+                    {"context": "ci-ok", "integration_id": 15368},
+                    {"context": "old"}
+                ]
+            }},
+            {"type": "merge_queue", "parameters": {"merge_method": "SQUASH"}}
+        ],
+        "bypass_actors": [{"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"}]
+    })
+    .to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/11", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/11", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &ruleset(Some(11), false)).unwrap();
+    assert_eq!(
+        body(&api, 1),
+        json!({
+            "name": "hoist: default branch",
+            "target": "branch",
+            "enforcement": "active",
+            "conditions": {"ref_name": {
+                "include": ["refs/heads/release", "~DEFAULT_BRANCH"],
+                "exclude": ["refs/heads/x"]
+            }},
+            "rules": [
+                {"type": "pull_request", "parameters": {"required_approving_review_count": 1}},
+                {"type": "non_fast_forward"},
+                {"type": "required_status_checks", "parameters": {
+                    "strict_required_status_checks_policy": true,
+                    "required_status_checks": [{"context": "ci-ok", "integration_id": 15368}]
+                }},
+                {"type": "deletion"}
+            ],
+            "bypass_actors": [
+                {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"},
+                {"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn ruleset_update_without_admin_bypass_neither_adds_nor_removes_actors() {
+    let (_dir, d) = desired();
+    let live = base_ruleset().to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/11", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/11", 200, "empty.json", &[]),
+    ]);
+    let change = Change::Ruleset {
+        existing_id: Some(11),
+        branch: "main".into(),
+        required_checks: vec!["ci-ok".into()],
+        merge_queue: false,
+        admin_bypass: false,
+    };
+    execute_github(&http(&api), &d, &change).unwrap();
+    assert_eq!(
+        body(&api, 1)["bypass_actors"],
+        base_ruleset()["bypass_actors"]
+    );
+}
+
+#[test]
+fn ruleset_update_of_an_unreadable_ruleset_writes_nothing() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "GET /repos/acme/x/rulesets/11",
+        403,
+        "github/forbidden.json",
+        &[],
+    )]);
+    let err = execute_github(&http(&api), &d, &ruleset(Some(11), false)).unwrap_err();
+    assert!(err.to_string().contains("blind"), "{err}");
+    assert!(api.requests().iter().all(|r| r.method == "GET"));
+}
+
+#[test]
+fn tag_ruleset_create_with_deploy_key_bypass_names_the_deploy_keys() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    let change = Change::TagRuleset {
+        existing_id: None,
+        patterns: vec!["v*".into()],
+        bypass: TagsBypass::DeployKey,
+    };
+    execute_github(&http(&api), &d, &change).unwrap();
+    assert_eq!(
+        body(&api, 0)["bypass_actors"],
+        json!([{"actor_id": null, "actor_type": "DeployKey", "bypass_mode": "always"}])
+    );
+}
+
+#[test]
+fn ruleset_with_merge_queue_adds_rule() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    execute_github(&http(&api), &d, &ruleset(None, true)).unwrap();
+    let mut want = base_ruleset();
+    want["rules"].as_array_mut().unwrap().push(json!({
+        "type": "merge_queue",
+        "parameters": {
+            "merge_method": "MERGE",
+            "grouping_strategy": "ALLGREEN",
+            "max_entries_to_build": 5,
+            "min_entries_to_merge": 1,
+            "max_entries_to_merge": 5,
+            "min_entries_to_merge_wait_minutes": 5,
+            "check_response_timeout_minutes": 60
+        }
+    }));
+    assert_eq!(body(&api, 0), want);
+}
+
+#[test]
+fn actions_permissions_put() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "PUT /repos/acme/x/actions/permissions/workflow",
+        204,
+        "",
+        &[],
+    )]);
+    execute_github(
+        &http(&api),
+        &d,
+        &Change::ActionsPermissions {
+            default: "read".into(),
+        },
+    )
+    .unwrap();
+    assert_eq!(api.requests()[0].method, "PUT");
+    assert_eq!(
+        body(&api, 0),
+        json!({"default_workflow_permissions": "read"})
+    );
+}
+
+fn environment() -> Change {
+    Change::Environment {
+        name: "pro duction".into(),
+        branches: vec!["main".into()],
+        write_env: true,
+        exists: false,
+        release: false,
+        reviewers: Reviewers::Unresolved,
+    }
+}
+
+#[test]
+fn environment_put_then_branch_policy() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            200,
+            "created.json",
+            &[],
+        ),
+    ]);
+    execute_github(&http(&api), &d, &environment()).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0].method, "PUT");
+    assert_eq!(
+        body(&api, 0),
+        json!({"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}})
+    );
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(body(&api, 1), json!({"name": "main", "type": "branch"}));
+}
+
+fn release_environment() -> Change {
+    Change::Environment {
+        name: "release".into(),
+        branches: vec!["main".into()],
+        write_env: true,
+        exists: false,
+        release: true,
+        reviewers: Reviewers::Users(vec![42]),
+    }
+}
+
+const USER: (&str, u16, &str, &[(&str, &str)]) =
+    ("GET /user", 200, r#"{"id":42,"login":"owner"}"#, &[]);
+
+#[test]
+fn release_422_about_reviewers_creates_the_environment_without_one() {
+    for message in [
+        r#"{"message":"Failed to create the environment: required reviewers are not available on this plan"}"#,
+        r#"{"message":"Environment protection rules are not available for this repository"}"#,
+    ] {
+        let (_dir, d) = desired();
+        let api = FakeApi::start(&[
+            USER,
+            ("PUT /repos/acme/x/environments/release", 422, message, &[]),
+            ("PUT /repos/acme/x/environments/release", 200, "{}", &[]),
+            (
+                "POST /repos/acme/x/environments/release/deployment-branch-policies",
+                200,
+                "{}",
+                &[],
+            ),
+        ]);
+        let err = execute_github(&http(&api), &d, &release_environment()).unwrap_err();
+        assert!(
+            matches!(err, hoist::error::HoistError::PlanLimited(_)),
+            "{err}"
+        );
+        let puts: Vec<_> = api
+            .requests()
+            .into_iter()
+            .filter(|r| r.method == "PUT")
+            .collect();
+        assert_eq!(puts.len(), 2);
+        assert!(!puts[1].body.as_deref().unwrap().contains("reviewers"));
+    }
+}
+
+#[test]
+fn release_422_for_another_reason_is_a_real_error() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        USER,
+        (
+            "PUT /repos/acme/x/environments/release",
+            422,
+            r#"{"message":"Validation Failed: deployment_branch_policy is invalid"}"#,
+            &[],
+        ),
+    ]);
+    let err = execute_github(&http(&api), &d, &release_environment()).unwrap_err();
+    assert!(
+        !matches!(err, hoist::error::HoistError::PlanLimited(_)),
+        "{err}"
+    );
+    assert!(err.to_string().contains("422"), "{err}");
+    let puts = api
+        .requests()
+        .into_iter()
+        .filter(|r| r.method == "PUT")
+        .count();
+    assert_eq!(puts, 1);
+}
+
+#[test]
+fn branch_policy_already_exists_is_ok() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            422,
+            "github/policy_exists.json",
+            &[],
+        ),
+    ]);
+    execute_github(&http(&api), &d, &environment()).unwrap();
+}
+
+#[test]
+fn other_422_on_branch_policy_is_error() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            422,
+            "unprocessable.json",
+            &[],
+        ),
+    ]);
+    let err = execute_github(&http(&api), &d, &environment()).unwrap_err();
+    assert!(err.to_string().contains("422"), "{err}");
+}
+
+#[test]
+fn forbidden_write_is_rejected_error() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "POST /repos/acme/x/rulesets",
+        403,
+        "github/forbidden.json",
+        &[],
+    )]);
+    let err = execute_github(&http(&api), &d, &ruleset(None, false)).unwrap_err();
+    assert_eq!(err.exit_code(), 3);
+    let text = err.to_string();
+    assert!(
+        text.contains("POST /repos/acme/x/rulesets")
+            && text.contains("Resource not accessible by personal access token"),
+        "{text}"
+    );
+}
+
+#[test]
+fn non_github_change_is_usage_error() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[]);
+    let err = execute_github(
+        &http(&api),
+        &d,
+        &Change::Domain {
+            project: "p".into(),
+            host: "h".into(),
+        },
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("not a GitHub change"));
+    assert!(api.requests().is_empty());
+}
+
+#[test]
+fn branch_policy_303_is_success_and_not_followed() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            303,
+            "",
+            &[("Location", "/elsewhere")],
+        ),
+    ]);
+    execute_github(&http(&api), &d, &environment()).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert!(requests.iter().all(|r| r.path != "/elsewhere"));
+}
+
+#[test]
+fn ruleset_update_with_merge_queue_puts_queue_rule() {
+    let (_dir, d) = desired();
+    let live = base_ruleset().to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/11", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/11", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &ruleset(Some(11), true)).unwrap();
+    let sent = body(&api, 1);
+    let rules = sent["rules"].as_array().unwrap();
+    assert_eq!(rules.len(), 4);
+    assert_eq!(rules[3]["type"], "merge_queue");
+}
+
+fn tag_ruleset(existing_id: Option<u64>) -> Change {
+    Change::TagRuleset {
+        existing_id,
+        patterns: vec!["v*".into()],
+        bypass: TagsBypass::Actions,
+    }
+}
+
+fn fresh_tag_ruleset() -> Value {
+    json!({
+        "name": "hoist: tags",
+        "target": "tag",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["refs/tags/v*"], "exclude": []}},
+        "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+        "bypass_actors": [
+            {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
+        ]
+    })
+}
+
+#[test]
+fn tag_ruleset_create_body_exact() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    execute_github(&http(&api), &d, &tag_ruleset(None)).unwrap();
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(body(&api, 0), fresh_tag_ruleset());
+}
+
+#[test]
+fn tag_ruleset_update_reads_then_keeps_what_the_owner_added() {
+    let (_dir, d) = desired();
+    // Owner-added: an include, a rule, a bypass actor; hoist's rules keep their parameters.
+    let live = json!({
+        "id": 12, "name": "hoist: tags", "target": "tag", "enforcement": "evaluate",
+        "node_id": "RRS_x", "source_type": "Repository", "source": "acme/x",
+        "_links": {"self": {"href": "x"}}, "created_at": "2026-01-01T00:00:00Z",
+        "current_user_can_bypass": "always",
+        "conditions": {"ref_name": {"include": ["refs/tags/release-*"], "exclude": []}},
+        "rules": [
+            {"type": "update", "parameters": {"update_allows_fetch_and_merge": false}},
+            {"type": "required_signatures"}
+        ],
+        "bypass_actors": [
+            {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"},
+            {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "pull_request"}
+        ]
+    });
+    let live = live.to_string();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/12", 200, &live, &[]),
+        ("PUT /repos/acme/x/rulesets/12", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[0].method, "GET");
+    assert_eq!(requests[1].method, "PUT");
+    assert_eq!(
+        body(&api, 1),
+        json!({
+            "name": "hoist: tags",
+            "target": "tag",
+            "enforcement": "active",
+            "conditions": {"ref_name": {
+                "include": ["refs/tags/release-*", "refs/tags/v*"],
+                "exclude": []
+            }},
+            "rules": [
+                {"type": "update", "parameters": {"update_allows_fetch_and_merge": false}},
+                {"type": "required_signatures"},
+                {"type": "creation"},
+                {"type": "deletion"}
+            ],
+            "bypass_actors": [
+                {"actor_id": 7, "actor_type": "Team", "bypass_mode": "always"},
+                {"actor_id": 15368, "actor_type": "Integration", "bypass_mode": "always"}
+            ]
+        })
+    );
+}
+
+#[test]
+fn tag_ruleset_update_of_a_vanished_ruleset_creates_it() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        ("GET /repos/acme/x/rulesets/12", 404, "empty.json", &[]),
+        ("POST /repos/acme/x/rulesets", 201, "created.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap();
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "{requests:?}");
+    assert_eq!(requests[1].method, "POST");
+    assert_eq!(body(&api, 1), fresh_tag_ruleset());
+}
+
+#[test]
+fn tag_ruleset_update_of_an_unreadable_ruleset_writes_nothing() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "GET /repos/acme/x/rulesets/12",
+        403,
+        "github/forbidden.json",
+        &[],
+    )]);
+    let err = execute_github(&http(&api), &d, &tag_ruleset(Some(12))).unwrap_err();
+    assert!(err.to_string().contains("blind"), "{err}");
+    assert!(api.requests().iter().all(|r| r.method == "GET"));
+}
+
+#[test]
+fn environment_without_branches_has_no_branch_restriction() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[(
+        "PUT /repos/acme/x/environments/pro%20duction",
+        200,
+        "empty.json",
+        &[],
+    )]);
+    let open = Change::Environment {
+        name: "pro duction".into(),
+        branches: Vec::new(),
+        write_env: true,
+        exists: false,
+        release: false,
+        reviewers: Reviewers::Unresolved,
+    };
+    execute_github(&http(&api), &d, &open).unwrap();
+    assert_eq!(api.requests().len(), 1);
+    assert_eq!(body(&api, 0), json!({"deployment_branch_policy": null}));
+}
+
+#[test]
+fn environment_posts_one_policy_per_branch() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            200,
+            "created.json",
+            &[],
+        ),
+    ]);
+    let two = Change::Environment {
+        name: "pro duction".into(),
+        branches: vec!["main".into(), "release/*".into()],
+        write_env: true,
+        exists: false,
+        release: false,
+        reviewers: Reviewers::Unresolved,
+    };
+    execute_github(&http(&api), &d, &two).unwrap();
+    assert_eq!(api.requests().len(), 3);
+    assert_eq!(body(&api, 1), json!({"name": "main", "type": "branch"}));
+    assert_eq!(
+        body(&api, 2),
+        json!({"name": "release/*", "type": "branch"})
+    );
+}
+
+const LIVE_ENV: &str = r#"{"name":"pro duction","protection_rules":[{"id":1,"type":"wait_timer","wait_timer":15},{"id":2,"type":"required_reviewers","prevent_self_review":true,"reviewers":[{"type":"User","reviewer":{"id":7,"login":"a"}},{"type":"Team","reviewer":{"id":9,"slug":"t"}}]},{"id":3,"type":"branch_policy"}]}"#;
+
+fn existing(release: bool, reviewers: Reviewers) -> Change {
+    Change::Environment {
+        name: "pro duction".into(),
+        branches: vec!["main".into()],
+        write_env: true,
+        exists: true,
+        release,
+        reviewers,
+    }
+}
+
+fn put_body_of(api: &FakeApi) -> Value {
+    let put = api
+        .requests()
+        .into_iter()
+        .find(|r| r.method == "PUT")
+        .unwrap();
+    serde_json::from_str(put.body.as_deref().unwrap()).unwrap()
+}
+
+fn env_api(get: (u16, &str)) -> FakeApi {
+    FakeApi::start(&[
+        (
+            "GET /repos/acme/x/environments/pro%20duction",
+            get.0,
+            get.1,
+            &[],
+        ),
+        (
+            "PUT /repos/acme/x/environments/pro%20duction",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/pro%20duction/deployment-branch-policies",
+            200,
+            "created.json",
+            &[],
+        ),
+    ])
+}
+
+#[test]
+fn putting_an_existing_environment_carries_back_its_protection() {
+    let (_dir, d) = desired();
+    let api = env_api((200, LIVE_ENV));
+    execute_github(&http(&api), &d, &existing(false, Reviewers::Unresolved)).unwrap();
+    let body = put_body_of(&api);
+    assert_eq!(body["wait_timer"], 15, "{body}");
+    assert_eq!(body["prevent_self_review"], true, "{body}");
+    assert_eq!(
+        body["reviewers"],
+        json!([{"type":"User","id":7},{"type":"Team","id":9}]),
+        "{body}"
+    );
+    assert_eq!(
+        body["deployment_branch_policy"]["custom_branch_policies"],
+        true
+    );
+}
+
+#[test]
+fn the_release_environments_resolved_reviewers_win_but_the_rest_is_kept() {
+    let (_dir, d) = desired();
+    let api = env_api((200, LIVE_ENV));
+    execute_github(&http(&api), &d, &existing(true, Reviewers::Users(vec![42]))).unwrap();
+    let body = put_body_of(&api);
+    assert_eq!(
+        body["reviewers"],
+        json!([{"type":"User","id":42}]),
+        "{body}"
+    );
+    assert_eq!(body["wait_timer"], 15);
+    assert_eq!(body["prevent_self_review"], true);
+}
+
+#[test]
+fn an_unreadable_existing_environment_is_not_rewritten_blind() {
+    let (_dir, d) = desired();
+    let api = env_api((403, r#"{"message":"Resource not accessible"}"#));
+    let err = execute_github(&http(&api), &d, &existing(false, Reviewers::Unresolved));
+    assert!(err.is_err());
+    assert!(api.requests().iter().all(|r| r.method == "GET"));
+}
+
+#[test]
+fn a_new_environment_is_not_read_first() {
+    let (_dir, d) = desired();
+    let api = env_api((200, LIVE_ENV));
+    let mut c = existing(false, Reviewers::Unresolved);
+    if let Change::Environment { exists, .. } = &mut c {
+        *exists = false;
+    }
+    execute_github(&http(&api), &d, &c).unwrap();
+    assert!(api.requests().iter().all(|r| r.method != "GET"));
+    assert!(put_body_of(&api).get("wait_timer").is_none());
+}

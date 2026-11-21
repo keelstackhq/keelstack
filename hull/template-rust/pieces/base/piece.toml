@@ -1,0 +1,29 @@
+id = "base"
+description = "Pure Rust workspace root: cargo, rustup pin, cargo-deny, nextest, CI, hoist release and AI layer (no Node)"
+
+[files]
+shared = ["Cargo.toml", "crates/common/Cargo.toml"]
+owned = [".claude/agents/*.md", "docs/agents/guard.md", "scripts/proxy-ca.sh", ".github/scripts/workflows.mjs", ".github/workflows/ci.yml", ".github/workflows/advisories.yml", ".github/scripts/advisory-issue.mjs", ".github/workflows/release.yml", ".github/workflows/splice.yml", ".github/scripts/docs-only.mjs", ".github/scripts/release-pending.mjs", "scripts/agents-index.mjs", "scripts/ready.mjs", "scripts/pins.mjs", "pins.toml", "scripts/deny.mjs", "scripts/licenses.mjs", "rust-toolchain.toml", "rustfmt.toml", "deny.toml", ".config/nextest.toml", "renovate.json"]
+seed = ["CHANGELOG.md", "docs/agents/index.md", "AGENTS.md", "deny.local.toml", "docs/agents/onboarding.toml", "scripts/ci-pre.sh", "scripts/ci-extra.sh", "README.md", "docs/agents/project.md", "hoist.toml", "crates/common/src/**", "Cargo.lock"]
+
+[merge]
+"Cargo.toml" = "toml"
+"crates/common/Cargo.toml" = "toml"
+
+[[post]]
+run = "cargo generate-lockfile"
+when = ["new"]
+
+[[post]]
+run = "cargo update --workspace"
+when = ["update"]
+
+[[post]]
+run = "node scripts/agents-index.mjs"
+when = ["new", "add", "update"]
+
+# THIRD_PARTY_LICENSES.md + third-party-licenses.json (cargo metadata; no install step needed).
+# Not on add: a new crate is in Cargo.lock only after rust-cli's chained post (order is not fixed).
+[[post]]
+run = "node scripts/licenses.mjs"
+when = ["new", "update"]

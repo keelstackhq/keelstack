@@ -1,0 +1,565 @@
+# Changelog
+
+All notable changes to bosun. The format follows [Keep a Changelog](https://keepachangelog.com/).
+
+## Unreleased
+
+## 0.21.0 (2026-11-18)
+
+- bosun runs on itself in `[mode] name = "autonomous"`; the explicit `[approvals] policy` is dropped so the preset fills `autonomous`.
+- ts-pnpm `deps` in bosun-trusted reads the pushed commit's own `package.json` and `pnpm-workspace.yaml` on a push to the default branch, so a merged `auditConfig` change (an approved `ignoreGhsas` entry) applies on its own push run instead of leaving main red; pull requests and the merge queue still use the base's copies.
+- bosun.yml (and the CircleCI job) key the ts-pnpm steps (pnpm setup, install, hoard) off the ts-pnpm `[[stack]]` paths of the base's `.bosun/bosun.toml`, not the render's `ts_path`, so a stack in a subdirectory (`action/`) gets pnpm on push to main; the `{}` package.json stand-in for a new stack's audit is scoped to those stacks and removed right after deps.
+- push-gates (`[mode] push_gates = "push"`) warns, never denies, when the pushed branch's open PR has a verdict for an older head than the pushed commit, pointing at `bosun review-loop N`.
+- `bosun risk-check` that posts `success` on a head with no `review-verdict` re-applies the newest verdict comment for exactly that head when it is an approval and bosun is not halted (as `bosun verdict apply`), ignores refused comments as verdict.yml does (at most 20), applies a newer verdict that raced it (at most 3 applies) and otherwise withdraws (`failure`, `re-apply withdrawn: `), which a later run retries; reports `data.verdict_reapplied`; never an error.
+- `test-integrity` judges untracked, non-ignored files as added files and stamps the working tree like every gate, so committing gated work keeps its stamp (push-gates no longer refuses "no passing stamp for test-integrity").
+- `bosun review-pack` adds `verdict_skeleton` (a fail-safe request-changes verdict with pr and head_sha filled in and an empty `chunks_reviewed`) and `chunk_count`, and tells the reviewer to start from it; the missing-chunks refusal of `verdict post/comment/apply` names at most 5 missing chunks then `and K more`, none when no chunk was reviewed, and says to review them; an approving verdict whose `chunks_reviewed` is a count is refused by `verdict post/comment` (exit 2) and `verdict apply` (exit 1), and `review-loop` ignores it.
+- Handoff notes go to `docs/handoff/<branch>.md`, outside R-gov: a handoff PR is normal risk and `bosun pr --one-off` takes it; instruction files and nested `.claude/` folders anywhere stay R-gov (new `**/.claude/**` in the built-ins, bosun's rules and the channel), and nothing imports the notes (spec §4, §8).
+- `bosun verdict apply` relays a listed `[approvals] verdict_bots` bot verdict without markers (first fenced json block that is a valid verdict); a non-writer comment with no verdict is refused neutrally; the verdict workflow also runs on Bot comments containing "head_sha".
+- `bosun gate sources --pr N` (read-only): reports who posted `risk-check`, `review-verdict` and `main-open` on the PR head — status creator, the gate App's run, other Apps' runs — judged by `[checks] mode`; exit 3 unless every gate is posted by the gate App and no status disagrees (a forge sign).
+- `bosun review-loop <pr> [--max N]` (the PR author owns the review loop): counts rounds from verdict comments and returns one step — spawn a reviewer, fix findings, ready, or ask the owner (exit 5 at an escalation or round max+1); `--report` lists open PRs with missing, stale, request-changes or escalated verdicts; `[mode] review_rounds` (preset 5); bot verdicts never count as independent.
+- `bosun verdict comment --from <file>` relays a verdict comment body: it keeps the original reviewer, model and chunks, adds `<!-- bosun:relayed_by <session> -->` when another session posts it, and `verdict comment` / `verdict apply` report `relayed_by` (`comment` also `reviewer`).
+- gates: in `[checks] mode = "dual"` every reader of risk-check, review-verdict and main-open takes the worse of the newest status and the gate App's newest check run, so a status forged by any workflow cannot outvote the App.
+
+## 0.20.0 (2026-11-18)
+
+- `bosun pr --auto-merge` on an already clean PR hands it to the parent as `ready_to_merge` (`next`); `bosun metrics` gets `--max-prs`, stderr progress and a timeout (bad `BOSUN_METRICS_TIMEOUT_SECS` is exit 2); global `--full`; `bosun doctor` notes the notify fallback and the merge identity (step 18).
+- Push gates carry stamps over a docs-only diff (local pre-push only: *.md under docs/ or changelog.d/, not the spec or READMEs; CI still runs every gate); R-weaken ignores lone `dead_code` allows in test code and prints ASCII `->`; `bosun risk-check --local` judges `origin/main...HEAD` before a push.
+- One governance path list (`GOVERNANCE_PATHS`, R-gov's) for `bosun pr --pr N` and risk-check; `[approvals] oneoff_allow` lets task-less PRs and `--one-off` reach more paths (risk-check still asks the owner); `bosun owners set` opens an owner PR for `governance/owners.toml` with team entries; `migrate` fills the intake template's owner and visibility from the repo.
+- Review flow: an owner's own approval of the exact head clears an approvable escalated `review-verdict`; `verdict apply` refuses non-writer authors neutrally and accepts `[approvals] verdict_bots` (default branch only, `[bot]` logins of type Bot, PRs into the default branch, reviewer marker, current head) as `bot:<login>` verdicts that set `review-verdict` only and never count toward an approval; autonomous request-changes opens or updates a `bosun:fix-task` issue; `review-pack` adds `draft`, `required_checks` and `gate_stamps`; the reviewer saves its verdict JSON to the scratchpad.
+- `bosun rules --write` renders the session rules into a marked block of CLAUDE.md/AGENTS.md (hooks do not load in Claude in Slack), with an npx fallback line; `doctor` warns there when it is missing; CI runs ci-minutes with the release a pin PR moves to.
+- `bosun result --session-json` records spend; cloud sessions skip collaborator lookups; GET retried once on reset; any 403 on /graphql returns the MCP call in `next`; `migrate` HTTP budget 600 s.
+
+## 0.19.0 (2026-11-17)
+
+- Merge-lock: refuse `remote.<r>.fetch` into the default branch or a tag set by `GIT_CONFIG_*` exported in an earlier segment or by `git config` (`--add`, `--replace-all`, `set`), and fetches into the default branch whose remote is a path with `:` (`./ev:il`) or any name but `origin`/`upstream` (`git fetch evil2 +main:main`); allow long brace sequences in read-only git subcommands (`git log -n {1..100}`).
+- Merge-lock: a fetch or pull now reads git config where it runs (`git config --get-regexp`, after `cd` and `-C`) and is refused when a configured `remote.<r>.fetch` moves the default branch, mirrors or writes tags from an untrusted remote, or when `protocol.*.allow`/`url.*.insteadOf` enables `ext::`/`fd::`; git-core programs (`git-fetch`, `/usr/lib/git-core/git-push`) are judged as git.
+- Merge-lock: inside a quoted or option value of a git command (`rebase -x '..'`), brace expansion, `$( )`, backticks, `git-*` programs and globs that can name `git-*`, fetch, pull or update are refused.
+- R-secrets: flag a PHP/Ruby arrow to a single-quoted literal that starts with `$` (`'password' => '$ecret1'`), which never interpolates; double-quoted `"$x"`, `"{$x}"` and Ruby `"#{x}"` stay skipped.
+
+## 0.18.0 (2026-11-16)
+
+- ci: release workflow pins hoist 0.5.1 and passes HOIST_RELEASE_TOKEN to `hoist release prepare`
+- guard: a prose string literal in the quoted heredoc of an interpreter (`python3 - <<'EOF'`) no longer trips the decrypt-lock; command-shaped literals are still judged
+- Merge-lock: refuse `git symbolic-ref` writes under `refs/tags/`, brace-expanded words (`refs/{tags,x}/v1`, `{git,} push ..`, `{x..y}` in any git or gh spelling), fetches into the default branch from anything but that remote's default branch or with a refspec the guard cannot read (`git fetch . feat:main`, `git fetch origin $SPEC`), moves of the default branch (`update-ref`, `branch -f`, `checkout -B`, `switch -C`), and a git subcommand held in a variable or behind `--namespace x` (`git $g x`).
+- R-secrets also catches unquoted yaml literals (`password: x` in yaml, properties and env files), php/ruby `'password' => 'x'` array literals and Kubernetes env `value:` literals under a secret `name:`.
+
+## 0.17.0 (2026-11-15)
+
+- Audit fixes: guard (quoted/-R gh merge incl. `gh pr -R`, -fu pushes, update-ref tags, shell indirection, | sh), risk (++ lines, R-secrets (values, not types or refs), CODEOWNERS, build files, every added binary file now trips R-unseen (a pure rename does not; a renamed changed binary does), exact lock sources, missing plan), hooks (stale-cache edit-lock, version skew line, reap, token scrub, https base), init/adopt/doctor/migrate flow, setup-script version check (warns), risk re-judge on push to main, SHA-pinned actions, tuned cargo profiles; update-ref and fetch `$` targets and push.followTags denied, R-secrets: keyword inside a string is no key, typed and `:=` literals match, `.tf` is code Also: R-secrets `${X:-lit}` defaults and `'$..'` literals match, `secret` keyword narrowed (no `secrets`, `secretary`, `secretName`), migrate-booster one structure, deny `git fetch <r> <src>:tags/<x>`. R-secrets: `${X:=l}` `${X=l}` `${X:+l}` `${X+l}` defaults, `name == "lit"` comparisons and a secret-looking reader-call argument match.
+
+## 0.16.0 (2026-11-15)
+
+- chore: pin splice 0.5.1, hoist 0.5.1, berth 0.2.1 (setup scripts, channel, splice workflow with the v0.5.1 action sha)
+- chore: pin bosun 0.15.0 (.bosun/version, docs/setup-script.sh)
+- feat: the janitor Routine is opt-in: `[routines] janitor = true` (and `janitor_cron`) in .bosun/bosun.toml; doctor, init and the docs no longer create, recommend or require it by default
+- Fewer owner stops: plan checkbox ticks (plan files only, modified status, no patch headers) need no lease or owner, `[approvals] autonomous_allow` widens the narrow default (`src/**`, `tests/**`, `docs/**`, `changelog.d/**`, `.changeset/*.md`) and a longer deny set stays owner-only, `bosun pr --one-off` (touch inside the allow set and outside gated paths, at most 300 lines, owner past that also in autonomous mode; `CODEOWNERS` at any depth and a plan-path `..` stay owner-only) opens and claims a task for unplanned work; autonomous one-off hardening: a task is a one-off unless its item and task are in a plan file on base (or it has the oneoff label); deny globs lowercase, plus claude.local.md, .claude-plugin, docs/spec.
+- fix: `bosun adopt --dry-run` succeeds when the token cannot read the repo; `janitor_cron` is a real cron check (only with `janitor = true`); `pr --ready` caps every one-off, also by label or unplanned item; tool pins: splice 0.5.0, hoist 0.5.0, berth 0.2.0
+
+## 0.15.0 (2026-11-14)
+
+- chore: pin bosun 0.14.0 (.bosun/version, docs/setup-script.sh)
+- Spec 05 residual (c) and the migrate-booster registry step now match `registry::pick` (lowest open labelled issue, else lowest in any state).
+- `docs/migrate-booster.md`: runbook for an agent (and the owner) that moves a repo on bosun to booster mode, for the CLI, cloud and Slack, with prompts, rollback and troubleshooting; linked from the README and `docs/quickstart.md`.
+- `bosun migrate --to <mode> [--direct] [--dry-run]` opens one governance PR for a mode move (version and registry pins, `[mode]`), with a best-effort metrics baseline; `--finish` joins and amends plans after the merge; `bosun pr --pr <n> --ready` readies and auto-merges a PR with no task; `docs/migrate-booster.md` leads with the short path per environment.
+- budget record: ccr/external_metadata shapes, session totals recorded as deltas, session ledger without an issue, --at (at most 48 h back), `--session` must match the `get_session` id; result lists green PRs and returns send_message to the parent
+- gates: test gate runs nextest when installed; verdict threshold visible, `chunks_reviewed` accepts a count; risk-check rates a plan `risk: high` task high (R-plan); plan check skips merged pairs; pin lists ci-minutes findings
+- Cloud and Claude Tag sessions: a proxy 403 on the collaborators lookup degrades instead of failing every command; GitHub calls stop after a 120 s budget (`BOSUN_HTTP_BUDGET_SECS`; exempt in CI); leases of unknown logins only block and their spend counts; `wait --once`; `risk-check --dry-run`; `doctor`, `plan amend`/`import` and `progress` print a summary unless `--full`.
+- Keyless fast lane for D-017 (signer is OFF by default: enable it with `[approvals] signer = true` (R-weaken) and `[checks] mode = "checks"` with the gate App; signer signatures are ignored while it is off at base): `role = "signer"` keys (autonomous form only), `bosun approve --as signer` (needs `ci-ok` green) and `--via-signer`, `.github/workflows/signer.yml` (bosun and the channel `core` piece), `bosun doctor` signer check, and risk-check `author_is_owner` when the PR author is the owner.
+- `bosun notify` gains the opt-in `digest` kind (`[slack] notify` must name it): one post per UTC day listing the owner-waiting PRs with GitHub links and the comment to approve with; Slack still approves nothing (spec §10, §14).
+- risk-check: `deny.local.toml`, `.deny.local.toml` and `scripts/deny.mjs` are R-ci; a growing allow list is R-weaken (pairs with hull v0.10.0).
+- perf: setup script installs cargo-deny and cargo-nextest from pinned sha256-checked prebuilt release binaries (cargo install only as fallback)
+
+## 0.14.0 (2026-11-13)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.13.0 with npm sha512 values via `bosun pin --latest`; CLAUDE.md runs tests with `cargo test --locked` (fresh cloud containers no longer build nextest).
+- Budget guard: a task whose plan kind is mainfix is claimable without the registry pin (spec §5: a mainfix task is never refused)
+- Gate workflows and channel templates mint the App token with `client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}` instead of the deprecated `app-id`; consumers with the App: set `BOSUN_APP_CLIENT_ID` (the App's client id) in the `bosun-app` environment before taking this channel update, as `BOSUN_APP_ID` is no longer read.
+- The risk, verdict, main-open and main-health gate jobs run in the `bosun-app` environment and pass a downscoped App token (actions/create-github-app-token, pinned by sha) to bosun as `BOSUN_APP_TOKEN`; `tests/workflows.rs` checks that only those jobs hold the key and never run PR code (spec §15 Transition step 3).
+- New splice var `bosun_app` (1 or empty): the channel's risk, verdict, main-open and main-health gate jobs run in the `bosun-app` environment with the App token step (`risk.yml`, `verdict.yml` and `main-open.yml` become templates); bootstrap mode also excludes the `.jinja` copies of risk and verdict.
+- `.bosun/bosun.toml` sets `[checks] mode = "dual"` with the gate App (`keelstackhq-bosun-gate`, id 5696830): the gates post statuses and App check runs (spec §15 Transition step 3); `tests/pinned_config.rs` knows the 0.13.0 keys.
+- CI type-checks the declarations `bosun schema --format ts` prints with a pinned tsc; tests for the checks-mode verdict carry and golden snapshots of the four channel gate workflows
+- `bosun pr --ready` works for plain issues (no state label, no task metadata), `budget record --pr` refuses task PRs, plain `pin --latest` picks the dated branch before writing, worker rule and compaction warnings fixed
+- Guard: prose stripping only for plain git commit|tag and gh pr|issue commands with allowlisted flags (no -c, VAR=, editor or file flags)
+- `[mode] push_gates = "push"`: the PreToolUse hook refuses a `git push` whose tree lacks a passing gate stamp.
+- Design and plan for the mode ladder (gatekeeper, steady, booster, autonomous) and its boosters: gates before push, self-heal, daily approval digest, auto spawn, feature budget, metrics with brake.
+- Splice channel: an explicit bosun_version no longer renders `[approvals] policy` unless `policy_pin_checked` is set (`bosun adopt` sets it); a comment asks for it by hand. Migration: repos that set `policy` with an explicit `bosun_version` must set `policy_pin_checked=1` in the channel vars before this update, or the rendered policy key goes away.
+- risk-check: growth of a Rust `*_ALLOWED` list is an R-weaken finding, and no orchestrator signature counts on a PR with the `weaken` capability.
+- Channel AGENTS.md: a push runs as its own command or names `src:dst` (the merge-lock refuses a chained push without it)
+- Docs: mode ladder wording says "lighter" instead of "up" in the quickstart and spec §18.
+- Docs: `docs/quickstart.md` (each mode in CLI, cloud and Slack, migration steps) and the README, spec §18, defaults, operating-model, adopt and prerequisites docs updated for modes.
+- `[session] autocompact_window` (cloud) and `autocompact_pct` (local only) in `.bosun/bosun.toml` make `bosun setup-snippet` print the auto-compact variables and where each takes effect (spec §5).
+- The compaction state block reads leases from the cache only and waits at most 5 s for the PR lookup; the PreCompact hook entry has a 15 s timeout (spec §4).
+- `[mode]` in `.bosun/bosun.toml` parses (gatekeeper only until the weaken check), `bosun mode` prints the effective knobs; `heal`, `digest`, `metrics` and `wave tick` are registered stubs
+- `[mode]` lighter modes and overrides parse; the preset fills `[approvals] policy` (`data.policy_source`), loosening `[mode]` is R-weaken, R-gov joins the D-017 deny set, and the mode, digest, heal, metrics, spawn and wave code joins R-gate
+- `bosun heal`: a red `ci-ok` head on an open PR gets a `send_message` to the live lease holder (`heal_pr = notify`) or a `create_session` fixer when the holder is dead (`spawn`, within the spawn checks); at most 2 rounds, then needs-human; the brake caps it at notify; a no-op in gatekeeper (modes PR 3a).
+- risk-check adds the built-in `R-revert` (owner) on a `bosun:revert N` PR that is not the exact inverse of #N or whose #N was not normal risk
+- `bosun heal` with `[mode] heal_main` opens a draft revert of the one PR merged since main was green; `revert-auto` readies a clean exact inverse with auto-merge
+- `bosun digest`: the owner's daily approval digest as one chat form; `--answer` turns the reply into `bosun approve` calls in `next` (modes PR 4).
+- `bosun digest --answer --sign-key`: signs the owner's budget raises (`raise <epic> +<usd>`) with an enrolled owner key (modes PR 4b).
+- `bosun metrics [--days N]` prints red-CI rate, the brake (`data.brake`), cost per merged PR, lead time, owner touches and blocks per owner rule from GitHub; `--propose` is plan PR 8
+- `bosun metrics --propose`: rules with at least 10 owner blocks and no catch in the window (never the floor rules), each with a draft loosening PR body as evidence (modes PR 8).
+- `bosun wave tick <epic>` returns `create_session` calls for ready wave entries (mode knob `spawn_auto`, brake, spawn checks) and `archive_session` for finished children whose PR closed
+- Guard: git aliases are read in every directory an earlier `cd` or `pushd` moves to; after a `cd` the guard cannot read, only git builtins pass
+- Guard: merge-lock refuses `git send-pack` and `git subtree push` to the default branch and pushes whose target comes from git config (`remote.<r>.push`, `remote.<r>.mirror`, `push.default`), failing closed when the target is unknown
+- `bosun plan import` and `plan amend` write trusted `bind` records when `budget_feature` is on; the feature budget guard reads them first, so editing issue bodies no longer lifts `ask` (modes item 6b).
+- `budget_usd:` on a plan item sets a feature budget; `bosun claim` and `bosun spawn` warn at 80 % and exit 5 at 100 % under the `ask` knob (modes item 6).
+- Feature-budget rival check reads a registry epic index (`{"bosun":"epic-index"}`, written by plan import and amend) instead of scanning lower issues; a missing index refuses with a `bosun plan amend` fix.
+- `bosun budget raise` records the owner-signed raises of `bosun digest --answer` on their epics; the feature-budget guard adds the verified ones to the base budget.
+- The 80 % feature-budget warning also shows in `bosun status` (`budget_feature`) and in each `bosun wave tick` spawn; `bosun digest` lists epics at 100 % as budget asks with a `raise <epic> +<usd>` reply line.
+- The registry is pinned by `.bosun/registry` on the default branch (else the lowest open, then lowest any-state, `bosun:registry` issue); a repo that rotated its registry should commit `.bosun/registry` naming the live one, and the feature budget refuses without the pin.
+- Guard: a `CDPATH` in the hook's own environment makes a `cd` unknown (only git builtins and git-* commands pass)
+
+## 0.13.0 (2026-11-10)
+
+- Plan `2026-10-28-app-checks-team-owners.md`: the B4 UCs are numbered without gaps, so `bosun plan import` and `bosun prereqs` read it again.
+- `src/github`: gate check runs — `create_check_run` and `update_check_run` (only `in_progress`, `success` or `failure`, never `neutral` or `skipped`), `check_runs_all` (`filter=all`), and `CheckRun.app_id` (spec §15, B2/T1).
+- `.bosun/bosun.toml` `[checks]`: `mode = "statuses" | "dual" | "checks"` (default `statuses`) with `app_id` and `app_slug` (required unless `statuses`); hoist.toml `[github] required_checks` reads `{ context, app | integration_id }` tables beside strings (spec §15, B2/T2).
+- `risk-check`, `verdict post`/`apply`, `gate main-open`, `main-health` and `review-ci` post the gates through one writer: with `[checks] mode = "dual"` a status and a gate App check run (token from `BOSUN_APP_TOKEN`; missing, the run is skipped with `data.checks_skipped`), with `"checks"` only the check run (missing token: exit 1). Default `statuses` changes nothing (spec §15, B2/T3).
+- In `[checks] mode = "checks"`, bosun reads its gates back only from the gate App's check runs (`approve --list`, `pr --auto-merge`, risk-check carry, review-pack) and counts only verdict records written by `<app_slug>[bot]`, which `verdict apply` then writes with the App token, defused; a `[checks]` change is R-weaken evidence (spec §15, B2/T4).
+- In `[checks] mode = "checks"`, `bosun verdict post` is refused (use `bosun verdict comment`) and `bosun approve --main-open` is exit 3 (re-run the main-open workflow); `doctor` reads the hoist.toml table form of `required_checks` and flags an unreadable list, and `doctor --remote` warns when a gate is not pinned to the gate App or the token can list the Actions secrets; `[checks]` refuses GitHub Actions as the gate App, and the App's verdict record keeps its JSON line intact (spec §15, B2/T5).
+- The CLI counts its own calls per session: the same bosun call five times in a row with no other tool call in between (a loop inside one script) is refused with exit 6, as the repeat-lock refuses repeated Bash calls; polls are not counted.
+- The CLI repeat counter and the sticky refusal markers live in the repo bosun runs in, not the `-C` directory, so the hook resets and shows them; the hook reads a deny from the parsed hook output.
+- edit-lock judges plain Bash file writes (`> f`, `tee f`, `cp|mv|install .. f`, `sed -i f`) like an Edit.
+- merge-lock reads interpreter code (`python -c`, `node -e`, heredocs) and the scripts interpreters and shells run.
+- The merge-lock skips a `/dev/stdin` script only when a heredoc on its own segment feeds it.
+- `bosun schema [<command>]` prints the envelope contract and each command's `data` as JSON Schema (status, claim, gate, pr, verdict, risk-check, approve, spawn, wait, heartbeat and release described; the rest follow); tests check every envelope against it.
+- `bosun schema` describes the `data` of every command (no `{..}` left); the test check also covers `error.kind` and an empty `next` on failures.
+- `bosun schema --format ts` prints TypeScript declarations of the contract (`declare namespace bosun`, one typed function per command) in `data.ts`; `bosun schema <group>` names its subcommands; README "Using bosun from code (Code Mode)".
+- Sticky refusals: a bosun exit 4, 5 or 6 (3 from `claim`) leaves a per-session marker; the PreToolUse hook shows its fix on the next tool call and, while halted, refuses writes and pushes until `bosun status` shows the halt lifted, so a script that swallows an exit code cannot go on blind.
+- `bosun hook pre-compact` prints the session's bosun state (leases, branch, open PR, last refusal, next step) for the compaction summary, and the SessionStart hook adds it back after a compaction; wired as the PreCompact hook, it never blocks (spec §4).
+
+## 0.12.1 (2026-11-10)
+
+- `bosun` reads the token's own repo permission from `GET /repos/{o}/{r}` when a proxy blocks `/collaborators` (Claude Code cloud), so `bosun budget record --pr` and other writer checks work there; other users still need the collaborators endpoint.
+
+## 0.12.0 (2026-11-10)
+
+- `bosun budget record --pr <n>` (repeatable) records session spend on PRs; `budget report` counts spend on the PR itself.
+- `bosun adopt --policy owner|owner-gated|orchestrator|autonomous` writes `[approvals] policy` into the rendered `.bosun/bosun.toml` (channel var `policy`, default empty: render unchanged); a policy the pinned release cannot parse (`autonomous` before 0.8.0, the others before 0.5.0) is exit 2 naming the minimum, and a kept config gets an owner step to set it by hand.
+- `@keelstackhq/cargo-deny` npm packages (launcher, linux-x64, linux-arm64) republish upstream cargo-deny's prebuilt musl binaries through the manual `cargo-deny-npm.yml` workflow (checked against upstream's `.sha256`, npm trusted publishing).
+- risk, edit-lock and touch check treat `.changeset/*.md` (one level) as autonomous-allowed; `.changeset/config.json` and other files stay owner-only and `.changeset/<name>.md` as a free fragment.
+- Setup script: cargo-nextest builds only for a bosun pin before 0.12.0 or a nextest profile override; Rust steps only in a checkout with `Cargo.toml` or `rust-toolchain.toml`, pnpm only where the checkout uses pnpm; cargo-deny from pinned `@keelstackhq/cargo-deny` npm packages once pinned, else `cargo install --locked cargo-deny`.
+- The built-in rust profile's test gate is `cargo test --locked` (was `cargo nextest run --locked`; it also runs doctests). Channel CI keeps installing cargo-nextest while pinned releases up to 0.11.0 run it. Keep nextest with a `.bosun/profiles/rust.toml` override.
+- Update path documented: README "Update bosun" and `docs/update.md` (human and agent, local and cloud, verification failures); a test keeps "no re-paste" true.
+- `bosun budget report` lists every PR opened, merged or closed in the month (spend, sessions and models `null` when unrecorded) with "spend recorded for N of M PRs", and prints a zero total as 0.00, never -0.00.
+- `budget-report` workflow: weekly and by manual dispatch it commits `reports/budget/YYYY-MM.{md,json}` to the branch `bosun/budget-reports` and keeps one draft PR "Budget reports".
+- `bosun budget report --month YYYY-MM [--out DIR]`: spend per PR for one month with totals; `--out` writes `YYYY-MM.md` and `YYYY-MM.json` (same input, same bytes).
+- `bosun doctor` adds step 17 `update` (warn) when a tool pin or this binary is behind npm, with `bosun pin --latest --pr` as the fix; the session-start notice names the same command.
+- `bosun pin --latest --pr` branches, commits, pushes and opens the draft pin PR in one step; `data.left` lists what is left for the human.
+- The last raw readers of lease, leave and `task-pr` records (`spawn --record` liveness, `plan amend`, risk-check touch warning, `hold`, `reap`) now ignore forgeries by read-only users.
+- `spawn --record` registration text and spec §4 match the code; tests for expired-only-join refusal and `hold` exit 3.
+- Join and lease records now count only from commenters with write access, so a forged join or lease from a reader or outsider no longer counts as a live session or blocks a claim.
+- `review-pack` hardening: `delta_not_in_pr` is listed as untrusted and capped at 50 names (`delta_not_in_pr_count`), a delta falls back to a full review when `pulls/{n}/files` is short of `changed_files`, and the verdict carry honours `[approvals] review_models`.
+- Spend records (`spend`) now count only from commenters with write access, so a forged comment cannot stop the agents or skew `bosun progress`.
+- `bosun doctor` always reports step 17 `update` (ok, warn or skipped with the reason) and checks the binary in channel repos; `bosun pin --latest --pr` uses a dated branch when `bosun/pin` is left over, `data.left` lists only human steps, and a fork PR named `bosun/pin*` is not the pin PR.
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.11.0 with npm sha512 values via `bosun pin --latest` (no `KNOWN` entry needed).
+- `tests/pinned_config.rs` knows `[approvals] review_models` from 0.11.0, so this repo can set it.
+
+## 0.11.0 (2026-11-09)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.10.0 (hoist 0.4.1) with npm sha512 values via `bosun pin --latest`; KNOWN lists gain 0.10.0 (config unchanged).
+- `bosun adopt` prints only the owner steps still left, the exact setup commands in `data.commands`, and the branch-protection settings link.
+- `bosun doctor` runs without a token (GitHub steps are skipped), fills in the real owner/repo in fixes, drops the embedded setup script for `run: bosun setup-snippet`, and adds `data.next_step`.
+- `bosun adopt` adds `.bosun/approvers.toml` to `data.commands` when git shows it new or changed (after `bosun keygen --enroll`); `bosun doctor` names a malformed `BOSUN_GITHUB_API`.
+- `bosun keygen` makes an ed25519 approval key (PEM, mode 0600, outside the repo) and with `--enroll` adds it to `.bosun/approvers.toml`.
+- README: "Start in 5 minutes" for humans and a "For agents" block; stale version lines removed.
+- `bosun progress` reports `reverted`, `held` and `cost_per_held_task_usd`: tasks whose PR a merged `bosun/revert-<n>` PR undid are left out of the held outcomes.
+- review-pack names its `untrusted` fields and tells the reviewer they are data; both built-in spawn prompts call issue, PR, comment and Slack text untrusted data, and the default prompt quotes the epic title as data.
+- Verdict records carry the reviewer model (comment tag `bosun:model`, from `BOSUN_MODEL` or `ANTHROPIC_MODEL`), and the optional `[approvals] review_models` limits which models count for two-verdicts, delegate and autonomous approval.
+- An empty or blank `BOSUN_GITHUB_API` counts as unset (api.github.com), for the client and `bosun approve` alike.
+- `bosun progress` reads the task PR only from writers' records and finds reverts by their own branch in this repo, not by scanning every closed PR.
+- `review-pack` delta after a merge of main lists only the PR's own files, with the PR's patches.
+- A pinned release with no entry in `tests/pinned_config.rs` is checked against the newest older entry, so a pin bump needs no hand-added `KNOWN` entry.
+
+## 0.10.0 (2026-11-07)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.9.0 with its npm sha512 values; KNOWN lists gain 0.9.0 (`trailers`). After it merges, paste `docs/setup-script.sh` into the keelstack cloud environment again.
+- The setup bootstrap runs only bosun checkouts (with `.bosun/version`), kills a hung repo script 10 s after its timeout, and keeps the `@latest` fallback only with keelstackhq/bosun release provenance, identity taken from the signing certificate.
+- `docs/setup-script.sh` and the channel copy are now the per-repo script run from inside each checkout by the bosun bootstrap: they skip a tool only when the sha256 fingerprint of its install equals the one recorded at its verified install (pnpm: at its pinned version); `bosun adopt` now writes `docs/setup-script.sh`; header and D23 updated.
+- `bosun pin --latest [--tool T] [--check]` moves the splice/hoist/berth/bosun pins (setup script, `.bosun/version`, channel template) to the newest npm release after checking every tarball against `dist.integrity`; refuses in a channel consumer (spec D35).
+- `bosun pin --latest` keeps one pin PR per repo (branch `bosun/pin`, refresh or one `next` create call) and SessionStart notes pins that are behind; `BOSUN_PIN_CHECK=0` opts out (spec D35).
+- `bosun setup-snippet` prints a bootstrap to paste once as a cloud environment setup script: it runs each checkout's own `docs/setup-script.sh`, so a release needs no new paste; doctor step 6 returns it as `bootstrap`.
+- The setup script fingerprint also covers symlinks and sorts by bytes (LC_ALL=C).
+- `bosun pin` refuses a plain-http `BOSUN_NPM_REGISTRY` off this machine and versions with leading zeros (spec D35).
+
+## 0.9.0 (2026-11-07)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.8.0 with its npm sha512 values; KNOWN lists gain 0.8.0. After it merges, paste `docs/setup-script.sh` into the keelstack cloud environment again.
+- Commit trailers `Bosun-Session`/`Bosun-Task`/`Bosun-Model`: `bosun trailers stamp|install|list`, a `bosun pr` check (`[trailers] require`), and a rollback recipe.
+- `bosun gate-missed` and the main-health and revert hooks open a "Which gate missed this?" issue (`bosun:process-fix`) per escaped defect, deduped per incident.
+- R-weaken also compares gate profiles and reads diffs: CI steps removed or `continue-on-error`, coverage floors lowered, lint disables added, Rust MIN/MAX consts loosened.
+- R-weaken also counts a repo rule with the `weaken` capability as R-weaken, compares keys added to gate profiles, and counts `cfg(not(test))` and `feature = "never"` switch-offs.
+- R-weaken counts tests in whole files at base and head: fewer tests or assertions, more skips, `.only` or `cfg` switch-offs, deleted test files.
+- `bosun risk-check` flags a PR that loosens a gate config (raised cap, loosened risk rule, lowered deny or lint level, approval settings) as built-in R-weaken; only the owner approves it.
+- `bosun pr` with `[trailers] require` checks local commits before it creates the PR; trailer keys match without case; `#123` is body text.
+- tests/pinned_config.rs also checks the `[approvals] policy` value against the pinned release (`autonomous` from 0.8.0).
+
+## 0.8.0 (2026-11-06)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.7.0 with its npm sha512 values; KNOWN lists gain 0.7.0. After it merges, paste `docs/setup-script.sh` into the keelstack cloud environment again.
+- CI (bosun's ci.yml and the channel's bosun.yml) and the local pre-push loop run `bosun gate ci-minutes` after test-integrity; the channel skips it when the pinned bosun is older than 0.7.0.
+- `[approvals] policy = "autonomous"` (D-017): the orchestrator approves gated PRs itself when the head has a clean, unedited verdict from an independent session on a leased task and an autonomous-form signature; only `src/`, `tests/`, `docs/`, `changelog.d/` paths qualify (not R-gate code, module roots or `#[path]` changes), everything else (workflows, `.bosun`, `channel`, root files) stays with the owner.
+- `bosun adopt` writes bosun's files into a plain repo (no hull, splice or hoist) and `bosun uninstall` takes back exactly what it wrote, tracked in `.bosun/adopt.toml`.
+- Docs: add docs/adopt-existing-repo.md (bosun-only setup, cloud sessions, Claude Tag gaps) and bring README.md to 0.7.0 and the draft-first loop.
+- R-gate covers the approval path (carry-over, PR bundles, touch, text, shape, plan, lock-merge) and the hooks with their guard and repeat logic; the bootstrap window (D-012) never covers R-gov or R-prod-write.
+- R-gate also covers the gate stamps, gate records and the CI-minutes gate.
+- `docs/operating-model.md`: how to work with agents in a bosun repo, which principles bosun enforces today, and ranked candidates to enforce next.
+- `bosun join --origin slack --slack-channel C… [--slack-thread TS]` maps a Claude Tag channel or thread session to a seat on its registry record; a spawned or routine session cannot join as slack.
+- `bosun notify` routes Claude Tag posts to threads (`send_message`, `thread_reply`) from the session seat, owner questions go to their task's thread; `bosun doctor` checks the seat (`claude-tag`) and warns about a PAT in a cloud session.
+
+## 0.7.0 (2026-11-06)
+
+- `bosun claim` lets a session re-claim its own task in an active state (queued, review, ...) after its lease lapsed and before reap: the lease is renewed in place, with the overlap check on its touch.
+- `bosun plan check` warns when a task touches a crate's `src/` but none of its `tests/` (list the tests in `touch:`).
+- When `bosun pr --ready` exits 5 with `already_clean` (the PR is already mergeable, so auto-merge cannot be turned on), the orchestrator merges it (D-008).
+- risk-check R-bundle and `bosun pr` bundle checks count closing refs in the PR title and commit messages too, failing closed at the commit cap.
+- main-open judges a draft when the mainfix label changes; `bosun gate ci-minutes` accepts `draft != true` and a fail-fast job of any name.
+- PreToolUse hook: destructive-lock (rm -rf /, mkfs, dd to a device, terraform destroy, DROP DATABASE, fork bomb) and repeat-lock (same Bash command warns at 3, denied at 5).
+- Draft-first PRs: `bosun pr` opens a draft, `bosun pr --ready` (alias `--auto-merge`) needs local gate stamps (a skipped gate counts) for the pushed head, then marks it ready and turns on auto-merge; `bosun hold`/`ask` put the PR back to draft; heavy CI jobs skip drafts while the required check fails fast; new `bosun gate ci-minutes` and doctor step 14 check workflows for draft skips, `ready_for_review`, cancelling concurrency and `paths` on heavy PR jobs.
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.6.0 with its npm sha512 values; KNOWN lists gain 0.6.0. After it merges, paste `docs/setup-script.sh` into the keelstack cloud environment again.
+- `bosun pr` no longer closes a spawned child's epic before its `result` (its own lease and a pending child lease block the close); `bosun result` reports an outcome it could not apply as `data.state_skipped` and `data.epic_already_closed` (#400).
+- `bosun pr <lead> --bundle <issue>...` writes a `Closes` per bundled issue; risk-check adds `R-bundle` (owner) for a multi-task PR that changes a gated path; closing references in `owner/repo#N` and issue-URL forms count; `review-pack` adds `bundle_tasks` and compares `touch_added` against the whole bundle.
+- `shape: single|split|auto` on plan items (D-016, no line caps): gated tasks (`risk: high` or touching a risk path) get their own PR and are never bundled; `wave plan` bundles the rest of a single item; a bundled issue is not claimable while the lead holds it; `review-pack` adds `chunks` and a `drift` note at 2x the planned size, and a verdict must list every chunk in `chunks_reviewed`. Gated detection resolves wildcard touches against the default branch's tree (plan, wave, claim); `bosun pr` refuses a multi-task PR that changes gated files.
+- `bosun result` and `bosun pr` (task found merged) close the epic when every task is merged (no quiet period, only other sessions' leases block it), reporting `data.epic_closed`; before, only `reap` did, after a 10-minute wait.
+- This repo's session rules now tell every session that the owner's start request covers its own task loop (push, PRs, verdicts, auto-merge); gated PRs still need an owner approval.
+- `bosun hook stop`: the Stop hook blocks a child that holds a live lease without a result or handoff, and warns when the work tree changed since the last passing local `bosun gate`.
+- `bosun ci-log` keeps the head (`--head`, default 20), the tail and up to 20 error lines from the middle of each failed job log, with `… N lines cut …` markers; before, only the tail.
+- `lesson add`, `handoff`, `msg` and `fail` refuse secret-shaped text (tokens, keys, PEM, high-entropy words) with exit 2 and never echo it.
+- `bosun` secret check allows public integrity hashes (`sha512-<b64>`, `NAME_SHA512=<b64>`) and `bosun pr` refuses a secret-shaped title.
+
+## 0.6.0 (2026-11-05)
+
+- `docs/setup-script.sh` (and the channel copy) prewarms superpowers and caveman from the `keelstack` marketplace and warns when an installed commit is off its pin; it never fails.
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.5.0 with its npm sha512 values; bosun's own config sets `waves.relay_waves`, `[cloud] environment_id` (the shared keelstack environment) and `[approvals] policy = "owner-gated"`. After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- The setup scripts pin splice 0.4.0 and hoist 0.4.0, each with its npm integrity; both `splice.yml` move to splice 0.4.0 and pin `keelstackhq/splice/action` at v0.4.0's commit. berth stays 0.1.0 (the newest). After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- Breaking: `review-pack` `lessons` is now an array of strings `"<id> <scope> <rule>"` (was objects; read the string); `lesson add` needs `--evidence #N` and a rule of at most 160 characters (also `lesson triage --as advice --rule`; a duplicate rule records a hit and merges scope and evidence, so shorten long rules and pass evidence); `claim` returns `data.lessons`; session start prints global lessons.
+- `bosun status` and `bosun reap` add `next` `archive_session` for children of the caller whose newest result is final (merged, blocked, needs-human) and who have not joined or leased again.
+- `bosun doctor` step 13 `plugins` fails on drift from the keelstack marketplace pins (settings source and ref, setup-script pins, installed plugins) (R4).
+- `.claude-plugin/marketplace.json`: the `keelstack` plugin marketplace, superpowers and caveman pinned to commits (Claude Code verifies the sha on install).
+- `.claude/settings.json` (bosun and the channel core) enable superpowers and caveman from the `keelstack` marketplace, from bosun main (plugin commits pinned by sha in `.claude-plugin/marketplace.json`).
+- Fragment fold writes Done to `docs/progress-done.md` (refuses while `docs/PROGRESS.md` still has `## Done`: move it once); tests set their own TMPDIR.
+- `bosun hook session-start` adds role rules (worker if spawned, else orchestrator; built-in text, `.bosun/session-rules.toml` overrides), also without GitHub (R1).
+- `.bosun/session-rules.toml` seed (role rules text for SessionStart) in bosun and the channel core; R-gov covers `src/core/session_rules*`, `src/hooks/session_rules*` and `.claude-plugin/**`.
+- `bosun handoff-pr <pr> [--to SESSION]` returns a `send_message` call to the parent with the PR, head SHA, risk paths and review minors.
+- The edit hook lets a registered child (a trusted live `spawned` lease with empty touch on its epic) create one new issue with a task marker for that epic; edits, comments, other repos and the `allow` and `capabilities` keys stay refused. Spec §4 says any session may run `bosun intake`.
+- Plan task field `done-by: #N`: `plan import` and `plan amend` make the task merged when PR N is merged.
+- `bosun pr --auto-merge` prints the gates it relies on (`risk-check`, `review-verdict` and their states) on stderr and in `data.gates` before it turns auto-merge on.
+- `bosun pr <issue>` (and `--auto-merge`) works from any branch: with no open PR on the current branch it uses the open PR carrying the `bosun:task-pr` marker of the task.
+- `bosun result` moves every task of the epic whose own PR (task-pr record, else bosun marker) merged to merged, and `bosun reap` does so for tasks with a merged recorded PR, even when the task issue stayed open.
+- The default spawn prompt gains working notes: one CARGO_TARGET_DIR per worktree (share dependencies with sccache), delete only build caches when the disk is full, and background waits default to 30 minutes so children also message the parent.
+- `spawn` (and the root relay) `create_session` call in `next` includes `source_url` and `source_revision` (the default branch).
+- `bosun verdict comment` fences the verdict with more backticks than any run in the payload, and `verdict apply` reads any fence of three or more, so backticks in evidence no longer break the block.
+- `bosun wait --pr` says `"no checks yet"` in `checks` while nothing has reported for the head, instead of an empty map.
+- A GitHub 5xx now ends any command with exit 1 and `error.kind` `upstream` (retry hint), so `bosun wait` never returns 0 without data.
+
+## 0.5.0 (2026-11-03)
+
+- `.bosun/version` and `docs/setup-script.sh` pin bosun 0.4.0 with its npm sha512 values. After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- docs: design for zero-touch onboarding (intake file, org provisioner app, handoff and relay), docs only.
+- `bosun doctor` step 6 prints the setup script in `content` and names the shared `keelstack` cloud environment (ZR/T1).
+- `bosun init --intake FILE` checks the intake file first (5 on a missing answer, 2 on a bad value), derives `--stack`, `--owner` and `--plan` from it (a disagreeing flag exits 2), copies it to `.bosun/intake.toml` outside the render, and returns the janitor, curator and (with Slack) notify `create_trigger` calls in `next` (ZI/T3).
+- `bosun intake check` validates `.bosun/intake.toml` against the intake schema (ZI/T1).
+- The channel seeds `.bosun/intake.toml` (a template `bosun intake check` refuses with exit 5) and `bosun.toml` accepts `intake = true|false` (ZI/T2).
+- `bosun intake sign` and `verify` sign and check a detached `.bosun/intake.sig` for provision.yml (ZI/T1).
+- `[approvals] policy = "owner" | "owner-gated" | "orchestrator"` (missing means `owner`) decides when an orchestrator approval counts in `risk-check` and when `bosun approve --bootstrap` signs after bootstrap mode (D-014); a CI workflow change and any `hoist.toml` always need the owner, and `bootstrap_until` is capped at 2026-11-30.
+- A local composite action (`action.yml` or `action.yaml` at any path) is R-ci and a critical path, and counts as a CI workflow file for approval policies: a PR changing one needs the owner, never a delegate or an orchestrator approval.
+- `bosun handoff [--from FILE]` writes a root's handoff (at most 40 lines, else exit 6) to the registry and `bosun resume --handoff` returns the newest one in `data.handoff`; a handoff is never a lease.
+- `bosun spawn --root --handoff` / `--root --record` relay a root to a fresh root (`waves.relay_waves`, default 6; optional `[cloud] environment_id`); `resume --handoff` follows the relay lineage and shows `relay_waves`.
+
+## 0.4.0 (2026-11-01)
+
+- bosun pins 0.3.0 and turns on bootstrap mode (D-012) until 2026-11-30: `[approvals] bootstrap_until` in its own `.bosun/bosun.toml`, and in the channel for repos that pin the channel version. After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- The setup scripts pin splice 0.3.1 (it strips token-like env vars from what it posts) and hoist 0.3.0, each with its npm integrity; both `splice.yml` move to splice 0.3.1 and pin `keelstackhq/splice/action` at v0.3.1's commit. After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- `bosun plan pr <plan> "<why>" --source <s>` opens the intake, claims the plan file and opens the PR of a plan amendment in one step.
+- `bosun approve --list` works without a token: without `BOSUN_OWNER_TOKEN` it reads unauthenticated, writes nothing, and lists what it could not read in `data.skipped`; `bosun answer --chat` takes the owner's answer relayed in chat, counted only with a verified signature of an owner key in `.bosun/approvers.toml` (`--chat --sign-key` makes the signed form), and moves a needs-human task to ready (not while halted or main is red) (F6).
+- risk-check: an approval or verdict now carries across a merge of main whose only conflict is `Cargo.lock` or `pnpm-lock.yaml`, when every whole entry of the regenerated lockfile is an entry of the approved head's or main's copy (checked from git, entry by entry).
+- CI and the channel's `bosun.yml` read test-integrity's allowed kinds from the PR's linked task (plan `allow:`) in a step before the gates, with a read-only token that never reaches PR code; needs a bosun with `test-integrity --pr`.
+- `bosun doctor` reports Slack (no `[slack]`) and release (no `[release]`/`[publish]`, release workflow, publishable Cargo or npm package, hoist publish items or release) as `skipped`, not missing, and `--remote` lists their hoist items in `data.hoist.skipped`; `bosun notify` without `[slack]` exits 0 with `data.skipped`; the janitor prompt leaves out notify without Slack; Routines run every hour.
+- The review pack shows `task.lease_touch`, the touch globs of the task's leases, so a lease widened with `claim --touch` is visible to the reviewer.
+- PreToolUse guard (F9): a `gh api` read (GET, no field or input flag) may name `auto_merge`; nested commands are judged to depth 8 (was 3) with one clear "nested deeper than" reason; `git merge --ff-only` with `origin/main`, `@{u}` or `@{upstream}` (no other ref) passes on the default branch.
+- PreToolUse guard: refuses `gh api` release writes, `gh release create|edit|upload|delete`, `gh workflow run`, `gh secret|variable set|delete`, GraphQL merge, ref and auto-merge mutations (and queries it cannot see: `--input`, `query=@file`, `$` outside single quotes), `gh alias set|import` and git aliases (`-c alias.*`, `git config alias.*`), `git push --all|--branches|--mirror|--tags|--follow-tags`, glob refspecs, quoted push targets (`'main'`) and push words with `$`, and gh, git or http writes behind `xargs`, runners (`timeout`, `nice`, `builtin`, `command`) or `env -S`.
+- Plan tasks take `allow:` (delete-test, skip, only, fewer-asserts), stored in the task metadata at import; `bosun test-integrity --pr <n>` reads the PR body and the linked task's `allow` from GitHub. A refused snapshot change now says to add `snapshot-change: <reason>` to the PR body.
+- A task's `allow:` reaches its metadata only from the plan on the default branch (owner-approved), never from an unmerged local plan.
+- `plan import` closes the plan tasks of a plan file that is already byte-identical on the default branch (`--keep-plan-tasks-open` opts out), and the critical-path rule counts only open tasks.
+- `bosun pr --auto-merge` now turns on auto-merge at once and lists unfinished checks as `pending_checks`; a PR GitHub reports as already clean exits 5 (`already_clean`) and is left for the owner to merge.
+- `bosun result` lists the epic's merged tasks for every outcome, and a new `partial` outcome hands the epic back as ready.
+- risk: changes to `.cargo/config.toml`, `.cargo/config`, `.npmrc`, `.yarnrc` and `.yarnrc.yml` (any directory) count as R-deps: they redirect where every package comes from.
+- risk-check: R-deps no longer counts `x.workspace = true` edges, in-repo `path` dependencies or pnpm `catalog:`/`workspace:` references as new dependencies; new root pins, new catalog entries and source changes (git, `package =` renames, `[patch]`/`[replace]`, npm and pnpm overrides, `npm:` aliases) count.
+- risk-check: R-secrets no longer flags code bindings without a literal (`let x = v`), test files and fixtures (never env or config files), or lines with a trailing `bosun:allow-secret <reason>` comment; strong formats (age, PEM and PGP private keys, GitHub, `sk-`, Stripe live, AWS, Slack tokens) are never exempt and now match on any added line.
+- The setup scripts now install cargo-nextest and cargo-deny (with rustup's stable default) when no `rust-toolchain.toml` exists yet, as it does before the checkout, and make Node 24 the `node` that resolves first when the image has an older Node earlier in PATH; a failed step warns and never fails the script. After it merges, paste docs/setup-script.sh into the cloud environments again.
+- The spawn prompts list the `partial` outcome of `bosun result`.
+- `bosun wait` renews the caller's leases and registry record while it polls, reaps expired leases and members, and `--pr` shows only the newest run of each check.
+- Wave agents with a per-task id `S/task` can claim in their orchestrator's area; the spawn prompt names the child's own id; `join` refuses itself as parent and `--depth` can lower a root's depth.
+
+## 0.3.0 (2026-10-29)
+
+- `bosun approve --list` adds `data.message`, `data.message_id` (8 hex characters) and `data.message_pairs`: one short chat text for the owner with inert titles, at most 10 PRs, and the `Reply: approve ...` line; the id hashes only the shown `pr@head` pairs (all null when nothing is ready).
+- `core::text::inert`: text an agent or a plan wrote, shown to a person as one plain line (control, format and separator characters as spaces, as an inline code span, cut to a length).
+- `core::prereqs`: `approvals` estimates which plan tasks will need the owner or a delegate at merge (as risk-check would, from touch paths; `risk: high` needs the owner), in dependency batches; `message` is the short checklist text for the owner's chat.
+- `core::prereqs`: the owner checklist as an issue body. Plan and agent text is shown inert. Each line carries a bosun marker with a content digest; `read_issue` and `ticked` count a tick only on a single line whose digest matches the plan. Ids, blocks and verify kinds come only from the plan. The parser takes `replaces:`.
+- `bosun prereqs <plan>... [--no-setup]`: the human steps of a plan, checked through the API (secrets, variables, environments, files) and the ticks of its checklist issue, plus the `bosun doctor` steps, the approvals at merge and a delegate key, with a short message for the owner's chat.
+- `core::prereqs`: parse the `## Prerequisites` section of a plan (who, phone or computer, steps, verify, blocks) and find the prerequisites that block a task.
+- Docs: spec §14 (front-loaded human prerequisites), the plan-format pointer, and AGENTS.md rules: front-load human steps, never wait mid-run (`bosun hold`), relay approvals in batches.
+- docs: design and plan for front-loaded human prerequisites (D-009), and the `## Prerequisites` format in `docs/prerequisites.md`.
+- `bosun prereqs` builds each plan's checklist in one reusable function (`Env::checklist`); no behaviour change.
+- `bosun claim` refuses (exit 5) a task that an open owner-checklist item blocks and `bosun spawn` refuses an epic blocked as a whole; ids, blocks and verify kinds come from the plan on the default branch, the checklist issue only gives ticks, and anything unreadable or ambiguous fails closed.
+- `bosun hold <task> "<what the owner must do>" [--phone]`: an agent that meets a human step nobody listed records it on the task, adds a box to the plan's owner checklist and puts the task back to ready, instead of stopping to ask.
+- `bosun hold` ids stay unique for the life of a plan (they skip the ids the plan `replaces`), `replaces:` releases only a hold of a task its item blocks, a hold re-adds its box once if a parallel write dropped it, and `bosun prereqs` lists a plan named twice once.
+- The markers-lock hook treats a `gh api` or `curl` call with several method flags (`-X GET --method PATCH`, `-XGET -XPATCH`) as a write when any of them is a write method; the `gh api graphql -F query=@file` gap is listed with the known bypasses.
+- feat(hooks): the PreToolUse hook refuses agents' GitHub writes that name the owner checklist marker `bosun:prereq` (best effort, design F4).
+- `bosun prereqs --post` keeps one checklist issue per plan (label `bosun:prereqs`): created when there is something to do, rewritten from the API and the owner's ticks, closed when nothing is open and reopened when something is.
+- `bosun plan import` and `plan amend` refresh the owner checklist of a plan with a `## Prerequisites` section (`--dry-run` only reads) and keep a task `planned` while an open item blocks it or its item; they are listed under `data.held`.
+- `bosun wave plan` leaves out ready tasks that an open owner-checklist item blocks (`data.held`; when the checklist cannot be read, every ready task of the plan, with a warning that names the fix), and `bosun spawn` refuses an epic blocked as a whole item.
+- Design and plan: gates as check runs of a dedicated GitHub App pinned in the ruleset (B2).
+- Design and plan: owner teams in governance/owners.toml, expanded per run and failing closed (B4).
+- docs: design (proposed, not built): spec §17 clean template updates, a lower approval class for clean splice bot updates; plan `docs/superpowers/plans/2026-10-28-clean-template-update.md`.
+- `docs/plan-format.md` explains how to cut tasks by file ownership so parallel PRs never conflict; AGENTS.md and the channel's agents section point to it.
+- Design and plan for parallel PRs without merge conflicts (truthful leases, plan overlap, spec split, approval carry-over).
+- `docs/spec.md` is split into `docs/spec/NN-<section>.md`, one file per section (a pure move), so PRs that change different sections never conflict.
+- docs: spec 08 notes that the default workflow token should be read-only, and links #298 (bind verdict records to the verdict run).
+- `bosun risk-check` carries a high-risk approval (owner review, comment, signature or the class's verdicts) of an older head over a clean merge of main (`data.approval_carried_from`); only the approval, everything else is recomputed on the new head.
+- `core::carry`: the pure rule that decides whether an approval carries over to a head that is a clean merge of main into the approved head (not wired yet).
+- `bosun risk-check` also carries a delegate approval (v1 signature plus one clean verdict) over a clean merge of main, and refuses any carry when an owner withdrew on any commit, even off the path.
+- `risk-check`: the carry-over reader gathers the facts by sha from GitHub (commits, trees, compares) and hands them to the pure rule; any doubt refuses.
+- `github`: reads for git commits, recursive trees and the compare merge base, with a truncation flag on compare.
+- `bosun risk-check` carries the `review-verdict` status across a clean merge of the default branch (`data.verdict_carried_from`), and restores a real verdict that raced the carry.
+- Channel piece `circleci-only` (no GitHub bosun.yml; main-health on the CircleCI status of main's head only, both checks `success` with own_ci) and, without hull (`own_ci` empty), hull's CircleCI setup config and status mirror, byte-identical to copies vendored from hull 58c488b. The channel needs splice 0.3.0 (`min_splice`).
+- Channel piece `circleci`: a CircleCI job `bosun-ok` (or `ci-ok` without `own_ci`) that fetches the default branch first and runs bosun.yml's gates with the pinned, sha256-checked bosun.
+- Risk: R-ci and the critical floor cover GitLab (`.gitlab-ci.yml`, `.gitlab/ci/**`), Buildkite, Jenkins (`**/jenkinsfile`, any case), Azure Pipelines, Bitbucket Pipelines, Travis and Drone config.
+- `bosun claim <issue> --touch <glob>` on a task the session already holds adds the globs to its lease after the same overlap check (exit 3 on a clash) and posts a newer lease record with the union (`data.added`); a grow that loses a race restores its previous record.
+- Owner approvals by chat form (D-012): docs, agent rules, `risk-check` and `bosun approve` fixes and hints, and `bosun init` owner steps say the session asks the owner with a form in the Claude Code chat and the orchestrator posts the signed `bosun approve` comment; an owner-written `/bosun approve <sha>` comment is the fallback.
+- Bootstrap mode (D-012): `[approvals] bootstrap_until` in `.bosun/bosun.toml` and `bosun approve --sign-key <pem> --bootstrap`, which signs `bosun-bootstrap v1`; risk-check counts it as the owner until that day (UTC, inclusive) on owner-class PRs that touch none of `BOOTSTRAP_EXCLUDED` (the setting, the approval code, governance, risk rules, `hoist.toml`, environment workflows, R-secrets).
+- The hook refuses decrypting secrets for agents (`sops` other than version/help/encrypt, `age -d`, `hoist secrets edit|sync|grant|revoke|rotate*`), reading the sops age key and printing `SOPS_AGE_KEY`.
+- **Added:** `bosun doctor --remote` checks the environment of every workflow job (each `environment:` in `.github/workflows/*.yml`): step 5 warns, never fails, unless only the branch `main` may deploy to it (custom deployment branches, exactly `main`); a missing environment, no policy, protected branches or any other rule names the Settings → Environments steps, and a 403 says it cannot verify. `data.environments` lists each one.
+- The edit hook keeps a session with a lease inside its own touch: an existing file outside it (and its lockfile companions) is denied with the `bosun claim --touch` fix; fragments and new files stay free.
+- `bosun gate` and `test-integrity` find their base on CircleCI (`CIRCLECI=true`): merge-base with the default branch for a PR, `--all` for a push to the default branch or a merge-queue branch (queue base sha); the output carries `data.ci`. GitHub and local runs are unchanged.
+- A lease race is decided per contested glob pair (each side counts from its earliest record that overlaps the other glob), so a grow keeps its priority on its old globs, races at grow time for the added ones, and the two sides never both win.
+- `bosun main-health --result success` flags a queued task whose `task-pr` PR became conflicting (`mergeable_state` dirty): one `conflict` record on the task and one comment on the PR, the task stays queued; `data.conflicts`, `skipped_unknown` and `conflict_errors` report it.
+- `bosun plan check` warns when two tasks touch overlapping files with no `depends` path between them, and when 3 or more parallel tasks touch one file; `Cargo.toml` and `package.json` count their lockfiles.
+- `bosun plan check` now fails on a touch glob with braces, classes, escapes or `..`, and its overlap warnings stop counting at 1000 pairs ("at least N more").
+- `bosun pr` exits 3 when the PR modifies, removes or renames files outside this session's lease touch (lockfile companions, added files and the fragments always pass); a human PR without a lease or a diff of 3000+ files skips the check.
+- risk-check posts `pending` on the head while it judges, so auto-merge waits; a run that cannot finish posts `error` instead of leaving `pending`.
+- Risk: R-secrets also covers sops files (`secrets.toml`, `access.toml`, `.sops.yaml`, `*.sops.yaml|json`) and age keys in added lines; `.circleci/**` is R-ci and in the critical floor.
+- `bosun risk-check` warns (data.out_of_touch, a line in the Risk note of a high-risk PR body, one stderr line) about PR files outside the linked task's live lease; it never changes the risk level or the status state. `bosun pr` skips the touch check for a lease with an empty touch (a spawn's epic lease).
+- `risk-check`, `approve`: a v2 owner signature (`bosun-approve v2 ... after-review <review_id>`) bound to the current dismissed owner review clears a dismissal; `approve --sign-key` signs it on a dismissed PR; v1 signatures, delegate keys and older review ids never clear.
+- splice 0.3.0 everywhere (both setup scripts; both `splice.yml`, whose `keelstackhq/splice/action` is now pinned by commit). The setup scripts install splice, hoist and berth (and, in bosun's own script, bosun) only from `npm pack` tarballs whose sha512 matches the pinned npm integrity (launcher and linux binary package), and skip a tool with a warning on a mismatch or a failed install. After it merges, paste `docs/setup-script.sh` into the cloud environments again.
+- `.bosun/bosun.toml` drops `[approvals]` until a release that reads it is pinned: the pinned 0.2.3 rejected the key and failed every gate on main; `tests/pinned_config.rs` keeps the file to the keys the pinned release knows.
+- `bosun claim` re-reads the comments after setting a lost claim back to `ready` and restores `claimed` when a third session won meanwhile; the edit hook resolves the edited path with `canonicalize`, so symlinks and `link/../x` are judged by their real target.
+- `bosun claim` re-lists the active issues after setting the task `claimed`, so two ready tasks claimed at the same time with overlapping touch no longer both win; the loser is set back to `ready` (exit 3).
+- Hooks: the decrypt-lock lets ack and ugrep (also `ack-grep`, `ugrep+`, `ug+`) run only a strict allowlist of pagers (`less`, `more`, `most`, `cat` with plain flags, no less `-k`/`-o`/`-O`) and `--view` editors (name alone), refusing shell syntax, other paths, `LESSOPEN`/`LESSKEY`/`LESSSECURE`/`BAT_PAGER` and `PAGER`/`LESS` values that fail the allowlist; it reads `-nd recurse` clusters, treats `grep.fallbackToNoIndex` (`-c`, `--config-env`, `GIT_CONFIG_KEY_<n>`) as `--no-index`, and takes unique prefixes of `git grep --no-index`, GNU grep `--recursive`/`--dereference-recursive`/`--directories=recurse` and ag `--hidden`/`--unrestricted`.
+- decrypt-lock: a `git grep` whose `-C`/`--work-tree` base is a key root (`git -C ~ grep x`, `git -C ../../root grep x`) is judged like `--no-index`, whatever config sets `grep.fallbackToNoIndex`; vim and nvim init variables, and ugrep's `EDITOR`/`VISUAL` view fallbacks, are judged when ugrep can open a viewer (`-Q`, `--query`, `--view`); a bare ugrep `--pager` or `--view` no longer takes the next word as its command.
+- Hooks: the decrypt-lock refuses a recursive grep, rg or ag whose root holds the age key (.config and ancestors, any pattern), any search under .config/sops, and bun reading the environment.
+- decrypt-lock: a `git grep` pathspec-magic root (`:(exclude)x`, `:!x`, `:/`) is judged as its base, and a `-C`/`--work-tree` base of one segment after two or more `..` (`../../user`) counts as a possible home.
+- Hooks: the decrypt-lock judges egrep, fgrep, rgrep, zgrep, ugrep, ug, pcregrep, ack and git grep --no-index (with -C) by root too, judges the option values of ack and ugrep as commands, refuses .. chains and ~user homes, and resolves dir/.. before matching.
+- Hooks: the decrypt-lock judges the command after doas, chrt, taskset, unbuffer, watch (also as its sh -c string), flock, busybox, strace, ltrace, unshare, chroot and caffeinate; unshare -w moves the base and a new root counts as /.
+- `risk-check`: an owner request for changes that someone dismissed (GitHub then reports DISMISSED) still withdraws comment, signed and delegate approvals; only a newer owner APPROVED review or a newer plain-token owner comment clears it, never a signature.
+- `bosun reap` closes epics whose tasks are all merged or closed and quiet for 10 minutes (`data.epics_closed`, best-effort with `data.epics_error`), and `plan import`/`amend` reopen such an epic when it has an open task again (`data.reopened`, `data.would_reopen`).
+- `bosun gate` and `test-integrity` also see staged, unstaged and untracked changes: they select the gate, and `data.uncommitted` lists them.
+- The edit hook judges a repo-root file named `..x` as inside the repo (only a real `..` path component means outside).
+- Hooks: a session may edit paths leased under its own `<session>/<task>` ids; the label-lock no longer refuses read-only GitHub MCP tools or heredoc prose that names a state label; AGENTS.md says to run `git checkout -b` as its own command.
+- `bosun init` sets `[github] merge_queue = false` in an existing hoist.toml when the key is absent (bosun's statuses are not posted on `merge_group` refs), keeps an explicit bool, warns in `data.warnings` and the PR body on `true` or when it cannot place the key, refuses a non-bool, and accepts `[ github ]` and `["github"]` headers; `data.hoist_merge_queue` says `added`, `kept_true`, `kept_false` or `unset`.
+- `bosun plan amend` and `plan import` make the plan task of an item already merged when a merged intake PR added the item to the plan file, and promote its epic and tasks at once, but only while the local item equals the one in the plan file on the default branch.
+- `plan import`/`amend` skip an intake whose merge commit GitHub answers with 422 instead of failing; `reap` keeps an epic open while a hand-made open task carries its item.
+- The label-lock skips only an explicit allowlist of read-only GitHub MCP tools (`READ_ONLY_GITHUB`), pinned by a test, so an unknown `get_*`/`list_*` tool is judged like a write.
+- `bosun pr` names the fix when auto-merge is off or the branch is not pushed, titles the PR after a conventional head commit, the review pack tells reviewers when not to `escalate_risk`, and the channel pins splice 0.2.1.
+- `risk.yml` (bosun's and the channel's): `/bosun recheck` runs only for the repo's owners, members and collaborators (`author_association`); anyone else's runs no job and never cancels the judge. It limits CI minutes only (an outsider's `/bosun approve` still re-judges, harmlessly); a recheck from an owner with private org membership or an app (`NONE`) is dropped, so risk-check's fix and the docs now also say to re-run the risk workflow. `/bosun approve` is unchanged.
+- risk-check orders an owner's decisive reviews by `submitted_at` (a missing time fails closed), not by list order.
+- risk: every `hoist.toml` is R-gov and the root one (the ruleset's required checks) is on the critical floor (owner only, never a delegate), so a PR cannot drop a required check at normal risk; R-gov lists the agent-instruction files in lowercase (`docs/agents/**`, `**/agents.md`, `**/claude.md`, `**/claude.local.md`) so any case matches, and `docs/setup-script.sh` (its pasted copy runs as root in cloud environments), in the built-ins, bosun's own rules and the channel.
+- **Security:** `risk.yml` (bosun's and the channel's) no longer runs on `pull_request_review`, which ran the PR's own copy of the file with `statuses: write`, so a same-repo author could rewrite the job and forge `risk-check` with a COMMENT review; an owner's GitHub review (or its withdrawal) now counts on the next run, and a `/bosun recheck` PR comment (anyone) starts one without a push. The `on: pull_request` statuses residual stays open until B2.
+- risk-check quotes file names in the Risk note and replaces backticks, angle brackets and control characters, so a file name cannot end the note.
+- **Security:** workflow secrets sit behind main-only environments, since a same-repo PR's own `on: pull_request` workflow can read repository secrets: `SPLICE_BOT_TOKEN` in `splice-bot` (splice.yml job `update`, bosun's and the channel's), `HOIST_RELEASE_TOKEN` in `release-pr` (release.yml jobs `prepare` and the new `release-token`, which takes the token check out of `detect` so a dry run still works on any branch). A guard test requires a literal environment on every job that reads a secret other than `GITHUB_TOKEN`. `bosun init` tells the owner to create `splice-bot` first.
+- Setup scripts: a `rust-toolchain.toml` channel that is not a toolchain name (`^[A-Za-z0-9][A-Za-z0-9._-]*$`) never reaches `rustup`; it is skipped like a missing file, with an `invalid channel` warning.
+- The setup scripts (the channel's `docs/setup-script.sh` and bosun's own) install the `channel` of the repo's `rust-toolchain.toml` instead of a hard-coded Rust 1.97; without the file they warn, skip the Rust toolchain and the cargo tools, install the rest and exit 0; `--rust-version` prints the version.
+
+## 0.2.3 (2026-10-26)
+
+- The channel's bosun.yml runs a ts-pnpm or mixed stack in two jobs (#234): `bosun-trusted` runs test-integrity and deps with no PR code (no install, no cache; `pnpm audit` reads the PR's lockfile with the base's pnpm config and an exact pnpm release), and `ci-ok` (or `bosun-ok`) installs and runs fmt, lint and test only after it passed. The pnpm allow-list, install fingerprint, `--ignore-scripts` install and `pnpm rebuild` of #233 are gone; rust stacks stay one job.
+- bosun's own `.bosun/risk.toml` delegates R-ci, R-gate and R-deps again now that `.bosun/version` pins 0.2.1; after the critical floor a delegate decides `deny.toml`, the toolchain files, `.config/**` and `profiles/**`.
+- The channel's docs call `.bosun/fold-fragments.sh` through bash (`bash .bosun/fold-fragments.sh`): splice ships files without their mode (template format 9.13), so the script lands as 0644; a test keeps every shipped script call behind `bash`.
+
+## 0.2.2 (2026-10-26)
+
+- CI minutes (docs/ci-minutes.md): the channel's bosun.yml runs every gate in one job named after the required check (`ci-ok`/`bosun-ok`) instead of nine (the gates that run no PR code first); a draft fails it at once; after a PR body or title edit only test-integrity runs again on a head that passed; main-health runs the gates weekly, not nightly. AGENTS.md: run every gate locally before a push, push once per PR.
+- release.yml: `prepare` (the release PR) runs only when the secret `HOIST_RELEASE_TOKEN` is set; without it the job failed on every push to main (GITHUB_TOKEN may not open PRs here) and is now skipped with a warning.
+- CI minutes: bosun's own ci.yml runs everything in one job `ci` (9 jobs before), `ci-ok` aggregates it; drafts fail at once, edits rerun only test-integrity on a passed head, the pin check runs before the gates; the channel's main-open and main-health comments name bosun.yml's pinned-release steps.
+- CHANGELOG and PROGRESS entries are one-line fragments (`changelog.d/`, `docs/progress.d/`) that `scripts/fold-fragments.sh` folds in a docs PR to main before a release, so merging main into a PR no longer conflicts on them; the channel ships the script as `.bosun/fold-fragments.sh` and the rule in AGENTS.md.
+
+## 0.2.1 (2026-10-26)
+
+- bosun's own `.bosun/risk.toml` delegates nothing until `.bosun/version` pins 0.2.1: the pinned 0.2.0 risk-check rejected `approval = "delegate"` and failed every PR. A test keeps the rules parseable by the pin.
+- No signed approval (owner or delegate key) counts on a PR that changes `.bosun/approvers.toml`, `governance/owners.toml` or a CODEOWNERS file: key and owner changes need the owner's own GitHub approval, as does a diff bosun could not see whole. `.github/actions/**` is R-ci.
+- Delegated decisions: `approval = "delegate"` rules and `role = "delegate"` keys; risk-check counts a signed `bosun-delegate v1` approval with one clean independent verdict, never on a critical change (hard-coded floor: every workflow, governance, bosun's code), while halted, or for a PR whose linked issues are not open leased tasks; verdict records carry `major`; `bosun approve --as delegate`. The kill switch and notify read owners at `refs/heads/<default>`.
+- `bosun pr` refuses an open PR on the branch that does not link the task (exit 3).
+- A human merge moves a building, review or fixing task to merged: `bosun pr`, `bosun reap` (also for closed issues) and `bosun result --outcome merged --pr N` see it; leases end with reason `merged`.
+- `bosun init --branch <name>`; in a Claude cloud session the default is `claude/bosun-init`; `--no-pr` returns the PR title and body. The owner steps say each weekly splice update PR needs `/bosun approve <sha>`.
+- `bosun doctor` sees the Claude GitHub App through `performed_via_github_app`, and step 3 reads the checks the default branch enforces (403: "cannot verify").
+- The label-lock hook lets read-only commands that mention a state label pass (grep, git show, heredoc prose, `gh issue list --label`); any other command naming one is refused. The hook denies a call when its guard panics.
+- `verdict apply`: a newer verdict comment replaces only one of the same session, so two reviewers posting close together both count.
+- A PR body edit no longer cancels the running CI of the same head (bosun's ci.yml and the channel's bosun.yml).
+- Channel: the gates install the toolchain of `rust-toolchain.toml` (else the 1.97 pin); with own_ci a PR runs only test-integrity unless `BOSUN_ALL_GATES=1`; a docs-only PR (Markdown, not README.md, not with ts-pnpm) skips the gates; `docs/agents/**`, `**/AGENTS.md` and `**/CLAUDE.md` are R-gov.
+- Signed owner approvals: risk-check counts `/bosun approve <head>` with a `bosun-sig ed25519` line from a key in `.bosun/approvers.toml` on the default branch, bound to repo, PR and head; `bosun approve <pr>@<head> --sign-key <pem> [--print]` signs and posts it, also from a Claude cloud session.
+- Risk rules: the owner approves all workflows, `deny.toml`, the toolchain files, `Cargo.toml`, `Cargo.lock`, build inputs, `REVIEW.md`, `docs/lessons.toml` and the gate code (R-gate); `channel/**` passes with two independent verdicts instead.
+- `bosun approve --list` returns a hint: approvals posted through the Claude GitHub tool never count.
+- `bosun approve` refuses to post from a Claude cloud session (its proxy rewrites GitHub writes); a PR whose owner review requests changes is not ready; a counting approval is re-posted when risk-check is still red.
+- `bosun reap` reads the PR that `bosun pr --auto-merge` recorded on the task (a `task-pr` record) instead of listing every PR; tasks queued before this keep the old sweep.
+- `bosun result --outcome blocked|needs-human` sets that state on the epic; `merged` stays a report.
+- `bosun init` detects a repo's own `ci-ok` check by the job's name (or key without a name), at any indentation.
+- `bosun approve`: the missing-token fix says to run it on your own machine.
+- The channel's main-open and main-health comments name bosun.yml; a test renders every channel variant and parses the output.
+
+## 0.2.0 (2026-10-24)
+
+- `bosun fail`: stop rules (3 equal failures or 0 changed lines block the task) and tier escalation, with `failure` and `escalate` records.
+- `bosun claim` refuses new work with exit 6 at 80 % of the daily budget, like `spawn` check 2; mainfix tasks and a re-claim of your own lease are exempt (UC-M4-1).
+- `bosun budget check`: the level (normal, guard, stop) of today's spend; at 100 % one `interrupt_session` per live remote session in `next`, for the janitor (UC-M4-2).
+- `bosun budget record`: the record that blocks a task over `per_task_usd` opens a `budget` lesson, or adds a hit to it (UC-M4-3).
+- `bosun progress [--days N]`: cost per merged task over the last N days, read-only (UC-M4-4).
+- `wave plan` and `status` read `.bosun/limits.toml` from the default branch, like `spawn`, `claim` and `budget record`; `status` reports `daily_usd`.
+- `bosun pr` moves a claimed task through building to review; `bosun pr` and `bosun reap` move a queued task to merged once GitHub merged its PR (agents never merge).
+- `bosun fail`: a stop opens or hits a `stop-rule` lesson.
+- `bosun resume`: after a container restart, renew the session's join record and leases and list the open PR and next action of each held task.
+- `bosun result <epic> --outcome .. [--pr N]`: a child posts its result, ends its epic lease and leaves the registry; the spawn prompt uses it.
+- `bosun pr --auto-merge` works in Claude Code cloud sessions: it falls back to the CCR auto-merge route when GraphQL is refused; the merge-lock also blocks `gh api` auto-merge calls.
+- The janitor Routine prompt (`bosun doctor`) runs `bosun budget check` and makes its `interrupt_session` calls.
+- `bosun gate main-open --pr N`: posts the required `main-open` status; while main is red only PRs labelled `bosun:kind/mainfix` (or linked to an open issue with that label) pass (UC-M3-2).
+- `bosun main-triage --good <rev>`: bisects the merged PRs on main and names the first bad one (UC-M3-3).
+- `bosun revert <pr>`: opens a `bosun:kind/mainfix` PR that reverts a merged PR, without touching your checkout (UC-M3-4).
+- `bosun main-health --result <conclusion>`: opens or closes the `bosun:main-red` issue, opens a `main-red` lesson, and re-posts `main-open` on every open PR (UC-M3-1).
+- CI: `main-open` and `main-health` (bosun's and the channel's) run the pinned bosun release, with a shell fallback until it has the commands; main-health ignores fork runs from a branch named main; splice is pinned to 0.2.0.
+- `bosun approve --list` and `bosun approve <pr>@<sha>...`: the owner approves ready high-risk PRs from their own Claude Code session, posting the same `/bosun approve <sha>` comment risk-check already counts.
+- risk-check: a two-verdict approval class (mechanism only; the rules are unchanged).
+- `bosun plan check <file>` and `bosun plan import <file>`: epics, tasks and one plan task per item from a plan file; a second import creates nothing (UC-M2-1).
+- `bosun plan import` moves an item's tasks to ready once its plan task merged (UC-M2-2); it writes no UC test stubs, the UC tests land with their code (#199).
+- `bosun plan amend <file>`: items and tasks gone from the plan close as not planned; changed ones update in place (UC-M2-4).
+- `bosun intake "<text>" --source ..`: opens a kind/plan issue that asks for a plan amendment.
+- `bosun lesson capture`: a failure opens a lesson issue, or adds a hit to the open lesson with the same signature (UC-M5-1).
+- Process-red: an open `bosun:process-red` issue pauses `claim`, `spawn` and `wave plan` for all but mainfix and process-fix work (UC-M5-2).
+- `bosun lesson triage <issue> --as blocking|mechanizable|advice`, called by the curator Routine prompt.
+- A hit on a mechanized lesson reopens it as blocking (UC-M5-5); `lesson add --upstream`; `bosun progress --lessons`.
+- The merge-lock follows `cd`, `git -C`, `--git-dir` and `--work-tree`; the label-lock reads label fields only.
+- Paging works through the Claude Code cloud proxy.
+- `risk.yml` and `verdict.yml` run the pinned bosun release instead of building main.
+- `bosun review-ci <pr>`: review mode (b). The review verdict comes from one Anthropic API call in CI, with no session (UC-M8-1); it fails closed on a diff it cannot see or a request over the cap, and does nothing unless `review.mode = "ci"`. `--dry-run` records a verdict and writes nothing.
+- A later review covers only the new commits, and only from an approved ancestor that is one of the PR's commits (UC-M8-2).
+- `core::agreement` and the recorded-review fixtures for comparing mode (a) with mode (b) (UC-M8-3 waits for 20 recordings).
+- risk-check flags a file with changed lines and no patch whatever its name.
+- `bosun notify`: owner questions, halt, main-red, budget-halt and thread results as `slack_post` items in `next`, posted by Claude Tag or the notify Routine and acknowledged with `--ack`, so each post is made once; it refuses a channel that is shared or has guests (UC-M6-1, UC-M6-4). bosun holds no Slack token.
+- `bosun answer`: an owner answers an ask from Slack; only owner Slack IDs count and the answer never changes the task state (UC-M6-2).
+- `bosun spawn --slack-thread`: a Slack thread spawns a child (a new request goes through intake), with the same checks and budget as any spawn; the result is posted back into the thread (UC-M6-3, UC-M6-4).
+- The splice channel `gh:keelstackhq/bosun//channel` (D16): pieces `core` (governance seeds, the `bosun`, `risk`, `verdict`, `main-open`, `main-health` and `splice` workflows, the AGENTS.md and REVIEW.md sections), `rust`, `ts-pnpm` and the optional `claude-md`. The gates run in `.github/workflows/bosun.yml` (aggregate `ci-ok`, or `bosun-ok` beside a repo's own ci.yml); consumer workflows run the release pinned in `.bosun/version`, never PR code.
+- `bosun init --stack <rust|ts-pnpm>... [--plan FILE] [--owner LOGIN] [--source SRC] [--ref REF] [--bosun-version X.Y.Z] [--no-pr]`: adds the channel on branch `bosun/init` and opens one R-gov setup PR with the owner steps. Beside a hull template it sets `own_ci`, skips `claude-md` when the template owns CLAUDE.md, excludes existing seeds and `.claude/settings.json`, and merges the required checks into an existing hoist.toml.
+- Gate profiles: `manifest` (a stack whose manifest is missing at the head and the base is skipped, so an empty repo's setup PR is green), `requires`, the `{packages}` placeholder and a closed set of packages adapters (`cargo-metadata`, `pnpm-workspace`, `none`, `generic`).
+- The `ts-pnpm` profile (root `package.json` scripts, `pnpm --filter`), the `ts-skip` and `ts` test-integrity adapters, and generic `regex` adapters for any stack, reported as reduced integrity; mixed stacks get one kit per stack.
+- `bosun pr --auto-merge` and `bosun doctor` read the required checks as the defaults plus hoist.toml `[github] required_checks` from the default branch; doctor finds `ci-ok` in any workflow.
+- `bosun doctor --remote` runs `hoist check` and folds its drift into steps 3, 5 and 10.
+- `.bosun/risk.toml`: `channel/**` is R-ci.
+
+### Features
+
+- plan import writes no UC stubs; UC tests land with their code (#179) (#199) (b0e0d48)
+- channel workflows run the pinned bosun (2/2) (#109) (cebf97b)
+- one thread reply per child result (M6/T4) (#196) (c23a253)
+- thread spawn with intake first, no exemptions (M6/T3) (#195) (8b69b49)
+- bosun answer counts only owner Slack IDs (M6/T2) (#194) (63b60b3)
+- bosun notify with the channel check (M6/T1) (#193) (36ec948)
+- agreement harness and review-ci --dry-run (M8/T3) (#184) (d2d7565)
+- bosun review-ci, review mode (b) with no session (M8/T1a) (#182) (28f12e0)
+- delta since the newest approved head of this PR (M8/T2) (#180) (cdf576b)
+- bosun main-health opens and closes main-red, opens a lesson (M3 T4) (#155) (0b49fcf)
+- bosun intake (M2/T4) (#165) (377f31b)
+- splice channel with pieces core, rust and ts-pnpm (1/2) (#107) (d3e50a2)
+- ts-pnpm profile with the pnpm-workspace packages adapter (M7 T3 1b) (#122) (ee753f9)
+- generic regex adapters, reduced integrity in status, mixed stacks (UC-M7-3, UC-M7-5) (#168) (d90fa30)
+- --remote runs hoist check for steps 3 and 5 (#118) (cb277bc)
+- work beside a hull template (own_ci, claude-md, excludes, hoist checks) (#157) (a69bb22)
+- reopen mechanized lessons as blocking, --upstream, progress --lessons (M5/T4) (#166) (747a579)
+- ts-skip and ts assertion adapters for test-integrity (M7 T3 2/2) (#123) (9e931d2)
+- runner keys {packages} and requires; packages adapter dispatch (M7 T3 1a) (#167) (79ab011)
+- required checks follow hoist.toml; doctor finds ci-ok in any workflow (#158) (8285d9f)
+- bosun plan amend (M2/T3) (#163) (0627b7d)
+- bosun revert opens a mainfix PR (M3 T3) (#111) (f7a126d)
+- lesson triage and the curator prompt (M5/T3) (#154) (80a4c75)
+- bosun init adds the splice channel and opens the setup PR (#112) (701bf2b)
+- ready after the plan task merged, UC stubs, list-lag guard (M2/T2b) (#153) (b98a709)
+- critical path and dependency cycles (M2/T1b) (#151) (b8bae91)
+- janitor prompt runs bosun budget check (M1 janitor, UC-M4-2) (#174) (0bd9015)
+- bosun main-triage bisects merged PRs (M3 T2) (#108) (5c50abd)
+- bosun result for child results (M1 T4) (#116) (b2748d5)
+- a task over per_task_usd opens a budget lesson (UC-M4-3) (#171) (adb980d)
+- bosun budget check stops the live sessions at 100 % (UC-M4-2) (#169) (d50dc05)
+- fall back to the CCR auto-merge route when GraphQL is refused (#164) (33f2a1f)
+- a stop rule opens or hits a lesson (M1 T2b) (#149) (35082e9)
+- bosun pr sets building, pr and reap set merged (M1 T1) (#115) (6747ffc)
+- cost per merged task over the last N days (UC-M4-4) (#127) (1b3fe20)
+- spend guard at 80 % of the daily budget (UC-M4-1) (#126) (569c846)
+- bosun plan check and import (M2/T2a) (#124) (7817c6c)
+- bosun gate main-open (M3 T1) (#117) (81c8824)
+- plan-format parser, rules 1-5, 7, 8 (M2/T1a) (#113) (274b418)
+- skip a stack whose manifest does not exist yet (#110) (f3f61ba)
+- bosun resume after a container restart (M1 T3) (#105) (c0462f6)
+- process-red pauses claim, spawn and waves (M5/T2) (#102) (012629d)
+- capture lessons by failure signature (M5/T1) (#103) (6b7bf7e)
+- bosun fail — stop rules and tier escalation (M1 T2) (#104) (7b3a42a)
+
+### Fixes
+
+- a file with changed lines and no patch is unseen, whatever its name (#181) (3d3d87e)
+- the label-lock reads label fields, not prose (#162) (7e5efbb)
+- wave plan and status read the limits from the default branch (#170) (8dbcc5d)
+- COMMANDS holds 26 entries (plan and progress both merged) (#152) (ca13968)
+- follow next-page links by owner/repo, not repository id (#120) (6a6b556)
+- merge-lock reads the branch where git acts (#101) (f182f14)
+
+## v0.1.0
+
+The first release: the seed (S1-S10, `docs/superpowers/plans/2026-10-22-bosun-seed.md`).
+
+- One JSON envelope on stdout for every command, fixed exit codes 0-6, `error.fix` always set.
+- Identity, config and time: `BOSUN_REPO`, `BOSUN_SESSION`, `.bosun/*.toml`, `BOSUN_NOW`.
+- Coordination on GitHub issues: `join`, `claim`, `heartbeat`, `release`, `reap`, `status`, with
+  leases in the registry issue and the kill switch (an owner's `bosun:halt` issue).
+- Spawning and limits: `spawn`, `wave plan`, `wait`, `msg`, `budget record`; the
+  claude-code-remote calls come back in `next`.
+- Gates: `gate` (rust profile), `test-integrity`, `ci-log`.
+- Review and risk: `review-pack`, `verdict post|comment|apply`, `risk-check`, `pr --auto-merge`,
+  `ask`.
+- Learning loop: `lesson add`, `lesson hit`.
+- Hooks: `hook pre-tool-use` (edit-, label- and merge-lock) and `hook session-start`.
+- `doctor`, which also prints the janitor, curator and notify Routine prompts.
+
+Install: `npm i -g @keelstackhq/bosun`, `cargo install keel-bosun`, or a binary from the
+GitHub Release.
+
+### Added after the seed
+
+- `risk-check` accepts an owner's PR comment `/bosun approve <head sha>` (full 40-character SHA,
+  unedited) as the approval of a high-risk PR, beside a GitHub review. The `risk` workflow also
+  runs on such comments, from the default branch.
+- Kill switch: an open issue labelled `bosun:halt` and opened by an owner halts bosun (exit 4).
+  Create the label with `gh label create bosun:halt --repo <owner>/<repo> --color B60205`.
+- `bosun verdict comment` posts a verdict as a PR comment, and the `verdict` workflow runs
+  `bosun verdict apply <comment-id>` to check it and post the `review-verdict` status, so cloud
+  sessions (which cannot write statuses) can deliver verdicts.
+
+### Fixed
+
+- The `verdict` workflow has `pull-requests: write`: with `issues: write` alone, its verdict record
+  comment on the PR got 403 after the status was posted (first full run, #73).
+- `bosun verdict apply` reads only the ```json block of a verdict comment: the agent proxy
+  appends a footer to every comment, which made the second verdict comment on #73 invalid.
+- `bosun verdict apply` checks the author's repository permission (write or admin) instead of
+  `author_association`: the workflow token sees an org member as `CONTRIBUTOR`, so the first
+  verdict comment (#73) was refused.
+
+### Changed
+
+- risk-check counts a `/bosun approve` comment only when GitHub says no app wrote it
+  (`performed_via_github_app` present and `null`). Agent sessions comment as the owner's login
+  through the Claude app, so before this an agent could approve its own PR.
+- The `risk` workflow runs on `pull_request_target` instead of `pull_request`: the judging job
+  comes from the base branch, never checks out PR-head code, passes event data through `env`
+  only, and has least permissions. `tests/workflows.rs` asserts it.
+- The repo variable `BOSUN_HALT` is now a second, optional kill-switch source: 404 (unset) and 403
+  (not readable from this token) are no signal; any other read error still halts. Before, a 403
+  halted every session behind the agent proxy.
+- `bosun doctor` step 5 ("kill switch") checks the `bosun:halt` label instead of the variable.

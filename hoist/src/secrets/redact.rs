@@ -1,0 +1,434 @@
+//! Redaction for `hoist secrets exec` (spec §15.7.1 step 7). Every value of at least 4 bytes and
+//! each line of a multi-line value become `***` in each line of the child's output:
+//! as written, URL-encoded or JSON-escaped in any spelling, or base64 (also inside a longer
+//! encoding, and wrapped). Shorter values are left alone: they would wreck the log.
+
+use base64::Engine;
+use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+use zeroize::Zeroizing;
+
+/// Values shorter than this are not redacted or masked.
+const MIN: usize = 4;
+/// Bytes per base64 window. Windows start at every byte, so overlapping matches cover a wrapped
+/// line whose width is a multiple of 4 and at least 16 (76 for `base64`, 64 for PEM); up to 3
+/// bytes on each side of a line break stay visible, so a 4 to 6 byte value split there can show.
+const WRAP: usize = 12;
+/// At most this many readings of a value are followed at once (see `spelled_len`).
+const READINGS: usize = 32;
+/// Matching steps allowed per byte of a line; a line that needs more becomes `***`.
+const BUDGET: usize = 64;
+/// A longer line becomes `***` without being checked.
+const MAX_LINE: usize = 1 << 20;
+
+/// What to replace; zeroized on drop.
+pub struct Redactor {
+    /// Values and their lines, sorted, matched in any spelling (`spelled_len`).
+    parts: Vec<Zeroizing<Vec<u8>>>,
+    /// Bytes each part shares with the next one, to skip parts that would fail alike, and for
+    /// each the next with fewer (`next_smaller`).
+    shared: Vec<usize>,
+    shared_next: Vec<usize>,
+    /// Base64 forms, sorted, their first `MIN` bytes for a quick lookup, and the bytes each
+    /// shares with the next one.
+    needles: Vec<Zeroizing<Vec<u8>>>,
+    keys: Zeroizing<Vec<[u8; MIN]>>,
+    needles_shared: Vec<usize>,
+    needles_next: Vec<usize>,
+}
+
+impl std::fmt::Debug for Redactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Redactor({} parts)", self.parts.len())
+    }
+}
+
+/// The pieces of `value` between line breaks (`\n` or `\r`) and, when it has any, `value` itself;
+/// each at least `MIN` bytes.
+fn parts(value: &[u8]) -> Vec<&[u8]> {
+    let pieces: Vec<&[u8]> = value.split(|b| matches!(b, b'\n' | b'\r')).collect();
+    let whole = (pieces.len() > 1).then_some(value);
+    pieces
+        .into_iter()
+        .chain(whole)
+        .filter(|p| p.len() >= MIN)
+        .collect()
+}
+
+/// The base64 characters of `value` that do not depend on its neighbours when it starts at byte
+/// offset `k` (0 to 2) of a longer encoded text (e.g. `Basic base64(user:token)`).
+fn base64_core(value: &[u8], k: usize, engine: &impl Engine) -> Zeroizing<Vec<u8>> {
+    let mut bytes = Zeroizing::new(Vec::with_capacity(k + value.len()));
+    bytes.extend_from_slice(&[0; 2][..k]);
+    bytes.extend_from_slice(value);
+    let text = Zeroizing::new(engine.encode(&*bytes).into_bytes());
+    let first = (8 * k).div_ceil(6);
+    let end = (8 * bytes.len() / 6).min(text.len());
+    Zeroizing::new(text[first.min(end)..end].to_vec())
+}
+
+/// Base64 forms of `value`: whole, inside a longer encoding, and as wrapped lines split it. A
+/// wrapped line (`base64`, `openssl base64`) starts at a 3-byte boundary of the stream, so it is
+/// covered by windows of the value at offset 0, or begins with the value's start at any offset.
+fn base64_forms(value: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+    let engines = [STANDARD, URL_SAFE, STANDARD_NO_PAD, URL_SAFE_NO_PAD];
+    let full = engines.map(|e| Zeroizing::new(e.encode(value).into_bytes()));
+    let url_safe = (0..3).map(|k| base64_core(value, k, &URL_SAFE_NO_PAD));
+    let windows = (0..=value.len() - MIN).map(|j| &value[j..value.len().min(j + WRAP)]);
+    let windows = windows.map(|w| base64_core(w, 0, &STANDARD_NO_PAD));
+    let starts = (MIN..=value.len().min(WRAP)).map(|m| &value[..m]);
+    let starts = starts.flat_map(|s| (0..3).map(move |k| base64_core(s, k, &STANDARD_NO_PAD)));
+    full.into_iter()
+        .chain(url_safe)
+        .chain(windows)
+        .chain(starts)
+        .collect()
+}
+
+fn hex(h: u8, l: u8) -> Option<u32> {
+    let digit = |c: u8| char::from(c).to_digit(16);
+    Some(digit(h)? * 16 + digit(l)?)
+}
+
+/// Length of `unit` (one byte of a value) URL-encoded at the start of `text`: `%hh` in any case
+/// or `+` for a space.
+fn url_len(text: &[u8], unit: &[u8]) -> Option<usize> {
+    match (text, unit) {
+        ([b'+', ..], b" ") => Some(1),
+        ([b'%', h, l, ..], [b]) => (hex(*h, *l)? == u32::from(*b)).then_some(3),
+        _ => None,
+    }
+}
+
+/// Length of `unit` (one character of a value) JSON-escaped at the start of `text`: `\"`, `\\`,
+/// `\/`, `\n`, `\r`, `\t`, `\b`, `\f` or `\uXXXX` (a surrogate pair outside the BMP).
+fn json_len(text: &[u8], unit: &[u8]) -> Option<usize> {
+    let c = std::str::from_utf8(unit).ok()?.chars().next()?;
+    let short = match c {
+        '"' | '\\' | '/' => Some(c as u8),
+        '\n' => Some(b'n'),
+        '\r' => Some(b'r'),
+        '\t' => Some(b't'),
+        '\u{8}' => Some(b'b'),
+        '\u{c}' => Some(b'f'),
+        _ => None,
+    };
+    if short.is_some() && text.get(..2) == Some(&[b'\\', short?]) {
+        return Some(2);
+    }
+    let mut utf16 = [0u16; 2];
+    c.encode_utf16(&mut utf16).iter().try_fold(0, |at, &u| {
+        let [b'\\', b'u', a, b, c, d] = *text.get(at..at + 6)? else {
+            return None;
+        };
+        (hex(a, b)? * 256 + hex(c, d)? == u32::from(u)).then_some(at + 6)
+    })
+}
+
+/// Length of `part` at the start of `text`, unit by unit (a byte when `url`, else a character):
+/// each URL-encoded (`url`) or JSON-escaped, or else as itself (never a line break). One encoding
+/// per pass keeps the reading unambiguous (`\\` in JSON is one backslash), except where a unit
+/// can be read two ways (`%25`, `\\`): then every reading is followed (`spelled_set`). Each step
+/// costs one unit of `budget`; `None` when it runs out.
+fn spelled_len(text: &[u8], part: &[u8], url: bool, budget: &mut usize) -> Result<usize, usize> {
+    // `seen`: part bytes the outcome so far depends on, for `Err` (see `covered`).
+    let (mut at, mut i, mut seen) = (0, 0, 0);
+    while i < part.len() {
+        *budget = budget.checked_sub(1).ok_or(0usize)?;
+        let n = unit_len(&part[i..], url);
+        seen = seen.max(looked(&part[i..], i, n, url));
+        let ends = text.get(at..).map(|t| ends(t, &part[i..i + n], url));
+        match ends.unwrap_or_default() {
+            [Some(a), Some(b)] if a != b => {
+                let first = [at + a, at + b];
+                return spelled_set(text, first, part, (i + n, seen), url, budget);
+            }
+            [Some(e), _] | [None, Some(e)] => at += e,
+            [None, None] => return Err(seen),
+        }
+        i += n;
+    }
+    Ok(at)
+}
+
+/// Bytes of `rest` from which a unit split starting `i` bytes into the part was decided: an
+/// invalid UTF-8 byte (a one-byte unit in JSON mode) was decided by up to 3 bytes after it.
+fn looked(rest: &[u8], i: usize, n: usize, url: bool) -> usize {
+    match !url && rest[0] >= 0x80 && n == 1 {
+        true => i + 4,
+        false => i + n,
+    }
+}
+
+/// Bytes in the next unit of `rest`: one when `url` or ASCII, else a whole UTF-8 character.
+fn unit_len(rest: &[u8], url: bool) -> usize {
+    match rest[0] {
+        b if url || b < 0x80 => 1,
+        _ => (2..=4.min(rest.len()))
+            .find(|&n| std::str::from_utf8(&rest[..n]).is_ok())
+            .unwrap_or(1),
+    }
+}
+
+/// Where `unit` can end at the start of `text`: escaped, and as itself (never a line break).
+fn ends(text: &[u8], unit: &[u8], url: bool) -> [Option<usize>; 2] {
+    let escaped = if url {
+        url_len(text, unit)
+    } else {
+        json_len(text, unit)
+    };
+    let raw = !matches!(unit, b"\n" | b"\r") && text.starts_with(unit);
+    [escaped, raw.then_some(unit.len())]
+}
+
+/// `spelled_len` from several readings at once: every position a reading can reach, at most
+/// `READINGS` of them (a run of `\\` in a value doubles them).
+fn spelled_set(
+    text: &[u8],
+    first: [usize; 2],
+    part: &[u8],
+    (mut i, mut seen): (usize, usize),
+    url: bool,
+    budget: &mut usize,
+) -> Result<usize, usize> {
+    // Two buffers on the stack, swapped each unit: this runs inside the per-byte loop.
+    let mut bufs = [[0usize; READINGS]; 2];
+    let (mut cur, mut len) = (0, 2);
+    bufs[0][..2].copy_from_slice(&first);
+    while i < part.len() {
+        let n = unit_len(&part[i..], url);
+        seen = seen.max(looked(&part[i..], i, n, url));
+        let (ats, next) = match &mut bufs {
+            [a, b] if cur == 0 => (&*a, b),
+            [a, b] => (&*b, a),
+        };
+        let mut count = 0;
+        for &at in &ats[..len] {
+            // A step, plus the readings each new end is checked against.
+            *budget = budget.checked_sub(1 + len / 8).ok_or(0usize)?;
+            let Some(text) = text.get(at..) else { continue };
+            for end in ends(text, &part[i..i + n], url).into_iter().flatten() {
+                if count < READINGS && !next[..count].contains(&(at + end)) {
+                    (next[count], count) = (at + end, count + 1);
+                }
+            }
+        }
+        if count == 0 {
+            return Err(seen);
+        }
+        (cur, len, i) = (1 - cur, count, i + n);
+    }
+    Ok(bufs[cur][..len].iter().copied().max().unwrap_or(0))
+}
+
+/// The first byte of what a URL or JSON escape at the start of `text` decodes to, if any. A
+/// `\uXXXX` high surrogate fixes the first UTF-8 byte of its character on its own.
+fn decoded_first(text: &[u8]) -> Option<u8> {
+    match text {
+        [b'%', h, l, ..] => hex(*h, *l).map(|b| b as u8),
+        [b'+', ..] => Some(b' '),
+        [b'\\', b'u', a, b, c, d, ..] => {
+            let unit = hex(*a, *b)? * 256 + hex(*c, *d)?;
+            let code = match unit {
+                0xD800..=0xDBFF => 0x10000 + ((unit - 0xD800) << 10),
+                _ => unit,
+            };
+            char::from_u32(code).map(|c| c.encode_utf8(&mut [0; 4]).as_bytes()[0])
+        }
+        [b'\\', b'n', ..] => Some(b'\n'),
+        [b'\\', b'r', ..] => Some(b'\r'),
+        [b'\\', b't', ..] => Some(b'\t'),
+        [b'\\', b'b', ..] => Some(8),
+        [b'\\', b'f', ..] => Some(12),
+        [b'\\', c, ..] => Some(*c),
+        _ => None,
+    }
+}
+
+impl Redactor {
+    pub fn new<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> Redactor {
+        let mut parts: Vec<_> = values.into_iter().flat_map(parts).collect();
+        parts.sort();
+        parts.dedup(); // a PEM bundle repeats its BEGIN and END lines
+        let shared: Vec<usize> = parts.windows(2).map(|w| common(w[0], w[1])).collect();
+        let mut needles: Vec<_> = parts.iter().flat_map(|p| base64_forms(p)).collect();
+        needles.retain(|n| n.len() >= MIN); // `covered` looks needles up by `MIN` bytes
+        needles.sort_by(|a, b| a.as_slice().cmp(b));
+        needles.dedup_by(|a, b| a == b);
+        let keys = needles.iter().map(|n| [n[0], n[1], n[2], n[3]]).collect();
+        let needles_shared: Vec<usize> = needles.windows(2).map(|w| common(&w[0], &w[1])).collect();
+        let parts = parts
+            .into_iter()
+            .map(|p| Zeroizing::new(p.to_vec()))
+            .collect();
+        let keys = Zeroizing::new(keys);
+        Redactor {
+            parts,
+            shared_next: next_smaller(&shared),
+            shared,
+            needles,
+            keys,
+            needles_next: next_smaller(&needles_shared),
+            needles_shared,
+        }
+    }
+
+    /// Which bytes of `text` belong to a value in some form; `None` when the work runs ahead of
+    /// `BUDGET` steps per byte scanned (plus 4096 to start, with at most 64 KiB worth saved), so a
+    /// costly stretch anywhere stops within a few million steps.
+    fn covered(&self, text: &[u8]) -> Option<Vec<bool>> {
+        let mut covered = vec![false; text.len()];
+        let (mut budget, mut marked) = (4096, 0);
+        // The parts that start with byte `b`, as a range of `self.parts`.
+        let with = |b: u8| {
+            let lo = self.parts.partition_point(|p| p[0] < b);
+            lo..self.parts.partition_point(|p| p[0] <= b)
+        };
+        for (start, key) in text.windows(MIN).enumerate() {
+            budget = (budget + BUDGET).min(BUDGET * 65_536);
+            // Base64 forms that are prefixes of the text here, found like words in a sorted
+            // dictionary: `m` bytes match the last form compared; a next form sharing more than
+            // `m` with it fails alike, one sharing fewer (being greater) ends the search.
+            let from = self.keys.partition_point(|k| k[..] < *key);
+            let to = self.keys.partition_point(|k| k[..] <= *key);
+            let (t, mut g, mut m) = (&text[start..], from, MIN);
+            while g < to {
+                let needle = &self.needles[g];
+                let more = common(&needle[m..], t.get(m..).unwrap_or_default());
+                budget = budget.checked_sub(1 + more / 16)?; // a step per 16 bytes compared
+                m += more;
+                if m == needle.len() {
+                    mark(&mut covered, &mut marked, start, start + m);
+                }
+                // Skip forms sharing more than `m` with this one; stop at one sharing fewer.
+                let i = first_below(
+                    &self.needles_shared,
+                    &self.needles_next,
+                    g,
+                    m + 1,
+                    &mut budget,
+                )?;
+                if i + 1 >= to || self.needles_shared[i] < m {
+                    break;
+                }
+                g = i + 1;
+            }
+            // Only parts that start with this byte or with what an escape here decodes to.
+            let decoded = decoded_first(&text[start..]).filter(|d| *d != key[0]);
+            for range in [Some(with(key[0])), decoded.map(with)]
+                .into_iter()
+                .flatten()
+            {
+                for url in [true, false] {
+                    // A part that fails after reading `k` bytes (with the bytes that decided
+                    // how a character splits) fails the same way for every next part sharing
+                    // them: jump past those.
+                    let mut g = range.start;
+                    while g < range.end {
+                        match spelled_len(&text[start..], &self.parts[g], url, &mut budget) {
+                            Ok(len) => {
+                                mark(&mut covered, &mut marked, start, start + len);
+                                g += 1;
+                            }
+                            Err(_) if budget == 0 => return None,
+                            Err(k) => {
+                                let shared = (&self.shared, &self.shared_next);
+                                g = first_below(shared.0, shared.1, g, k, &mut budget)? + 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Some(covered)
+    }
+
+    /// `line` with every run of covered bytes replaced by one `***`. A line over `MAX_LINE`
+    /// bytes, or too costly to check, fails closed: all of it but its line break becomes `***`.
+    pub fn line(&self, line: &[u8]) -> Vec<u8> {
+        let body = line.strip_suffix(b"\n").unwrap_or(line);
+        let body = body.strip_suffix(b"\r").unwrap_or(body);
+        let covered = if body.len() <= MAX_LINE {
+            self.covered(line)
+        } else {
+            None
+        };
+        match covered {
+            Some(covered) => render(line, &covered),
+            None => [b"***", &line[body.len()..]].concat(),
+        }
+    }
+
+    /// One GitHub `::add-mask::` command per single-line value and per line of a multi-line one,
+    /// with `%` escaped. A value that is not UTF-8 is redacted but cannot be masked.
+    pub fn masks<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> Vec<Zeroizing<String>> {
+        let lines = values.into_iter().flat_map(parts);
+        let lines = lines.filter(|p| !p.iter().any(|b| matches!(b, b'\n' | b'\r')));
+        let text = lines.filter_map(|p| std::str::from_utf8(p).ok());
+        let mask = |t: &str| {
+            let mut line = Zeroizing::new(String::with_capacity(12 + 3 * t.len()));
+            line.push_str("::add-mask::");
+            t.chars().for_each(|c| match c {
+                '%' => line.push_str("%25"),
+                c => line.push(c),
+            });
+            line
+        };
+        text.map(mask).collect()
+    }
+}
+
+/// For each `i`, the first `j > i` with `s[j] < s[i]`, or `s.len()`.
+fn next_smaller(s: &[usize]) -> Vec<usize> {
+    let mut next = vec![s.len(); s.len()];
+    let mut open: Vec<usize> = Vec::new();
+    for (j, &v) in s.iter().enumerate() {
+        while open.last().is_some_and(|&i| s[i] > v) {
+            next[open.pop().unwrap_or_default()] = j;
+        }
+        open.push(j);
+    }
+    next
+}
+
+/// The first `i >= from` with `s[i] < bound`, or `s.len()`: every index jumped over holds at least
+/// `bound`. Each jump costs a budget step; `None` when it runs out.
+fn first_below(
+    s: &[usize],
+    next: &[usize],
+    mut i: usize,
+    bound: usize,
+    budget: &mut usize,
+) -> Option<usize> {
+    while i < s.len() && s[i] >= bound {
+        *budget = budget.checked_sub(1)?;
+        i = next[i];
+    }
+    Some(i)
+}
+
+/// How many bytes `a` and `b` share at the start.
+fn common(a: &[u8], b: &[u8]) -> usize {
+    a.iter().zip(b).take_while(|(x, y)| x == y).count()
+}
+
+/// Marks `covered[start..end]`, writing each byte once: `marked` is how far marks already reach
+/// (starts only grow).
+fn mark(covered: &mut [bool], marked: &mut usize, start: usize, end: usize) {
+    if end > *marked {
+        covered[start.max(*marked)..end].fill(true);
+        *marked = end;
+    }
+}
+
+/// `text` with each run of covered bytes replaced by `***`.
+fn render(text: &[u8], covered: &[bool]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for (i, &b) in text.iter().enumerate() {
+        match (covered[i], i > 0 && covered[i - 1]) {
+            (false, _) => out.push(b),
+            (true, false) => out.extend_from_slice(b"***"),
+            (true, true) => {}
+        }
+    }
+    out
+}

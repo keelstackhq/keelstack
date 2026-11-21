@@ -1,0 +1,264 @@
+# Exactly the owner-only paths of .bosun/risk.toml: every owner-class rule (R-gov, R-ci,
+# R-secrets, R-deps), re-rooted under bosun's code root `bosun/` as risk-check does, and bosun's
+# critical floor (CRITICAL_PATHS and APPROVAL_CODE_PATHS in bosun/src/core/risk.rs), where no
+# delegate approves. bosun/tests/governance_owners.rs pins the parity both ways: every such glob
+# has a line here and every line maps to one. Code owner review is not required by the ruleset;
+# .bosun/risk.toml decides who approves, this file routes the review requests.
+#
+# CODEOWNERS is case-sensitive, risk-check matches in any case: a name the rules write in lower
+# case (`**/agents.md`) is listed in lower case and in its usual spelling (`AGENTS.md`).
+# Delegate or two-verdict paths are not listed: R-gate outside the floor and R-ci-review
+# (`bosun/channel/**`).
+
+# Anywhere in the repo (no leading or middle slash matches at any depth): the `**/` globs.
+CODEOWNERS               @urbanisierung
+codeowners               @urbanisierung
+hoist.toml               @urbanisierung
+AGENTS.md                @urbanisierung
+agents.md                @urbanisierung
+CLAUDE.md                @urbanisierung
+claude.md                @urbanisierung
+CLAUDE.local.md          @urbanisierung
+claude.local.md          @urbanisierung
+.claude/                 @urbanisierung
+plans/                   @urbanisierung
+action.yml               @urbanisierung
+action.yaml              @urbanisierung
+Makefile                 @urbanisierung
+justfile                 @urbanisierung
+Dockerfile               @urbanisierung
+Jenkinsfile              @urbanisierung
+jenkinsfile              @urbanisierung
+deny.toml                @urbanisierung
+.deny.toml               @urbanisierung
+deny.exceptions.toml     @urbanisierung
+.deny.exceptions.toml    @urbanisierung
+deny.local.toml          @urbanisierung
+.deny.local.toml         @urbanisierung
+build.rs                 @urbanisierung
+# R-secrets.
+secrets.toml             @urbanisierung
+access.toml              @urbanisierung
+*.sops.*                 @urbanisierung
+# R-deps: package-source config.
+**/.cargo/config.toml    @urbanisierung
+**/.cargo/config         @urbanisierung
+.npmrc                   @urbanisierung
+.yarnrc                  @urbanisierung
+.yarnrc.yml              @urbanisierung
+.pnpmfile.cjs            @urbanisierung
+bunfig.toml              @urbanisierung
+**/.yarn/plugins/        @urbanisierung
+**/.yarn/releases/       @urbanisierung
+
+# Repo root: governance (R-gov), CI (R-ci) and the critical floor (workspace manifests).
+/.bosun/                 @urbanisierung
+/governance/             @urbanisierung
+/docs/CODEOWNERS         @urbanisierung
+/.github/CODEOWNERS      @urbanisierung
+/.github/workflows/      @urbanisierung
+/.github/actions/        @urbanisierung
+/.github/scripts/        @urbanisierung
+/.github/dependabot.yml  @urbanisierung
+/.splice/                @urbanisierung
+/.claude-plugin/         @urbanisierung
+/docs/setup-script.sh    @urbanisierung
+/REVIEW.md               @urbanisierung
+/docs/lessons.toml       @urbanisierung
+/docs/agents/            @urbanisierung
+/src/core/session_rules.rs @urbanisierung
+/src/core/session_rules/ @urbanisierung
+/src/hooks/session_rules.rs @urbanisierung
+/src/hooks/session_rules/ @urbanisierung
+/keel.toml               @urbanisierung
+/scripts/                @urbanisierung
+/.husky/                 @urbanisierung
+/.circleci/              @urbanisierung
+/.gitlab-ci.yml          @urbanisierung
+/.gitlab/ci/             @urbanisierung
+/.buildkite/             @urbanisierung
+/azure-pipelines.yml     @urbanisierung
+/azure-pipelines.yaml    @urbanisierung
+/bitbucket-pipelines.yml @urbanisierung
+/.travis.yml             @urbanisierung
+/.drone.yml              @urbanisierung
+/rust-toolchain.toml     @urbanisierung
+/rust-toolchain          @urbanisierung
+/Cargo.toml              @urbanisierung
+/Cargo.lock              @urbanisierung
+/.cargo/                 @urbanisierung
+/src/                    @urbanisierung
+/npm/                    @urbanisierung
+
+# Org decisions (R-gov `decisions/**`; D-022 names its own row as trust root).
+/decisions/              @urbanisierung
+
+# bosun: the root rules re-rooted under its code root, and its code on the critical floor.
+/bosun/.bosun/           @urbanisierung
+/bosun/governance/       @urbanisierung
+/bosun/docs/CODEOWNERS   @urbanisierung
+/bosun/.github/CODEOWNERS @urbanisierung
+/bosun/.github/workflows/ @urbanisierung
+/bosun/.github/actions/  @urbanisierung
+/bosun/.github/scripts/  @urbanisierung
+/bosun/.github/dependabot.yml @urbanisierung
+/bosun/.splice/          @urbanisierung
+/bosun/.claude-plugin/   @urbanisierung
+/bosun/docs/setup-script.sh @urbanisierung
+/bosun/REVIEW.md         @urbanisierung
+/bosun/docs/lessons.toml @urbanisierung
+/bosun/docs/agents/      @urbanisierung
+/bosun/keel.toml         @urbanisierung
+/bosun/scripts/          @urbanisierung
+/bosun/.husky/           @urbanisierung
+/bosun/.circleci/        @urbanisierung
+/bosun/.gitlab-ci.yml    @urbanisierung
+/bosun/.gitlab/ci/       @urbanisierung
+/bosun/.buildkite/       @urbanisierung
+/bosun/azure-pipelines.yml @urbanisierung
+/bosun/azure-pipelines.yaml @urbanisierung
+/bosun/bitbucket-pipelines.yml @urbanisierung
+/bosun/.travis.yml       @urbanisierung
+/bosun/.drone.yml        @urbanisierung
+/bosun/rust-toolchain.toml @urbanisierung
+/bosun/rust-toolchain    @urbanisierung
+/bosun/src/              @urbanisierung
+/bosun/npm/              @urbanisierung
+/bosun/Cargo.toml        @urbanisierung
+/bosun/Cargo.lock        @urbanisierung
+/bosun/.cargo/           @urbanisierung
+
+# splice, hull, hoard, hoist: their own R-gov and R-ci rules, re-rooted under the folder.
+/splice/.bosun/          @urbanisierung
+/splice/governance/      @urbanisierung
+/splice/docs/CODEOWNERS  @urbanisierung
+/splice/.github/CODEOWNERS @urbanisierung
+/splice/.splice/         @urbanisierung
+/splice/.claude-plugin/  @urbanisierung
+/splice/docs/setup-script.sh @urbanisierung
+/splice/REVIEW.md        @urbanisierung
+/splice/docs/agents/     @urbanisierung
+/splice/src/core/session_rules.rs @urbanisierung
+/splice/src/core/session_rules/ @urbanisierung
+/splice/src/hooks/session_rules.rs @urbanisierung
+/splice/src/hooks/session_rules/ @urbanisierung
+/splice/.github/workflows/ @urbanisierung
+/splice/.github/actions/ @urbanisierung
+/splice/.github/dependabot.yml @urbanisierung
+/splice/scripts/         @urbanisierung
+/splice/.husky/          @urbanisierung
+/splice/.circleci/       @urbanisierung
+/splice/.gitlab-ci.yml   @urbanisierung
+/splice/.gitlab/ci/      @urbanisierung
+/splice/.buildkite/      @urbanisierung
+/splice/azure-pipelines.yml @urbanisierung
+/splice/azure-pipelines.yaml @urbanisierung
+/splice/bitbucket-pipelines.yml @urbanisierung
+/splice/.travis.yml      @urbanisierung
+/splice/.drone.yml       @urbanisierung
+/splice/rust-toolchain.toml @urbanisierung
+
+/hull/.bosun/            @urbanisierung
+/hull/governance/        @urbanisierung
+/hull/docs/CODEOWNERS    @urbanisierung
+/hull/.github/CODEOWNERS @urbanisierung
+/hull/.splice/           @urbanisierung
+/hull/.claude-plugin/    @urbanisierung
+/hull/docs/setup-script.sh @urbanisierung
+/hull/REVIEW.md          @urbanisierung
+/hull/docs/agents/       @urbanisierung
+/hull/src/core/session_rules.rs @urbanisierung
+/hull/src/core/session_rules/ @urbanisierung
+/hull/src/hooks/session_rules.rs @urbanisierung
+/hull/src/hooks/session_rules/ @urbanisierung
+/hull/.github/workflows/ @urbanisierung
+/hull/.github/actions/   @urbanisierung
+/hull/.github/dependabot.yml @urbanisierung
+/hull/scripts/           @urbanisierung
+/hull/.husky/            @urbanisierung
+/hull/.circleci/         @urbanisierung
+/hull/.gitlab-ci.yml     @urbanisierung
+/hull/.gitlab/ci/        @urbanisierung
+/hull/.buildkite/        @urbanisierung
+/hull/azure-pipelines.yml @urbanisierung
+/hull/azure-pipelines.yaml @urbanisierung
+/hull/bitbucket-pipelines.yml @urbanisierung
+/hull/.travis.yml        @urbanisierung
+/hull/.drone.yml         @urbanisierung
+
+/hoard/.bosun/           @urbanisierung
+/hoard/governance/       @urbanisierung
+/hoard/docs/CODEOWNERS   @urbanisierung
+/hoard/.github/CODEOWNERS @urbanisierung
+/hoard/.splice/          @urbanisierung
+/hoard/.claude-plugin/   @urbanisierung
+/hoard/docs/setup-script.sh @urbanisierung
+/hoard/REVIEW.md         @urbanisierung
+/hoard/docs/agents/      @urbanisierung
+/hoard/src/core/session_rules.rs @urbanisierung
+/hoard/src/core/session_rules/ @urbanisierung
+/hoard/src/hooks/session_rules.rs @urbanisierung
+/hoard/src/hooks/session_rules/ @urbanisierung
+/hoard/.github/workflows/ @urbanisierung
+/hoard/.github/actions/  @urbanisierung
+/hoard/.github/dependabot.yml @urbanisierung
+/hoard/scripts/          @urbanisierung
+/hoard/.husky/           @urbanisierung
+/hoard/.circleci/        @urbanisierung
+/hoard/.gitlab-ci.yml    @urbanisierung
+/hoard/.gitlab/ci/       @urbanisierung
+/hoard/.buildkite/       @urbanisierung
+/hoard/azure-pipelines.yml @urbanisierung
+/hoard/azure-pipelines.yaml @urbanisierung
+/hoard/bitbucket-pipelines.yml @urbanisierung
+/hoard/.travis.yml       @urbanisierung
+/hoard/.drone.yml        @urbanisierung
+/hoard/rust-toolchain.toml @urbanisierung
+
+/hoist/.bosun/           @urbanisierung
+/hoist/governance/       @urbanisierung
+/hoist/docs/CODEOWNERS   @urbanisierung
+/hoist/.github/CODEOWNERS @urbanisierung
+/hoist/.splice/          @urbanisierung
+/hoist/.claude-plugin/   @urbanisierung
+/hoist/docs/setup-script.sh @urbanisierung
+/hoist/REVIEW.md         @urbanisierung
+/hoist/docs/agents/      @urbanisierung
+/hoist/src/core/session_rules.rs @urbanisierung
+/hoist/src/core/session_rules/ @urbanisierung
+/hoist/src/hooks/session_rules.rs @urbanisierung
+/hoist/src/hooks/session_rules/ @urbanisierung
+/hoist/.github/workflows/ @urbanisierung
+/hoist/.github/actions/  @urbanisierung
+/hoist/.github/dependabot.yml @urbanisierung
+/hoist/scripts/          @urbanisierung
+/hoist/.husky/           @urbanisierung
+/hoist/.circleci/        @urbanisierung
+/hoist/.gitlab-ci.yml    @urbanisierung
+/hoist/.gitlab/ci/       @urbanisierung
+/hoist/.buildkite/       @urbanisierung
+/hoist/azure-pipelines.yml @urbanisierung
+/hoist/azure-pipelines.yaml @urbanisierung
+/hoist/bitbucket-pipelines.yml @urbanisierung
+/hoist/.travis.yml       @urbanisierung
+/hoist/.drone.yml        @urbanisierung
+/hoist/rust-toolchain.toml @urbanisierung
+
+# site (D-024): its governance paths, re-rooted under site/.
+/site/.bosun/            @urbanisierung
+/site/governance/        @urbanisierung
+/site/docs/CODEOWNERS    @urbanisierung
+/site/.github/CODEOWNERS @urbanisierung
+/site/.splice/           @urbanisierung
+/site/.claude-plugin/    @urbanisierung
+/site/docs/setup-script.sh @urbanisierung
+/site/REVIEW.md          @urbanisierung
+/site/docs/agents/       @urbanisierung
+/site/src/core/session_rules.rs @urbanisierung
+/site/src/core/session_rules/ @urbanisierung
+/site/src/hooks/session_rules.rs @urbanisierung
+/site/src/hooks/session_rules/ @urbanisierung
+/site/apps/site/src/data/bosun/setup-script.sh @urbanisierung
+
+# berth: its imported workflows (R-ci).
+/berth/.github/workflows/ @urbanisierung

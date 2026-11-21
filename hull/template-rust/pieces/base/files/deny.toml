@@ -1,0 +1,24 @@
+# The policy for every crate in the workspace. CI runs `node scripts/deny.mjs` (all four checks with
+# deny.local.toml merged in: extra licenses and expiring advisory ignores go there, not here). On a
+# push to the default branch advisories are skipped: the weekly scan covers main, so a new advisory
+# never turns it red; pull requests and merge groups check them.
+
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["MIT", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Unicode-3.0", "Zlib"]
+# The allow-list is the policy, not a list of what is used today.
+unused-allowed-license = "allow"
+# Unpublished crates (`publish = false`) need no license field.
+private = { ignore = true }
+
+[bans]
+multiple-versions = "allow"
+# rustls only: no OpenSSL anywhere in the dependency tree.
+deny = [{ crate = "openssl" }, { crate = "openssl-sys" }, { crate = "native-tls" }]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

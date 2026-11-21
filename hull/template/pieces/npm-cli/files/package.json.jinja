@@ -1,0 +1,30 @@
+{
+  "name": "@{{ scope }}/{{ name }}",
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "{{ crate }}": "bin/launcher.js"
+  },
+  "files": [
+    "bin"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "hull": {
+    "release": "npm-cli"
+  },
+  "scripts": {
+    "lint": "vp lint",
+    "format:check": "vp fmt --check",
+    "typecheck": "tsc --noEmit",
+    "test": "vp test run"
+  },
+  "devDependencies": {
+    "@{{ scope }}/{{ crate }}-crate": "workspace:*",
+    "@types/node": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

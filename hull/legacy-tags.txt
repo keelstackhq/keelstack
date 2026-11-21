@@ -1,0 +1,25 @@
+# hull's release tags from keelstackhq/hull, mapped to their commits in this repository (D-023).
+# Tags were not imported; tests that need a released template (tests/splice-update.test.mjs) resolve
+# a version here. Releases of this repository (vX.Y.Z tags, > 0.21.0) come after all of these.
+v0.1.0 f896a8c2ed493acc9b4d732a119c450b53932923
+v0.1.1 96f86a83ee0db47dda97a1fa449eee9f4a54d05f
+v0.2.0 d3e44f531d2256b94a57d24b2b1ab8208b97cf70
+v0.2.1 83cc07cae2cb073ee4b95ec782f9b0b19d8aa6ca
+v0.2.2 0e587cae5d6907dbca0f424c3af003ec4cf53948
+v0.3.0 df536a62abd3506f63a6ec42fcc9eff6a8988249
+v0.3.1 799f47e5e119b4dcb0206c0e3306caade6ce75a3
+v0.4.0 fe1d29409d6ebb24015de19d1933d1a6fcea4ea0
+v0.5.0 9212b0d2dcd44044056ae7773cf03035db7f82a2
+v0.5.1 b6fe6083623958d4a9a031b992d5dafa27bd284c
+v0.5.2 19843c57d3c59c8af0df6610ffb1cb7472d16692
+v0.6.0 e4f0233b6a9d0513743823e1678a7c6b34c9143f
+v0.6.1 e00ac690b2bfa48681e7632ad39c4d58fb9dcbe4
+v0.6.2 48414468db31e17991a31807a491b216ec6f492d
+v0.7.0 ee36c384dece4f85d48b45bb57aa6da7c330b698
+v0.8.0 ead2ba9f3cc7a814b3a62c3641f64b8cb72ec5bc
+v0.9.0 81edf623ced0be8472424d6569d681d494b5c62d
+v0.10.0 6d4138063a5cf78374c6cb5e40c90f932ad0ccfe
+v0.11.0 878186e226646424ca35aa0cabc638ff9bad0863
+v0.12.0 20dbdb577256134bfdc1866ebc7eac06f49a1f72
+v0.12.1 b601790dc6228511fd83d355d932ddb3f3fafd1e
+v0.13.0 cbf937f8c9fe7f9a0aa30a1cc0bc7ac2f7f6d503

@@ -1,0 +1,94 @@
+#![forbid(unsafe_code)]
+
+use bosun::cli::COMMANDS;
+use bosun::{BosunError, Cli, CmdResult, envelope};
+use clap::Parser;
+use clap::error::ErrorKind;
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(err) => return usage_error(&err),
+    };
+    let command = cli.command.name();
+    // Hooks print their own protocol output; no envelope.
+    let is_hook = matches!(cli.command, bosun::Command::Hook(_));
+    // The CLI counts its own calls: a loop inside one script is one tool call for the hook.
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let repeated = (!is_hook)
+        .then(|| bosun::hooks::cli_repeat::check(&args))
+        .flatten();
+    let result = match repeated {
+        Some(e) => Err(e),
+        None => bosun::run(cli),
+    };
+    if !is_hook {
+        // The marker goes to the repo the shell runs in, where the hook reads it (not `-C`).
+        bosun::hooks::refusal::record(None, command, &result);
+        print(command, &result);
+    }
+    ExitCode::from(bosun::output::exit_of(&result).code())
+}
+
+fn print(command: &str, result: &CmdResult) {
+    if let Err(e) = result {
+        eprintln!("bosun {command}: {}", e.message);
+    }
+    println!("{}", envelope(command, result));
+}
+
+/// Help and version print clap's text (exit 0). Every other parse error is a usage error:
+/// the clap text goes to stderr and one envelope (exit 2) to stdout.
+fn usage_error(err: &clap::Error) -> ExitCode {
+    if matches!(
+        err.kind(),
+        ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+    ) {
+        let _ = err.print();
+        return ExitCode::from(0);
+    }
+    let text = err.render().to_string();
+    eprint!("{text}");
+    let message = if err.kind() == ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand {
+        "a subcommand is missing".to_string()
+    } else {
+        let first = text.lines().next().unwrap_or("usage error");
+        first.strip_prefix("error: ").unwrap_or(first).to_string()
+    };
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let command = command_from_args(&args);
+    let fix = if command == "unknown" {
+        "run `bosun --help` for the commands".to_string()
+    } else {
+        format!("run `bosun {command} --help` for its arguments")
+    };
+    let result: CmdResult = Err(BosunError::usage(message, fix));
+    println!("{}", envelope(command, &result));
+    ExitCode::from(2)
+}
+
+/// The first positional argument if it names a command, else `"unknown"`.
+fn command_from_args(args: &[String]) -> &'static str {
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        if arg == "-C" {
+            iter.next();
+        } else if !arg.starts_with('-') {
+            if arg == "intake" {
+                match iter.find(|a| !a.starts_with('-')).map(String::as_str) {
+                    Some("check") => return "intake check",
+                    Some("sign") => return "intake sign",
+                    Some("verify") => return "intake verify",
+                    _ => {}
+                }
+            }
+            return COMMANDS
+                .iter()
+                .copied()
+                .find(|c| c == arg)
+                .unwrap_or("unknown");
+        }
+    }
+    "unknown"
+}

@@ -1,0 +1,48 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "rangeStrategy": "pin",
+  "minimumReleaseAge": "3 days",
+  "platformAutomerge": true,
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["before 5am on monday"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": ["cargo-deny@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "cargo-deny",
+      "datasourceTemplate": "crate"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/.*\\.ya?ml$/"],
+      "matchStrings": ["cargo-nextest@(?<currentValue>\\d+\\.\\d+\\.\\d+)"],
+      "depNameTemplate": "cargo-nextest",
+      "datasourceTemplate": "crate"
+    }
+  ],
+  "packageRules": [
+    {
+      "groupName": "vite-plus",
+      "matchPackageNames": ["vite-plus", "@voidzero-dev/vite-plus-core"]
+    },
+    { "groupName": "storybook", "matchPackageNames": ["storybook", "@storybook/**"] },
+    { "groupName": "astro", "matchPackageNames": ["astro", "@astrojs/**"] },
+    { "groupName": "tauri", "matchManagers": ["npm", "cargo"], "matchPackageNames": ["@tauri-apps/**", "tauri", "tauri-build"] },
+    { "groupName": "cloudflare", "matchPackageNames": ["wrangler", "@cloudflare/workers-types"] },
+    { "groupName": "react", "matchPackageNames": ["react", "react-dom"] },
+    { "groupName": "cascivo", "matchPackageNames": ["@cascivo/**"] },
+    { "groupName": "sentry", "matchPackageNames": ["@sentry/**"] },
+    { "groupName": "preact", "matchPackageNames": ["preact", "@preact/**"] },
+    { "groupName": "clap", "matchPackageNames": ["clap", "clap_*"] },
+    { "groupName": "tracing", "matchPackageNames": ["tracing", "tracing-*"] },
+    { "groupName": "turbo", "matchPackageNames": ["turbo", "@turbo/**"] },
+    {
+      "matchUpdateTypes": ["minor", "patch", "digest"],
+      "automerge": true
+    }
+  ]
+}

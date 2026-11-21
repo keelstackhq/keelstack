@@ -1,0 +1,40 @@
+[package]
+name = "keel-hoard"
+version.workspace = true
+edition = "2024"
+description = "One-line CI cache for TypeScript monorepos"
+license = "MIT"
+
+[lib]
+name = "hoard"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hoard"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+aws-sdk-s3 = { workspace = true, features = ["default-https-client", "rt-tokio", "behavior-version-latest"] }
+axum.workspace = true
+bytes.workspace = true
+chrono = { workspace = true, features = ["clock", "std"] }
+clap = { workspace = true, features = ["derive", "env"] }
+futures = { workspace = true, features = ["std"] }
+opendal = { workspace = true, features = ["services-fs", "services-ghac", "services-s3", "http-transport-reqwest", "layers-timeout"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "fs", "io-util", "net", "sync", "signal", "time"] }
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["fmt", "env-filter"] }
+rand.workspace = true
+reqwest = { workspace = true, features = ["json", "rustls", "stream"] }
+sha2.workspace = true
+tar.workspace = true
+zstd.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["time"] }

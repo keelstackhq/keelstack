@@ -1,0 +1,456 @@
+//! `bosun claim`: write a lease for a ready task, or refuse with exit 3 (spec §4).
+
+use std::path::Path;
+
+use serde_json::{Value, json};
+
+use super::ClaimArgs;
+use crate::app::{
+    App, active_issues, active_issues_blocking, kill_switch, limits_from_default, main_red,
+    renew_lease, set_state, settle_race, task_meta, trusted_notes,
+};
+use crate::cli::lesson;
+use crate::cli::status::process_red;
+use crate::core::budget::{BUDGET_STOP, no_new_work};
+use crate::core::glob::{self, Glob};
+use crate::core::lease::{
+    Lease, TTL_SECS, conflicts, leases_of, members, orchestrator_of, race_winner,
+};
+use crate::core::lessons;
+use crate::core::meta::area_of;
+use crate::core::records::{Note, Record, parse_record, spend_total_today};
+use crate::core::state::{State, state_of};
+use crate::github::{Github, Issue};
+use crate::output::{BosunError, CmdResult, Exit, Outcome};
+use crate::registry;
+use crate::time::Timestamp;
+
+pub fn run(dir: Option<&Path>, args: &ClaimArgs) -> CmdResult {
+    super::refuse_secrets("--touch", &args.touch)?;
+    let app = App::load(dir)?;
+    let gh = app.gh.as_ref();
+    let (n, session, now) = (args.issue, &app.ctx.session, app.ctx.now);
+    kill_switch(gh)?;
+    let issue = gh.get_issue(n)?.ok_or_else(|| {
+        BosunError::error(
+            format!("issue #{n} does not exist"),
+            "check the number; `bosun status` lists the tasks",
+        )
+    })?;
+    let meta = task_meta(&issue);
+    let mainfix = meta.as_ref().is_some_and(|m| m.kind == "mainfix")
+        || issue.labels.iter().any(|l| l == "bosun:kind/mainfix");
+    if let Some(red) = main_red(gh)?
+        && !mainfix
+    {
+        return Err(BosunError::halted(
+            format!("main is red (#{red}); only mainfix tasks can be claimed"),
+            format!("wait for #{red} to close, or claim a mainfix task"),
+        ));
+    }
+    if let Some(red) = process_red(gh)?
+        && !mainfix
+        && !meta.as_ref().is_some_and(|m| m.kind == "process-fix")
+    {
+        return Err(BosunError::halted(
+            format!(
+                "process is red (#{red}): a blocking lesson pauses feature work; only mainfix and process-fix tasks can be claimed"
+            ),
+            format!(
+                "fix the process (a process-fix task) and close #{red}, or claim a process-fix task"
+            ),
+        ));
+    }
+
+    let state = state_of(&issue.labels);
+    if state != Some(State::Ready) {
+        let cur = trusted_notes(gh, n)?;
+        // The caller's own lease, live or lapsed (not yet reaped): a long wait can outlive it.
+        let mine = leases_of(n, &cur)
+            .into_iter()
+            .find(|l| &l.session == session);
+        if let Some(mut l) = mine.filter(|_| state.is_some_and(State::is_active)) {
+            if !l.is_live(now) {
+                l = renew_lapsed(gh, &l, &cur, n, session, now)?;
+            }
+            let mut added: Vec<String> = Vec::new();
+            for g in &args.touch {
+                if !l.touch.contains(g) && !added.contains(g) {
+                    added.push(g.clone());
+                }
+            }
+            if !added.is_empty() {
+                return grow(&app, n, &l, &added, &cur);
+            }
+            let exp = l.expires.to_string();
+            let mut data = lease_data(n, session, &exp, &l.touch, l.comment_id);
+            add_lessons(&mut data, &app.ctx.dir, &l.touch);
+            if !args.touch.is_empty() {
+                data["added"] = json!([]);
+            }
+            return Ok(Outcome::data(data));
+        }
+        return Err(BosunError::conflict(
+            format!(
+                "#{n} is {}",
+                state.map_or("not a task".into(), |s| s.to_string())
+            ),
+            "claim a task in state ready; `bosun wave plan` lists them",
+        ));
+    }
+
+    // Spend guard (spec §9, UC-M4-1): the same rule as spawn check 2. It sits after the
+    // idempotent re-claim above, which is not new work.
+    if !mainfix {
+        let daily = limits_from_default(gh, &app.ctx)?.budget.daily_usd;
+        let spent = spend_total_today(&registry::trusted_spend_notes(gh)?, now.day_start());
+        if no_new_work(spent, daily) {
+            return Err(BosunError::limit(
+                format!(
+                    "spent ${spent:.2} of ${daily:.2} today (at or over {:.0} %); no new work",
+                    BUDGET_STOP * 100.0
+                ),
+                "wait for the day to reset at 00:00 UTC, claim a mainfix task, or ask the owner to raise budget.daily_usd in .bosun/limits.toml",
+            )
+            .with_data(json!({"check": 2, "name": "budget", "spent_today_usd": spent,
+                "daily_usd": daily, "pct": spent / daily * 100.0})));
+        }
+    }
+
+    let feature = super::budget::task_guard(&app, n, meta.as_ref(), mainfix)?;
+
+    super::prereqs_gate::refuse_if_held(gh, n, &meta)?;
+    refuse_if_bundled(gh, n, &meta)?;
+    let touch_raw = if args.touch.is_empty() {
+        meta.map(|m| m.touch).unwrap_or_default()
+    } else {
+        args.touch.clone()
+    };
+    if touch_raw.is_empty() {
+        return Err(BosunError::usage(
+            format!("no touch paths for #{n}"),
+            "pass --touch GLOB (repeatable) or add `touch` to the task metadata",
+        ));
+    }
+    let touch = glob::parse_all(&touch_raw).map_err(|m| {
+        BosunError::usage(
+            m,
+            "use repo-relative globs with * ? ** only, such as src/core/**",
+        )
+    })?;
+
+    let active = active_issues_blocking(gh)?;
+    check_overlap(&active, &touch, session, n, now)?;
+
+    if let (Some(area), Some((_, reg))) = (area_of(&issue.labels), registry::load(gh)?) {
+        // A per-task id `S/task` is a wave agent of `S` (as for the edit-lock): it claims as `S`.
+        let me = orchestrator_of(session);
+        let all = members(&reg);
+        let parent = all
+            .iter()
+            .find(|m| m.session == me)
+            .and_then(|m| m.parent.clone());
+        let owner = all.iter().find(|m| {
+            m.area.as_deref() == Some(&area)
+                && m.session != me
+                && m.expires > now
+                && Some(&m.session) != parent.as_ref()
+        });
+        if let Some(o) = owner {
+            return Err(BosunError::conflict(
+                format!(
+                    "area `{area}` is owned by {} until {}",
+                    o.session, o.expires
+                ),
+                format!("ask {} to take #{n}, or wait until it leaves", o.session),
+            ));
+        }
+    }
+
+    let expires = now.plus_secs(TTL_SECS).to_string();
+    let record = Record::Lease {
+        session: session.clone(),
+        origin: app.ctx.origin.as_str().into(),
+        expires: expires.clone(),
+        touch: touch_raw.clone(),
+
+        thread_ts: None,
+    };
+    let body = format!("Claimed by {session}.\n\n{}", record.to_line());
+    // Claimed first, then the lease, then a fresh list: every lease is posted on an already
+    // active issue, so of two claims at the same time the later poster lists the earlier one
+    // (this relies on the label-filtered issue list reflecting a label change at once).
+    set_state(gh, n, &issue, State::Claimed)?;
+    let comment = match gh.add_comment(n, &body) {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = revert_to_ready(gh, n, session, now);
+            return Err(e);
+        }
+    };
+    let others: Vec<u64> = active_issues(gh)?.iter().map(|(i, _)| i.number).collect();
+    if let Err(mut e) = settle_race(gh, session, n, comment.id, &touch, &others, now) {
+        if e.exit == Exit::Conflict
+            && let Err(why) = revert_to_ready(gh, n, session, now)
+        {
+            // Still the conflict; `bosun reap` resets a task whose last lease ended lost-race.
+            eprintln!("bosun: warning: could not set #{n} back to ready ({why}); reap will");
+            if let Some(d) = e.data.as_mut() {
+                d["revert_failed"] = json!(true);
+            }
+        }
+        return Err(e);
+    }
+    let mut data = lease_data(n, session, &expires, &touch_raw, comment.id);
+    add_lessons(&mut data, &app.ctx.dir, &touch_raw);
+    if let Some(w) = feature {
+        data["budget_feature"] = w;
+    }
+    Ok(Outcome::data(data))
+}
+
+/// Bring the caller's own lapsed lease back: the same overlap check as a new claim on its full
+/// touch (another session may hold those paths now), then the record is renewed in place.
+fn renew_lapsed(
+    gh: &dyn Github,
+    l: &Lease,
+    cur: &[Note],
+    n: u64,
+    session: &str,
+    now: Timestamp,
+) -> Result<Lease, BosunError> {
+    // Another session took the task while this lease lapsed: it is theirs now.
+    if let Some(o) = leases_of(n, cur)
+        .into_iter()
+        .find(|o| o.session != session && o.is_live(now))
+    {
+        return Err(BosunError::conflict(
+            format!("#{n} is held by {} until {}", o.session, o.expires),
+            format!("ask {} to release #{n}, or claim another task", o.session),
+        ));
+    }
+    let globs = glob::parse_all(&l.touch)
+        .map_err(|m| BosunError::usage(m, "release the task and claim it again"))?;
+    check_overlap(&active_issues_blocking(gh)?, &globs, session, n, now)?;
+    let expires = now.plus_secs(TTL_SECS);
+    renew_lease(gh, l, cur, expires)?;
+    // The write is in place, so a reap that ended the lease meanwhile is not undone by it: read
+    // the task back and answer exit 3 unless this session still holds it live in an active state.
+    let lost = || {
+        BosunError::conflict(
+            format!("#{n} was released while its lease was renewed"),
+            format!("run `bosun claim {n}` again"),
+        )
+    };
+    let fresh = gh.get_issue(n)?.ok_or_else(lost)?;
+    let held = leases_of(n, &trusted_notes(gh, n)?)
+        .into_iter()
+        .find(|o| o.session == session && o.is_live(now));
+    match (state_of(&fresh.labels), held) {
+        (Some(st), Some(h)) if st.is_active() => Ok(h),
+        _ => Err(lost()),
+    }
+}
+
+/// After a lost race: the task was ready before this claim, so put it back, but only while it is
+/// still exactly `claimed` and no other session holds a live lease on it (then the state is theirs).
+fn revert_to_ready(gh: &dyn Github, n: u64, session: &str, now: Timestamp) -> Result<(), String> {
+    let fresh = gh.get_issue(n).map_err(|e| e.to_string())?;
+    let Some(fresh) = fresh.filter(|i| state_of(&i.labels) == Some(State::Claimed)) else {
+        return Ok(());
+    };
+    let theirs = crate::app::blocking_notes(gh, n).map_err(|e| e.to_string())?;
+    if leases_of(n, &theirs)
+        .iter()
+        .any(|l| l.session != session && l.is_live(now))
+    {
+        return Ok(());
+    }
+    set_state(gh, n, &fresh, State::Ready).map_err(|e| e.to_string())?;
+    // A third claimer may have won while the state was `claimed` and posted its lease before our
+    // `ready` write: its task must not be left `ready`. Look again and restore `claimed`.
+    let theirs = crate::app::blocking_notes(gh, n).map_err(|e| e.to_string())?;
+    if leases_of(n, &theirs)
+        .iter()
+        .any(|l| l.session != session && l.is_live(now))
+    {
+        let again = gh.get_issue(n).map_err(|e| e.to_string())?;
+        if let Some(again) = again.filter(|i| state_of(&i.labels) == Some(State::Ready)) {
+            set_state(gh, n, &again, State::Claimed)
+                .map_err(|e| format!("re-claiming it for the winner failed: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn lease_data(issue: u64, session: &str, expires: &str, touch: &[String], id: u64) -> Value {
+    json!({"issue": issue, "comment_id": id,
+        "lease": {"session": session, "expires": expires, "touch": touch}})
+}
+
+/// `data.lessons`: the repo's global lessons and those scoped to `touch`, as one line each. Advice
+/// only: a missing or unreadable `docs/lessons.toml` gives an empty list and never fails the claim.
+fn add_lessons(data: &mut Value, root: &Path, touch: &[String]) {
+    let lines: Vec<String> = match (lesson::load(root), glob::parse_all(touch)) {
+        (Ok(store), Ok(globs)) => lessons::relevant(&store, &globs)
+            .into_iter()
+            .map(lessons::line)
+            .collect(),
+        _ => Vec::new(),
+    };
+    data["lessons"] = json!(lines);
+}
+
+/// Refuse (exit 3, naming the holder) when `touch` overlaps a live lease of another issue.
+fn check_overlap(
+    active: &[(Issue, Vec<Note>)],
+    touch: &[Glob],
+    session: &str,
+    n: u64,
+    now: Timestamp,
+) -> Result<(), BosunError> {
+    let live: Vec<_> = active
+        .iter()
+        .flat_map(|(i, notes)| leases_of(i.number, notes))
+        .filter(|l| l.is_live(now))
+        .collect();
+    let found = conflicts(touch, &live, session, Some(n));
+    if found.is_empty() {
+        return Ok(());
+    }
+    let list: Vec<String> = found.iter().map(|c| c.describe()).collect();
+    let data: Vec<Value> = found
+        .iter()
+        .map(|c| {
+            json!({"issue": c.issue, "session": c.session, "mine": c.mine,
+                "theirs": c.theirs, "expires": c.expires.to_string()})
+        })
+        .collect();
+    Err(BosunError::conflict(
+        format!(
+            "touch paths of #{n} overlap a live lease: {}",
+            list.join("; ")
+        ),
+        "wait until that lease ends, narrow --touch, or claim another task",
+    )
+    .with_data(json!({"conflicts": data})))
+}
+
+/// A re-claim of an own active task with new globs: the same overlap check on the added globs,
+/// then a newer lease record with the union (the newest lease is the live one; no state change).
+/// `mine` are the comments of the issue as read by the caller. On a lost race the grow comment is
+/// rewritten with the old lease, so the lease keeps its previous touch and is never ended. (A
+/// concurrent `bosun heartbeat` of the same plain session id can rewrite that comment with the
+/// union touch before the restore; per-task ids `S/x` avoid it.)
+fn grow(app: &App, n: u64, old: &Lease, added: &[String], mine: &[Note]) -> CmdResult {
+    let (gh, session, now) = (app.gh.as_ref(), &app.ctx.session, app.ctx.now);
+    let new_globs = glob::parse_all(added).map_err(|m| {
+        BosunError::usage(
+            m,
+            "use repo-relative globs with * ? ** only, such as src/core/**",
+        )
+    })?;
+    let active = active_issues_blocking(gh)?;
+    check_overlap(&active, &new_globs, session, n, now)?;
+    let touch: Vec<String> = old.touch.iter().chain(added).cloned().collect();
+    let thread_ts = match mine
+        .iter()
+        .find(|c| c.id == old.comment_id)
+        .and_then(|c| parse_record(&c.body))
+    {
+        Some(Record::Lease { thread_ts, .. }) => thread_ts,
+        _ => None,
+    };
+    let body = |expires: String, touch: Vec<String>| {
+        let r = Record::Lease {
+            session: session.clone(),
+            origin: old.origin.clone(),
+            expires,
+            touch,
+            thread_ts: thread_ts.clone(),
+        };
+        format!("Claimed by {session}.\n\n{}", r.to_line())
+    };
+    let expires = now.plus_secs(TTL_SECS).to_string();
+    let comment = gh.add_comment(n, &body(expires.clone(), touch.clone()))?;
+    // Race against the active issues as they are after the write: a rival may have claimed an
+    // issue that was still `ready` when the list was first read.
+    let fresh = active_issues(gh)?;
+    let restored = body(old.expires.to_string(), old.touch.clone());
+    let won = fresh.iter().find(|(i, _)| i.number == n).is_some_and(|(_, c)| {
+        // Still held: a lease-end of this session newer than the old record means a reap or
+        // release ended the lease while the grow was written.
+        !c.iter().any(|x| {
+            x.id > old.comment_id
+                && matches!(parse_record(&x.body), Some(Record::LeaseEnd { session: s, .. }) if &s == session)
+        })
+    });
+    if !won {
+        gh.update_comment(comment.id, &restored)?;
+        return Err(BosunError::conflict(
+            format!("#{n} is no longer held by this session"),
+            format!("claim it again with `bosun claim {n}`"),
+        ));
+    }
+    let ids: Vec<_> = fresh.into_iter().map(|(i, c)| (i.number, c)).collect();
+    if let Some(w) = race_winner(n, comment.id, &new_globs, &ids, now) {
+        let list = added.join(", ");
+        let lost = format!(
+            "#{n}: lost the race for {list} to #{} (session {}, lease until {})",
+            w.issue, w.session, w.expires
+        );
+        let rival = json!({"issue": w.issue, "session": w.session,
+            "expires": w.expires.to_string()});
+        return Err(match gh.update_comment(comment.id, &restored) {
+            Ok(_) => BosunError::conflict(
+                format!("{lost}; your lease keeps its previous touch"),
+                "wait until that lease ends, or claim with a narrower --touch",
+            )
+            .with_data(json!({"conflicts": [rival], "restored": true})),
+            Err(e) => BosunError::error(
+                format!(
+                    "{lost}, and restoring the old lease failed ({e}); the lease still names {list}"
+                ),
+                format!(
+                    "run `bosun release {n}`, or re-run `bosun claim {n}` with the same --touch once that lease ends"
+                ),
+            )
+            .with_data(json!({"conflicts": [rival], "restored": false})),
+        });
+    }
+    let mut data = lease_data(n, session, &expires, &touch, comment.id);
+    data["added"] = json!(added);
+    add_lessons(&mut data, &app.ctx.dir, &touch);
+    Ok(Outcome::data(data))
+}
+
+/// In a single-shape epic the lead's PR closes the bundled issues, gated ones included (D-021), so
+/// while another task of the epic is active, `n` is not claimable.
+fn refuse_if_bundled(
+    gh: &dyn Github,
+    n: u64,
+    meta: &Option<crate::core::meta::TaskMeta>,
+) -> Result<(), BosunError> {
+    let Some(epic) = meta.as_ref().and_then(|m| m.epic) else {
+        return Ok(());
+    };
+    let shape = gh
+        .get_issue(epic)?
+        .and_then(|e| super::plan::epic_shape(e.body_text()));
+    if shape.as_deref() != Some("single") {
+        return Ok(());
+    }
+    let lead = active_issues(gh)?
+        .into_iter()
+        .filter(|(i, _)| i.number != n)
+        .filter(|(i, _)| task_meta(i).is_some_and(|t| t.epic == Some(epic)))
+        .map(|(i, _)| i.number)
+        .min();
+    match lead {
+        Some(lead) => Err(BosunError::conflict(
+            format!("#{n} is bundled into #{lead}'s PR"),
+            format!("work in #{lead}'s bundle: its PR closes #{n}"),
+        )),
+        None => Ok(()),
+    }
+}

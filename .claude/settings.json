@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bosun hook session-start"
+          }
+        ]
+      },
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"$CLAUDE_PROJECT_DIR/hull\" && [ -f package.json ] && pnpm install --prefer-offline --silent >/dev/null 2>&1; echo 'hull: deps ready (or install skipped)'; exit 0"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "out=$(bosun hook stop) && printf '%s\\n' \"$out\"; exit 0"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit|NotebookEdit|Bash|mcp__github__.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bosun hook pre-tool-use"
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "out=$(bosun hook pre-compact) && printf '%s\\n' \"$out\"; exit 0",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bosun hook post-tool-use"
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(rm -rf /)",
+      "Bash(rm -rf ~)",
+      "Bash(rm -rf ~/)",
+      "Bash(sudo rm -rf /)",
+      "Bash(mkfs:*)",
+      "Bash(terraform destroy:*)",
+      "Bash(git push --force:*)",
+      "Bash(git push -f:*)",
+      "Bash(git push --force-with-lease:*)",
+      "Bash(git push --tags:*)",
+      "Bash(git push origin --tags:*)",
+      "Bash(git push * --tags*)",
+      "Bash(git push origin v*)",
+      "Bash(git push * v*)",
+      "Bash(git push origin refs/tags/*)",
+      "Bash(git push * refs/tags/*)",
+      "Bash(git push +*)",
+      "Bash(git push origin +*)",
+      "Bash(git push * +*)",
+      "Bash(git tag:*)",
+      "Bash(gh release create:*)",
+      "Bash(gh pr merge:*)",
+      "Bash(npm publish:*)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./hull/.env)",
+      "Read(./hull/.env.*)"
+    ]
+  },
+  "extraKnownMarketplaces": {
+    "keelstack": {
+      "source": {
+        "source": "github",
+        "repo": "keelstackhq/keelstack",
+        "ref": "main",
+        "path": "bosun/.claude-plugin/marketplace.json",
+        "sparsePaths": ["bosun/.claude-plugin"]
+      }
+    }
+  },
+  "enabledPlugins": {
+    "superpowers@keelstack": true,
+    "caveman@keelstack": true
+  }
+}

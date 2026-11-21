@@ -1,0 +1,402 @@
+//! R-weaken: a PR that loosens a gate is high risk and needs the owner (spec §8).
+mod common;
+
+use common::fake::FakeGithub;
+use common::run;
+use serde_json::Value;
+
+const NOW: &str = "2026-10-22T10:00:00Z";
+const BASE: &str = "base0000";
+const HEAD: &str = "sha1";
+
+fn pr() -> FakeGithub {
+    let fake = FakeGithub::start();
+    fake.pull(1, "change", "feature", "");
+    fake.content(
+        "governance/owners.toml",
+        BASE,
+        "[[owner]]\ngithub = \"ada\"\n",
+    );
+    fake.content(
+        ".bosun/risk.toml",
+        BASE,
+        "[[rule]]\nid = \"R-weaken\"\nwhy = \"w\"\ncapability = \"weaken\"\n",
+    );
+    fake
+}
+
+fn check(fake: &FakeGithub) -> (i32, Value) {
+    run(fake, "session_test", NOW, &["risk-check", "1"])
+}
+
+fn budget(fake: &FakeGithub, old: u32, new: u32) {
+    let patch = format!("@@ -1,2 +1,2 @@\n [budget]\n-daily_usd = {old}\n+daily_usd = {new}");
+    fake.pull_file(1, ".bosun/limits.toml", "modified", 1, 1, Some(&patch));
+    fake.content(
+        ".bosun/limits.toml",
+        BASE,
+        &format!("[budget]\ndaily_usd = {old}\n"),
+    );
+    fake.content(
+        ".bosun/limits.toml",
+        HEAD,
+        &format!("[budget]\ndaily_usd = {new}\n"),
+    );
+}
+
+#[test]
+fn a_raised_cap_is_high_and_needs_the_owner() {
+    let fake = pr();
+    budget(&fake, 150, 300);
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["level"], "high");
+    assert_eq!(v["data"]["requirement"], "owner");
+    let m = &v["data"]["matches"][0];
+    assert_eq!(m["rule"], "R-weaken");
+    let evidence = m["evidence"].to_string();
+    assert!(evidence.contains("daily_usd 150 -> 300"), "{evidence}");
+}
+
+#[test]
+fn continue_on_error_in_a_workflow_is_a_weakening() {
+    let fake = pr();
+    let patch = "@@ -1,2 +1,3 @@\n   test:\n+    continue-on-error: true\n     runs-on: x";
+    fake.pull_file(1, ".github/workflows/ci.yml", "modified", 1, 0, Some(patch));
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["matches"][0]["rule"], "R-weaken");
+}
+
+#[test]
+fn a_deleted_test_file_is_a_weakening() {
+    let fake = pr();
+    fake.pull_file(
+        1,
+        "tests/cli_a.rs",
+        "removed",
+        0,
+        9,
+        Some("@@ -1,1 +0,0 @@\n-#[test]"),
+    );
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    let evidence = v["data"]["matches"][0]["evidence"].to_string();
+    assert!(
+        evidence.contains("test file present -> (deleted)"),
+        "{evidence}"
+    );
+}
+
+#[test]
+fn a_lowered_cap_is_normal() {
+    let fake = pr();
+    budget(&fake, 300, 150);
+    let (code, v) = check(&fake);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["level"], "normal");
+    assert!(
+        !v["data"]["matches"].to_string().contains("R-weaken"),
+        "{v}"
+    );
+}
+
+fn evidence(fake: &FakeGithub) -> String {
+    let (code, v) = check(fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["matches"][0]["rule"], "R-weaken", "{v}");
+    v["data"]["matches"][0]["evidence"].to_string()
+}
+
+#[test]
+fn a_gate_file_renamed_away_counts_as_removed() {
+    let fake = pr();
+    fake.pull_file(1, "deny.toml.bak", "renamed", 0, 0, None);
+    fake.renamed_from(1, "deny.toml");
+    fake.content("deny.toml", BASE, "[sources]\nunknown-git = \"deny\"\n");
+    let e = evidence(&fake);
+    assert!(
+        e.contains("deny.toml: sources.unknown-git deny -> (removed)"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_file_renamed_into_a_gate_path_is_judged_against_the_builtin() {
+    let fake = pr();
+    let weak = "[[rule]]\nid = \"R-gov\"\nwhy = \"w\"\npaths = [\"x\"]\n";
+    fake.pull_file(1, ".bosun/risk.toml", "renamed", 0, 0, None);
+    fake.renamed_from(1, "docs/weak.toml");
+    fake.content("docs/weak.toml", BASE, weak);
+    fake.content(".bosun/risk.toml", HEAD, weak);
+    let e = evidence(&fake);
+    assert!(
+        e.contains(".bosun/risk.toml: R-secrets rule present -> (removed)"),
+        "{e}"
+    );
+}
+
+#[test]
+fn repo_rules_without_r_weaken_still_send_a_weakening_to_the_owner() {
+    let fake = pr();
+    let rules = "[[rule]]\nid = \"R-x\"\nwhy = \"w\"\npaths = [\"nothing/**\"]\n";
+    fake.content(".bosun/risk.toml", BASE, rules);
+    budget(&fake, 150, 300);
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["requirement"], "owner", "{v}");
+    let m = v["data"]["matches"].to_string();
+    assert!(
+        m.contains("R-weaken") && m.contains("daily_usd 150 -> 300"),
+        "{v}"
+    );
+}
+
+/// A PR changing `path` from `old` to `new` (None: added or removed).
+fn file(fake: &FakeGithub, path: &str, old: Option<&str>, new: Option<&str>) {
+    let status = match (old, new) {
+        (None, _) => "added",
+        (_, None) => "removed",
+        _ => "modified",
+    };
+    fake.pull_file(1, path, status, 1, 1, Some("@@\n+x"));
+    if let Some(t) = old {
+        fake.content(path, BASE, t);
+    }
+    if let Some(t) = new {
+        fake.content(path, HEAD, t);
+    }
+}
+
+const T: &str = "#[test]\nfn a() { assert!(x); }\n";
+
+fn no_weakening(fake: &FakeGithub) {
+    let (code, v) = check(fake);
+    assert_eq!(code, 0, "{v}");
+    assert!(
+        !v["data"]["matches"].to_string().contains("R-weaken"),
+        "{v}"
+    );
+}
+
+#[test]
+fn tests_moved_between_files_are_no_weakening_but_a_dropped_inline_test_is() {
+    let fake = pr();
+    file(&fake, "tests/a.rs", Some(T), Some(""));
+    file(&fake, "tests/b.rs", Some(""), Some(T));
+    no_weakening(&fake);
+
+    let fake = pr();
+    file(&fake, "src/a.rs", Some(T), Some("fn a() {}\n"));
+    assert!(evidence(&fake).contains("tests (all files) 1 -> 0"));
+}
+
+#[test]
+fn whole_file_counts_catch_switched_off_tests() {
+    let fake = pr();
+    fake.pull_file(1, "junk/a.rs", "renamed", 0, 0, None);
+    fake.renamed_from(1, "tests/a.rs");
+    fake.content("tests/a.rs", BASE, T);
+    fake.content("junk/a.rs", HEAD, T);
+    assert!(evidence(&fake).contains("tests (all files) 1 -> 0"));
+
+    let cases = [
+        (
+            "tests/a.rs",
+            format!("#[cfg(any())]\nmod t {{\n{T}}}\n"),
+            "cfg switch-offs (all files) 0 -> 1",
+        ),
+        (
+            "tests/a.rs",
+            format!("/*\n{T}*/\n"),
+            "tests (all files) 1 -> 0",
+        ),
+        (
+            "tests/a.rs",
+            format!("{T}#[test]\n#[ignore]\nfn b() {{ assert!(y); }}\n"),
+            "skips (all files) 0 -> 1",
+        ),
+        (
+            "web/a.test.ts",
+            "it.only('a', () => { expect(1); });\n".into(),
+            "only (all files) 0 -> 1",
+        ),
+        (
+            "web/b.test.ts",
+            "/*\nit('a', () => { expect(1); });\n".into(),
+            "tests (all files) 1 -> 0",
+        ),
+    ];
+    for (path, new, want) in cases {
+        let fake = pr();
+        let old = if path.ends_with(".ts") {
+            "it('a', () => { expect(1); });\n"
+        } else {
+            T
+        };
+        file(&fake, path, Some(old), Some(&new));
+        let e = evidence(&fake);
+        assert!(e.contains(want), "{path}: {e}");
+    }
+}
+
+#[test]
+fn a_weakening_needs_the_owner_even_if_the_rules_delegate_it() {
+    for class in ["delegate", "two-verdicts"] {
+        let fake = pr();
+        fake.content(
+            ".bosun/risk.toml",
+            BASE,
+            &format!("[[rule]]\nid = \"R-weaken\"\nwhy = \"w\"\ncapability = \"weaken\"\napproval = \"{class}\"\n"),
+        );
+        budget(&fake, 150, 300);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{v}");
+        assert_eq!(v["data"]["requirement"], "owner", "{class}: {v}");
+    }
+}
+
+#[test]
+fn only_built_test_files_count_and_reads_are_capped() {
+    let fake = pr();
+    fake.pull_file(1, "tests/sub/a.rs", "renamed", 0, 0, None);
+    fake.renamed_from(1, "tests/a.rs");
+    fake.content("tests/a.rs", BASE, T);
+    fake.content("tests/sub/a.rs", HEAD, T);
+    assert!(evidence(&fake).contains("tests (all files) 1 -> 0"));
+
+    let fake = pr();
+    file(
+        &fake,
+        "tests/big/main.rs",
+        Some(T),
+        Some(&format!("{T}{}", " ".repeat(1 << 21))),
+    );
+    assert!(evidence(&fake).contains("tests/big/main.rs: tests not counted"));
+
+    let fake = pr();
+    for i in 0..101 {
+        fake.pull_file(1, &format!("src/f{i}.rs"), "modified", 1, 1, Some("@@\n+x"));
+    }
+    assert!(evidence(&fake).contains("tests not counted: 101 code files"));
+}
+
+#[test]
+fn a_new_profile_override_is_compared_with_the_builtin() {
+    let fake = pr();
+    let text = include_str!("../profiles/rust.toml").replace("\"--check\"", "\"--all\"");
+    fake.pull_file(
+        1,
+        ".bosun/profiles/rust.toml",
+        "added",
+        1,
+        0,
+        Some("@@\n+x"),
+    );
+    fake.content(".bosun/profiles/rust.toml", HEAD, &text);
+    let e = evidence(&fake);
+    assert!(
+        e.contains(".bosun/profiles/rust.toml: gates.fmt.cmd"),
+        "{e}"
+    );
+}
+
+#[test]
+fn a_repo_rule_with_the_weaken_capability_counts_as_r_weaken() {
+    let fake = pr();
+    let rules = "[[rule]]\nid = \"R-mine\"\nwhy = \"w\"\ncapability = \"weaken\"\n";
+    fake.content(".bosun/risk.toml", BASE, rules);
+    fake.pull_file(1, "README.md", "modified", 1, 0, Some("@@\n+x"));
+    fake.pull_set(
+        1,
+        "labels",
+        serde_json::json!([{"name": "bosun:capability/weaken"}]),
+    );
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    let ids = v["data"]["matches"].to_string();
+    assert!(
+        ids.contains("R-mine") && ids.contains("\"R-weaken\""),
+        "{v}"
+    );
+}
+
+#[test]
+fn src_under_fixtures_is_not_built() {
+    let fake = pr();
+    file(&fake, "tests/fixtures/src/a.rs", Some(T), Some(""));
+    no_weakening(&fake);
+}
+
+#[test]
+fn a_grown_or_swapped_allowed_list_is_a_weakening() {
+    let old = "pub const PATHS_ALLOWED: [&str; 1] = [\"docs/**\"];\n";
+    let fake = pr();
+    file(
+        &fake,
+        "src/a.rs",
+        Some(old),
+        Some("pub const PATHS_ALLOWED: [&str; 1] = [\"**\"];\n"),
+    );
+    assert!(evidence(&fake).contains("PATHS_ALLOWED (all files): \\\"**\\\" 0 -> 1"));
+    // The same list moved to another file is no weakening.
+    let fake = pr();
+    file(&fake, "src/a.rs", Some(old), Some(""));
+    file(&fake, "src/b.rs", Some(""), Some(old));
+    no_weakening(&fake);
+}
+
+#[test]
+fn dead_code_allows_in_test_code_are_no_weakening() {
+    let add = "@@ -1,1 +1,2 @@\n+#![allow(dead_code)]\n use x;";
+    let blob = |p| (p, "100644", "blob", "b");
+    let decl = "pub fn f() {}\n\n#[cfg(test)]\n#[path = \"foo_tests.rs\"]\nmod tests;\n";
+    // A base where src/core/foo.rs pulls in foo_tests.rs under cfg(test); `extra` is a third
+    // src file's text at base.
+    let setup = |extra: &str| {
+        let fake = pr();
+        fake.pull_file(1, "tests/common/mod.rs", "modified", 1, 0, Some(add));
+        fake.pull_file(1, "src/core/foo_tests.rs", "modified", 1, 0, Some(add));
+        fake.content("src/core/foo.rs", BASE, decl);
+        fake.content("src/core/foo_tests.rs", BASE, "use x;\n");
+        fake.content("src/lib.rs", BASE, extra);
+        let files = [
+            blob("src/core/foo.rs"),
+            blob("src/core/foo_tests.rs"),
+            blob("src/lib.rs"),
+            blob("tests/common/mod.rs"),
+        ];
+        fake.git_tree(BASE, &files, false);
+        fake
+    };
+    let (code, v) = check(&setup("pub mod core;\n"));
+    assert_eq!(code, 0, "{v}");
+    // A tests/ file that src pulls in by `#[path]` (cfg(test) or not) is no test code; neither
+    // is a file a plain `mod` pulls in too.
+    for extra in [
+        "#[path = \"../tests/common/mod.rs\"]\nmod c;\n",
+        "#[cfg(test)]\n#[path = \"../tests/common/mod.rs\"]\nmod c;\n",
+        "#[path = \"core/foo_tests.rs\"]\nmod t;\n",
+    ] {
+        let (code, v) = check(&setup(extra));
+        assert_eq!(code, 5, "{extra}: {v}");
+    }
+    // A PR that adds a `#[path]` line exempts nothing.
+    let fake = setup("pub mod core;\n");
+    let p = "@@ -1,1 +1,3 @@\n+#[path = \"x.rs\"]\n+mod x;\n pub mod core;";
+    fake.pull_file(1, "src/lib.rs", "modified", 2, 0, Some(p));
+    assert_eq!(check(&fake).0, 5);
+    // Still a finding: an allow in src, another lint in tests.
+    for (path, line) in [
+        ("src/lib.rs", "#[allow(dead_code)]"),
+        ("tests/common/mod.rs", "#![allow(unused)]"),
+    ] {
+        let fake = pr();
+        let patch = format!("@@ -1,1 +1,2 @@\n+{line}\n use x;");
+        fake.pull_file(1, path, "modified", 1, 0, Some(&patch));
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{v}");
+        let ev = v["data"]["matches"][0]["evidence"].to_string();
+        assert!(ev.contains("lint allow/expect 0 -> 1"), "{ev}");
+    }
+}

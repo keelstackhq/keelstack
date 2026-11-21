@@ -1,0 +1,400 @@
+//! Reads the facts for approval carry-over (design 2026-10-27 §3 C7) from GitHub, strictly by sha,
+//! and maps them to `core::carry`, which decides. Every error, `None`, mismatch or unknown value
+//! is a refusal with a short reason; no GitHub message reaches it, paths only escaped by core.
+
+use std::collections::{BTreeMap, HashMap};
+
+use super::risk_check::{
+    Found, decisive_review, delegation_blocked, review_models, submitted, verdict_inputs, withdrawn,
+};
+use super::verdict::CONTEXT;
+use crate::core::approve::trust_files_in;
+use crate::core::carry::{
+    self, CarryFacts, Entry, FileChange, Hop, Kind, LockTexts, RawTree, Refusal,
+};
+use crate::core::records::{Record, parse_record};
+use crate::core::risk::{VERDICT_AUTHOR, apply_record, is_bot_session, relayer_excluded};
+use crate::github::{Comment, Compare, GitCommit, Github, PrFile, Pull, Review, Status};
+
+/// Seven hex characters of a sha taken from GitHub data, else `?`.
+fn short(sha: &str) -> String {
+    let s: String = sha.chars().take(7).collect();
+    let hex = s.len() == 7 && s.chars().all(|c| c.is_ascii_hexdigit());
+    if hex { s } else { "?".into() }
+}
+
+/// A full lowercase sha: everything is read and compared by these, never by a name.
+fn sha40(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+fn on_default(status: &str) -> bool {
+    status == "ahead" || status == "identical"
+}
+
+struct Reads<'a> {
+    gh: &'a dyn Github,
+    commits: HashMap<String, GitCommit>,
+}
+
+impl Reads<'_> {
+    /// The commit `sha`, which must come back under that very sha. Read once per `check`.
+    fn commit(&mut self, sha: &str) -> Result<GitCommit, String> {
+        if let Some(c) = self.commits.get(sha) {
+            return Ok(c.clone());
+        }
+        let full = |c: &GitCommit| c.parents.iter().chain([&c.sha, &c.tree]).all(|s| sha40(s));
+        let c = self.gh.commit(sha).ok().flatten();
+        let c = c.filter(|c| c.sha == sha && full(c));
+        let c = c.ok_or_else(|| format!("cannot read commit {}", short(sha)))?;
+        self.commits.insert(sha.into(), c.clone());
+        Ok(c)
+    }
+
+    fn compare(&self, base: &str, head: &str) -> Result<Compare, String> {
+        let why = |_| format!("cannot compare {} with {}", short(base), short(head));
+        self.gh.compare(base, head).map_err(why)
+    }
+
+    fn ancestor(&self, a: &str, b: &str) -> bool {
+        self.compare(a, b).is_ok_and(|c| on_default(&c.status))
+    }
+
+    /// The tree of commit `x`, bound to the commit: the tree read must be the tree it names.
+    /// Returns the entries and whether GitHub cut the listing short.
+    fn tree(&mut self, x: &str) -> Result<(RawTree, bool), String> {
+        let c = self.commit(x)?;
+        let bad = || format!("cannot read tree of commit {}", short(x));
+        let t = self.gh.tree(&c.tree).ok().flatten();
+        let t = t.filter(|t| t.sha == c.tree).ok_or_else(bad)?;
+        let mut out = RawTree::new();
+        for e in t.entries {
+            let kind = match e.kind.as_str() {
+                "blob" => Kind::Blob,
+                "tree" => Kind::Tree,
+                "commit" => Kind::Commit,
+                _ => return Err(bad()),
+            };
+            let (mode, sha) = (e.mode, e.sha);
+            out.push((e.path, Entry { mode, kind, sha }));
+        }
+        Ok((out, t.truncated))
+    }
+}
+
+fn changes(c: &Compare) -> Vec<FileChange> {
+    let f = |f: &PrFile| FileChange {
+        filename: f.filename.clone(),
+        previous_filename: f.previous_filename.clone(),
+        status: f.status.clone(),
+    };
+    c.files.iter().map(f).collect()
+}
+
+/// Whether an approval of `h` carries to `pull.head_sha` (rules 1-4). `Ok` is the path from
+/// `H2` down to the oldest hop (`h` excluded); `Err` is a safe, short reason.
+pub fn check(
+    gh: &dyn Github,
+    pull: &Pull,
+    default_branch: &str,
+    h: &str,
+) -> Result<Vec<String>, String> {
+    if pull.base_ref != default_branch {
+        return Err(Refusal::NotDefaultBase.message());
+    }
+    let (d, h2) = (pull.base_sha.as_str(), pull.head_sha.as_str());
+    let mut r = Reads {
+        gh,
+        commits: HashMap::new(),
+    };
+    if ![h, h2, d].into_iter().all(sha40) {
+        return Err("a head or base is not a full sha".into());
+    }
+    if h == h2 {
+        return Err("the approved head is the current head".into());
+    }
+    // D vouches for every merge parent, so it must still be on the default branch tip.
+    if !r.ancestor(d, &format!("refs/heads/{default_branch}")) {
+        return Err("the PR's base commit is not on the default branch now".into());
+    }
+    // Rule 1: the first-parent chain from H2 down to the commit whose first parent is `h`.
+    let mut chain = Vec::new();
+    let mut sha = h2.to_string();
+    loop {
+        if chain.len() == carry::MAX_HOPS {
+            return Err(Refusal::TooManyHops(chain.len() + 1).message());
+        }
+        let c = r.commit(&sha)?;
+        if c.parents.len() != 2 {
+            return Err(Refusal::OctopusOrNonMerge.message());
+        }
+        let done = c.parents[0] == h;
+        sha = c.parents[0].clone();
+        chain.push(c);
+        if done {
+            break;
+        }
+    }
+    let hops: Vec<Hop> = chain
+        .iter()
+        .enumerate()
+        .map(|(i, c)| Hop {
+            sha: c.sha.clone(),
+            parents: c.parents.clone(),
+            second_parent_on_default: r.ancestor(&c.parents[1], d),
+            descends_from_previous_second_parent: chain
+                .get(i + 1)
+                .is_none_or(|older| r.ancestor(&older.parents[1], &c.parents[1])),
+        })
+        .collect();
+    // Rule 3's inputs: M, B and the two file lists.
+    let m = chain[0].parents[1].clone();
+    let b = r
+        .compare(d, h)?
+        .merge_base
+        .filter(|b| sha40(b))
+        .ok_or("GitHub names no merge base")?;
+    let main = r.compare(&b, &m)?;
+    let pr = r.compare(&b, h)?;
+    let mut truncated = main.truncated || pr.truncated;
+    let mut tr = |x: &str| {
+        let (t, cut) = r.tree(x)?;
+        truncated |= cut;
+        Ok::<_, String>(t)
+    };
+    let (tree_b, tree_m, tree_h, tree_h2) = (tr(&b)?, tr(&m)?, tr(h)?, tr(h2)?);
+    // Rule 4: the trust files at the root and under bosun's code roots, read at the base `D`
+    // (a PR cannot move them), as risk-check reads them.
+    let roots = super::risk_check::code_roots_at(gh, d)
+        .map_err(|_| "cannot read bosun's code roots at the base".to_string())?;
+    let trust = trust_files_in(&roots);
+    let trust: Vec<&str> = trust.iter().map(String::as_str).collect();
+    let mut facts = CarryFacts {
+        base_is_default: true,
+        h: h.into(),
+        h2: h2.into(),
+        m,
+        b,
+        hops,
+        truncated,
+        b_ancestor_of_m: on_default(&main.status),
+        pr_files: changes(&pr),
+        main_files: changes(&main),
+        tree_b,
+        tree_m,
+        tree_h,
+        tree_h2,
+        trust_files: &trust,
+        lock_texts: BTreeMap::new(),
+    };
+    // Rule 6 reads each lockfile both sides changed in place, at each commit by its sha. A text
+    // that cannot be read is left out, and the check then refuses.
+    let both: Vec<String> = facts
+        .pr_files
+        .iter()
+        .map(|c| c.filename.clone())
+        .filter(|p| carry::lock_in_place(&facts, p))
+        .collect();
+    for path in both {
+        let at = |sha: &str| gh.file_at(&path, sha).ok().flatten();
+        let (h, m, h2) = (at(&facts.h), at(&facts.m), at(&facts.h2));
+        if let (Some(h), Some(m), Some(h2)) = (h, m, h2) {
+            facts.lock_texts.insert(path, LockTexts { h, m, h2 });
+        }
+    }
+    carry::check(&facts).map_err(|e| e.message())?;
+    Ok(chain.into_iter().map(|c| c.sha).collect())
+}
+
+pub fn is_verdict(s: &Status) -> bool {
+    s.context.eq_ignore_ascii_case(CONTEXT)
+}
+
+/// Whether `sha` has a `review-verdict`; an error, no statuses (risk-check posted one) or 100+ count as yes.
+pub fn has_verdict(gh: &dyn Github, sha: &str) -> bool {
+    !crate::github::gate::gate_statuses(gh, sha)
+        .is_ok_and(|l| (1..100).contains(&l.len()) && !l.iter().any(is_verdict))
+}
+
+/// The heads an approval could carry from, nearest first: first parents of the merges on top of
+/// the PR (at most `MAX_HOPS`). Empty off the default branch; the walk ends at any doubt.
+pub fn candidates(gh: &dyn Github, pull: &Pull, default_branch: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if pull.base_ref != default_branch {
+        return out;
+    }
+    let mut sha = pull.head_sha.clone();
+    while out.len() < carry::MAX_HOPS {
+        let c = gh.commit(&sha).ok().flatten();
+        let Some(c) = c.filter(|c| {
+            c.sha == sha && c.parents.len() == 2 && sha40(&sha) && sha40(&c.parents[0])
+        }) else {
+            break;
+        };
+        sha = c.parents[0].clone();
+        out.push(sha.clone());
+    }
+    out
+}
+
+/// The id of the newest verdict record on `h` (workflow, unedited) if it approves independently
+/// and, with `models` (`[approvals] review_models` at base), names one of them.
+fn approved_by_independent(
+    comments: &[Comment],
+    excluded: &[String],
+    models: Option<&[String]>,
+    h: &str,
+) -> Option<u64> {
+    let bot = |c: &&Comment| c.user.eq_ignore_ascii_case(VERDICT_AUTHOR);
+    let on_h = |c: &Comment| match apply_record(&c.body) {
+        Some(Record::Verdict {
+            session,
+            head_sha,
+            approved,
+            confidence,
+            model,
+            relayed_by,
+            ..
+        }) if head_sha == h => {
+            let enrolled = models.is_none_or(|m| model.is_some_and(|x| m.contains(&x)));
+            // A verdict relayed by the lease holder is the lease holder's (spec §7).
+            let relayed = relayer_excluded(relayed_by.as_deref(), excluded);
+            Some((
+                session,
+                approved && confidence.is_some() && enrolled && !relayed,
+            ))
+        }
+        _ => None,
+    };
+    let newest = comments
+        .iter()
+        .filter(bot)
+        .filter_map(|c| Some((c, on_h(c)?)))
+        .next_back();
+    let (c, (session, approved)) = newest?;
+    let known = !session.is_empty() && session != "unknown" && !is_bot_session(&session);
+    (approved && known && c.unedited() && !excluded.contains(&session)).then_some(c.id)
+}
+
+/// Rule 5: no owner withdrawn (per commit) on the path or `h`; with verdicts (`approval`: the oldest
+/// counted record) also no record on the path, none newer than it off the path.
+fn standing(
+    comments: &[Comment],
+    reviews: &[Review],
+    owners: &[String],
+    path: &[String],
+    (h, approval): (&str, Option<u64>),
+) -> bool {
+    let superseded = approval.is_some_and(|approval| {
+        comments.iter().any(|c| match parse_record(&c.body) {
+            Some(Record::Verdict { head_sha, .. }) => {
+                path.contains(&head_sha) || (c.id > approval && head_sha != h)
+            }
+            _ => false,
+        })
+    });
+    let withdrawn_by = |o: &String| {
+        let at = |sha: &str| withdrawn(decisive_review(reviews, o, sha).as_deref());
+        at(h) || path.iter().any(|sha| at(sha))
+    };
+    !superseded && !owners.iter().any(withdrawn_by)
+}
+
+/// The oldest of the counted `sessions`' newest records on `h`; `None` if one is missing or edited.
+fn counted_floor(comments: &[Comment], h: &str, sessions: &[String]) -> Option<u64> {
+    let newest = |s: &String| {
+        let mine = |c: &&Comment| match apply_record(&c.body) {
+            Some(Record::Verdict {
+                session, head_sha, ..
+            }) => c.user.eq_ignore_ascii_case(VERDICT_AUTHOR) && head_sha == h && session == *s,
+            _ => false,
+        };
+        let last = comments.iter().filter(mine).max_by_key(|c| c.id)?;
+        last.unedited().then_some(last.id) // an edited record may not be what was reviewed
+    };
+    let ids: Option<Vec<u64>> = sessions.iter().map(newest).collect();
+    ids?.into_iter().min()
+}
+
+/// The older head `h` whose approval carries to `pull.head_sha` if rules 1-5 hold, and who gave
+/// it. `approve` judges a sha with the inputs of the current head and returns `None` on any
+/// error. `check` runs only for a head that is approved; any doubt tries the next head.
+pub(crate) fn carry_approval(
+    gh: &dyn Github,
+    pull: &Pull,
+    default_branch: &str,
+    owners: &[String],
+    approve: &dyn Fn(&str) -> Option<Found>,
+) -> Option<(String, String, Vec<String>)> {
+    for h in candidates(gh, pull, default_branch) {
+        let Some(found) = approve(&h).filter(Found::passed) else {
+            continue;
+        };
+        let path = (check(gh, pull, default_branch, &h))
+            .map_err(|why| eprintln!("bosun: risk-check: no carry from {}: {why}", short(&h)));
+        let (comments, reviews) = (gh.list_comments(pull.number), gh.list_reviews(pull.number));
+        let (Ok(path), Ok(mut comments), Ok(mut reviews)) = (path, comments, reviews) else {
+            continue;
+        };
+        comments.sort_by_key(|c| c.id);
+        for c in &mut comments {
+            c.user = crate::github::gate::record_author(&c.user);
+        }
+        reviews.sort_by_key(|r| r.id);
+        let approval = match found.counted() {
+            None => Some(None),
+            Some(sessions) => counted_floor(&comments, &h, sessions).map(Some),
+        };
+        let Some(approval) = approval else {
+            continue;
+        };
+        // An owner whose newest decisive review on any commit (by `submitted_at`) withdraws, even one
+        // off the path (a force-pushed-away head), refuses; a later approval clears an older one. A
+        // decisive review without a usable time makes the order unknown: refuse.
+        let anywhere = owners.iter().any(|o| {
+            let decisive = (reviews.iter())
+                .filter(|r| r.user.eq_ignore_ascii_case(o))
+                .filter(|r| {
+                    ["APPROVED", "CHANGES_REQUESTED", "DISMISSED"].contains(&r.state.as_str())
+                });
+            let newest = decisive.clone().max_by_key(|r| (submitted(r), r.id));
+            decisive.clone().any(|r| submitted(r).is_none())
+                || newest.is_some_and(|r| withdrawn(Some(&r.state)))
+        });
+        if !anywhere && standing(&comments, &reviews, owners, &path, (&h, approval)) {
+            let counted = found.counted().unwrap_or_default().to_vec();
+            let who = found
+                .approved_by
+                .unwrap_or_else(|| format!("two verdicts: {}", counted.join(", ")));
+            return Some((h, who, counted));
+        }
+    }
+    None
+}
+
+/// The head `h` whose approval carries to `pull.head_sha` if rules 1-5 hold; any doubt is `None`.
+pub fn carry_verdict(
+    gh: &dyn Github,
+    pull: &Pull,
+    default_branch: &str,
+    linked: &[u64],
+    owners: &[String],
+) -> Option<String> {
+    let cands = candidates(gh, pull, default_branch);
+    let open = || matches!(delegation_blocked(gh, &pull.base_ref, linked), Ok(None));
+    if cands.is_empty() || linked.is_empty() || has_verdict(gh, &pull.head_sha) || !open() {
+        return None;
+    }
+    let (comments, excluded) = verdict_inputs(gh, pull.number, linked).ok()?;
+    let models = review_models(gh, &pull.base_sha).ok()?;
+    let mut reviews = gh.list_reviews(pull.number).ok()?;
+    reviews.sort_by_key(|r| r.id);
+    cands.into_iter().find(|h| {
+        let Some(id) = approved_by_independent(&comments, &excluded, models.as_deref(), h) else {
+            return false;
+        };
+        (check(gh, pull, default_branch, h))
+            .map_err(|why| eprintln!("bosun: risk-check: no carry from {}: {why}", short(h)))
+            .is_ok_and(|path| standing(&comments, &reviews, owners, &path, (h, Some(id))))
+    })
+}

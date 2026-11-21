@@ -1,0 +1,126 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  merge_group:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    if: github.event.pull_request.draft != true
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+    steps:
+      - name: Start timer
+        run: echo "CI_START=$(date +%s)" >> "$GITHUB_ENV"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          filter: blob:none
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - name: Install
+        run: pnpm install --frozen-lockfile --prefer-offline
+      - name: Lint
+        run: pnpm lint
+      - name: Format
+        run: pnpm format:check
+      - name: Install splice
+        # same version as SPLICE_VERSION in scripts/lib/splice.mjs (tests/hull-workflows.test.mjs)
+        run: |
+          npm install -g --no-fund --no-audit @keelstackhq/splice@0.5.0
+          echo "SPLICE_BIN=$(command -v splice)" >> "$GITHUB_ENV"
+      - name: Install sops and age-keygen (tests/bootstrap-secrets.test.mjs)
+        # sops: SHA-256 from sops-v3.13.3.checksums.txt; age: SHA-256 of the v1.3.2 release
+        # tarball as downloaded on 2026-10-27 (age publishes no checksums file).
+        run: |
+          set -euo pipefail
+          d="$RUNNER_TEMP/secrets-bin"
+          mkdir -p "$d"
+          curl -fsSL -o "$d/sops" https://github.com/getsops/sops/releases/download/v3.13.3/sops-v3.13.3.linux.amd64
+          echo "e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b  $d/sops" | sha256sum -c -
+          curl -fsSL -o "$RUNNER_TEMP/age.tgz" https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz
+          echo "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10  $RUNNER_TEMP/age.tgz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/age.tgz" -C "$RUNNER_TEMP" age/age-keygen
+          mv "$RUNNER_TEMP/age/age-keygen" "$d/"
+          chmod +x "$d/sops" "$d/age-keygen"
+          echo "$d" >> "$GITHUB_PATH"
+      - name: Test
+        run: pnpm test
+      - name: Affected combos
+        id: combos
+        run: |
+          set -e
+          if [ -z "$BASE" ] || [ "$BASE" = "0000000000000000000000000000000000000000" ]; then
+            list=$(node scripts/affected-combos.mjs --all)
+          else
+            list=$(node scripts/affected-combos.mjs --base "$BASE")
+          fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"
+          args=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).map((c) => `--combo ${c}`).join(" "))' "$list")
+          echo "args=$args" >> "$GITHUB_OUTPUT"
+      - name: Rust needed?
+        id: rust
+        env:
+          LIST: ${{ steps.combos.outputs.list }}
+        run: |
+          if node -e 'process.exit(JSON.parse(process.argv[1]).some((c) => JSON.parse(process.argv[2]).combos.find((x) => x.name === c)?.pieces.some((p) => ["rust-tool", "rust-cli"].includes(p.split(":")[0]))) ? 0 : 1)' "$LIST" "$(node -e 'import("./scripts/lib/combos.mjs").then((m) => process.stdout.write(JSON.stringify(m.loadCombos())))')"; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      # Bump by hand to the `stable` branch head; `toolchain: stable` is explicit, so a digest bump to master stays safe.
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable branch, 2026-10-28
+        if: steps.rust.outputs.needed == 'true'
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: steps.rust.outputs.needed == 'true'
+        with:
+          workspaces: |
+            ${{ runner.temp }}/combos/cli -> target
+            ${{ runner.temp }}/combos/rust -> target
+      - uses: taiki-e/install-action@5488ac5a951645ce95062214902ac4b6bc1a1037 # v2.87.32
+        if: steps.rust.outputs.needed == 'true'
+        with:
+          tool: cargo-nextest@0.9.148,cargo-deny@0.20.2
+      # Turborepo remote cache for the combos; exports TURBO_API/TURBO_TOKEN/TURBO_TEAM
+      - uses: keelstackhq/hoard@4a6d185fb73af3d973eaa256a88bc0d02c68b63a # v0.6.1
+        if: steps.combos.outputs.args != ''
+      - name: Dogfood combos
+        if: steps.combos.outputs.args != ''
+        run: node scripts/dogfood.mjs ${{ steps.combos.outputs.args }} --root "$RUNNER_TEMP/combos"
+      - name: Job duration
+        if: always()
+        continue-on-error: true
+        run: |
+          echo "ci job: $(( $(date +%s) - ${CI_START:-$(date +%s)} ))s (hull budget: 120s warm with one piece changed, 20s docs-only)" >> "$GITHUB_STEP_SUMMARY"
+
+  ci-ok:
+    needs: [ci]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require ci success
+        run: |
+          if [ "${{ github.event.pull_request.draft }}" = "true" ]; then
+            echo "draft: CI not run, mark ready for review"
+            exit 1
+          fi
+          if [ "${{ needs.ci.result }}" != "success" ]; then
+            echo "ci result: ${{ needs.ci.result }}"
+            exit 1
+          fi

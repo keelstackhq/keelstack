@@ -1,0 +1,576 @@
+//! The reviewer's verdict (spec §7): shape, validation and the rule that decides approval.
+
+use crate::core::meta::linked_issues;
+use crate::core::risk::VERDICT_MIN_CONFIDENCE;
+use serde::{Deserialize, Serialize};
+
+/// A verdict approves only at or above this confidence.
+pub const APPROVE_MIN: f64 = 0.85;
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Finding {
+    /// `blocker`, `major`, `minor` or `nit`.
+    pub severity: String,
+    pub file: String,
+    #[serde(default)]
+    pub line: Option<u32>,
+    pub claim: String,
+    pub evidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Verdict {
+    pub pr: u64,
+    pub head_sha: String,
+    /// `approve` or `request-changes`.
+    pub verdict: String,
+    pub confidence: f64,
+    #[serde(default)]
+    pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub lessons_hit: Vec<String>,
+    #[serde(default)]
+    pub escalate_risk: bool,
+    /// The 1-based review chunks (`bosun review-pack` `chunks`) the reviewers covered. A verdict
+    /// comment carries them in its own marker line ([`comment_chunks`]), not in the JSON: the
+    /// pinned applier of an older release refuses unknown fields.
+    /// A count `n` (an older prompt) means chunks 1..=n.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "chunks_list_or_count"
+    )]
+    pub chunks_reviewed: Vec<u32>,
+}
+
+/// A count above this is capped: the number comes from an untrusted verdict.
+const MAX_CHUNK_COUNT: u32 = 1000;
+
+fn chunks_list_or_count<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u32>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Chunks {
+        List(Vec<u32>),
+        Count(u32),
+    }
+    Ok(match Chunks::deserialize(d)? {
+        Chunks::List(l) => l,
+        Chunks::Count(n) => (1..=n.min(MAX_CHUNK_COUNT)).collect(),
+    })
+}
+
+/// What the verdict amounts to once the rules are applied.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effective {
+    pub approve: bool,
+    pub reasons: Vec<String>,
+}
+
+impl Verdict {
+    /// Parse and validate JSON; the error names the offending field.
+    pub fn parse(text: &str) -> Result<Verdict, String> {
+        let v: Verdict = serde_json::from_str(text).map_err(|e| e.to_string())?;
+        v.validate()?;
+        Ok(v)
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.head_sha.trim().is_empty() {
+            return Err("head_sha is empty".into());
+        }
+        if !["approve", "request-changes"].contains(&self.verdict.as_str()) {
+            return Err(format!(
+                "verdict {:?} must be \"approve\" or \"request-changes\"",
+                self.verdict
+            ));
+        }
+        if !(0.0..=1.0).contains(&self.confidence) {
+            return Err(format!(
+                "confidence {} must be between 0 and 1",
+                self.confidence
+            ));
+        }
+        for (i, f) in self.findings.iter().enumerate() {
+            if !["blocker", "major", "minor", "nit"].contains(&f.severity.as_str()) {
+                return Err(format!(
+                    "findings[{i}].severity {:?} must be blocker, major, minor or nit",
+                    f.severity
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn count(&self, severity: &str) -> usize {
+        self.findings
+            .iter()
+            .filter(|f| f.severity == severity)
+            .count()
+    }
+
+    /// The status description, for example `approve 0.92 (approves at 0.85), 0 blocker, 1 major`.
+    pub fn summary(&self) -> String {
+        format!(
+            "{} {:.2} (approves at {APPROVE_MIN:.2}), {} blocker, {} major",
+            self.verdict,
+            self.confidence,
+            self.count("blocker"),
+            self.count("major")
+        )
+    }
+}
+
+/// Approve only with verdict `approve`, confidence at least [`APPROVE_MIN`] and no blocker.
+pub fn effective(v: &Verdict) -> Effective {
+    let mut reasons = Vec::new();
+    if v.verdict != "approve" {
+        reasons.push(format!("the reviewer said {}", v.verdict));
+    }
+    if v.confidence < APPROVE_MIN {
+        reasons.push(format!(
+            "confidence {:.2} is below {APPROVE_MIN}",
+            v.confidence
+        ));
+    }
+    let blockers = v.count("blocker");
+    if blockers > 0 {
+        reasons.push(format!("{blockers} blocker finding(s)"));
+    }
+    Effective {
+        approve: reasons.is_empty(),
+        reasons,
+    }
+}
+
+/// The first issue a PR body links (see [`linked_issues`]).
+pub fn closes_issue(body: &str) -> Option<u64> {
+    linked_issues(body).first().copied()
+}
+
+/// Marks a PR comment that carries a verdict for `bosun verdict apply` (spec §7).
+pub const COMMENT_MARKER: &str = "<!-- bosun:verdict -->";
+
+const SESSION_TAG: &str = "<!-- bosun:reviewer ";
+
+/// The PR comment `bosun verdict comment` posts: a summary, the reviewer session (for the
+/// record; the session writes it, so it is not proof), the marker, the JSON.
+pub fn comment_body(v: &Verdict, session: &str, model: Option<&str>) -> String {
+    relayed_comment_body(v, session, model, None)
+}
+
+const RELAY_TAG: &str = "<!-- bosun:relayed_by ";
+
+/// [`comment_body`] with a `<!-- bosun:relayed_by S -->` line when session `S` posts another
+/// reviewer's verdict (self-declared, an audit hint like the reviewer tag).
+pub fn relayed_comment_body(
+    v: &Verdict,
+    session: &str,
+    model: Option<&str>,
+    relayed_by: Option<&str>,
+) -> String {
+    let mut plain = v.clone();
+    let chunks = std::mem::take(&mut plain.chunks_reviewed);
+    let json = serde_json::to_string(&plain).unwrap_or_default();
+    // A fence longer than any backtick run in the payload, so evidence cannot close it.
+    let fence = "`".repeat(longest_backtick_run(&json).max(2) + 1);
+    format!(
+        "Review verdict for {}: {}.\n\n{SESSION_TAG}{session} -->\n{relay_line}{model_line}{chunk_line}{COMMENT_MARKER}\n{fence}json\n{json}\n{fence}",
+        v.head_sha,
+        v.summary(),
+        relay_line = relayed_by.map_or(String::new(), |r| format!("{RELAY_TAG}{r} -->\n")),
+        model_line = model
+            .and_then(valid_model)
+            .map_or(String::new(), |m| format!("{MODEL_TAG}{m} -->\n")),
+        chunk_line = if chunks.is_empty() {
+            String::new()
+        } else {
+            let list: Vec<String> = chunks.iter().map(u32::to_string).collect();
+            format!("{CHUNKS_TAG}{} -->\n", list.join(","))
+        }
+    )
+}
+
+/// The last `bosun-sig ed25519 <id> <sig>` line of a signed verdict comment: the text it signs
+/// (everything before that line), the key id and the base64 signature.
+pub fn split_signature(body: &str) -> Option<(&str, &str, &str)> {
+    let at = body.rfind("\nbosun-sig ed25519 ")?;
+    let line = body[at + 1..].lines().next()?;
+    match line.trim().split(' ').collect::<Vec<_>>().as_slice() {
+        ["bosun-sig", "ed25519", id, sig] => Some((&body[..at], id, sig)),
+        _ => None,
+    }
+}
+
+/// The bytes an enrolled key signs for a verdict comment: its own prefix, the repo, PR and head,
+/// and the SHA-256 of the signed text, so the signature binds the whole verdict and nothing else.
+pub fn signed_message(owner: &str, repo: &str, pr: u64, head: &str, text: &str) -> String {
+    let digest = ring::digest::digest(&ring::digest::SHA256, text.as_bytes());
+    let hex: String = digest.as_ref().iter().map(|b| format!("{b:02x}")).collect();
+    let (o, r) = (owner.to_ascii_lowercase(), repo.to_ascii_lowercase());
+    format!("bosun-verdict v1 {o}/{r}#{pr} {head} sha256:{hex}")
+}
+
+const MODEL_TAG: &str = "<!-- bosun:model ";
+
+/// The reviewer model a verdict comment declares (self-declared, like the session), if any.
+pub fn comment_model(body: &str) -> Option<&str> {
+    let head = body.split_once(COMMENT_MARKER).map_or(body, |(h, _)| h);
+    let (_, rest) = head.split_once(MODEL_TAG)?;
+    let (m, _) = rest.split_once(" -->")?;
+    valid_model(m)
+}
+
+/// A usable reviewer model id: non-empty, no whitespace. The one check for every path (comment
+/// tag, `BOSUN_MODEL`, review-ci config).
+pub fn valid_model(m: &str) -> Option<&str> {
+    (!m.is_empty() && !m.contains(char::is_whitespace)).then_some(m)
+}
+
+const CHUNKS_TAG: &str = "<!-- bosun:chunks ";
+
+/// The review chunks a verdict comment lists in its `<!-- bosun:chunks 1,2 -->` line (before the
+/// verdict marker); empty when there is none or it is malformed.
+pub fn comment_chunks(body: &str) -> Vec<u32> {
+    let head = body.split_once(COMMENT_MARKER).map_or(body, |(h, _)| h);
+    let Some((_, rest)) = head.split_once(CHUNKS_TAG) else {
+        return vec![];
+    };
+    let Some((list, _)) = rest.split_once(" -->") else {
+        return vec![];
+    };
+    list.split(',')
+        .map(|s| s.trim().parse::<u32>())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap_or_default()
+}
+
+/// The reviewer session a verdict comment names, if any.
+/// Only the head before the marker counts, so a tag inside the JSON evidence is ignored.
+pub fn comment_session(body: &str) -> Option<&str> {
+    let head = body.split_once(COMMENT_MARKER).map_or(body, |(h, _)| h);
+    let (_, rest) = head.split_once(SESSION_TAG)?;
+    let (s, _) = rest.split_once(" -->")?;
+    (!s.is_empty() && !s.contains(char::is_whitespace)).then_some(s)
+}
+
+/// The session a verdict comment says relayed it (its line before the marker), if any.
+pub fn comment_relayed_by(body: &str) -> Option<&str> {
+    let head = body.split_once(COMMENT_MARKER).map_or(body, |(h, _)| h);
+    let (_, rest) = head.split_once(RELAY_TAG)?;
+    let (s, _) = rest.split_once(" -->")?;
+    (!s.is_empty() && !s.contains(char::is_whitespace)).then_some(s)
+}
+
+fn longest_backtick_run(s: &str) -> usize {
+    s.split(|c| c != '`').map(str::len).max().unwrap_or(0)
+}
+
+/// The verdict JSON of a verdict comment: the `json` block after the marker (its fence is three
+/// or more backticks), or the rest of the comment when there is no fence. The block ends at the
+/// first line that is that same fence; text after it (the agent proxy appends a footer to every
+/// comment) is not part of it.
+pub fn comment_json(body: &str) -> Option<&str> {
+    let (_, rest) = body.split_once(COMMENT_MARKER)?;
+    let rest = rest.trim();
+    let ticks = rest.len() - rest.trim_start_matches('`').len();
+    let fenced = (ticks >= 3)
+        .then(|| rest[ticks..].strip_prefix("json"))
+        .flatten();
+    let Some(fenced) = fenced else {
+        return Some(rest);
+    };
+    let fence = &rest[..ticks];
+    let end = fenced.match_indices(fence).map(|(i, _)| i).find(|&i| {
+        let line_start = fenced[..i].ends_with('\n');
+        let after = &fenced[i + ticks..];
+        line_start && !after.starts_with('`')
+    });
+    Some(fenced[..end.unwrap_or(fenced.len())].trim())
+}
+
+/// No-CI mode: sessions whose verdict on `pr` at `head` is clean (approve, confidence at least
+/// [`VERDICT_MIN_CONFIDENCE`], no major, not escalated, all `chunks` listed), unedited, not
+/// `excluded`, of an allowed model. Each item is `(signed text, unedited, key id)`: the newest per
+/// key id counts, never per self-declared session tag, and any unclean verdict on the head, in any
+/// order, blocks all (a replayed older approval cannot outvote a rejection).
+pub fn comment_clean<'a>(
+    comments: impl IntoIterator<Item = (&'a str, bool, &'a str)>,
+    pr: u64,
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+    chunks: usize,
+) -> Vec<String> {
+    let mut newest: Vec<(String, String, bool)> = Vec::new();
+    let mut blocked = false;
+    for (body, unedited, key) in comments {
+        let Some(v) = comment_json(body).and_then(|t| Verdict::parse(t).ok()) else {
+            continue;
+        };
+        if v.pr != pr || v.head_sha != head {
+            continue;
+        }
+        let session = comment_session(body).unwrap_or("unknown");
+        let listed = |k: u32| v.chunks_reviewed.contains(&k) || comment_chunks(body).contains(&k);
+        let clean = effective(&v).approve
+            && !v.escalate_risk
+            && (chunks <= 1 || (1..=chunks as u32).all(listed))
+            && v.count("major") == 0
+            && v.confidence >= VERDICT_MIN_CONFIDENCE;
+        blocked |= !clean;
+        let model_ok =
+            models.is_none_or(|m| comment_model(body).is_some_and(|x| m.iter().any(|y| y == x)));
+        let counts =
+            unedited && model_ok && session != "unknown" && !excluded.iter().any(|e| e == session);
+        newest.retain(|(k, ..)| k != key);
+        newest.push((key.to_string(), session.to_string(), counts));
+    }
+    if blocked {
+        return Vec::new();
+    }
+    let mut out: Vec<String> = Vec::new();
+    for (_, s, counts) in newest {
+        if counts && !out.contains(&s) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// A trusted bot's verdict without markers: the one top-level fenced ```json block that parses
+/// as a valid `Verdict`. Every fence counts (backticks or tildes, 3+ long, any info string,
+/// closed by a bare run of the same character at least as long), so a json block inside
+/// another fence is ignored. None when no block or more than one block is a valid verdict.
+pub fn bot_verdict_json(body: &str) -> Option<&str> {
+    // (fence character, fence length, json-tagged, contents start)
+    let mut open: Option<(char, usize, bool, usize)> = None;
+    let mut found: Option<&str> = None;
+    let mut pos = 0;
+    for line in body.split_inclusive('\n') {
+        let t = line.trim();
+        // A line indented 4+ columns is an indented code line, never a fence (CommonMark).
+        let lead = &line[..line.len() - line.trim_start().len()];
+        let indent: usize = lead.chars().map(|c| if c == '\t' { 4 } else { 1 }).sum();
+        let ch = (indent < 4)
+            .then(|| t.chars().next())
+            .flatten()
+            .filter(|c| matches!(c, '`' | '~'));
+        let run = ch.map_or(0, |c| t.len() - t.trim_start_matches(c).len());
+        let info = t[run..].trim();
+        match (open, ch) {
+            (None, Some(c)) if run >= 3 && !(c == '`' && info.contains('`')) => {
+                open = Some((c, run, c == '`' && info == "json", pos + line.len()));
+            }
+            (Some((c, n, json, start)), Some(d)) if d == c && run >= n && info.is_empty() => {
+                let text = body[start..pos].trim();
+                if json && Verdict::parse(text).is_ok() {
+                    if found.is_some() {
+                        return None;
+                    }
+                    found = Some(text);
+                }
+                open = None;
+            }
+            _ => {}
+        }
+        pos += line.len();
+    }
+    found
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn v(verdict: &str, conf: f64, sev: &[&str]) -> Verdict {
+        Verdict {
+            pr: 1,
+            head_sha: "abc".into(),
+            verdict: verdict.into(),
+            confidence: conf,
+            findings: sev
+                .iter()
+                .map(|s| Finding {
+                    severity: s.to_string(),
+                    file: "f".into(),
+                    line: None,
+                    claim: "c".into(),
+                    evidence: "e".into(),
+                })
+                .collect(),
+            lessons_hit: vec![],
+            escalate_risk: false,
+            chunks_reviewed: vec![],
+        }
+    }
+
+    #[test]
+    fn chunks_reviewed_takes_a_count_or_a_list() {
+        let head =
+            r#"{"pr":1,"head_sha":"a","verdict":"approve","confidence":0.9,"chunks_reviewed":"#;
+        let n = Verdict::parse(&format!("{head}3}}")).unwrap();
+        assert_eq!(n.chunks_reviewed, vec![1, 2, 3]);
+        let l = Verdict::parse(&format!("{head}[2,1]}}")).unwrap();
+        assert_eq!(l.chunks_reviewed, vec![2, 1]);
+        assert!(Verdict::parse(&format!("{head}\"x\"}}")).is_err());
+        let big = Verdict::parse(&format!("{head}4294967295}}")).unwrap();
+        assert_eq!(big.chunks_reviewed.len(), MAX_CHUNK_COUNT as usize);
+    }
+
+    #[test]
+    fn threshold_is_inclusive() {
+        assert!(!effective(&v("approve", 0.84, &[])).approve);
+        assert!(effective(&v("approve", 0.85, &[])).approve);
+        assert!(!effective(&v("approve", 0.99, &["blocker"])).approve);
+        assert!(effective(&v("approve", 0.9, &["major", "nit"])).approve);
+        assert!(!effective(&v("request-changes", 0.99, &[])).approve);
+    }
+
+    #[test]
+    fn summary_matches_the_spec_style() {
+        assert_eq!(
+            v("approve", 0.92, &["major"]).summary(),
+            "approve 0.92 (approves at 0.85), 0 blocker, 1 major"
+        );
+    }
+
+    #[test]
+    fn validation_names_the_field() {
+        let bad = r#"{"pr":1,"head_sha":"a","verdict":"approve","confidence":0.9,"extra":1}"#;
+        assert!(Verdict::parse(bad).unwrap_err().contains("extra"));
+        let bad = r#"{"pr":1,"head_sha":"a","verdict":"approve"}"#;
+        assert!(Verdict::parse(bad).unwrap_err().contains("confidence"));
+        let bad = r#"{"pr":1,"head_sha":"a","verdict":"approve","confidence":1.5}"#;
+        assert!(Verdict::parse(bad).unwrap_err().contains("confidence"));
+        let bad = r#"{"pr":1,"head_sha":"a","verdict":"meh","confidence":0.5}"#;
+        assert!(Verdict::parse(bad).unwrap_err().contains("verdict"));
+        let bad = r#"{"pr":1,"head_sha":"a","verdict":"approve","confidence":0.9,
+            "findings":[{"severity":"huge","file":"f","claim":"c","evidence":"e"}]}"#;
+        assert!(
+            Verdict::parse(bad)
+                .unwrap_err()
+                .contains("findings[0].severity")
+        );
+    }
+
+    #[test]
+    fn closes_is_found() {
+        assert_eq!(closes_issue("Closes #12\n\nx"), Some(12));
+        assert_eq!(closes_issue("this fixes #7."), Some(7));
+        assert_eq!(closes_issue("no link"), None);
+        assert_eq!(closes_issue("Fixes other/repo#40"), None);
+    }
+
+    #[test]
+    fn a_verdict_comment_round_trips() {
+        let v = Verdict::parse(r#"{"pr":3,"head_sha":"abc","verdict":"approve","confidence":0.9}"#)
+            .unwrap();
+        let body = comment_body(&v, "session_r", None);
+        assert!(body.contains(COMMENT_MARKER));
+        assert_eq!(comment_session(&body), Some("session_r"));
+        assert_eq!(comment_session("no tag"), None);
+        assert_eq!(comment_model(&body), None);
+        let tagged = comment_body(&v, "session_r", Some("claude-x"));
+        assert_eq!(comment_model(&tagged), Some("claude-x"));
+        assert_eq!(comment_session(&tagged), Some("session_r"));
+        assert_eq!(comment_model(&comment_body(&v, "s", Some("a b"))), None);
+        assert_eq!(Verdict::parse(comment_json(&body).unwrap()).unwrap(), v);
+        assert_eq!(comment_json("no marker"), None);
+        // The agent proxy appends a footer after the fence.
+        let footed =
+            format!("{body}\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_\n");
+        assert_eq!(Verdict::parse(comment_json(&footed).unwrap()).unwrap(), v);
+    }
+
+    #[test]
+    fn a_relayed_comment_keeps_the_reviewer_and_names_the_relay() {
+        let mut v = v("approve", 0.9, &[]);
+        v.chunks_reviewed = vec![1, 2];
+        let body = relayed_comment_body(&v, "session_r", Some("claude-x"), Some("session_o"));
+        assert!(
+            body.contains("<!-- bosun:relayed_by session_o -->\n"),
+            "{body}"
+        );
+        assert_eq!(comment_relayed_by(&body), Some("session_o"));
+        assert_eq!(comment_session(&body), Some("session_r"));
+        assert_eq!(comment_model(&body), Some("claude-x"));
+        assert_eq!(comment_chunks(&body), vec![1, 2]);
+        let mut plain = v.clone();
+        plain.chunks_reviewed.clear();
+        assert_eq!(Verdict::parse(comment_json(&body).unwrap()).unwrap(), plain);
+        let direct = comment_body(&v, "session_r", None);
+        assert_eq!(comment_relayed_by(&direct), None);
+        assert_eq!(
+            relayed_comment_body(&v, "session_r", None, None),
+            direct,
+            "no relay, same body"
+        );
+        // A tag after the marker (inside the JSON evidence) is not the relay line.
+        let tail = format!("{COMMENT_MARKER}\n<!-- bosun:relayed_by x -->");
+        assert_eq!(comment_relayed_by(&tail), None);
+        assert_eq!(comment_relayed_by("<!-- bosun:relayed_by a b -->"), None);
+        // Likewise a reviewer tag after the marker is not the reviewer line.
+        let tail = format!("{COMMENT_MARKER}\n<!-- bosun:reviewer x -->");
+        assert_eq!(comment_session(&tail), None);
+    }
+
+    #[test]
+    fn a_backtick_run_in_the_evidence_cannot_close_the_fence() {
+        let mut v = v("approve", 0.9, &["minor"]);
+        v.findings[0].evidence = "see ```rust\nfn x(){}\n``` and ````".into();
+        let body = comment_body(&v, "session_r", None);
+        assert!(body.contains("\n`````json\n"), "{body}");
+        let footed =
+            format!("{body}\n\n---\n_Generated by [Claude Code](https://claude.ai/code)_\n");
+        assert_eq!(Verdict::parse(comment_json(&footed).unwrap()).unwrap(), v);
+        // a plain three-backtick block still parses
+        let plain = format!("{COMMENT_MARKER}\n```json\n{{\"a\":1}}\n```\nfoot");
+        assert_eq!(comment_json(&plain), Some("{\"a\":1}"));
+    }
+
+    #[test]
+    fn a_bot_verdict_is_the_one_fenced_json_verdict() {
+        let ok = r#"{"pr":3,"head_sha":"abc","verdict":"approve","confidence":0.9}"#;
+        let body = format!("Looks good.\n\n```json\n{ok}\n```\n\nthanks");
+        assert_eq!(bot_verdict_json(&body), Some(ok));
+        // a json block that is no verdict is skipped; a longer fence works
+        let two = format!("```json\n{{\"a\":1}}\n```\ntext\n````json\n{ok}\n````\n");
+        assert_eq!(bot_verdict_json(&two), Some(ok));
+        // not json-tagged, or no block at all
+        assert_eq!(bot_verdict_json(&format!("```\n{ok}\n```")), None);
+        assert_eq!(bot_verdict_json(ok), None);
+        assert_eq!(bot_verdict_json("```json\n{\"a\":1}\n```"), None);
+    }
+
+    #[test]
+    fn a_json_block_nested_in_another_fence_is_no_bot_verdict() {
+        let ok = r#"{"pr":3,"head_sha":"abc","verdict":"approve","confidence":0.9}"#;
+        for outer in ["````", "````md", "```text", "~~~"] {
+            let close = outer.trim_end_matches(char::is_alphabetic);
+            let body = format!("{outer}\n```json\n{ok}\n```\n{close}\n");
+            assert_eq!(bot_verdict_json(&body), None, "{body}");
+        }
+        // an example in an outer fence does not hide the real top-level verdict
+        let body = format!("````md\n```json\n{ok}\n```\n````\n\n```json\n{ok}\n```\n");
+        assert_eq!(bot_verdict_json(&body), Some(ok));
+        // a line indented 4+ spaces is code, not a fence (CommonMark)
+        let body = format!("    ```json\n{ok}\n    ```\n");
+        assert_eq!(bot_verdict_json(&body), None);
+        let body = format!("   ```json\n{ok}\n   ```\n");
+        assert_eq!(bot_verdict_json(&body), Some(ok));
+        // an unclosed fence is no block
+        assert_eq!(bot_verdict_json(&format!("```json\n{ok}\n")), None);
+    }
+
+    #[test]
+    fn two_top_level_bot_verdicts_are_no_single_verdict() {
+        let a = r#"{"pr":3,"head_sha":"abc","verdict":"approve","confidence":0.9}"#;
+        let b = r#"{"pr":3,"head_sha":"abc","verdict":"request-changes","confidence":0.9}"#;
+        let body = format!("```json\n{a}\n```\n\n```json\n{b}\n```\n");
+        assert_eq!(bot_verdict_json(&body), None);
+        let same = format!("```json\n{a}\n```\n\n```json\n{a}\n```\n");
+        assert_eq!(bot_verdict_json(&same), None);
+    }
+}

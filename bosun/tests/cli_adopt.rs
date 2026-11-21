@@ -1,0 +1,477 @@
+mod common;
+
+use bosun::core::adopt::{Manifest, fnv1a_hex};
+use common::fake::FakeGithub;
+use common::{bosun, one_object, run};
+use serde_json::Value;
+use std::path::Path;
+
+const NOW: &str = "2026-11-06T10:00:00Z";
+const ALL: [&str; 14] = [
+    ".bosun/bosun.toml",
+    ".bosun/version",
+    ".bosun/limits.toml",
+    ".bosun/risk.toml",
+    ".bosun/session-rules.toml",
+    ".bosun/approvers.toml",
+    ".bosun/fold-fragments.sh",
+    ".github/workflows/bosun.yml",
+    ".github/workflows/risk.yml",
+    ".github/workflows/verdict.yml",
+    ".github/workflows/main-open.yml",
+    ".github/workflows/main-health.yml",
+    ".claude/settings.json",
+    "docs/setup-script.sh",
+];
+
+fn adopt(fake: &FakeGithub, dir: &Path, extra: &[&str]) -> (i32, Value) {
+    let d = dir.to_str().unwrap();
+    let mut args = vec!["-C", d, "adopt"];
+    args.extend_from_slice(extra);
+    run(fake, "s1", NOW, &args)
+}
+
+fn no_remote(dir: &Path, extra: &[&str]) -> Value {
+    let out = bosun()
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("BOSUN_REPO")
+        .args(["-C", dir.to_str().unwrap(), "adopt", "--no-remote"])
+        .args(extra)
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    one_object(&out.stdout)
+}
+
+fn action<'a>(v: &'a Value, path: &str) -> &'a str {
+    v["data"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["path"] == path)
+        .unwrap_or_else(|| panic!("no change for {path}: {v}"))["action"]
+        .as_str()
+        .unwrap()
+}
+
+fn read(dir: &Path, rel: &str) -> String {
+    std::fs::read_to_string(dir.join(rel)).unwrap()
+}
+
+fn write(dir: &Path, rel: &str, text: &str) {
+    let p = dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(p, text).unwrap();
+}
+
+#[test]
+fn detects_stacks() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!([]));
+    write(t.path(), "Cargo.toml", "[package]\n");
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!(["rust"]));
+    write(t.path(), "package.json", "{}");
+    write(t.path(), "pnpm-lock.yaml", "");
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!(["rust", "ts-pnpm"]));
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run", "--stack", "other"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!([]));
+    assert!(read_opt(t.path(), ".bosun/bosun.toml").is_none());
+}
+
+fn read_opt(dir: &Path, rel: &str) -> Option<String> {
+    std::fs::read_to_string(dir.join(rel)).ok()
+}
+
+#[test]
+fn dry_run_writes_nothing_and_lists_all() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let (code, v) = adopt(&fake, t.path(), &["--dry-run", "--stack", "rust"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["dry_run"], true);
+    for p in ALL {
+        assert_eq!(action(&v, p), "create", "{p}");
+    }
+    assert_eq!(action(&v, ".bosun/adopt.toml"), "create");
+    // Only the .git of `git init` is there.
+    assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 1);
+    assert!(fake.label_names().is_empty());
+}
+
+#[test]
+fn writes_files_labels_registry_and_manifest() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let (code, v) = adopt(&fake, t.path(), &["--stack", "rust", "--owner", "alice"]);
+    assert_eq!(code, 0, "{v}");
+    for p in ALL {
+        assert!(t.path().join(p).is_file(), "{p}");
+    }
+    assert_eq!(action(&v, "governance/owners.toml"), "create");
+    assert!(read(t.path(), "governance/owners.toml").contains("github = \"alice\""));
+    assert_eq!(
+        read(t.path(), ".bosun/version").trim(),
+        env!("CARGO_PKG_VERSION")
+    );
+    let cfg = read(t.path(), ".bosun/bosun.toml");
+    assert!(cfg.contains("profile = \"rust\"") && cfg.contains("project = \"widget\""));
+    assert!(!cfg.contains("[approvals]"));
+    for p in ALL {
+        let text = read(t.path(), p);
+        assert!(!text.contains("{%"), "{p} has a tag left");
+        assert!(
+            !text.replace("${{", "").contains("{{ "),
+            "{p} has a var left"
+        );
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(t.path().join(".bosun/fold-fragments.sh"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o111, 0o111);
+    }
+    // No hull, splice or hoist files.
+    for p in [
+        ".github/workflows/splice.yml",
+        "hoist.toml",
+        ".github/CODEOWNERS",
+        "deny.toml",
+    ] {
+        assert!(!t.path().join(p).exists(), "{p}");
+    }
+    // Remote.
+    let names = fake.label_names();
+    for l in [
+        "bosun:halt",
+        "bosun:registry",
+        "bosun:state/ready",
+        "bosun:state/needs-human",
+    ] {
+        assert!(names.iter().any(|n| n == l), "{l}");
+    }
+    let n = v["data"]["registry"]["number"].as_u64().unwrap();
+    assert_eq!(v["data"]["registry"]["action"], "create");
+    assert!(fake.labels_of(n).contains(&"bosun:registry".to_string()));
+    assert!(v["data"]["owner_steps"].as_array().unwrap().len() >= 3);
+    // Manifest.
+    let m = Manifest::parse(&read(t.path(), ".bosun/adopt.toml")).unwrap();
+    assert_eq!(m.registry_issue, Some(n));
+    assert!(m.labels.contains(&"bosun:halt".to_string()));
+    let f = m.files.iter().find(|f| f.path == ".bosun/version").unwrap();
+    assert_eq!(
+        f.hash,
+        fnv1a_hex(read(t.path(), ".bosun/version").as_bytes())
+    );
+    assert!(m.files.iter().all(|f| f.path != ".bosun/adopt.toml"));
+    assert!(m.files.iter().any(|f| f.path == "docs/setup-script.sh"));
+    let sh = std::process::Command::new("bash")
+        .args(["-n", "docs/setup-script.sh"])
+        .current_dir(t.path())
+        .status()
+        .unwrap();
+    assert!(sh.success(), "docs/setup-script.sh is not valid bash");
+}
+
+#[test]
+fn second_run_is_all_unchanged() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    adopt(&fake, t.path(), &["--stack", "rust", "--owner", "alice"]);
+    let first = read(t.path(), ".bosun/adopt.toml");
+    let (code, v) = adopt(&fake, t.path(), &["--stack", "rust", "--owner", "alice"]);
+    assert_eq!(code, 0, "{v}");
+    for c in v["data"]["changes"].as_array().unwrap() {
+        assert_eq!(c["action"], "unchanged", "{c}");
+    }
+    for l in v["data"]["labels"].as_array().unwrap() {
+        assert_eq!(l["action"], "exists", "{l}");
+    }
+    assert_eq!(v["data"]["registry"]["action"], "exists");
+    assert_eq!(read(t.path(), ".bosun/adopt.toml"), first);
+}
+
+#[test]
+fn existing_differing_file_is_kept_byte_identical() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    write(t.path(), ".bosun/limits.toml", "# mine\n");
+    write(t.path(), ".claude/settings.json", "{}\n");
+    let (code, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(action(&v, ".bosun/limits.toml"), "kept");
+    assert_eq!(action(&v, ".claude/settings.json"), "kept");
+    let kept = v["data"]["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["path"] == ".bosun/limits.toml")
+        .unwrap();
+    assert!(!kept["fix"].as_str().unwrap().is_empty());
+    assert_eq!(read(t.path(), ".bosun/limits.toml"), "# mine\n");
+    assert_eq!(read(t.path(), ".claude/settings.json"), "{}\n");
+    let m = Manifest::parse(&read(t.path(), ".bosun/adopt.toml")).unwrap();
+    assert!(m.files.iter().all(|f| f.path != ".bosun/limits.toml"));
+}
+
+#[test]
+fn no_remote_needs_no_token_and_repo() {
+    let t = tempfile::tempdir().unwrap();
+    let dir = t.path().join("my app");
+    std::fs::create_dir(&dir).unwrap();
+    assert!(
+        std::process::Command::new("git")
+            .args(["init", "-q"])
+            .arg(&dir)
+            .status()
+            .unwrap()
+            .success()
+    );
+    write(&dir, "Cargo.toml", "[package]\n");
+    let v = no_remote(&dir, &["--bosun-version", "0.9.1"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!(["rust"]));
+    assert_eq!(read(&dir, ".bosun/version").trim(), "0.9.1");
+    assert!(read(&dir, ".bosun/bosun.toml").contains("project = \"my-app\""));
+    let m = Manifest::parse(&read(&dir, ".bosun/adopt.toml")).unwrap();
+    assert_eq!(m.bosun_version, "0.9.1");
+    assert!(m.labels.is_empty() && m.registry_issue.is_none());
+}
+
+#[test]
+fn existing_ci_ok_job_renders_bosun_ok_and_stays_stable() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    write(
+        t.path(),
+        ".github/workflows/ci.yml",
+        "jobs:\n  ci-ok:\n    runs-on: ubuntu-latest\n",
+    );
+    adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert!(read(t.path(), ".github/workflows/bosun.yml").contains("bosun-ok"));
+    let (_, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert_eq!(action(&v, ".github/workflows/bosun.yml"), "unchanged");
+}
+
+#[test]
+fn preexisting_label_is_not_recorded_as_created() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    fake.add_label("bosun:halt", "000000");
+    let (_, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    let halt = v["data"]["labels"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|l| l["name"] == "bosun:halt")
+        .unwrap();
+    assert_eq!(halt["action"], "exists");
+    let m = Manifest::parse(&read(t.path(), ".bosun/adopt.toml")).unwrap();
+    assert!(!m.labels.contains(&"bosun:halt".to_string()));
+}
+
+#[test]
+fn every_template_renders_for_each_stack_set() {
+    use bosun::cli::adopt::{render_all, vars_for};
+    for stacks in [
+        vec!["rust"],
+        vec!["ts-pnpm"],
+        vec!["rust", "ts-pnpm"],
+        vec![],
+    ] {
+        for own_ci in [false, true] {
+            let stacks: Vec<String> = stacks.iter().map(|s| s.to_string()).collect();
+            let vars = vars_for("app", "alice", "0.7.0", &stacks, own_ci);
+            let files = render_all(&vars).unwrap_or_else(|e| panic!("{stacks:?}: {e}"));
+            assert!(files.len() >= 15);
+            for (path, text) in files {
+                assert!(!text.contains("{%"), "{path}: tag left");
+                assert!(
+                    !text.contains("{{ project") && !text.contains("{{ owner"),
+                    "{path}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn bad_bosun_version_is_a_usage_error() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let (code, v) = adopt(&fake, t.path(), &["--bosun-version", "1.2", "--dry-run"]);
+    assert_eq!(code, 2, "{v}");
+    assert!(!v["error"]["fix"].as_str().unwrap().is_empty());
+}
+
+#[test]
+fn a_remote_failure_still_records_what_was_created() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    fake.fail_path("issues", 500);
+    let (code, _) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert_eq!(code, 1);
+    let m = Manifest::parse(&read(t.path(), ".bosun/adopt.toml")).unwrap();
+    assert!(m.labels.contains(&"bosun:halt".to_string()), "{m:?}");
+}
+
+#[test]
+fn owner_steps_name_the_right_required_check() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    let steps = v["data"]["owner_steps"].to_string();
+    assert!(
+        steps.contains("ci-ok") && !steps.contains("bosun-ok"),
+        "{steps}"
+    );
+    write(
+        t.path(),
+        ".github/workflows/ci.yml",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    let (_, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    assert!(v["data"]["owner_steps"].to_string().contains("bosun-ok"));
+}
+
+#[test]
+fn dry_run_without_a_token_lists_files_and_marks_remote_unknown() {
+    let t = common::git_tempdir();
+    let out = bosun()
+        .env_remove("GITHUB_TOKEN")
+        .args(["-C", t.path().to_str().unwrap(), "adopt", "--dry-run"])
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{v}");
+    assert_eq!(action(&v, ".bosun/version"), "create");
+    assert_eq!(v["data"]["registry"]["action"], "unknown");
+    assert!(
+        v["data"]["labels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|l| l["action"] == "unknown")
+    );
+}
+
+#[test]
+fn an_unreadable_file_is_an_error_not_absent() {
+    let t = common::git_tempdir();
+    std::fs::create_dir_all(t.path().join(".bosun/version")).unwrap();
+    let out = bosun()
+        .env_remove("GITHUB_TOKEN")
+        .args(["-C", t.path().to_str().unwrap(), "adopt", "--no-remote"])
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{v}");
+    assert!(!v["error"]["fix"].as_str().unwrap().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_are_never_written_through() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let outside = common::git_tempdir();
+    // A dangling symlink as a file, and a symlinked parent directory.
+    std::fs::create_dir_all(t.path().join(".bosun")).unwrap();
+    let target = outside.path().join("elsewhere");
+    std::os::unix::fs::symlink(&target, t.path().join(".bosun/version")).unwrap();
+    let dir = outside.path().join("claude");
+    std::fs::create_dir(&dir).unwrap();
+    std::os::unix::fs::symlink(&dir, t.path().join(".claude")).unwrap();
+    let (code, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(action(&v, ".bosun/version"), "kept");
+    assert_eq!(action(&v, ".claude/settings.json"), "kept");
+    assert!(!target.exists());
+    assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlinked_manifest_directory_is_an_error() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), t.path().join(".bosun")).unwrap();
+    let (code, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+    assert_eq!(code, 1, "{v}");
+    assert!(!v["error"]["fix"].as_str().unwrap().is_empty());
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn the_manifest_records_only_the_dirs_adopt_created() {
+    let fake = FakeGithub::start();
+    let t = common::git_tempdir();
+    std::fs::create_dir(t.path().join(".github")).unwrap();
+    adopt(&fake, t.path(), &["--stack", "rust"]);
+    let m = Manifest::parse(&read(t.path(), ".bosun/adopt.toml")).unwrap();
+    assert!(m.dirs.contains(&".bosun".to_string()));
+    assert!(m.dirs.contains(&".github/workflows".to_string()));
+    assert!(!m.dirs.contains(&".github".to_string()));
+}
+
+#[test]
+fn adopt_outside_a_git_repo_is_an_error_that_writes_nothing() {
+    let t = tempfile::tempdir().unwrap();
+    write(t.path(), "Cargo.toml", "[package]\n");
+    let out = bosun()
+        .env_remove("GITHUB_TOKEN")
+        .env_remove("BOSUN_REPO")
+        .env("GIT_CEILING_DIRECTORIES", t.path().parent().unwrap())
+        .args(["-C", t.path().to_str().unwrap(), "adopt", "--no-remote"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let v = one_object(&out.stdout);
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not inside a git repository")
+    );
+    assert!(v["error"]["fix"].as_str().unwrap().contains("git init"));
+    assert!(read_opt(t.path(), ".bosun/bosun.toml").is_none());
+}
+
+#[test]
+fn a_monorepo_is_detected_below_the_root() {
+    let t = common::git_tempdir();
+    write(t.path(), "packages/web/package.json", "{}");
+    write(t.path(), "packages/web/pnpm-lock.yaml", "");
+    write(t.path(), "crates/core/Cargo.toml", "[package]\n");
+    write(t.path(), "node_modules/x/Cargo.toml", "[package]\n");
+    let v = no_remote(t.path(), &["--dry-run"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!(["rust", "ts-pnpm"]));
+    // A pnpm workspace file at the root counts without a lockfile.
+    let u = common::git_tempdir();
+    write(u.path(), "package.json", "{}");
+    write(u.path(), "pnpm-workspace.yaml", "packages: []\n");
+    let v = no_remote(u.path(), &["--dry-run"]);
+    assert_eq!(v["data"]["stacks"], serde_json::json!(["ts-pnpm"]));
+}
+
+#[test]
+fn dry_run_with_a_token_that_cannot_read_the_repo_still_succeeds() {
+    let fake = FakeGithub::start();
+    fake.fail_path("/labels/bosun%3Ahalt", 403);
+    fake.fail_path("/labels", 403);
+    let t = common::git_tempdir();
+    let (code, v) = adopt(&fake, t.path(), &["--dry-run"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["registry"]["action"], "unknown");
+}
