@@ -1259,3 +1259,28 @@ fn merge_counts_a_bootstrap_neutral_gate_as_done() {
     let (code, v) = merge(&fake, dir.path());
     assert_eq!(code, 0, "{v}");
 }
+
+#[test]
+fn merge_refuses_a_bootstrap_skip_when_the_default_branch_has_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "-b", "claude/t7"]);
+    std::fs::write(dir.path().join("README.md"), "x").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::create_dir_all(dir.path().join(".bosun")).unwrap();
+    std::fs::write(dir.path().join(".bosun/bosun.toml"), NO_CI).unwrap();
+    std::fs::write(dir.path().join("deny.toml"), "").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "head"]);
+    let (fake, dir) = setup_dir(false, Some(NO_CI), dir);
+    let deps = format!("{TINY}[gates.deps]\nbase_requires = [\"deny.toml\"]\ncmd = [\"false\"]\n");
+    fake.content(".bosun/profiles/rust.toml", "refs/heads/main", &deps);
+    // The PR's base predates deny.toml, but the default branch has it: no bootstrap to borrow.
+    fake.content("deny.toml", "refs/heads/main", "[bans]\n");
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["deps"]), "{v}");
+    assert!(!fake.merged(20));
+}

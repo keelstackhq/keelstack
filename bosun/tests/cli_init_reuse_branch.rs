@@ -428,6 +428,18 @@ fn a_failed_label_create_keeps_the_kill_switch_owner_step() {
         &e.tools.path().join("gh"),
         "#!/bin/sh\ncase \"$1 $2\" in\n\"auth token\") exit 1;;\n\"auth status\") exit 0;;\n\"api user\") echo ghuser;;\n\"pr create\") echo https://github.com/acme/widget/pull/7;;\n\"label create\") exit 1;;\nesac\n",
     );
+    // A parallel test's fork can hold the script's write fd for a moment (ETXTBSY): wait until
+    // the stub runs, so bosun never meets a `gh` it cannot execute (or falls through to a real one).
+    for _ in 0..100 {
+        if std::process::Command::new(e.tools.path().join("gh"))
+            .arg("probe")
+            .output()
+            .is_ok()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     let fake = FakeGithub::start();
     let (code, v) = e.run(&fake, false, true, &["--owner", "octocat"]);
     assert_eq!(code, 0, "{v}");

@@ -816,6 +816,21 @@ fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
         "{v}"
     );
 
+    // The trust root with the base on owner: nothing is signed either, and the message names why.
+    let fake = quorum(&k);
+    fake.content(".bosun/bosun.toml", BASE, &config("owner"));
+    fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("approval policy owner: only the owner approves"),
+        "{v}"
+    );
+
     let fake = quorum(&k);
     fake.content(".bosun/bosun.toml", MAIN, &config("owner"));
     // The fake lets a default-branch write stand for every PR base: restore this PR's base.
