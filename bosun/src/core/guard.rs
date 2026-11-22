@@ -625,25 +625,36 @@ pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
         return None;
     }
     let command = input.get("command").and_then(Value::as_str)?;
-    for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
-        let words = shell_words(seg);
-        let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
-            continue;
-        };
-        let rest = &words[i + 1..];
+    let refuse = || {
+        Some(
+            "a subagent never merges or signs an approval (D-022: child sessions never merge): \
+             report the PR to the orchestrator, which runs `bosun merge` or `bosun approve` \
+             itself"
+                .to_string(),
+        )
+    };
+    // `merge`, or `approve` with a signing flag, among the words after `bosun`.
+    let refused = |rest: &[String]| {
         let has = |w: &str| rest.iter().any(|r| r == w);
         let signs = ["--sign-key", "--via-signer", "--as"].iter().any(|f| {
             rest.iter()
                 .any(|r| r == f || r.starts_with(&format!("{f}=")))
         });
-        if has("merge") || (has("approve") && signs) {
-            return Some(
-                "a subagent never merges or signs an approval (D-022: child sessions never merge): \
-                 report the PR to the orchestrator, which runs `bosun merge` or `bosun approve` \
-                 itself"
-                    .into(),
-            );
+        has("merge") || (has("approve") && signs)
+    };
+    for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
+        let words = shell_words(seg);
+        let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
+            continue;
+        };
+        if refused(&words[i + 1..]) {
+            return refuse();
         }
+    }
+    // Fail closed when the command name may be built at run time (`B=bosun; $B merge`,
+    // `"$(echo bosun)" merge`): a `bosun` text, an expansion, and the words anywhere.
+    if command.contains("bosun") && command.contains(['$', '`']) && refused(&shell_words(command)) {
+        return refuse();
     }
     None
 }
@@ -7467,6 +7478,32 @@ mod tests {
             assert!(!hit(c), "{c}");
         }
         assert!(subagent_lock("Edit", &json!({"command": "bosun merge 1"})).is_none());
+    }
+
+    #[test]
+    fn subagent_lock_sees_expanded_and_nested_bosun() {
+        let hit = |c: &str| subagent_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "echo $(bosun merge 12)",
+            "x=$(bosun -C /r merge 12)",
+            "echo `bosun merge 12`",
+            "B=bosun; $B merge 12",
+            "B=bosun && ${B} merge 12",
+            "B=./target/debug/bosun\n\"$B\" merge 12",
+            "$(echo bosun) merge 12",
+            "B=bosun; $B approve 1@abc --sign-key k.pem",
+            "B=bosun; $B approve 1@abc --as=signer",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "B=bosun; $B status",
+            "B=bosun; $B approve --list",
+            "echo $(bosun status)",
+            "echo $HOME merge",
+        ] {
+            assert!(!hit(c), "{c}");
+        }
     }
 
     #[test]

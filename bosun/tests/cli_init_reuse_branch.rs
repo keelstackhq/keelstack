@@ -381,12 +381,22 @@ fn an_inferred_login_is_suggested_never_written() {
 }
 
 #[test]
+fn a_human_login_that_starts_like_an_agent_is_accepted_as_owner() {
+    let e = Env::new();
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, true, false, &["--owner", "claudia-x"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["owner"], "claudia-x", "{v}");
+}
+
+#[test]
 fn an_agent_login_passed_as_owner_is_refused() {
-    for login in ["claude", "claude-agent", "renovate[bot]"] {
+    for login in ["claude", "Claude-Agent", "claude-code", "renovate[bot]"] {
         let e = Env::new();
         let fake = FakeGithub::start();
         let (code, v) = e.run(&fake, true, false, &["--owner", login]);
         assert_eq!(code, 2, "{login}: {v}");
+        assert_eq!(v["ok"], false, "{login}: {v}");
         assert!(
             v["error"]["fix"]
                 .as_str()

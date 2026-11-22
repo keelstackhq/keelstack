@@ -38,10 +38,12 @@ const PR_TITLE: &str = "chore: set up bosun";
 /// Files `bosun init` never seeds: the intake file only exists with `--intake` (bosun copies it),
 /// and the session rules are the built-in text until the owner writes a file (P1-7, P1-8).
 const NOT_SEEDED: [&str; 2] = [".bosun/intake.toml", ".bosun/session-rules.toml"];
-/// A `[bot]` login or the app/agent identity doctor step 2 knows: never an owner.
+/// The agent identities that are never an owner (exact, case-insensitive: `claudia-x` is a person).
+const AGENT_LOGINS: [&str; 3] = ["claude", "claude-agent", "claude-code"];
+/// A `[bot]` login or an exact known agent login: never an owner.
 fn is_agent_login(l: &str) -> bool {
     let l = l.to_lowercase();
-    l.ends_with("[bot]") || super::doctor::app_user(&l)
+    l.ends_with("[bot]") || AGENT_LOGINS.contains(&l.as_str())
 }
 const STEP_OWNERS: &str =
     "Fill governance/owners.toml with the owners' GitHub logins (pass --owner to seed it).";

@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use super::PrereqsArgs;
 use super::plan::{plan_errors, plan_key};
 use super::prereqs_gate::{replaces_hold, task_key};
+use super::risk_check::BOSUN_CODE_MARKER;
 use crate::app::{App, Result, default_branch, kill_switch};
 use crate::core::approve::{APPROVERS_PATH, Role, parse_approvers};
 use crate::core::plan;
@@ -19,7 +20,6 @@ use crate::output::{BosunError, CmdResult, Outcome};
 
 const LABEL: &str = "bosun:prereqs";
 const RULES_PATH: &str = ".bosun/risk.toml";
-const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
 
 /// What `Env::checklist` found for one plan.
 pub(crate) struct PlanChecklist {

@@ -238,14 +238,13 @@ fn changelog_section(
 }
 
 /// An id as a safe inline code span: backticks in it are replaced, whitespace runs (newlines)
-/// collapse to a space and `|` is escaped, so file names cannot inject markdown or mentions.
+/// collapse to a space, so file names cannot inject markdown or mentions.
 pub(super) fn code_span(id: &str) -> String {
     let clean: String = id
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .replace('`', "'")
-        .replace('|', "\\|");
+        .replace('`', "'");
     format!("`{clean}`")
 }
 
@@ -464,10 +463,11 @@ mod tests {
     use super::code_span;
 
     #[test]
-    fn ids_render_as_escaped_code_spans() {
+    fn ids_render_as_safe_code_spans_and_keep_pipes() {
         assert_eq!(code_span("brave-fox"), "`brave-fox`");
         let s = code_span("a`b <x>|@y\nz");
-        assert_eq!(s, "`a'b <x>\\|@y z`");
+        // Only used in list items: a backslash would show inside a code span.
+        assert_eq!(s, "`a'b <x>|@y z`");
         assert!(!s.contains('\n'));
     }
 }

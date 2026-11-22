@@ -21,7 +21,7 @@ const HOME: &str = r"(?:~[\w.-]*|\$\{?HOME\}?|/root|/home/[^/\s]+|/Users/[^/\s]+
 /// A path (file tool or redirect target) the lock covers.
 static PATH: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"^(?:{HOME}/\.claude(?:/|$)|(?:.*/)?\.claude/settings[^/]*\.json$)"
+        r"(?i)^(?:{HOME}/\.claude(?:/|$)|(?:.*/)?\.claude/settings[^/]*\.json$)"
     ))
     .expect("settings path regex")
 });
@@ -29,7 +29,7 @@ static PATH: LazyLock<Regex> = LazyLock::new(|| {
 /// The same targets anywhere in a command's text, with globs that could reach them.
 static TEXT: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(&format!(
-        r"{HOME}/\.claude\b|\.claude/(?:set|s\*|\*|\?|\[)|\.claude/settings[^/\s]*\.json"
+        r"(?i){HOME}/\.claude\b|\.claude/(?:set|s\*|\*|\?|\[)|\.claude/settings[^/\s]*\.json"
     ))
     .expect("settings text regex")
 });
@@ -55,7 +55,8 @@ fn normalize(path: &str) -> String {
     format!("{}{}", if abs { "/" } else { "" }, out.join("/"))
 }
 
-/// `path` without quotes and backslashes (`.cla''ude`), then cleaned lexically.
+/// `path` without quotes and backslashes (`.cla''ude`), then cleaned lexically; the regexes
+/// below ignore case (`.Claude/Settings.json`: macOS and Windows file systems do).
 fn plain(path: &str) -> String {
     let bare: String = path
         .chars()
@@ -71,7 +72,8 @@ fn protected(path: &str) -> bool {
 /// A word naming a target of a mutating command: a settings file, a glob that could reach one, or
 /// the `.claude` directory itself (`rm -rf .claude`, `git checkout -- .claude`).
 static TARGET: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(&format!("{}|(?:^|/)\\.claude/?$", TEXT.as_str())).expect("settings target regex")
+    Regex::new(&format!("(?i){}|(?:^|/)\\.claude/?$", TEXT.as_str()))
+        .expect("settings target regex")
 });
 
 /// Interpreters and shells: the code they run is only seen as text, so a target in it counts.
@@ -150,7 +152,7 @@ fn destination<'a>(args: &[&'a str]) -> Option<&'a str> {
 /// Whether `dir` is `.claude` or below it.
 fn inside(dir: &str) -> bool {
     static IN: LazyLock<Regex> =
-        LazyLock::new(|| Regex::new(r"(?:^|/)\.claude(?:/|$)").expect("inside regex"));
+        LazyLock::new(|| Regex::new(r"(?i)(?:^|/)\.claude(?:/|$)").expect("inside regex"));
     IN.is_match(&plain(dir))
 }
 
@@ -431,6 +433,20 @@ mod tests {
         }
         let why = file("Edit", ".claude/settings.json").unwrap();
         assert!(why.contains("ask the orchestrator"), "{why}");
+    }
+
+    #[test]
+    fn the_lock_matches_case_insensitively() {
+        for p in [
+            ".Claude/Settings.json",
+            "/repo/.CLAUDE/settings.LOCAL.json",
+            "~/.Claude/Hooks/x.sh",
+        ] {
+            assert!(file("Edit", p).is_some(), "{p}");
+        }
+        assert!(sh("rm .Claude/Settings.json").is_some());
+        assert!(sh("echo {} > .CLAUDE/settings.json").is_some());
+        assert!(sh("cat .Claude/Settings.json").is_none());
     }
 
     #[test]
