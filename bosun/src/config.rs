@@ -291,7 +291,7 @@ pub struct Approvals {
     /// `policy` came from the `[mode]` preset, not from this table.
     #[serde(skip)]
     pub policy_preset: bool,
-    /// Deprecated and ignored (D-022 retired chat approvals): a chat approval record never counts,
+    /// Deprecated and ignored (D-025 retired chat approvals): a chat approval record never counts,
     /// whatever this says. Still parsed so an old config (and a release that pins `chat`) keeps
     /// loading; delete it. Ignoring it fails safe: the only effect of the key was to count more.
     #[serde(skip_serializing_if = "Option::is_none")]

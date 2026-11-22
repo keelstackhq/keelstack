@@ -1,6 +1,6 @@
 //! The owner's AskUserQuestion answers: `<git common dir>/bosun/answers.json`, a map
 //! `question_id -> {answer, repo, pr, head, at, session, cli_session_id, tool_use_id}` beside the lease cache (spec §8, approval batches).
-//! Written by `bosun hook post-tool-use`; read by `approve --list` (holds). Chat approvals are retired (D-022): an answer never approves.
+//! Written by `bosun hook post-tool-use`; read by `approve --list` (holds). Chat approvals are retired (D-025): an answer never approves.
 
 use std::path::{Path, PathBuf};
 

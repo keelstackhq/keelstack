@@ -186,7 +186,7 @@ pub fn ready(app: &App, n: u64, issue: &Issue, plain: bool, mut pull: Pull) -> C
             BosunError::needs_human(
                 e.message,
                 format!(
-                    "the orchestrator runs `bosun approve --list`, asks the owner, who approves with the owner's own `/bosun approve {head}` PR comment or a GitHub review (a chat approval does not count, D-022), or: {}; then rerun `{rerun}`",
+                    "the orchestrator runs `bosun approve --list`, asks the owner, who approves with the owner's own `/bosun approve {head}` PR comment or a GitHub review (a chat approval does not count, D-025), or: {}; then rerun `{rerun}`",
                     e.fix
                 ),
             ),

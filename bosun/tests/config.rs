@@ -149,7 +149,7 @@ fn relay_waves_and_the_cloud_environment_parse() {
 
 #[test]
 fn approvals_chat_is_deprecated_but_still_parses() {
-    // D-022 retired chat approvals: the key stays accepted so an old config loads; it does nothing.
+    // D-025 retired chat approvals: the key stays accepted so an old config loads; it does nothing.
     let c = Config::parse("[approvals]\nchat = false\n", "b").unwrap();
     assert_eq!(c.approvals.chat, Some(false));
     let c = Config::parse("[approvals]\nchat = true\n", "b").unwrap();

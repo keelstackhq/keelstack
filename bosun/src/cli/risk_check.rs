@@ -942,7 +942,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         format!("fill {OWNERS_PATH} on the base branch, then an owner must approve head {head}")
     } else {
         format!(
-            "an owner in {OWNERS_PATH} must approve head {head}: the owner's own PR comment `/bosun approve {head}`, an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or a signed approval (`bosun approve {n}@{head} --sign-key <pem>`); a chat approval does not count (D-022)"
+            "an owner in {OWNERS_PATH} must approve head {head}: the owner's own PR comment `/bosun approve {head}`, an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or a signed approval (`bosun approve {n}@{head} --sign-key <pem>`); a chat approval does not count (D-025)"
         )
     };
     // A bootstrap-mode signature that does not count says why (D-012).

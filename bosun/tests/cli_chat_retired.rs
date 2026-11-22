@@ -1,4 +1,4 @@
-//! Chat approvals are retired (D-022): a chat approval record never counts as the owner's approval.
+//! Chat approvals are retired (D-025): a chat approval record never counts as the owner's approval.
 mod common;
 
 use common::fake::FakeGithub;

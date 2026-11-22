@@ -95,7 +95,7 @@ The PostToolUse hook (`bosun hook post-tool-use`, matcher `AskUserQuestion`, in
 `approve`; `Hold` stores `hold` for every PR of the question, even with approves picked (Hold
 wins; multi-select with Hold and Approve stores a hold and approves nothing); an unpicked or unknown label (matched exactly) stores nothing. It never denies and prints nothing. `--list` moves a PR
 whose newest answer (by `at`; a hold wins a tie) at its current head is a hold to `data.held[]` (`{pr, head_sha}`) and does not ask it again; a new
-head asks again. An `approve` answer approves nothing (chat approvals are retired, D-022); only a `hold` is read. `answers.json` is a local hint, never proof. Each answer stores the `repo` (a PostToolUse answer for another repo never counts) and a non-empty `session` and `cli_session_id` (an answer without one is refused and nothing is stored). A corrupt `answers.json` is warned about on stderr, not used (no hold, no approval) and never reset.
+head asks again. An `approve` answer approves nothing (chat approvals are retired, D-025); only a `hold` is read. `answers.json` is a local hint, never proof. Each answer stores the `repo` (a PostToolUse answer for another repo never counts) and a non-empty `session` and `cli_session_id` (an answer without one is refused and nothing is stored). A corrupt `answers.json` is warned about on stderr, not used (no hold, no approval) and never reset.
 This is the per-PR form; the daily digest below is the batch form
 and reads only `data`.
 
