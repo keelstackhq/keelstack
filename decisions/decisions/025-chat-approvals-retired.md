@@ -20,8 +20,9 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
   for one. This overrides the batched chat approvals clause of D-009.
 - An owner approves with a GitHub comment `/bosun approve <sha>` (the full 40-character head SHA,
   posted as a login in `governance/owners.toml`), or the repo uses the quorum approvals policy
-  (D-022, bosun#705: `[approvals] policy = "quorum"`). The root `.bosun/` of keelstackhq/keelstack
-  switches to quorum once that policy is in bosun; until then `autonomous` stays.
+  (D-022, bosun#705: `[approvals] policy = "quorum"`). The port PR that carries this decision adds
+  that policy to bosun and switches the root `.bosun/` of keelstackhq/keelstack to it; the
+  switch is a trust-root edit, so the owner approves it.
 - Hoist changesets (`.changeset/*.md` files that `hoist release prepare` reads) are an opt-in for
   consumer repos only. keelstackhq/keelstack stays lockstep: one version from the root
   `Cargo.toml`, bumped with `bash scripts/bump-version.sh X.Y.Z` (D-023).
@@ -30,10 +31,10 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
 
 ## Consequences
 
-- bosun: the existing chat-record path (`bosun/src/cli/approve_chat.rs`, chat counting in
-  `risk_check.rs`, spec 04 and 08, `bosun/AGENTS.md`, README, `docs/adopt-existing-repo.md`)
-  stays until a follow-up PR removes it; until then set `[approvals] chat = false`. Unported:
-  bosun#642, #643, #644, #673, #680.
+- bosun: the chat-record path is removed in the port PR that carries this decision:
+  `bosun approve --chat` is gone and `risk-check` no longer counts a chat approval record.
+  `[approvals] chat` is still parsed, so old configs load, but it is ignored. Unported:
+  bosun#642, #644, #673, #680.
 - hoist: the changeset commands are ported behind an opt-in; the keelstack release workflow does
   not read `.changeset/`.
 - The trust root is unchanged: only the owner edits `.bosun/approvers.toml` and `[approvals]`.
