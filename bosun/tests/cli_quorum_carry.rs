@@ -171,3 +171,48 @@ fn a_carried_signature_without_two_clean_verdicts_on_the_new_head_does_not_count
         );
     }
 }
+
+/// An owner-role key signature (v1, v2) on `h` is a key, not the owner (D-022): its carry also
+/// needs the two clean verdicts counted again on the new head.
+fn sign_owner_key(fake: &FakeGithub, k: &Key, sha: &str, v2: bool) {
+    let (msg, first) = if v2 {
+        (
+            format!("bosun-approve v2 acme/widget#1 {sha} after-review 7"),
+            format!("/bosun approve {sha} after-review 7"),
+        )
+    } else {
+        (
+            format!("bosun-approve v1 acme/widget#1 {sha}"),
+            format!("/bosun approve {sha}"),
+        )
+    };
+    let s = b64::encode(k.0.sign(msg.as_bytes()).as_ref());
+    let body = format!("{first}\nbosun-sig ed25519 k1 {s}");
+    fake.comment_at(1, "claude", &body, "2026-10-22T09:00:00Z");
+    fake.last_comment(|c| c.via_app = Some("claude".into()));
+}
+
+#[test]
+fn a_carried_owner_role_key_signature_needs_two_verdicts_on_the_new_head() {
+    for v2 in [false, true] {
+        for sessions in [&[][..], &["session_r"][..]] {
+            let (fake, k) = world();
+            sign_owner_key(&fake, &k, H, v2);
+            two(&fake, H);
+            for s in sessions {
+                verdict(&fake, H2, s);
+            }
+            let (code, v) = go(&fake);
+            assert_eq!(code, 5, "v2={v2} {sessions:?}: {v}");
+            assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+            assert_eq!(v["data"]["approval_carried_from"], Value::Null, "{v}");
+        }
+        let (fake, k) = world();
+        sign_owner_key(&fake, &k, H, v2);
+        two(&fake, H);
+        two(&fake, H2);
+        let (code, v) = go(&fake);
+        assert_eq!(code, 0, "v2={v2}: {v}");
+        assert_eq!(v["data"]["approval_carried_from"], H, "{v}");
+    }
+}

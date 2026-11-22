@@ -782,6 +782,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             }
         }
     }
+    // D-022: while halted (or unknown) no signature counts, a key of any role included.
+    let signed_ok = signed_ok && halt_note.is_none();
     let unlinked =
         linked.is_empty() && matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
     let models = review_models(gh, base)?;
@@ -818,7 +820,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             // again on this head (`found`), so a carry never rests on the verdicts of `h` alone.
             let approve = |h: &str| {
                 let f = approval_on(gh, &need, h).ok()?;
-                let by_signature = need.quorum && f.approved_by.is_some() && !f.owner_own;
+                // Any key (owner role included) is a signature: it needs the recount.
+                let by_signature = need.quorum && matches!(f.kind, Some(Approver::Key { .. }));
                 let recounted = found.autonomous_verdicts.len() >= risk::QUORUM_VERDICTS;
                 (!by_signature || recounted).then_some(f)
             };
@@ -827,7 +830,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     };
     let Found {
         mut approved_by,
-        owner_own,
+        kind,
         mut verdicts,
         mut delegate_verdicts,
         delegate_blocked,
@@ -906,12 +909,17 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     // A low-risk head reads the owners' approval only when an escalation waits for it.
     let signer = need.signer_on;
     let cleared = clear_escalation(gh, w, head, &|| match &approved_by {
-        Some(who) if high && passed_on_head && owner_own => Ok(Some(who.clone())),
+        Some(who) if high && passed_on_head && kind.is_some_and(|k| k.stands_for_owner(quorum)) => {
+            Ok(Some(who.clone()))
+        }
         _ if high => Ok(None),
         _ => {
             let owners = owner_logins(gh, base)?;
             let by = approver(gh, &ctx.repo, n, head, &owners, signed_ok, (None, signer))?;
-            Ok(by.filter(|b| b.1).map(|b| b.0))
+            // Low risk reads no policy above: under quorum (or a base config that does not
+            // parse) a key never stands for the owner.
+            let quorum = by.is_some() && quorum_policy_at(gh, base)?;
+            Ok(by.filter(|b| b.1.stands_for_owner(quorum)).map(|b| b.0))
         }
     });
 
@@ -1217,12 +1225,39 @@ struct Need<'a> {
     signer_on: bool,
 }
 
+/// Who approved a head (D-022). Only the owner's own GitHub review or `/bosun approve <sha>`
+/// comment is the owner; a key signature of any role is a key, never the owner under quorum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approver {
+    /// The owner's own GitHub review or unedited `/bosun approve <sha>` comment.
+    Owner,
+    /// A key signature. `owner_form`: an owner-role v1/v2 approval, which stands for the owner
+    /// only outside quorum; bootstrap, autonomous and delegate signatures never do.
+    Key { role: Role, owner_form: bool },
+}
+
+impl Approver {
+    const OWNER_KEY: Approver = Approver::Key {
+        role: Role::Owner,
+        owner_form: true,
+    };
+
+    /// Whether this approval stands for the owner (it clears an escalated verdict): the owner's
+    /// own one always; an owner-role v1/v2 key only when the policy is not quorum.
+    pub(crate) fn stands_for_owner(self, quorum: bool) -> bool {
+        match self {
+            Approver::Owner => true,
+            Approver::Key { role, owner_form } => !quorum && owner_form && role == Role::Owner,
+        }
+    }
+}
+
 /// How a head is approved: by an owner or delegate (`approved_by`), or by two verdicts.
 #[derive(Default)]
 pub(crate) struct Found {
     pub(crate) approved_by: Option<String>,
-    /// `approved_by` is an owner's own approval of the head (review, comment, owner key).
-    pub(crate) owner_own: bool,
+    /// What `approved_by` is: the owner's own approval or a key signature.
+    pub(crate) kind: Option<Approver>,
     pub(crate) verdicts: Vec<String>,
     delegate_verdicts: Vec<String>,
     delegate_blocked: Option<String>,
@@ -1289,7 +1324,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         signed_ok,
         (bootstrap, need.signer_on),
     )?;
-    found.owner_own = by.as_ref().is_some_and(|b| b.1);
+    found.kind = by.as_ref().map(|b| b.1);
     found.approved_by = by.map(|b| b.0);
     let open = found.approved_by.is_none() && !need.unlinked;
     // Two verdicts only matter when the owner has not approved and the class allows them.
@@ -1305,7 +1340,8 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     // A delegate decides only with one clean independent verdict on the head (spec §8).
     if open && need.requirement == Approval::Delegate {
         found.delegate_blocked = delegation_blocked(gh, need.base_ref, need.linked)?;
-        if found.delegate_blocked.is_none() && need.signed_ok {
+        // The quorum-adjusted `signed_ok`: under quorum a delegate key also needs the quorum.
+        if found.delegate_blocked.is_none() && signed_ok {
             let (comments, excluded) = verdict_inputs(gh, pr, need.linked)?;
             found.delegate_verdicts = clean_verdicts(
                 comments.iter().map(|c| (c.user.as_str(), c.body.as_str())),
@@ -1317,6 +1353,12 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
                 let v1 = |f: Form| f == Form::V1;
                 let key =
                     signed_approver(gh, repo, pr, sha, &comments, (Role::Delegate, false), &v1)?;
+                if key.is_some() {
+                    found.kind = Some(Approver::Key {
+                        role: Role::Delegate,
+                        owner_form: false,
+                    });
+                }
                 found.approved_by = key.map(|id| format!("delegate {id}"));
             }
         }
@@ -1624,8 +1666,7 @@ pub fn decisive_review(reviews: &[Review], owner: &str, head: &str) -> Option<St
 
 /// The owner who approved `head`: by a GitHub review (their newest decisive review on `head` is
 /// an approval) or by an unedited PR comment `/bosun approve <head>`.
-/// The approver and whether it is the owner's own approval (not a bootstrap or autonomous
-/// signature).
+/// The approver and its kind: the owner's own approval, or a key signature (D-022).
 fn approver(
     gh: &dyn Github,
     repo: &RepoId,
@@ -1634,14 +1675,14 @@ fn approver(
     owners: &[String],
     signed_ok: bool,
     (bootstrap, signer_on): (Option<(&str, Form)>, bool),
-) -> Result<Option<(String, bool)>> {
+) -> Result<Option<(String, Approver)>> {
     let reviews = gh.list_reviews(pr)?;
     let state = |o: &str| decisive_review(&reviews, o, head);
     let by_review = owners
         .iter()
         .find(|o| state(o).as_deref() == Some("APPROVED"));
     if let Some(o) = by_review {
-        return Ok(Some((o.clone(), true)));
+        return Ok(Some((o.clone(), Approver::Owner)));
     }
     let comments = gh.list_comments(pr)?;
     // Only a comment written with a plain user token counts: agent sessions act as the same
@@ -1659,7 +1700,7 @@ fn approver(
         _ => owner_comment(&comments, o, head).is_some(),
     });
     if let Some(o) = by_comment {
-        return Ok(Some((o.clone(), true)));
+        return Ok(Some((o.clone(), Approver::Owner)));
     }
     // A signed approval stands for the owner: with no owners it counts for no one, and any
     // owner's request for changes withdraws it. A v1 signature carries no time, so a re-posted
@@ -1687,13 +1728,17 @@ fn approver(
     if ids.is_empty() {
         // Bootstrap and autonomous signatures are not owner approvals.
         if let Some(id) = sign(&|f| matches!(f, Form::V1 | Form::V2(_)))? {
-            return Ok(Some((format!("key {id}"), true)));
+            return Ok(Some((format!("key {id}"), Approver::OWNER_KEY)));
         }
         let Some((label, form)) = bootstrap else {
             return Ok(None);
         };
         let boot = sign(&|f| f == form)?;
-        return Ok(boot.map(|id| (format!("key {id} ({label})"), false)));
+        let kind = Approver::Key {
+            role: Role::Owner,
+            owner_form: false,
+        };
+        return Ok(boot.map(|id| (format!("key {id} ({label})"), kind)));
     }
     let mut by = None;
     for id in ids {
@@ -1709,7 +1754,7 @@ fn approver(
         };
         by.get_or_insert(key);
     }
-    Ok(by.map(|id| (format!("key {id}"), true)))
+    Ok(by.map(|id| (format!("key {id}"), Approver::OWNER_KEY)))
 }
 
 /// A decisive review in this state withdraws the owner's approvals (anyone with write access can
@@ -1928,6 +1973,18 @@ pub(crate) fn quorum_trust_root(
 
 /// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
 /// base config that does not parse fails closed (an empty list: no verdict counts).
+/// Whether `[approvals] policy` at base is quorum; a config that does not parse may be a quorum
+/// one, so it reads as quorum (fail closed).
+fn quorum_policy_at(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c.approvals.policy() == Policy::Quorum,
+            Err(_) => true,
+        },
+        None => false,
+    })
+}
+
 /// `[approvals] signer` at base; a config that does not parse turns it off (fail closed).
 fn signer_on(gh: &dyn Github, base: &str) -> Result<bool> {
     Ok(match gh.file_at(CONFIG_FILE, base)? {
