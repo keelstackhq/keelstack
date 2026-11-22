@@ -286,6 +286,65 @@ High-risk PRs:
   covered: release environments, secrets, tags. `policy =
   "autonomous"` under an older pinned release is a parse error (fails closed); set it only after
   pinning a release that knows it.
+- Quorum policy (D-022, 0.22.0). `[approvals] policy = "quorum"`, set explicitly: no mode
+  implies it (bosun#706), so a repo switches in one owner-approved PR (the file is trust root).
+  It lets the orchestrator approve every PR except the trust root. Same signature as D-017
+  (`/bosun approve <head> autonomous`, owner or signer key, task link and lease rules, unedited
+  verdicts, a request for changes on the head blocks) with the note line `Signed under the quorum
+  policy (D-022), not an owner answer` and `data.policy = "quorum"`, but it decides before every
+  other refusal in `orchestrator_counts`: the allowlist, the deny set, workflows, R-weaken (also
+  the `weaken` capability; D-022 superseded D-017's weaken exception), R-gate, R-gov, R-ci,
+  R-ci-review, R-deps, R-secrets, R-oneoff-size and the critical floor do not stop it. Only the
+  trust root does (below), and the unseen-diff refusal (`R-unseen`) still makes signatures not
+  count (fail closed).
+  - Two counting verdicts (`risk::QUORUM_VERDICTS`) on unedited comments by the verdict author,
+    on the exact head, none of them a lease holder on a linked issue (the PR author), and no
+    verdict on the head that would not count (`risk::quorum_verdicts`). They come from two
+    different sessions: wave agents `S/r1` and `S/r2` are one session, and a verdict also stands
+    for the session that relayed it (`relayed_by`), so a relayer that posts records under two
+    session ids counts once; two verdicts count only when their session roots and their carriers
+    (the relayer, else the session) all differ. Known limit: bosun cannot see whether the
+    orchestrator dispatched a reviewer session; the verdict author (the verdict workflow) and the
+    carrier rule are what binds it. One verdict's bar stays `VERDICT_MIN_CONFIDENCE` = 0.9
+    (approve, no major finding), stricter than the 0.85 of D-022's text; lowering it is its own
+    decision. `data.quorum_verdicts` lists the counted sessions. Waiting is `high risk, quorum
+    (D-022): 2 clean verdicts and orchestrator signature needed: <ids>`, which does not start
+    with the owner-wait text, so it stays off the owner board. `bosun approve --bootstrap` (also
+    `--via-signer`) signs under this policy only with two counting verdicts by the same rule,
+    none from the signer's own session (that one is excluded from the count, so neither author
+    nor signer counts), no trust-root path and bosun not halted.
+  - Halt: in risk-check, if `halt_reason` says halted or cannot tell (a read error), the
+    signature does not count (reason on stderr); `approve` refuses with exit 4 as everywhere.
+  - Trust root (`risk::TRUST_ROOT`, `risk::TRUST_ROOT_CODE`, `trust_root_changed`,
+    `risk_check::quorum_trust_root`; always the owner's own GitHub review or `/bosun approve
+    <sha>` comment). At the repo root and under each code root: `.bosun/approvers.toml` (who may
+    sign), `.bosun/bosun.toml`, `.bosun/risk.toml`, `**/workflows/risk.yml*` (also channel
+    template copies), the verdict, signer, main-open, review and release workflows,
+    `.claude/settings*.json` (the hooks that run bosun) and every trust file (`TRUST_FILES`:
+    owners, CODEOWNERS, the decisions index and D-022's file). Under each code root (`""` when
+    `src/cli/risk_check.rs` is at the root, and each `[[folders]]` path, plus `bosun`, that holds
+    it at the base: `bosun/` in the monorepo): the code that holds the list, judges, parses the
+    records and config, talks to GitHub and ships the binary: `src/core/{risk,approve,folders,glob,mode,weaken,records,verdict,carry}.rs`,
+    `src/{config,ctx,app,main,lib}.rs`, `src/cli/{mod,approve,verdict,carry_over}.rs`,
+    `src/cli/risk_check.rs`, `src/github/**`, `build.rs`, `Cargo.toml` and `npm/**`. And every
+    `.github/workflows/**` file unless `[checks] mode = "checks"`: elsewhere a workflow the PR
+    adds runs as the verdict author and could post verdict records for invented sessions.
+    Built in, whatever the rules say: a change of a trust file, and under quorum of the trust
+    root, adds the owner-only match `R-trust` before the level is set, so it is high risk and
+    waits for the owner even when the base rules (which a PR could have rewritten) match nothing
+    (bosun#706). `.bosun/bosun.toml` matches as a whole file: a table-level diff (only
+    `[approvals]`) is not done, so any edit of it needs the owner. A rename counts on both
+    sides, any case, and a `..` segment is a hit. The list is compiled into the binary that
+    judges the PR; the risk workflow builds bosun at the PR's base (or runs the base pin), and
+    the policy is read from the base config, so a single PR cannot widen or narrow it. Not in
+    the list (known limits): the root `Cargo.toml` and `Cargo.lock` (every lockstep version
+    bump and dependency PR changes them; R-deps and two reviewers judge them) and the other
+    folders' code.
+  - `.bosun/version` pin rule: an upgrade to a released version stays under quorum, but a change of the pin is trust root (owner only) when the base pins no release (absent, `unreleased` or not plain `x.y.z`: the owner sets the first released pin, bosun#706), the head pin is a downgrade (head semver below base), not a published release, not plain `x.y.z` (no `v`, suffix or leading zeros; surrounding whitespace is fine), or deleted or renamed away. "Published" means the ref `v{version}` exists in bosun's upstream repo (`Github::tag_exists_in(owner, repo, name)`, `GET /repos/<owner>/<repo>/git/ref/tags/<name>`, same token and API base, 404 is no), in every repo, whatever repo the PR is in: `[approvals] bosun_repo = "owner/name"` (default `keelstackhq/keelstack`, the monorepo that tags every lockstep release `vX.Y.Z` since D-023), read from `.bosun/bosun.toml` at the PR's base only, never the head (a head-only change has no effect; changing it is owner-only, the file is trust root). The value must be exactly `owner/name` (parts of letters, digits, `.`, `_`, `-`; not empty, `.` or `..`); an invalid value, a base config that does not parse, and any API error reading the pin, the config or the ref fail closed (owner only). A pinned release older than 0.22.0 rejects the key: pin first, then set it. The base pin is read at base, the head pin at head; the rule applies only when `.bosun/version` (or a rename from it) is among the changed files, in risk-check and in `bosun approve` alike (`risk::pin_change_trust_root`, pure; `risk_check::pin_trust_root`, I/O). Two identical versions (whitespace aside) are no change. Known limit: the tag names a release, while a repo's risk workflow may install the npm package of that version; both come from the one release workflow (D-006). Mitigations that remain: every judging file above is trust root, two independent reviewers, `bosun halt`.
+  - Secrets: quorum counts on R-secrets hits (path or content). Every counting verdict is already
+    clean (approve, no major finding), so a reviewer treats a real secret value in the diff as a
+    blocker (`approved = false`: nothing counts) and approves only the false positives; a
+    placeholder or test fixture is not a blocker.
 - Keyless fast lane: the CI signer (D-017 in ephemeral sessions). Off by default: `[approvals]
   signer = true` turns it on (an `[approvals]` change, so R-weaken: the owner decides), it needs
   `[checks] mode = "checks"` with the gate App (`approve --as signer` refuses otherwise, exit 1, and

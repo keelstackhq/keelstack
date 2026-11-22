@@ -39,7 +39,7 @@ const RULES_PATH: &str = ".bosun/risk.toml";
 pub const OWNERS_PATH: &str = "governance/owners.toml";
 const CONTEXT: &str = "risk-check";
 /// A base with this file carries bosun's own approval code, which is then critical too.
-const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
+pub(crate) const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
 
 /// Owner logins from `governance/owners.toml` at `git_ref`; empty when the file is missing.
 pub fn owner_logins(gh: &dyn Github, git_ref: &str) -> Result<Vec<String>> {
@@ -641,6 +641,29 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             evidence,
         });
     }
+    // Key and owner changes need the owner's own GitHub approval, never a signature.
+    let trust = trust_files_changed_in(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.previous_path.as_deref())),
+        &roots,
+    );
+    // D-022: under the quorum policy (read at base) its trust root is the owner's too.
+    let quorum_root = quorum_trust_root(gh, &pr_files, &roots, (base, head))?;
+    // Built in, whatever the repo's rules say (bosun#706): a trust-root change is high risk and
+    // the owner's, so a PR that rewrites the base rules cannot make itself normal risk.
+    let mut root_hits: Vec<String> = trust.iter().chain(&quorum_root).cloned().collect();
+    root_hits.sort();
+    root_hits.dedup();
+    if !root_hits.is_empty() {
+        matches.retain(|m| m.rule != TRUST_RULE);
+        matches.push(risk::Match {
+            rule: TRUST_RULE.into(),
+            why: "the PR changes the trust root (D-022): only the owner approves".into(),
+            approval: Approval::Owner,
+            evidence: root_hits,
+        });
+    }
     // The critical floor: a delegate never approves the approval system, secrets or prod.
     let critical = if matches.iter().any(|m| m.approval == Approval::Delegate) {
         risk::critical_in(&matches, &files, &roots)
@@ -679,13 +702,6 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     } else {
         Vec::new()
     };
-    // Key and owner changes need the owner's own GitHub approval, never a signature.
-    let trust = trust_files_changed_in(
-        files
-            .iter()
-            .map(|f| (f.path.as_str(), f.previous_path.as_deref())),
-        &roots,
-    );
     if !trust.is_empty() {
         eprintln!(
             "bosun: risk-check: the PR changes {}: signed approvals do not count",
@@ -705,10 +721,13 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         let excluded = bootstrap_excluded(&pr_files, &matches, &roots);
         let today = ctx.now.to_string();
         let pr = (&pr_files[..], &matches[..], requirement);
-        orchestrator_window(gh, base, &today[..10], pr, (&excluded, &capabilities))?
+        let ctx = (&excluded[..], &capabilities[..], &quorum_root[..]);
+        orchestrator_window(gh, base, &today[..10], pr, ctx)?
     } else {
         (Err("signed approvals do not count on this PR".into()), None)
     };
+    let quorum = policy_source.is_some_and(|(p, _)| p == Policy::Quorum);
+    let policy_source = policy_source.map(|(_, s)| s);
     let repo = ctx.repo.to_string();
     let linked = linked_issues_in(&pull.body, &repo);
     // D-017: the signature counts only with a clean verdict and a task the author leased.
@@ -718,10 +737,41 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         None
     };
     if policy_source.is_some() && bootstrap.is_ok() && auto.is_none() {
-        bootstrap =
-            Err("autonomous mode (D-017) needs an open linked task leased by the author".into());
+        let rule = if quorum {
+            "quorum (D-022)"
+        } else {
+            "autonomous mode (D-017)"
+        };
+        bootstrap = Err(format!(
+            "{rule} needs an open linked task leased by the author"
+        ));
     }
     let autonomous = auto.is_some();
+    // D-022: a halted bosun (or one that cannot tell) counts no signature.
+    let mut halt_note: Option<&str> = None;
+    if quorum && bootstrap.is_ok() {
+        match halt_reason(gh) {
+            Ok(None) => {}
+            Ok(Some((why, _))) => {
+                eprintln!(
+                    "bosun: risk-check: bosun is halted ({why}): the quorum signature does not count"
+                );
+                halt_note = Some("bosun is halted");
+                bootstrap = Err(format!("bosun is halted: {why}"));
+            }
+            Err(e) => {
+                eprintln!(
+                    "bosun: risk-check: cannot tell whether bosun is halted ({}): the quorum signature does not count",
+                    e.message
+                );
+                halt_note = Some("cannot tell whether bosun is halted");
+                bootstrap = Err(format!(
+                    "cannot tell whether bosun is halted: {}",
+                    e.message
+                ));
+            }
+        }
+    }
     let unlinked =
         linked.is_empty() && matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
     let models = review_models(gh, base)?;
@@ -739,6 +789,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         linked: &linked,
         unlinked,
         autonomous: auto.as_ref(),
+        quorum,
         models: models.as_deref(),
         signer_on: signer_on(gh, base)?,
         chat: chat_on.then_some(Chat {
@@ -797,6 +848,16 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "high risk ({}), approved by two verdicts: {}",
             ids.join(", "),
             verdicts.join(", ")
+        ),
+        (None, _) if halt_note.is_some() => format!(
+            "high risk, quorum (D-022): {}, no signature counts: {}",
+            halt_note.unwrap_or_default(),
+            ids.join(", ")
+        ),
+        (None, _) if autonomous && quorum => format!(
+            "high risk, quorum (D-022): {} clean verdicts and orchestrator signature needed: {}",
+            risk::QUORUM_VERDICTS,
+            ids.join(", ")
         ),
         (None, _) if autonomous => format!(
             "high risk, autonomous mode (D-017): clean verdict and orchestrator signature needed: {}",
@@ -879,9 +940,12 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             data["critical"] = json!(critical);
         }
         if autonomous {
-            data["policy"] = json!("autonomous");
+            data["policy"] = json!(if quorum { "quorum" } else { "autonomous" });
             data["policy_source"] = json!(policy_source);
             data["autonomous_verdicts"] = json!(autonomous_verdicts);
+            if quorum {
+                data["quorum_verdicts"] = json!(autonomous_verdicts);
+            }
         }
     }
     if passed {
@@ -929,7 +993,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "a chat approval record for head {head} exists but does not count: it is unsigned (no owner's unedited comment carries it); the orchestrator must post it again as the owner, or: "
         ),
     };
-    let fix = if autonomous {
+    let fix = if autonomous && quorum {
+        format!(
+            "get {} independent clean verdicts (approve, confidence >= {}, no major finding) on head {head} from {} different reviewer sessions (`bosun verdict comment --from -`; neither the author nor the signer), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap` (or `--via-signer`); or an owner approval: {owner_fix}",
+            risk::QUORUM_VERDICTS,
+            risk::VERDICT_MIN_CONFIDENCE,
+            risk::QUORUM_VERDICTS
+        )
+    } else if autonomous {
         format!(
             "get one independent clean verdict (approve, confidence >= {}, no major finding) on head {head} from a reviewer session (`bosun verdict comment --from -`; without CI add `--sign-key <reviewer.pem>`), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap`; or an owner approval: {owner_fix}",
             risk::VERDICT_MIN_CONFIDENCE
@@ -1158,6 +1229,8 @@ struct Need<'a> {
     /// Autonomous policy (D-017), nothing excluded: the PR comments and the lease sessions the
     /// signature's clean verdict is judged by.
     autonomous: Option<&'a (Vec<Comment>, Vec<String>)>,
+    /// Quorum policy (D-022): the signature also needs [`risk::QUORUM_VERDICTS`] counting verdicts.
+    quorum: bool,
     /// `[approvals] review_models` at base: when set, only verdicts by these models count.
     models: Option<&'a [String]>,
     /// `[approvals] signer` at base: a signer key's signature counts only while it is true.
@@ -1212,8 +1285,17 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     let mut found = Found::default();
     let mut bootstrap = need.bootstrap;
     if let Some((comments, excluded)) = need.autonomous {
-        found.autonomous_verdicts = autonomous_clean(comments, sha, excluded, need.models);
-        if found.autonomous_verdicts.is_empty() {
+        found.autonomous_verdicts = if need.quorum {
+            quorum_clean(comments, sha, excluded, need.models)
+        } else {
+            autonomous_clean(comments, sha, excluded, need.models)
+        };
+        let min = if need.quorum {
+            risk::QUORUM_VERDICTS
+        } else {
+            1
+        };
+        if found.autonomous_verdicts.len() < min {
             bootstrap = None;
         }
     }
@@ -1986,6 +2068,59 @@ pub(crate) fn autonomous_clean(
     )
 }
 
+/// D-022: the sessions that make up a quorum on `head` ([`risk::quorum_verdicts`]).
+pub(crate) fn quorum_clean(
+    comments: &[Comment],
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+) -> Vec<String> {
+    let c = comments.iter();
+    risk::quorum_verdicts(
+        c.map(|c| (c.user.as_str(), c.body.as_str(), c.unedited())),
+        head,
+        excluded,
+        models,
+    )
+}
+
+/// The built-in rule id of a trust-root change (D-022): owner only, whatever the rules say.
+pub const TRUST_RULE: &str = "R-trust";
+
+/// The quorum trust root (D-022) the PR changes, when `[approvals] policy = "quorum"` at base:
+/// [`risk::trust_root_changed`] under the code `roots`, the pin rule ([`pin_trust_root`]), and
+/// every workflow file unless `[checks] mode = "checks"` (a workflow the PR adds runs as the
+/// verdict author, bosun#706). Empty under any other policy. A base config that does not parse
+/// is no quorum (`orchestrator_window` then refuses every signature).
+pub(crate) fn quorum_trust_root(
+    gh: &dyn Github,
+    files: &[PrFile],
+    roots: &[String],
+    (base, head): (&str, &str),
+) -> Result<Vec<String>> {
+    let config = match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c,
+            Err(_) => return Ok(Vec::new()),
+        },
+        None => return Ok(Vec::new()),
+    };
+    if config.approvals.policy() != Policy::Quorum {
+        return Ok(Vec::new());
+    }
+    let paths: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+        .collect();
+    let mut out = risk::trust_root_changed(&paths, roots);
+    out.extend(pin_trust_root(gh, &paths, (base, head)));
+    if config.checks.mode != crate::config::CheckMode::Checks {
+        out.extend(risk::workflow_files(&paths));
+    }
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
 /// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
 /// base config that does not parse fails closed (an empty list: no verdict counts).
 /// `[approvals] signer` at base; a config that does not parse turns it off (fail closed).
@@ -2104,6 +2239,61 @@ fn signed_approver(
     Ok(None)
 }
 
+/// The trust-root entries a changed `.bosun/version` adds under quorum (D-022): one reason from
+/// [`risk::pin_change_trust_root`], or none when the pin is untouched or an upgrade to a released
+/// version. A pin names releases of bosun's upstream repo (`[approvals] bosun_repo` read at base,
+/// default keelstackhq/keelstack), whose `v{version}` ref is looked up there, whatever repo the PR is
+/// in. An unparsable base config, an invalid `bosun_repo` and any API error fail closed.
+pub(crate) fn pin_trust_root(
+    gh: &dyn Github,
+    paths: &[(&str, Option<&str>)],
+    (base, head): (&str, &str),
+) -> Vec<String> {
+    if !risk::pin_changed(paths) {
+        return Vec::new();
+    }
+    let (old, new) = match (
+        gh.file_at(risk::PIN_FILE, base),
+        gh.file_at(risk::PIN_FILE, head),
+    ) {
+        (Ok(o), Ok(n)) => (o, n),
+        (Err(e), _) | (_, Err(e)) => {
+            return vec![format!(".bosun/version unreadable: {}", e.message)];
+        }
+    };
+    let same = old.as_deref().map(str::trim) == new.as_deref().map(str::trim);
+    let released = same
+        || match new.as_deref().map(str::trim) {
+            Some(v) => match upstream_repo(gh, base) {
+                Ok((o, r)) => gh.tag_exists_in(&o, &r, &format!("v{v}")).unwrap_or(false),
+                Err(why) => return vec![why],
+            },
+            None => false,
+        };
+    (risk::pin_change_trust_root(old.as_deref(), new.as_deref(), released))
+        .into_iter()
+        .collect()
+}
+
+/// The bosun upstream repo from `[approvals] bosun_repo` at `base` (never the head).
+fn upstream_repo(gh: &dyn Github, base: &str) -> std::result::Result<(String, String), String> {
+    let approvals = match gh.file_at(CONFIG_FILE, base) {
+        Ok(Some(t)) => {
+            Config::parse(&t, CONFIG_FILE)
+                .map_err(|e| format!("{CONFIG_FILE} at base does not parse: {}", e.message))?
+                .approvals
+        }
+        Ok(None) => Default::default(),
+        Err(e) => return Err(format!("{CONFIG_FILE} unreadable: {}", e.message)),
+    };
+    approvals
+        .bosun_repo_pair()
+        .map_err(|v| format!("[approvals] bosun_repo {v:?} is not owner/name"))
+}
+
+/// The signing policy (autonomous or quorum) in force at base and who set it; `None` for the rest.
+type SignedPolicy = Option<(Policy, &'static str)>;
+
 /// The label of an orchestrator approval (a bootstrap-form signature) when it can count on this
 /// PR, else why not: `[approvals]` at base, read like the rules, decides with the window (D-012),
 /// `policy` (D-014) and the PR's rules, exclusions and workflow files.
@@ -2112,8 +2302,8 @@ fn orchestrator_window(
     base: &str,
     today: &str,
     pr: (&[PrFile], &[risk::Match], Approval),
-    (excluded, capabilities): (&[String], &[String]),
-) -> Result<(std::result::Result<String, String>, Option<&'static str>)> {
+    (excluded, capabilities, trust_root): (&[String], &[String], &[String]),
+) -> Result<(std::result::Result<String, String>, SignedPolicy)> {
     let (files, matches, requirement) = pr;
     let approvals = match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {
@@ -2142,10 +2332,12 @@ fn orchestrator_window(
         rules: &rules,
         workflows: &workflows,
         autonomous_excluded: &autonomous_excluded,
+        trust_root,
         capabilities,
     });
-    let autonomous = approvals.policy() == Policy::Autonomous;
-    Ok((counts, autonomous.then(|| approvals.policy_source())))
+    let p = approvals.policy();
+    let signed = matches!(p, Policy::Autonomous | Policy::Quorum);
+    Ok((counts, signed.then(|| (p, approvals.policy_source()))))
 }
 
 /// The paths and rules of the PR that a bootstrap-mode approval never covers.

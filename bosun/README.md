@@ -141,7 +141,7 @@ do not apply it. No hook can start a compaction; the bosun hooks keep the state 
 `[mode] name` in `.bosun/bosun.toml` sets how much bosun does for you: `gatekeeper` (the default,
 no table needed), `steady` (gates before push, red-PR and red-main help, daily digest), `booster`
 (fast-lane approval, auto spawn, curator proposals) and `autonomous` (auto-merged exact reverts,
-digest-only owner contact). A lighter mode (toward `autonomous`) is an owner-approved change. `bosun mode` shows the
+digest-only owner contact). `[approvals] policy = "quorum"` (D-022, set explicitly by the owner) lets two independent clean verdicts plus the orchestrator's signature pass everything except the trust root (keys, `.bosun/bosun.toml`, the risk rules and workflows, bosun's judging code). A lighter mode (toward `autonomous`) is an owner-approved change. `bosun mode` shows the
 effective knobs, `bosun metrics` the numbers. Setup per mode and environment (CLI, cloud, Slack)
 and the steps for a repo that already runs bosun: [docs/quickstart.md](docs/quickstart.md). The exact steps to move a
 repo to booster, per environment, with a prompt for Claude: [docs/migrate-booster.md](docs/migrate-booster.md).

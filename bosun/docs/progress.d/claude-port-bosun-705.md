@@ -1,0 +1,1 @@
+- 2026-11-22 · bosun#705 port: D-022 quorum approvals, with the bosun#706 review fixes · trust root re-rooted under the code roots, R-trust built in, relayer-aware quorum count, pin rule closed for unreleased bases, no implied quorum · this PR

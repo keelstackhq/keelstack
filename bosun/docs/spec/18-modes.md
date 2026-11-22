@@ -19,7 +19,9 @@ push_gates = "push"
 - Unknown mode names, unknown knobs and unknown values are parse errors. `policy` is never a
   `[mode]` key (parse error): only `[approvals] policy` or the mode name sets it.
 - The preset fills `[approvals] policy` when the table leaves it unset (booster and
-  autonomous: `autonomous`, D-017); risk-check and `approve` print `data.policy_source`.
+  autonomous: `autonomous`, D-017); risk-check and `approve` print `data.policy_source`. No
+  mode implies `quorum` (D-022): a repo sets `[approvals] policy = "quorum"` in one
+  owner-approved PR (the file is trust root, §8).
 - Direction: the ladder runs gatekeeper < steady < booster < autonomous. **Lighter** = toward
   `autonomous` (fewer gates, more helpers); **tighter** = toward `gatekeeper`.
 - Weaken (§8, R-weaken): a lighter mode (every step toward `autonomous` in the ladder above, gatekeeper → steady included), and an effective `push_gates` push → ready,
