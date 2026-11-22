@@ -1162,7 +1162,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 22] = [
+pub const TRUST_ROOT: [&str; 26] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1186,8 +1186,13 @@ pub const TRUST_ROOT: [&str; 22] = [
     "hoard/scripts/**",
     "*/npm/**",
     ".claude/settings*.json",
+    // Rules and templates that sessions and the guard load, the loop, and every subagent prompt.
+    ".bosun/session-rules.toml",
+    ".bosun/template-tests",
+    ".bosun/template-tests/**",
+    ".claude/loop.md",
     // The reviewers' prompts and what they are taught: they decide what a verdict says.
-    ".claude/agents/reviewer.md",
+    ".claude/agents/**",
     "REVIEW.md",
     "docs/lessons.toml",
     // What every session is told, reviewers included: at the root and in every folder.
@@ -3287,6 +3292,11 @@ mod monorepo_tests {
             "CLAUDE.md",
             "CLAUDE.local.md",
             ".claude/CLAUDE.md",
+            ".bosun/session-rules.toml",
+            ".bosun/template-tests/a.toml",
+            ".claude/loop.md",
+            ".claude/agents/explorer.md",
+            ".claude/agents/implementer.md",
             ".github/scripts/x.sh",
             "docs/setup-script.sh",
             "scripts/bump-version.sh",
@@ -3309,7 +3319,6 @@ mod monorepo_tests {
             "hoist/src/lib.rs",
             "docs/setup.md",
             "hoist/scripts/x.sh",
-            ".claude/agents/explorer.md",
             "decisions/decisions/021-gated-prs-no-line-cap.md",
         ] {
             assert!(t(f).is_empty(), "{f}");

@@ -265,6 +265,10 @@ fn mutates(cmd: &str, args: &[&str]) -> bool {
                 .any(|a| a.starts_with("settings") && a.ends_with(".json"));
             args.iter().any(|a| acts.contains(a)) && (any(args) || named)
         }
+        // They write the files a patch or an archive names: the operands name one, or `-d D`
+        // (`--directory=D` for git) moves there. A patch body naming a target is `bash`'s text check.
+        "patch" => any(args) || opt(args, "-d", "--directory").is_some_and(target),
+        "unzip" => any(args) || opt(args, "-d", "-d").is_some_and(target),
         "tar" => {
             let x = |a: &&str| {
                 matches!(*a, "--extract" | "--get")
@@ -279,7 +283,12 @@ fn mutates(cmd: &str, args: &[&str]) -> bool {
         "git" => {
             let sub = git_sub(args);
             let ops = ["checkout", "restore", "stash", "reset", "clean", "rm", "mv"];
-            sub.is_some_and(|i| ops.contains(&args[i]) && any(&args[i + 1..]))
+            let patches = |i: usize| {
+                matches!(args[i], "apply" | "am")
+                    && (any(&args[i + 1..])
+                        || opt(&args[i + 1..], "--directory", "--directory").is_some_and(target))
+            };
+            sub.is_some_and(|i| (ops.contains(&args[i]) && any(&args[i + 1..])) || patches(i))
         }
         _ => false,
     }
@@ -336,7 +345,10 @@ fn mutated(text: &str, mut cwd: Option<String>, depth: usize) -> bool {
             })
             .collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-        if mutates(cmd, &refs) || redirects(seg, here.as_deref()) {
+        let applies = matches!(cmd, "patch" | "unzip")
+            || (cmd == "git" && git_sub(&args).is_some_and(|i| matches!(args[i], "apply" | "am")));
+        // Run from `.claude`, the patch or archive lands there.
+        if mutates(cmd, &refs) || redirects(seg, here.as_deref()) || (applies && here.is_some()) {
             return true;
         }
         if matches!(cmd, "cd" | "pushd") {
@@ -372,6 +384,13 @@ fn bash(command: &str, cwd: &str) -> Option<String> {
         && dequoted.contains(".json")
         && !reads;
     let code = interp && TEXT.is_match(&dequoted) && !reads;
+    // A patch fed on stdin (`patch -p1 <<EOF`, `git apply <<EOF`) names its files in its body.
+    let patcher = (words.split(|w| w == SEP)).any(|seg| {
+        let (cmd, args, _) = command_of(seg);
+        cmd == "patch"
+            || (cmd == "git" && git_sub(&args).is_some_and(|i| matches!(args[i], "apply" | "am")))
+    });
+    let code = code || (patcher && TEXT.is_match(&dequoted));
     let writes = bash_writes(command).iter().any(|p| protected(p));
     let start = Some(cwd.to_string()).filter(|c| inside(c));
     (mutated(&text, start, 0) || code || sets || writes)
@@ -405,6 +424,44 @@ mod tests {
     }
     fn sh_in(cwd: &str, cmd: &str) -> Option<String> {
         super::settings_rule("Bash", &json!({"command": cmd}), cwd)
+    }
+
+    #[test]
+    fn patch_apply_am_and_unzip_write_the_settings() {
+        for c in [
+            "patch .claude/settings.json fix.diff",
+            "patch -d .claude < fix.diff",
+            "patch --directory=.claude -p1 < fix.diff",
+            "patch -d.claude -p1 < fix.diff",
+            "git apply --directory=.claude fix.diff",
+            "git apply --directory .claude fix.diff",
+            "git apply --include=.claude/settings.json fix.diff",
+            "git apply .claude/settings.json",
+            "git -C .claude apply ../fix.diff",
+            "git am .claude/settings.json",
+            "git apply <<'EOF'\n--- a/.claude/settings.json\n+++ b/.claude/settings.json\nEOF",
+            "patch -p1 <<EOF\n--- a/.claude/settings.json\n+++ b/.claude/settings.json\nEOF",
+            "unzip -o x.zip .claude/settings.json",
+            "unzip -d .claude x.zip",
+            "unzip -d.claude x.zip",
+            "env -C .claude unzip x.zip",
+            "cd .claude && patch -p0 < x.diff",
+            "cd .claude && git apply x.diff",
+        ] {
+            assert!(sh(c).is_some(), "{c}");
+        }
+        assert!(sh_in("/repo/.claude", "patch -p0 < x.diff").is_some());
+        for c in [
+            "patch -p1 < fix.diff",
+            "git apply fix.diff",
+            "git apply --check fix.diff",
+            "git am mail.patch",
+            "unzip x.zip -d out",
+            "unzip -l x.zip",
+            "git log -p",
+        ] {
+            assert!(sh(c).is_none(), "{c}");
+        }
     }
 
     #[test]

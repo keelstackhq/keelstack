@@ -550,7 +550,7 @@ fn names_answers(command: &str) -> bool {
             .any(|w| state(&lexical(w.trim_start_matches(['<', '>', '&']))))
 }
 
-/// Bosun-dir lock: `rm`, `mv` (source paths) and `git rm|mv` (also `--cached`) on `.bosun` or
+/// Bosun-dir lock: `rm`, `shred`, `mv` (source paths) and `git rm|mv` (also `--cached`) on `.bosun` or
 /// under it are refused in a Bash command (also inside `bash -c` and `eval`): removing
 /// `.bosun/version` would switch the guards off. Best effort: a path built in a variable or glob is missed.
 pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
@@ -571,7 +571,9 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
     // Whether a `cd`/`pushd` put the shell in `.bosun` (relative paths then name its files).
     let mut in_bosun = false;
     for seg in words.split(|w| w == SEP) {
-        let (name, args, _) = writes::command_of(seg);
+        let (name, args, runner_dirs) = writes::command_of(seg);
+        // `env -C .bosun rm x`, `sudo -D .bosun rm x`: the runner moves the command into `.bosun`.
+        let here = in_bosun || runner_dirs.iter().any(|d| is_bosun_dir_path(d));
         let (kind, args) = match name {
             "cd" | "pushd" => {
                 let to = args.iter().find(|a| !a.starts_with('-')).copied();
@@ -602,12 +604,12 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
                             | "shred"
                     )
                 });
-                if destructive && (in_bosun || roots.into_iter().any(|r| is_bosun_dir_path(r))) {
+                if destructive && (here || roots.into_iter().any(|r| is_bosun_dir_path(r))) {
                     return true;
                 }
                 continue;
             }
-            "rm" | "unlink" | "rmdir" | "mv" => (name, args),
+            "rm" | "unlink" | "rmdir" | "mv" | "shred" => (name, args),
             "git" => match args.iter().position(|w| matches!(*w, "rm" | "mv")) {
                 Some(k) => {
                     // `git -C .bosun rm x`: the directory git moves to, before the subcommand.
@@ -657,7 +659,7 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
         } else {
             paths.len() - usize::from(kind == "mv" && paths.len() > 1)
         };
-        let relative = |p: &str| in_bosun && !p.starts_with(['/', '~']);
+        let relative = |p: &str| here && !p.starts_with(['/', '~']);
         if paths[..n]
             .iter()
             .any(|p| is_bosun_dir_path(p) || relative(p))
@@ -727,6 +729,27 @@ pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
     };
     for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
         let words = shell_words(seg);
+        // `cargo run -p keel-bosun -- merge`: the package or binary named, the words after `--`.
+        if words.iter().any(|w| base(w) == "cargo") {
+            let named = words.iter().enumerate().any(|(i, w)| {
+                let next = words.get(i + 1).map(String::as_str);
+                let bosun = |v: &str| matches!(v, "keel-bosun" | "bosun");
+                match w.as_str() {
+                    "-p" | "--package" | "--bin" => next.is_some_and(bosun),
+                    w => w
+                        .strip_prefix("--package=")
+                        .or_else(|| w.strip_prefix("--bin="))
+                        .or_else(|| w.strip_prefix("-p"))
+                        .is_some_and(bosun),
+                }
+            });
+            if let Some(d) = words.iter().position(|w| w == "--")
+                && named
+                && refused(&words[d + 1..])
+            {
+                return refuse();
+            }
+        }
         let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
             continue;
         };
@@ -7554,10 +7577,20 @@ mod tests {
             "bosun approve 1@abc --sign-key k.pem --bootstrap",
             "bosun approve 1@abc --via-signer",
             "bosun approve 1@abc --as=signer",
+            "cargo run -p keel-bosun -- merge 12",
+            "cargo run --package keel-bosun -- approve 1@abc --sign-key k.pem",
+            "cargo run --package=keel-bosun --locked -- merge 3",
+            "cargo run -pkeel-bosun -- merge 3",
+            "cargo run --bin bosun -- merge 3",
+            "cargo run --bin=bosun -- approve 1@a --via-signer",
+            "cd bosun && cargo run -q -p keel-bosun -- -C /r merge 12",
         ] {
             assert!(hit(c), "{c}");
         }
         for c in [
+            "cargo run -p keel-bosun -- status",
+            "cargo run -p keel-bosun -- approve --list",
+            "cargo run -p keel-splice -- merge 12",
             "bosun approve --list",
             "bosun pr 7 --ready",
             "git merge-base a b",
@@ -7738,6 +7771,12 @@ mod tests {
             "find /r/.bosun -type f -exec rm {} +",
             "cd .bosun && find . -delete",
             "rm -rf .BOSUN",
+            "env -C .bosun rm version",
+            "sudo -D .bosun rm -f version",
+            "env -C /r/.bosun git rm version",
+            "env -C .bosun find . -delete",
+            "shred -u .bosun/version",
+            "shred .bosun/approvers.toml",
             "rm .Bosun/Version",
             "mv .BOSUN /tmp/x",
             "find .bosun -exec /bin/rm {} +",
