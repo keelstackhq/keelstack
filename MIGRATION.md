@@ -109,3 +109,16 @@ are owner-approved under R-deps, not trust files, so a dependency bump needs no 
 `.bosun/bosun.toml` is a trust file as a whole (for its `[approvals]` table), so every edit of it,
 also `[[folders]]` (which names the code roots) or `[slack]`, is owner-signed only. D-022's own
 file is the trust root and is not changed by this.
+
+## Quorum policy at the root (D-022)
+
+The root `.bosun/bosun.toml` sets `[approvals] policy = "quorum"` (owner answer Q3 in
+`docs/plans/port-open-prs.md`; this PR is trust root, so the owner approves it). Under it the
+orchestrator's signature plus two clean verdicts from different reviewer sessions (and different
+relayers) pass every PR except the trust root, which bosun re-roots under each code root
+(`bosun/` here): the trust files above, `.bosun/approvers.toml`, `.bosun/bosun.toml`,
+`.bosun/risk.toml`, the risk, verdict, signer, main-open, review and release workflows,
+`.claude/settings*.json`, and under `bosun/` the judging, record, config, GitHub and launcher
+code (`bosun/src/core/risk.rs` `TRUST_ROOT_CODE`, spec §8). With `[checks] mode = "dual"` every
+workflow change is trust root too. `.bosun/version` stays `unreleased`: moving it to the first
+monorepo release is the owner's (the pin rule fails closed from an unreleased base).

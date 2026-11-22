@@ -1,0 +1,1 @@
+- 2026-11-22 · bosun#702 port: bootstrap friction fixes (gate-neutral bootstrap, removable template tests, init/doctor/plan import/prereqs/pr --single without a token, one pins source) · this PR

@@ -35,6 +35,9 @@ pub fn bosun() -> Command {
         .env_remove("CLAUDECODE")
         .env_remove("CIRCLE_BRANCH")
         .env_remove("BOSUN_HALT")
+        // Never reach a real `gh`: a test that wants a fake one removes this and sets PATH.
+        .env("BOSUN_NO_GH", "1")
+        .env_remove("BOSUN_GH")
         // CI's task-allow step exports these to the gates step; a test sets its own.
         .env_remove("BOSUN_INTEGRITY_ALLOW")
         .env_remove("BOSUN_PR_BODY")
@@ -47,6 +50,8 @@ pub fn bosun() -> Command {
         .env_remove("CCR_AGENT_PROXY_ENABLED")
         .env_remove("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE")
         .env_remove("CLAUDE_CODE_CHILD_SESSION")
+        // A cloud container sets it for every session; a test that wants the cloud sets it.
+        .env_remove("CLAUDE_CODE_REMOTE")
         .env_remove("CLAUDE_CODE_REMOTE_SESSION_ID");
     cmd
 }

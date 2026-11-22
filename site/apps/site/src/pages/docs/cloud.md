@@ -377,7 +377,7 @@ skips the install with a warning.
   personal access token in a cloud environment at all; sessions reach GitHub through the Claude
   GitHub App.
 - **The Claude GitHub App** must be installed on the repo (bosun's setup checklist, step 2).
-- **The orchestrator's signing key** for chat approvals: the orchestrator makes it in its own
+- **The orchestrator's signing key** for its signed approvals (bootstrap, autonomous and quorum forms): the orchestrator makes it in its own
   container (`openssl genpkey -algorithm ed25519 -out key.pem`) and never shares the private key;
   **Practice:** keep it in the orchestrator's scratchpad only. Enroll the public key with a pull
   request to `.bosun/approvers.toml` that the owner approves on GitHub

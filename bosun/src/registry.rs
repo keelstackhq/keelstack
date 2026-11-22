@@ -197,6 +197,9 @@ pub fn join(app: &App, spec: JoinSpec) -> Result<(u64, Member)> {
     let origin = match (spec.origin, prior) {
         (Some(o), _) => o.as_str().to_string(),
         (None, Some(m)) if m.origin == "slack" => m.origin.clone(),
+        // A spawned or routine record stays so on a plain re-join: in the cloud the env child
+        // flag is no evidence (`Origin::resolve_env`), so the spawn record is what marks a child.
+        (None, Some(m)) if matches!(m.origin.as_str(), "spawned" | "routine") => m.origin.clone(),
         (None, _) => app.ctx.origin.as_str().to_string(),
     };
     let slack = spec

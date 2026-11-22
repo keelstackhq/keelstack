@@ -130,17 +130,16 @@ pub fn load(root: Option<&Path>) -> (Rules, String) {
 }
 
 pub fn rules_context(dir: Option<&Path>) -> String {
-    let origin = Origin::resolve(
+    let child = std::env::var("CLAUDE_CODE_CHILD_SESSION").ok();
+    let remote = std::env::var("CLAUDE_CODE_REMOTE").ok();
+    let origin = Origin::resolve_env(
         std::env::var("BOSUN_ORIGIN").ok().as_deref(),
-        std::env::var("CLAUDE_CODE_CHILD_SESSION").ok().as_deref(),
+        child.as_deref(),
+        remote.as_deref(),
     )
     .unwrap_or_else(|_| {
         // An invalid BOSUN_ORIGIN falls back to the child-session marker alone.
-        Origin::resolve(
-            None,
-            std::env::var("CLAUDE_CODE_CHILD_SESSION").ok().as_deref(),
-        )
-        .unwrap_or(Origin::Local)
+        Origin::resolve_env(None, child.as_deref(), remote.as_deref()).unwrap_or(Origin::Local)
     });
     let role = role(origin.as_str());
     let dir = dir

@@ -29,6 +29,19 @@ impl Origin {
         }
     }
 
+    /// [`Origin::resolve`] in a Claude Code cloud session (`remote` is `CLAUDE_CODE_REMOTE`):
+    /// there every session, the top-level one too, has `CLAUDE_CODE_CHILD_SESSION=1`, so the
+    /// flag alone is no child and resolves to `local`; the registry decides who is a child (the
+    /// spawn record `bosun spawn` writes, which a child cannot relabel). `BOSUN_ORIGIN` still wins.
+    pub fn resolve_env(
+        bosun_origin: Option<&str>,
+        child_session: Option<&str>,
+        remote: Option<&str>,
+    ) -> Result<Origin, BosunError> {
+        let cloud = remote.is_some_and(|r| r.trim() == "true");
+        Origin::resolve(bosun_origin, child_session.filter(|_| !cloud))
+    }
+
     /// `BOSUN_ORIGIN` wins; else `spawned` when `CLAUDE_CODE_CHILD_SESSION=1`; else `local`.
     pub fn resolve(
         bosun_origin: Option<&str>,
@@ -93,6 +106,13 @@ pub fn parse_remote_url(url: &str) -> Option<RepoId> {
 
 /// Session id (D31): `BOSUN_SESSION`, else the remote session id with `cse_` -> `session_`,
 /// else `local-<host>`.
+/// Whether `CLAUDE_CODE_CHILD_SESSION` marks this process as a child: set and not empty, outside
+/// a Claude Code cloud session (where every session has it, see [`Origin::resolve_env`]).
+pub fn child_flag() -> bool {
+    let cloud = std::env::var("CLAUDE_CODE_REMOTE").is_ok_and(|r| r.trim() == "true");
+    !cloud && std::env::var("CLAUDE_CODE_CHILD_SESSION").is_ok_and(|v| !v.trim().is_empty())
+}
+
 pub fn session_id(bosun_session: Option<&str>, remote_session: Option<&str>, host: &str) -> String {
     let set = |v: Option<&str>| v.map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     if let Some(s) = set(bosun_session) {
@@ -127,7 +147,7 @@ pub(crate) fn hostname() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Commands that trust the identity (merge, approve --chat, verdict, join --origin) refuse a
+/// Commands that trust the identity (merge, verdict, join --origin) refuse a
 /// `BOSUN_SESSION` that is not `<own>` or `<own>/<task>`; `<own>` is the remote session id
 /// (checkable only when `CLAUDE_CODE_REMOTE_SESSION_ID` is set).
 pub fn trusted_identity() -> Result<(), BosunError> {
@@ -224,9 +244,10 @@ impl Ctx {
                 env("CLAUDE_CODE_REMOTE_SESSION_ID").as_deref(),
                 &hostname(),
             ),
-            origin: Origin::resolve(
+            origin: Origin::resolve_env(
                 env("BOSUN_ORIGIN").as_deref(),
                 env("CLAUDE_CODE_CHILD_SESSION").as_deref(),
+                env("CLAUDE_CODE_REMOTE").as_deref(),
             )?,
             dir: root,
             repo,

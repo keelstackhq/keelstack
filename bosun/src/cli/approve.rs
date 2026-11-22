@@ -1,8 +1,8 @@
-//! `bosun approve`: lists the PRs that wait for an owner. The default approval (D-012): the
-//! session asks the owner with a form in the Claude Code chat and the orchestrator records the
-//! answer with `--chat` (D-018; it uses the session's own token, and a signature with `--sign-key`
-//! stays optional). The fallback: the owner, on their own machine, posts the comment `/bosun approve <head>` (spec section 8).
-//! Apart from `--chat`, every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
+//! `bosun approve`: lists the PRs that wait for an owner. The owner approves with their own
+//! comment `/bosun approve <head>` (posted by this command on their machine, or by hand in the
+//! GitHub web or mobile app), a GitHub review, or a signed approval (`--sign-key`; spec section 8).
+//! Chat approvals are retired (D-022): the owner's answer in a chat form is never an approval.
+//! Every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
 //! a plain user token, which agent sessions do not have. `--list` only reads: without the owner
 //! token it reads with no token at all and lists what it can. The owner names the head sha of each
 //! PR (`<pr>@<sha>`, from `--list`), so a push after the listing is never approved unseen.
@@ -14,18 +14,18 @@ use serde_json::{Value, json};
 use super::ApproveArgs;
 use crate::app::App;
 use crate::app::{Result, default_ref, kill_switch, main_red};
+use crate::cli::pr_no_ci::provider_default;
 use crate::cli::risk_check::{
     autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
-    owner_comment, owner_logins, review_models,
+    owner_comment, owner_logins, quorum_clean, review_models,
 };
-use crate::cli::{pr_no_ci::provider_default, risk_check::chat_counted};
 use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
-    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, Readiness, Role, Run, Stat,
-    TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line, ci_green,
-    in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness, signed_comment,
-    signed_message, signed_message_autonomous, signed_message_bootstrap, signed_message_v2,
-    summary_readiness,
+    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, QUORUM_LINE, Readiness, Role,
+    Run, Stat, TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line,
+    ci_green, in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness,
+    signed_comment, signed_message, signed_message_autonomous, signed_message_bootstrap,
+    signed_message_v2, summary_readiness,
 };
 use crate::core::ask;
 use crate::core::records::{PrHead, Record};
@@ -80,12 +80,12 @@ fn withdrawn(gh: &dyn Github, p: &Pull) -> Result<Option<(&'static str, bool)>> 
 }
 
 /// What to do instead in a Claude cloud session.
-const CLOUD_FIX: &str = "ask the owner with a form in the Claude Code chat; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs `bosun approve` on their own machine, or comments `/bosun approve <sha>` in the GitHub web or mobile app";
+const CLOUD_FIX: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR (GitHub web or mobile app) or a GitHub review, or runs `bosun approve` on their own machine; an orchestrator never records a chat answer as an approval (D-022)";
 
 /// Shown with every list: an approval comment counts only when posted with a plain user token, as
 /// this command does (an owner review counts too). The Claude GitHub tool posts through an app and
 /// adds a footer, so its comments never count.
-const LIST_HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; approve or hold; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs data.approve_command (bosun approve) on their own machine or approves in the GitHub UI; an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+const LIST_HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-022) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
 
 #[derive(Default)]
 pub(crate) struct Board {
@@ -192,7 +192,6 @@ fn board_of(gh: &dyn Github, ctx: &Ctx, pulls: Vec<Pull>) -> Result<Board> {
                 continue;
             };
             if let Readiness::Ready(risk) = no_ci_readiness(gh, ctx, &p)?
-                && !chat_counted(gh, &p)?
                 && !hold(gh, &p, &mut board)?
             {
                 board.ready.push(ready_of(gh, p, risk, verdict)?);
@@ -266,10 +265,6 @@ pub fn run(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
     }
     if args.via_signer {
         return via_signer(dir, args);
-    }
-    if args.chat {
-        crate::ctx::trusted_identity()?;
-        return super::approve_chat::run(dir, args);
     }
     if let Some(key) = &args.sign_key {
         return sign(dir, args, key);
@@ -486,20 +481,6 @@ fn ask_next(ctx: &Ctx, ready: &[Ready], mut data: Value) -> Outcome {
         return Outcome::data(data);
     }
     let out = if ctx.origin == Origin::Slack {
-        // The asks this post issues are remembered: `--chat --slack-user` needs one of them.
-        let asks: Vec<(String, u64, String)> = (items.iter())
-            .map(|i| {
-                (
-                    crate::core::approve::question_id(i.pr, i.head, unix),
-                    i.pr,
-                    i.head.to_string(),
-                )
-            })
-            .collect();
-        if !asks.is_empty() {
-            let now = ctx.now.to_string();
-            answers::record_asks(&ctx.dir, &repo, &ctx.session, &now, &asks);
-        }
         ask::slack_text(&repo, &items, unix).map(|text| {
             let mut a = json!({"text": text});
             let channel = ctx.config.slack.as_ref().map(|s| s.channel.trim());
@@ -792,7 +773,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
             None => Config::default(),
         };
         let policy = config.approvals.policy();
-        if policy != Policy::Autonomous {
+        if !matches!(policy, Policy::Autonomous | Policy::Quorum) {
             return Err(BosunError::error(
                 format!(
                     "--as signer signs only under the autonomous policy (D-017); the default branch's policy is {}",
@@ -914,7 +895,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     for after in reviews {
         let (form, msg) = match (after, &boot) {
             (Some(r), _) => (Form::V2(r), signed_message_v2(owner, repo, pr, &head, r)),
-            (None, Some((_, _, Policy::Autonomous, _))) => (
+            (None, Some((_, _, Policy::Autonomous | Policy::Quorum, _))) => (
                 Form::Autonomous,
                 signed_message_autonomous(owner, repo, pr, &head),
             ),
@@ -970,9 +951,14 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
         None => Default::default(),
     };
     let (policy, src) = (approvals.policy(), approvals.policy_source());
-    if policy == Policy::Autonomous {
-        autonomous_ok(app, pull, requester)?;
-        return Ok((None, AUTONOMOUS_LINE.into(), policy, src));
+    if matches!(policy, Policy::Autonomous | Policy::Quorum) {
+        autonomous_ok(app, pull, requester, policy)?;
+        let line = if policy == Policy::Quorum {
+            QUORUM_LINE
+        } else {
+            AUTONOMOUS_LINE
+        };
+        return Ok((None, line.into(), policy, src));
     }
     let end = approvals
         .bootstrap_until
@@ -989,7 +975,7 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer (D-012)";
     let refuse = |why: String| Err(BosunError::error(format!("{why}; {window}"), fix));
     let ok = match policy {
-        Policy::Orchestrator | Policy::Autonomous => true,
+        Policy::Orchestrator | Policy::Autonomous | Policy::Quorum => true,
         Policy::Owner => return refuse("approval policy owner: only the owner approves".into()),
         Policy::OwnerGated => {
             let stats: Vec<Stat> = (crate::github::gate::gate_statuses(gh, head)?.into_iter())
@@ -1016,13 +1002,49 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
 /// D-017: signs only when no excluded path changed and a reviewer other than the task's leaseholders
 /// and this signer has a clean verdict on the head. risk-check cannot see the signer's session, so
 /// this is where signer != reviewer is enforced.
-fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> {
+fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy) -> Result<()> {
     let gh = app.gh.as_ref();
-    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer";
+    let fix = "nothing was signed: get the clean verdicts this names and sign again, or the owner approves with their own `/bosun approve <sha>` comment or a GitHub review";
     let files = gh.pull_files(pull.number)?;
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))
         .collect();
+    let quorum = policy == Policy::Quorum;
+    if quorum {
+        // D-022: a diff bosun cannot see may hide the trust root (as risk-check's R-unseen).
+        let views: Vec<risk::FileView> = (files.iter())
+            .map(|f| risk::FileView {
+                path: f.filename.clone(),
+                status: f.status.clone(),
+                has_patch: f.patch.is_some(),
+                changes: f.additions + f.deletions,
+                same_blob: false,
+            })
+            .collect();
+        if risk::unseen_diff(&views, pull.changed_files).is_some() {
+            return Err(BosunError::error(
+                "quorum (D-022) never covers a diff bosun cannot see (R-unseen): the owner approves",
+                "nothing was signed: the owner approves this PR (their GitHub review or `/bosun approve <sha>` comment)",
+            ));
+        }
+        // D-022: the trust root is the owner's (a halt refused the signature at the top already).
+        let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
+        let root = crate::cli::risk_check::quorum_trust_root(
+            gh,
+            &files,
+            &roots,
+            (&pull.base_sha, &pull.head_sha),
+        )?;
+        if !root.is_empty() {
+            return Err(BosunError::error(
+                format!(
+                    "quorum (D-022) never covers the trust root ({}): the owner approves",
+                    root.join(", ")
+                ),
+                "nothing was signed: the owner approves this PR (their GitHub review or `/bosun approve <sha>` comment)",
+            ));
+        }
+    }
     // The base rules, as risk-check reads them: a rule match in the deny set (R-gov) refuses too.
     let rules = match gh.file_at(".bosun/risk.toml", &pull.base_sha)? {
         Some(t) => risk::Rules::parse(&t)
@@ -1049,8 +1071,11 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         })
         .collect();
     // R-weaken and capabilities, as risk-check computes them: a weakening is the owner's.
-    let findings =
-        crate::cli::risk_check::weaken_findings(gh, &files, &pull.base_sha, &pull.head_sha)?;
+    let findings = if quorum {
+        Vec::new()
+    } else {
+        crate::cli::risk_check::weaken_findings(gh, &files, &pull.base_sha, &pull.head_sha)?
+    };
     if !findings.is_empty() {
         return Err(BosunError::error(
             format!(
@@ -1085,7 +1110,8 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         .map(|f| (&*f.filename, f.patch.as_deref()))
         .collect();
     hit.extend(risk::path_attributes(&patches));
-    if !hit.is_empty() {
+    // The quorum ignores every exclusion but the trust root (checked above).
+    if !quorum && !hit.is_empty() {
         return Err(BosunError::error(
             format!(
                 "autonomous mode (D-017) never covers {}: the owner approves",
@@ -1101,15 +1127,26 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         excluded.push(app.ctx.session.clone());
         // The CI signer's own session is no reviewer's: the session that asked is excluded too.
         excluded.extend(requester.map(String::from));
-        autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        if quorum {
+            quorum_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        } else {
+            autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        }
     });
-    if clean.is_empty() {
+    let min = if quorum { risk::QUORUM_VERDICTS } else { 1 };
+    if clean.len() < min {
+        let rule = if quorum {
+            "quorum (D-022)"
+        } else {
+            "autonomous mode (D-017)"
+        };
         return Err(BosunError::error(
             format!(
-                "autonomous mode (D-017) needs a clean verdict on head {} from a reviewer who is neither the author (a task lease holder) nor this session, and an open linked task (`Closes #N`) with a lease record by the PR author",
+                "{rule} needs {min} clean verdict(s) from different sessions ({} counted) on head {}, from reviewers who are neither the author (a task lease holder) nor this session, and an open linked task (`Closes #N`) with a lease record by the PR author",
+                clean.len(),
                 pull.head_sha
             ),
-            "get one independent clean verdict (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in a reviewer session (without CI add `--sign-key <reviewer.pem>`), then sign again",
+            "get independent clean verdicts (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in reviewer sessions (without CI add `--sign-key <reviewer.pem>`), then sign again",
         ));
     }
     Ok(())

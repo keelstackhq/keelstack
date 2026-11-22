@@ -445,14 +445,12 @@ fn rust_gates_install_the_toolchain_file_once() {
         assert!(wf.contains("cache-bin: \"false\""), "{wf}");
         // Without a toolchain file in rust_path or a parent, the old pin, never `stable` (the
         // setup script has no fallback: it skips Rust).
-        let pin = "1.97";
         assert!(
-            wf.contains(&format!(
-                "rustup toolchain install {pin} --profile minimal -c rustfmt,clippy"
-            )),
+            wf.contains("rustup toolchain install \"$ch\" --profile minimal -c rustfmt,clippy"),
             "{wf}"
         );
-        assert!(wf.contains(&format!("rustup default {pin}")), "{wf}");
+        assert!(wf.contains("rustup default \"$ch\""), "{wf}");
+        assert!(wf.contains("ch=\"$PIN_RUST_FALLBACK\""), "{wf}");
         assert!(!wf.contains("install stable"), "{wf}");
     }
     let files = variant(&["ts-pnpm"], "");
@@ -966,6 +964,7 @@ fn toolchain_run(root: &std::path::Path, cwd: &std::path::Path) -> (bool, String
         .current_dir(cwd)
         .env("PATH", path)
         .env("GITHUB_WORKSPACE", root)
+        .env("PIN_RUST_FALLBACK", "1.97")
         .env("GITHUB_ENV", &env)
         .env("GITHUB_OUTPUT", bin.path().join("out"))
         .status()
@@ -1174,8 +1173,8 @@ fn the_plan_skips_gates_only_on_docs_and_drafts_fail() {
             .collect();
         assert_eq!(
             setup.len(),
-            4,
-            "toolchain, install-action (cargo-deny), setup-node, pnpm for the audit"
+            5,
+            "tool pins, toolchain, install-action (cargo-deny), setup-node, pnpm for the audit"
         );
         let gates = step(&steps, "name", "bosun gates");
         assert_eq!(gates["env"]["ONLY"], "${{ steps.plan.outputs.only }}");
@@ -1698,6 +1697,7 @@ fn the_required_check_installs_the_toolchain_bosun_trusted_checked() {
                 ("PATH", &path),
                 ("FILE", file_found),
                 ("CHANNEL", channel),
+                ("FALLBACK", "1.97"),
                 ("GITHUB_ENV", env.to_str().unwrap()),
             ],
         ));
@@ -2154,6 +2154,41 @@ fn an_explicit_pin_writes_the_policy_only_when_checked() {
     }
 }
 
+#[test]
+fn the_quorum_policy_renders_only_for_a_checked_pin_and_the_comment_names_its_release() {
+    for (pin, checked, written) in [("0.21.0", "", false), ("0.22.0", "1", true)] {
+        let vars: BTreeMap<&str, String> = [
+            ("project", "app"),
+            ("owner", ""),
+            ("bosun_version", pin),
+            ("template.version", "0.22.0"),
+            ("rust_path", "."),
+            ("ts_path", "."),
+            ("own_ci", ""),
+            ("intake", ""),
+            ("policy", "quorum"),
+            ("policy_pin_checked", checked),
+            ("ci_provider", ""),
+            ("ci_pin_checked", ""),
+            ("bosun_app", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+        let files = render_channel(&["core", "rust"], &vars);
+        let text = file(&files, ".bosun/bosun.toml");
+        let config: toml::Table = text.parse().unwrap();
+        let policy = config
+            .get("approvals")
+            .and_then(|a| a.get("policy"))
+            .and_then(|v| v.as_str());
+        assert_eq!(policy == Some("quorum"), written, "pin {pin}: {text}");
+        if !written {
+            assert!(text.contains("quorum: 0.22.0"), "{text}");
+        }
+    }
+}
+
 /// A sandbox for a full run of a setup script: stubs for every tool it calls log to `calls`.
 /// `node22` is first in PATH with a fake Node 22; `node24` holds a fake Node 24.
 struct SetupSandbox {
@@ -2168,6 +2203,13 @@ impl SetupSandbox {
         for d in ["bin", "node22", "node24", "repo"] {
             fs::create_dir(s.root.path().join(d)).unwrap();
         }
+        // The pins the setup scripts read (`.bosun/pins.toml` of the checkout).
+        fs::create_dir(s.root.path().join("repo/.bosun")).unwrap();
+        fs::copy(
+            channel().join("pieces/core/files/.bosun/pins.toml"),
+            s.root.path().join("repo/.bosun/pins.toml"),
+        )
+        .unwrap();
         let log = s.root.path().join("calls");
         let rec = format!("echo \"$(basename \"$0\") $*\" >> {}", log.display());
         for t in ["cargo", "curl", "apt-get", "bosun"] {

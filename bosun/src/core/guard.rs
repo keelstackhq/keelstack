@@ -14,7 +14,9 @@ use crate::core::meta::OPEN;
 mod interp;
 mod literals;
 mod prose;
+mod settings;
 pub use interp::{Script, script_rules};
+pub use settings::settings_rule;
 mod writes;
 pub use writes::bash_writes;
 
@@ -444,7 +446,7 @@ pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
 /// normalised, also inside `bash -c`, `python -c`, a `cd` chain or a `$d` path), unless it is
 /// purely read-only ([`answers_read_only`]). A hint, not a seal: it stops confused workers,
 /// not liars (quoting can hide a name). The PostToolUse hook checks the transcript; the strong
-/// path is the signed record (`chat_signed`).
+/// path is a signed approval or the owner's own comment.
 pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
     let hit = match tool {
         "Bash" => {
@@ -546,6 +548,46 @@ fn names_answers(command: &str) -> bool {
             .any(|w| state(&lexical(w.trim_start_matches(['<', '>', '&']))))
 }
 
+/// Bosun-dir lock: `rm`, `mv` (source paths) and `git rm|mv` (also `--cached`) on `.bosun` or
+/// under it are refused in a Bash command (also inside `bash -c` and `eval`): removing
+/// `.bosun/version` would switch the guards off. Best effort: a path built in a variable or glob is missed.
+pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
+    let c = (tool == "Bash").then(|| input.get("command").and_then(Value::as_str))??;
+    let why = "removing or moving `.bosun/` is refused: it holds the repo's bosun setup; change \
+        it in a PR the owner approves";
+    removes_bosun_dir(c, 0).then(|| why.to_string())
+}
+
+fn is_bosun_dir_path(w: &str) -> bool {
+    let n = lexical(w.trim_end_matches('/'));
+    n == ".bosun" || n.starts_with(".bosun/") || n.ends_with("/.bosun") || n.contains("/.bosun/")
+}
+
+fn removes_bosun_dir(command: &str, depth: usize) -> bool {
+    let words = shell_words(command);
+    for seg in words.split(|w| w == SEP) {
+        let (name, args, _) = writes::command_of(seg);
+        let (kind, args) = match name {
+            "rm" | "unlink" | "rmdir" | "mv" => (name, args),
+            "git" => match args.iter().position(|w| matches!(*w, "rm" | "mv")) {
+                Some(k) => (args[k], args[k + 1..].to_vec()),
+                None => continue,
+            },
+            _ => continue,
+        };
+        // `mv a b`: the last path is the destination, the rest are sources.
+        let paths: Vec<_> = args.iter().filter(|a| !a.starts_with('-')).collect();
+        let n = paths.len() - usize::from(kind == "mv" && paths.len() > 1);
+        if paths[..n].iter().any(|p| is_bosun_dir_path(p)) {
+            return true;
+        }
+    }
+    depth < 3
+        && word_scripts(command)
+            .iter()
+            .any(|s| removes_bosun_dir(s, depth + 1))
+}
+
 /// [`prereqs_lock`] for a caller that may write the `task` marker (`task_ok`: a registered child
 /// session, spec §4): the checklist and epic markers stay refused.
 pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<String> {
@@ -572,9 +614,42 @@ pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<Stri
     })
 }
 
-const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION or CLAUDE_CODE_REMOTE_SESSION_ID, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
-const IDENTITY: &str =
-    "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID";
+/// Subagent-lock (spec §4): a Claude Code subagent (the hook input carries an `agent_id`) runs
+/// inside its parent's session, with its session id and environment, so in the cloud (where the
+/// child flag is no evidence) only this tells it from the orchestrator itself. It may not run
+/// `bosun merge` or sign an approval (`bosun approve` with `--sign-key`, `--via-signer` or
+/// `--as`). Lexical and best effort, like the other locks: any `bosun` word followed in its
+/// segment by `merge`, or by `approve` and a signing flag, is refused.
+pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
+    if tool != "Bash" {
+        return None;
+    }
+    let command = input.get("command").and_then(Value::as_str)?;
+    for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
+        let words = shell_words(seg);
+        let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
+            continue;
+        };
+        let rest = &words[i + 1..];
+        let has = |w: &str| rest.iter().any(|r| r == w);
+        let signs = ["--sign-key", "--via-signer", "--as"].iter().any(|f| {
+            rest.iter()
+                .any(|r| r == f || r.starts_with(&format!("{f}=")))
+        });
+        if has("merge") || (has("approve") && signs) {
+            return Some(
+                "a subagent never merges or signs an approval (D-022: child sessions never merge): \
+                 report the PR to the orchestrator, which runs `bosun merge` or `bosun approve` \
+                 itself"
+                    .into(),
+            );
+        }
+    }
+    None
+}
+
+const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_REMOTE_SESSION_ID or CLAUDE_CODE_REMOTE, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
+const IDENTITY: &str = "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_REMOTE";
 
 /// The `<task>` of a `BOSUN_SESSION` value `<own>/<task>` (`[A-Za-z0-9._-]+`).
 pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
@@ -584,7 +659,8 @@ pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
 }
 
 /// D-019, everywhere (stops confused workers, not liars; spec 04): refuses `NAME=v`, or a name
-/// beside a verb (export, unset, env, read, ...), for the four identity names, any `${!`, and
+/// beside a verb (export, unset, env, read, ...), for the five identity names (`CLAUDE_CODE_REMOTE`
+/// too: in the cloud it makes the child flag no evidence), any `${!`, and
 /// `env -i`, `env -`, `exec -c`; git, gh, rg, grep, echo text passes. Allowed: `BOSUN_SESSION=
 /// <own>/<task>` and `BOSUN_ORIGIN=routine` (prefix or one `export`) when `own` is set and the
 /// text has no `$`, `--origin`, merge, approve or verdict.
@@ -7369,6 +7445,31 @@ mod tests {
     }
 
     #[test]
+    fn subagent_lock_refuses_merge_and_signing_only() {
+        let hit = |c: &str| subagent_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "bosun merge 12",
+            "./target/debug/bosun merge 12",
+            "cd /r && bosun -C /r merge 12 2>&1 | jq .",
+            "bosun approve 1@abc --sign-key k.pem --bootstrap",
+            "bosun approve 1@abc --via-signer",
+            "bosun approve 1@abc --as=signer",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "bosun approve --list",
+            "bosun pr 7 --ready",
+            "git merge-base a b",
+            "cargo test --test cli_merge",
+            "echo merge; bosun status",
+        ] {
+            assert!(!hit(c), "{c}");
+        }
+        assert!(subagent_lock("Edit", &json!({"command": "bosun merge 1"})).is_none());
+    }
+
+    #[test]
     fn merge_env_tamper_is_refused_in_every_spelling() {
         let hit = |c: &str| {
             tool_rules(
@@ -7386,6 +7487,9 @@ mod tests {
             "export CLAUDE_CODE_CHILD_SESSION= ; bosun merge 1",
             "unset CLAUDE_CODE_CHILD_SESSION && \\bosun merge 1",
             "CLAUDE_CODE_REMOTE_SESSION_ID=o command bosun merge 1",
+            "CLAUDE_CODE_REMOTE=true bosun merge 1",
+            "export CLAUDE_CODE_REMOTE=true; bosun merge 1",
+            "unset CLAUDE_CODE_REMOTE",
             "bash -c 'unset CLAUDE_\"CODE\"_CHILD_SESSION; bosun merge 1'",
             "env -u CLAUDE_CODE_CHILD_SESSION nice bosun merge 1",
             "n=BOSUN_SESSION; export ${!n}=x",
@@ -7424,7 +7528,7 @@ mod tests {
             "BOSUN_SESSION=session_o/ bosun claim 12",
             "BOSUN_SESSION=session_o bosun claim 12",
             "BOSUN_SESSION=session_o/12 bosun merge 12",
-            "BOSUN_SESSION=session_o/12 bosun approve --chat",
+            "BOSUN_SESSION=session_o/12 bosun approve 1@0123456789abcdef0123456789abcdef01234567 --sign-key k",
             "BOSUN_SESSION=session_o/12 bosun verdict post",
             "BOSUN_ORIGIN=routine bosun join --origin routine",
             "BOSUN_ORIGIN=local bosun join",
@@ -7470,6 +7574,39 @@ mod tests {
             "echo $DBUS_SESSION_BUS_ADDRESS $AWS_SESSION_TOKEN $TMUX_SESSION; bosun merge 1",
         ] {
             assert!(!hit(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn bosun_dir_removal_is_refused() {
+        let hit = |c: &str| bosun_dir_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "rm .bosun/version",
+            "rm -rf .bosun",
+            "rm -rf ./.bosun/",
+            "rm -f /r/.bosun/version",
+            "git rm -r .bosun",
+            "git -C /r rm .bosun/version",
+            "mv .bosun /tmp/x",
+            "mv .bosun/version /tmp/x",
+            "mv ./x/../.bosun/version /tmp",
+            "cd /r && rm .bosun/version",
+            "bash -c 'rm .bosun/version'",
+            "unlink .bosun/version",
+            "git rm --cached .bosun/version",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "mv x .bosun/version",
+            "cp .bosun/version /tmp",
+            "cat .bosun/version",
+            "rm docs/x.md",
+            "git rm src/a.rs",
+            "echo rm .bosun",
+            "ls .bosun",
+        ] {
+            assert!(!hit(c), "{c}");
         }
     }
 

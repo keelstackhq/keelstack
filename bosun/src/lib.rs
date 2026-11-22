@@ -56,7 +56,7 @@ pub fn run(mut cli: Cli) -> CmdResult {
         Command::Answer(a) => cli::answer::run(dir, a),
         Command::Lesson(a) => cli::lesson::run(dir, a),
         Command::Hook(a) => hooks::dispatch(dir, a),
-        Command::Doctor(a) => cli::doctor::run_with(dir, a.remote, a.full),
+        Command::Doctor(a) => cli::doctor::run_with(dir, a.remote, a.full, a.all),
         Command::Budget(a) => cli::budget::run(dir, a),
         Command::Plan(a) => cli::plan::run(dir, a),
         Command::Fail(a) => cli::stop::run(dir, a),
@@ -80,7 +80,7 @@ pub fn run(mut cli: Cli) -> CmdResult {
         Command::Pin(a) => cli::pin::run(dir, a),
         Command::Migrate(a) => cli::migrate::run(dir, a),
         Command::Owners(a) => cli::owners::run(dir, a),
-        Command::SetupSnippet => cli::setup_snippet::run(dir),
+        Command::SetupSnippet(a) => cli::setup_snippet::run(dir, a),
         Command::Schema(a) => cli::schema::run(a),
     }
 }

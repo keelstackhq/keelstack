@@ -102,6 +102,10 @@ pub struct State {
     pub repo: serde_json::Map<String, Value>,
     /// Tag of the latest release, if any.
     pub release: Option<String>,
+    /// `published_at` of the latest release, if set.
+    pub release_at: Option<String>,
+    /// Further releases `GET /releases` lists after the latest: `(tag, published_at)`.
+    pub more_releases: Vec<(String, String)>,
     /// (status, remaining) answered before any routing.
     pub fail: Option<(u16, u32)>,
     /// Repository permission by login; a login not listed has `write`.
@@ -134,6 +138,8 @@ pub struct State {
     pub parents: HashMap<String, String>,
     /// Branches `GET /branches/<name>` answers 404 for; every other branch exists.
     pub missing_branches: Vec<String>,
+    /// Git refs `GET /git/ref/tags/<name>` answers 200 for; every other one is 404.
+    pub release_refs: Vec<(String, String)>,
 }
 
 type Mutation = Box<dyn FnOnce(&mut State) + Send>;
@@ -616,6 +622,13 @@ impl FakeGithub {
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
         s.contents.insert(format!("{git_ref}:{path}"), text.into());
+        // The default branch is what each pull's base sha stands for (a missing file stays missing).
+        let bases: Vec<String> = (s.pulls.iter())
+            .filter_map(|p| p["base"]["sha"].as_str().map(String::from))
+            .collect();
+        for b in bases.iter().filter(|_| git_ref == "refs/heads/main") {
+            s.contents.insert(format!("{b}:{path}"), text.into());
+        }
     }
 
     /// A workflow run of `sha` with one job and its log.
@@ -658,6 +671,18 @@ impl FakeGithub {
             .push(name.into());
     }
 
+    /// Publish the release ref `name` (such as `v0.22.0`) in bosun's upstream repo
+    /// `keelstackhq/keelstack`: `GET /repos/keelstackhq/keelstack/git/ref/tags/<name>` answers 200.
+    pub fn release_ref(&self, name: &str) {
+        self.release_ref_in("keelstackhq/keelstack", name);
+    }
+
+    /// Publish the release ref `name` in the repo `owner/name`; the same ref in another repo is 404.
+    pub fn release_ref_in(&self, repo: &str, name: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.release_refs.push((repo.into(), name.into()));
+    }
+
     pub fn graphql_status(&self, status: u16, message: &str) {
         self.state.lock().unwrap().graphql_status = Some((status, message.into()));
     }
@@ -679,6 +704,18 @@ impl FakeGithub {
     /// Set a field of the repository document, for example `allow_auto_merge`.
     pub fn repo_set(&self, key: &str, value: Value) {
         self.state.lock().unwrap().repo.insert(key.into(), value);
+    }
+
+    pub fn release_published(&self, tag: &str, at: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.release = Some(tag.into());
+        s.release_at = Some(at.into());
+    }
+
+    /// An additional release in the `GET /releases` list (the latest stays `release_published`).
+    pub fn release_also(&self, tag: &str, at: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.more_releases.push((tag.into(), at.into()));
     }
 
     pub fn release(&self, tag: &str) {
@@ -1077,9 +1114,10 @@ fn route(
             None => msg(404, "Not Found"),
         };
     }
-    let ["repos", _, _, rest @ ..] = seg.as_slice() else {
+    let ["repos", repo_owner, repo_name, rest @ ..] = seg.as_slice() else {
         return msg(404, "Not Found");
     };
+    let repo_full = format!("{repo_owner}/{repo_name}");
     let find = |s: &State, n: &str| {
         n.parse::<u64>()
             .ok()
@@ -1269,6 +1307,12 @@ fn route(
                 return msg(404, "Branch not found");
             }
             ok(json!({"name": name}))
+        }
+        ("GET", ["git", "ref", "tags", name]) => {
+            if (s.release_refs.iter()).any(|(r, t)| *r == repo_full && t == name) {
+                return ok(json!({"ref": format!("refs/tags/{name}")}));
+            }
+            msg(404, "Not Found")
         }
         ("GET", ["labels", name]) => match s.labels.iter().find(|l| l.0 == *name) {
             Some(l) => ok(json!({"name": l.0, "color": l.1})),
@@ -1621,8 +1665,19 @@ fn route(
             }
             ok(v)
         }
+        ("GET", ["releases"]) => {
+            let mut v: Vec<Value> = (s.release.iter())
+                .map(|t| json!({"tag_name": t, "published_at": s.release_at}))
+                .collect();
+            v.extend(
+                s.more_releases
+                    .iter()
+                    .map(|(t, at)| json!({"tag_name": t, "published_at": at})),
+            );
+            ok(Value::Array(v))
+        }
         ("GET", ["releases", "latest"]) => match &s.release {
-            Some(t) => ok(json!({"tag_name": t})),
+            Some(t) => ok(json!({"tag_name": t, "published_at": s.release_at})),
             None => msg(404, "Not Found"),
         },
         ("GET", ["rules", "branches", _]) => ok(if s.ruleset_checks.is_empty() {
