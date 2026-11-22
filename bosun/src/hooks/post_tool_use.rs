@@ -37,7 +37,7 @@ pub fn run(cwd: Option<&Path>, input: &Value) -> Option<String> {
         return None;
     };
     // The bosun identity, resolved exactly as the CLI resolves it (same environment), so
-    // `approve --chat` in this session finds it; the CLI's own UUID is kept for audit.
+    // the answer is keyed by it; the CLI's own UUID is kept for audit.
     let ctx = match crate::ctx::Ctx::load(Some(&dir)) {
         Ok(c) => c,
         Err(e) => {

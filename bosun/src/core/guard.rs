@@ -446,7 +446,7 @@ pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
 /// normalised, also inside `bash -c`, `python -c`, a `cd` chain or a `$d` path), unless it is
 /// purely read-only ([`answers_read_only`]). A hint, not a seal: it stops confused workers,
 /// not liars (quoting can hide a name). The PostToolUse hook checks the transcript; the strong
-/// path is the signed record (`chat_signed`).
+/// path is a signed approval or the owner's own comment.
 pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
     let hit = match tool {
         "Bash" => {
@@ -7469,7 +7469,7 @@ mod tests {
             "BOSUN_SESSION=session_o/ bosun claim 12",
             "BOSUN_SESSION=session_o bosun claim 12",
             "BOSUN_SESSION=session_o/12 bosun merge 12",
-            "BOSUN_SESSION=session_o/12 bosun approve --chat",
+            "BOSUN_SESSION=session_o/12 bosun approve 1@0123456789abcdef0123456789abcdef01234567 --sign-key k",
             "BOSUN_SESSION=session_o/12 bosun verdict post",
             "BOSUN_ORIGIN=routine bosun join --origin routine",
             "BOSUN_ORIGIN=local bosun join",

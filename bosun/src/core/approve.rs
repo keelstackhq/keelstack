@@ -656,78 +656,6 @@ pub fn signed_comment(
     format!("/bosun approve {head}{tail}\n{note}bosun-sig ed25519 {key_id} {sig_b64}")
 }
 
-/// The marker that tags a chat approval record (spec section 8).
-pub const CHAT_MARKER: &str = "bosun:chat-approval";
-
-/// A chat approval record: the orchestrator wrote down the owner's chat yes for `head`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatRecord {
-    pub head: String,
-    pub session: String,
-    pub question: Option<String>,
-}
-
-/// The PR comment that records the owner's chat approval of `head`.
-pub fn chat_comment(head: &str, session: &str, at: &str, question: Option<&str>) -> String {
-    let q = question
-        .map(|q| format!(" question={q}"))
-        .unwrap_or_default();
-    format!(
-        "/bosun approve {head} chat\nApproved by the owner in chat (session {session}, {at}).\n<!-- {CHAT_MARKER} v1 session={session} head={head}{q} -->"
-    )
-}
-
-/// The chat record in `body` for `head`: the first line is exactly `/bosun approve <head> chat`,
-/// `head` is 40 lowercase hex, and exactly one line mentions the marker, which reads exactly
-/// `<!-- bosun:chat-approval v1 session=<id> head=<head>[ question=<id>] -->` (keys in this
-/// order, none unknown or repeated). The risk-check counter and the hook guard share this rule.
-pub fn parse_chat_record(body: &str, head: &str, pr: Option<u64>) -> Option<ChatRecord> {
-    let hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
-    if head.len() != 40 || !head.bytes().all(hex) {
-        return None;
-    }
-    // Untrimmed at the start: an indented line renders as code, not as the command.
-    let first = body.lines().find(|l| !l.trim().is_empty())?.trim_end();
-    if first != format!("/bosun approve {head} chat") {
-        return None;
-    }
-    let mut marked = body.lines().filter(|l| l.contains(CHAT_MARKER));
-    let (Some(line), None) = (marked.next(), marked.next()) else {
-        return None;
-    };
-    let rest = line
-        .trim()
-        .strip_prefix(&format!("<!-- {CHAT_MARKER} v1 "))?
-        .strip_suffix(" -->")?;
-    let mut kv = rest.split(' ');
-    let session = kv
-        .next()?
-        .strip_prefix("session=")
-        .filter(|s| !s.is_empty())?;
-    (kv.next()?.strip_prefix("head=")? == head).then_some(())?;
-    let question = match kv.next() {
-        None => None,
-        Some(q) => Some(q.strip_prefix("question=").filter(|q| !q.is_empty())?),
-    };
-    if kv.next().is_some() {
-        return None;
-    }
-    if let Some(q) = question {
-        // `<pr>-<short head>-<unix secs>`: it must name this head, and this PR when known.
-        let mut parts = q.splitn(3, '-');
-        let (q_pr, q_short) = (parts.next()?, parts.next()?);
-        if q_short != &head[..7] || pr.is_some_and(|n| q_pr != n.to_string()) {
-            return None;
-        }
-        question_unix(q)?;
-    }
-    Some(ChatRecord {
-        head: head.into(),
-        session: session.into(),
-        question: question.map(Into::into),
-    })
-}
-
 /// Whether `session`'s newest registry record is an orchestrator: it has no parent and is a
 /// root (depth 1) or origin `local` or `slack`, never origin `spawned` or `routine` (parent and
 /// depth are self-declared, the origin is not a claim of authority), and it has not expired at `now` (the registry
@@ -747,21 +675,6 @@ pub fn is_orchestrator(members: &[Member], session: &str, now: Timestamp) -> boo
                 && !matches!(m.origin.as_str(), "spawned" | "routine")
                 && (m.depth == 1 || matches!(m.origin.as_str(), "local" | "slack"))
         })
-}
-
-/// The unix part of a question id: all digits and an `i64`.
-pub fn question_unix(q: &str) -> Option<i64> {
-    let u = q.splitn(3, '-').nth(2)?;
-    if u.is_empty() || !u.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    u.parse().ok()
-}
-
-/// Whether a question id's time suits a comment created at `at` (unix secs): at most 60 s
-/// later, at most 14 days earlier. A record without a question has no time to check.
-pub fn question_fresh(q: Option<&str>, at: i64) -> bool {
-    q.is_none_or(|q| question_unix(q).is_some_and(|u| u <= at + 60 && u >= at - 14 * 86_400))
 }
 
 /// The id bosun puts in an approval question: `<pr>-<short head>-<unix secs>`.
@@ -823,11 +736,6 @@ pub fn summary_readiness(summary: Option<&str>) -> (Readiness, String) {
 mod tests {
 
     const H: &str = "abcdef1234567890abcdef1234567890abcdef12";
-    const H2: &str = "1111111111111111111111111111111111111111";
-
-    fn parse_chat_record(body: &str, head: &str) -> Option<ChatRecord> {
-        super::parse_chat_record(body, head, None)
-    }
 
     fn member(session: &str, origin: &str, parent: Option<&str>, depth: u32, id: u64) -> Member {
         Member {
@@ -909,69 +817,6 @@ mod tests {
     }
 
     #[test]
-    fn chat_comment_round_trips() {
-        let body = chat_comment(H, "session_o", "2026-11-10T00:00:00Z", Some("12-abcdef1-1"));
-        let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], format!("/bosun approve {H} chat"));
-        assert_eq!(
-            lines[1],
-            "Approved by the owner in chat (session session_o, 2026-11-10T00:00:00Z)."
-        );
-        assert_eq!(
-            lines[2],
-            format!(
-                "<!-- bosun:chat-approval v1 session=session_o head={H} question=12-abcdef1-1 -->"
-            )
-        );
-        assert_eq!(
-            parse_chat_record(&body, H),
-            Some(ChatRecord {
-                head: H.into(),
-                session: "session_o".into(),
-                question: Some("12-abcdef1-1".into()),
-            })
-        );
-        let none = chat_comment(H, "session_o", "t", None);
-        assert_eq!(parse_chat_record(&none, H).unwrap().question, None);
-    }
-
-    #[test]
-    fn parse_rejects_other_head() {
-        let body = chat_comment(H, "s", "t", None);
-        assert_eq!(parse_chat_record(&body, H2), None);
-        // Marker names another head than the first line.
-        let mixed = body.replacen(&format!("head={H}"), &format!("head={H2}"), 1);
-        assert_eq!(parse_chat_record(&mixed, H), None);
-    }
-
-    #[test]
-    fn parse_rejects_missing_marker() {
-        let body = format!("/bosun approve {H} chat\nApproved by the owner in chat.");
-        assert_eq!(parse_chat_record(&body, H), None);
-        let empty = chat_comment(H, "", "t", None);
-        assert_eq!(parse_chat_record(&empty, H), None);
-    }
-
-    #[test]
-    fn parse_rejects_duplicate_marker_or_key() {
-        let body = chat_comment(H, "s", "t", None);
-        assert_eq!(
-            parse_chat_record(&format!("{body}\n{}", body.lines().nth(2).unwrap()), H),
-            None
-        );
-        let dup = body.replace(" -->", " session=other -->");
-        assert_eq!(parse_chat_record(&dup, H), None);
-    }
-
-    #[test]
-    fn parse_rejects_plain_approve() {
-        assert_eq!(parse_chat_record(&format!("/bosun approve {H}"), H), None);
-        let quoted = format!("> {}", chat_comment(H, "s", "t", None));
-        assert_eq!(parse_chat_record(&quoted, H), None);
-    }
-
-    #[test]
     fn orchestrator_root_local_slack() {
         let m = vec![
             member("root", "local", None, 1, 1),
@@ -1017,83 +862,6 @@ mod tests {
             member("x", "local", None, 1, 1),
         ];
         assert!(!is_orchestrator(&rev, "x"));
-    }
-
-    #[test]
-    fn question_binds_the_pr_and_the_head() {
-        let q = question_id(12, H, 1_700_000_000);
-        let body = chat_comment(H, "s", "t", Some(&q));
-        assert!(super::parse_chat_record(&body, H, Some(12)).is_some());
-        assert!(super::parse_chat_record(&body, H, None).is_some());
-        assert_eq!(super::parse_chat_record(&body, H, Some(13)), None);
-        let other = question_id(12, H2, 1);
-        let body = chat_comment(H, "s", "t", Some(&other));
-        assert_eq!(super::parse_chat_record(&body, H, Some(12)), None);
-        assert_eq!(super::parse_chat_record(&body, H, None), None);
-        let junk = chat_comment(H, "s", "t", Some("q"));
-        assert_eq!(super::parse_chat_record(&junk, H, None), None);
-        let none = chat_comment(H, "s", "t", None);
-        assert!(super::parse_chat_record(&none, H, Some(12)).is_some());
-    }
-
-    #[test]
-    fn parse_is_strict() {
-        let ok = chat_comment(H, "s", "t", Some("1-abcdef1-2"));
-        let m = |marker: &str| ok.replacen("session=s head=", marker, 1);
-        // Keys out of order, unknown, duplicated.
-        assert_eq!(parse_chat_record(&m("head=x session=s head="), H), None);
-        assert_eq!(parse_chat_record(&m("session=s x=1 head="), H), None);
-        assert_eq!(parse_chat_record(&m("session=s session=s head="), H), None);
-        let swapped = ok.replacen(
-            &format!("head={H} question=1-abcdef1-2"),
-            &format!("question=1-abcdef1-2 head={H}"),
-            1,
-        );
-        assert_eq!(parse_chat_record(&swapped, H), None);
-        let dup_q = ok.replacen("question=1-abcdef1-2", "question=1-abcdef1-2 question=r", 1);
-        assert_eq!(parse_chat_record(&dup_q, H), None);
-        // Head must be 40 lowercase hex.
-        let short = chat_comment("abc", "s", "t", None);
-        assert_eq!(parse_chat_record(&short, "abc"), None);
-        let upper = H.to_uppercase();
-        assert_eq!(
-            parse_chat_record(&chat_comment(&upper, "s", "t", None), &upper),
-            None
-        );
-        // Exactly one marker line, and nothing after the marker but `-->`.
-        let twice = format!("{ok}\n<!-- bosun:chat-approval v1 session=s head={H} -->");
-        assert_eq!(parse_chat_record(&twice, H), None);
-        let mention = format!("{ok}\nsee bosun:chat-approval");
-        assert_eq!(parse_chat_record(&mention, H), None);
-        let indented = format!("    {ok}");
-        assert_eq!(parse_chat_record(&indented, H), None);
-        assert!(parse_chat_record(&ok, H).is_some());
-    }
-
-    #[test]
-    fn question_unix_part_is_checked() {
-        let rec = |q: &str| {
-            let body = format!(
-                "/bosun approve {H} chat\n<!-- bosun:chat-approval v1 session=s head={H} question={q} -->"
-            );
-            parse_chat_record(&body, H)
-        };
-        assert!(rec("12-abcdef1-1700000000").is_some());
-        for bad in [
-            "12-abcdef1",
-            "12-abcdef1-",
-            "12-abcdef1-17x",
-            "12-abcdef1--5",
-            "12-abcdef1-99999999999999999999",
-        ] {
-            assert!(rec(bad).is_none(), "{bad}");
-        }
-        let q = Some("12-abcdef1-1000");
-        assert!(question_fresh(q, 1000) && question_fresh(q, 1000 - 60));
-        assert!(!question_fresh(q, 1000 - 61));
-        assert!(question_fresh(q, 1000 + 14 * 86_400));
-        assert!(!question_fresh(q, 1000 + 14 * 86_400 + 1));
-        assert!(question_fresh(None, 5));
     }
 
     #[test]

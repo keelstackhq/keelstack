@@ -291,7 +291,9 @@ pub struct Approvals {
     /// `policy` came from the `[mode]` preset, not from this table.
     #[serde(skip)]
     pub policy_preset: bool,
-    /// Whether a chat approval record counts as the owner's approval. Unset: true.
+    /// Deprecated and ignored (D-022 retired chat approvals): a chat approval record never counts,
+    /// whatever this says. Still parsed so an old config (and a release that pins `chat`) keeps
+    /// loading; delete it. Ignoring it fails safe: the only effect of the key was to count more.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat: Option<bool>,
     /// The upstream bosun repository (`owner/name`, default `keelstackhq/keelstack`, the monorepo that releases bosun since D-023) whose `v{version}`
@@ -334,11 +336,6 @@ impl Approvals {
             Some((o, r)) if ok(o) && ok(r) => Ok((o.into(), r.into())),
             _ => Err(v.into()),
         }
-    }
-
-    /// Whether a chat approval record counts as the owner's approval (default true).
-    pub fn chat_enabled(&self) -> bool {
-        self.chat.unwrap_or(true)
     }
 }
 

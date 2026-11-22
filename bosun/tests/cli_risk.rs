@@ -82,11 +82,11 @@ fn pr_that_weakens_the_rules_is_judged_by_the_base_rules() {
     assert_eq!(rule_ids(&v), ["R-gov", "R-weaken", "R-trust"]);
     let fix = v["error"]["fix"].as_str().unwrap();
     assert!(
-        fix.contains(HEAD) && fix.contains("form in the Claude Code chat"),
+        fix.contains(HEAD) && fix.contains("/bosun approve") && !fix.contains("--chat"),
         "{fix}"
     );
     assert!(
-        fix.contains("--sign-key") && fix.contains("fallback"),
+        fix.contains("--sign-key") && fix.contains("GitHub review"),
         "{fix}"
     );
     assert_eq!(last_status(&fake)["state"], "failure");

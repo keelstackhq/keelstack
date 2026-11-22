@@ -147,7 +147,7 @@ pub(crate) fn hostname() -> String {
         .unwrap_or_else(|| "unknown".into())
 }
 
-/// Commands that trust the identity (merge, approve --chat, verdict, join --origin) refuse a
+/// Commands that trust the identity (merge, verdict, join --origin) refuse a
 /// `BOSUN_SESSION` that is not `<own>` or `<own>/<task>`; `<own>` is the remote session id
 /// (checkable only when `CLAUDE_CODE_REMOTE_SESSION_ID` is set).
 pub fn trusted_identity() -> Result<(), BosunError> {

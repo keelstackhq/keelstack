@@ -130,18 +130,10 @@ fn verdict_by(fake: &FakeGithub, session: &str) {
     noci::signed_verdict(fake, "rev", session);
 }
 
-fn chat(fake: &FakeGithub) {
+/// The owner's own `/bosun approve <head>` comment (a plain user token, no app footer).
+fn owner_approves(fake: &FakeGithub) {
     let head = fake.pull_head(20);
-    let short = &head[..7];
-    // Written at NOW (inside the join's live window), question id minted at NOW (unix 1794304800).
-    fake.comment_at(
-        20,
-        "ada",
-        &format!(
-            "/bosun approve {head} chat\nApproved by the owner in chat.\n<!-- bosun:chat-approval v1 session={ORCH} head={head} question=20-{short}-1794304800 -->"
-        ),
-        NOW,
-    );
+    fake.comment_at(20, "ada", &format!("/bosun approve {head}"), NOW);
 }
 
 fn run_as(fake: &FakeGithub, dir: &Path, session: &str, args: &[&str]) -> (i32, Value) {
@@ -247,17 +239,17 @@ fn merge_halted_exit4() {
     assert!(merge_puts(&fake).is_empty());
 }
 
-/// Gated without the owner's chat answer: no summary says ready, the merge waits (exit 5).
+/// Gated without the owner's approval: no summary says ready, the merge waits (exit 5).
 #[test]
-fn merge_gated_without_chat_refused() {
+fn merge_gated_without_owner_approval_refused() {
     let (fake, dir) = setup(true, Some(NO_CI));
     verdict(&fake);
     assert_eq!(ready(&fake, dir.path()).0, 5);
     let (code, v) = merge(&fake, dir.path());
     assert_eq!(code, 5, "{v}");
     assert!(merge_puts(&fake).is_empty());
-    // With the owner's answer recorded, the merge goes through (re-checked, no rerun needed).
-    chat(&fake);
+    // With the owner's own approval comment, the merge goes through (re-checked, no rerun needed).
+    owner_approves(&fake);
     let (code, v) = merge(&fake, dir.path());
     assert_eq!(code, 0, "{v}");
     assert!(fake.merged(20));
@@ -731,7 +723,7 @@ fn merge_runs_no_gate_before_the_owner_approves() {
     let (code, v) = merge(&fake, dir.path());
     assert_eq!(code, 5, "{v}");
     assert!(!marker.exists(), "a gate ran before the owner approved");
-    chat(&fake);
+    owner_approves(&fake);
     let (code, v) = merge(&fake, dir.path());
     assert_eq!(code, 0, "{v}");
     assert!(marker.exists());
@@ -1001,7 +993,6 @@ fn identity_trusting_commands_refuse_a_foreign_session() {
     };
     for args in [
         &["merge", "20"][..],
-        &["approve", "20@abc", "--chat"],
         &["verdict", "post"],
         &["join", "--origin", "local"],
     ] {

@@ -1,7 +1,7 @@
 //! `bosun merge <pr>` (spec D13 as amended by org decision D-019, §4): the orchestrator re-checks
 //! every gate on the PR's current head, then merges with `sha = head`, so a push after the
 //! checks makes GitHub refuse (exit 3). Without CI the gates are the ready summary, risk-check,
-//! a clean verdict from another session (the owner's chat approval when gated) and main-open;
+//! a clean verdict from another session (the owner's approval when gated) and main-open;
 //! with CI they are the required checks. Every other agent merge path stays refused by the hook.
 
 use std::path::Path;
@@ -98,7 +98,7 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
 }
 
 /// No CI: a writer's ready summary for this head, then the same local checks `pr --ready` ran,
-/// re-run now (the owner's chat answer may have come after the summary).
+/// re-run now (the owner's approval may have come after the summary).
 fn check_no_ci(app: &App, pull: &Pull) -> Result<(), BosunError> {
     let gh = app.gh.as_ref();
     let (pr, head) = (pull.number, pull.head_sha.as_str());
