@@ -51,7 +51,7 @@ fn from_pr(dir: Option<&Path>, base: Option<&str>, n: u64) -> CmdResult {
             data["allow_refused"] = json!(why);
         }
     };
-    match check_with(dir, base, &pull.body, &allow) {
+    match check_with(dir, base, &pull.body, &allow, None) {
         Ok(mut out) => {
             add(&mut out.data);
             Ok(out)
@@ -125,7 +125,7 @@ pub(crate) fn pr_allow(app: &App, pull: &crate::github::Pull) -> Result<PrAllow,
 pub fn check(dir: Option<&Path>, base: Option<&str>) -> CmdResult {
     let body = std::env::var("BOSUN_PR_BODY").unwrap_or_default();
     let allow = parse_allow(&std::env::var("BOSUN_INTEGRITY_ALLOW").unwrap_or_default());
-    check_with(dir, base, &body, &allow)
+    check_with(dir, base, &body, &allow, None)
 }
 
 pub(crate) fn check_with(
@@ -133,6 +133,7 @@ pub(crate) fn check_with(
     base: Option<&str>,
     body: &str,
     allow: &[String],
+    default: Option<&integrity::DefaultView>,
 ) -> CmdResult {
     let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| ".".into());
     let root = repo_root(&dir)?;
@@ -144,6 +145,7 @@ pub(crate) fn check_with(
         base: &base,
         body,
         allow,
+        default,
     })
 }
 

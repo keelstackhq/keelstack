@@ -19,16 +19,18 @@ name: deploy-site
 # for the new version, fail the drift test: nothing is deployed); the release run's completion
 # deploys the new ones.
 #
-# Three jobs, so no secret meets installed code:
-#   decide  resolves the commit (this run's: main's head) and the release tag.
-#   build   checks out that commit, installs, runs `ci` (build, lint, tests) and uploads one
-#           archive (dist + wrangler, installed from the lockfile) with its sha256. No secrets, no
-#           environment.
-#   deploy  environment `site` (deployment branches: default branch only) holds
-#           CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (.github/SETUP.md). It checks out and
-#           installs nothing: it verifies the archive's sha256 against build's output and runs
-#           the archived wrangler on the archived dist. Only `Check secrets` and the deploy step
-#           see the secrets.
+# Four jobs, so no secret meets code a site script could have touched:
+#   decide   resolves the commit (this run's: main's head) and the release tag.
+#   build    checks out that commit, installs, runs `ci` (build, lint, tests) and uploads dist only,
+#            with its sha256. No secrets, no environment.
+#   wrangler checks out the same commit, runs no site script and only stages wrangler from the
+#            lockfile (`pnpm deploy --ignore-scripts`); uploads it with its sha256. No secrets.
+#   deploy   environment `site` (deployment branches: default branch only) holds
+#            CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID (.github/SETUP.md). It checks out and
+#            installs nothing: it verifies both sha256 against the jobs' outputs, takes only
+#            `dist/` from the site archive (regular files and directories only) and runs the
+#            wrangler of the wrangler archive on it. Only `Check secrets` and the deploy step
+#            see the secrets.
 #
 # D-007: Linux only, no comment/label/edit triggers, job-level `if:`, one build per run.
 on:
@@ -128,15 +130,12 @@ jobs:
         env:
           RELEASED_VERSION: ${{ needs.decide.outputs.released }}
         run: pnpm run ci
-      # One archive: the built site and wrangler with its locked closure (pnpm deploy of the
-      # workspace package that depends on wrangler only), so `deploy` installs nothing.
+      # Only the built site, packed. Wrangler is staged by job `wrangler`, never here: this job ran
+      # every site script, so nothing it leaves may be run with the token.
       - name: Pack the site
         id: pack
         run: |
-          mkdir stage
-          cp -r site/apps/site/dist stage/dist
-          pnpm --dir site --filter @keelstackhq/deploy deploy --prod "$PWD/stage/wrangler"
-          tar -C stage -czf site-dist.tgz .
+          tar -C site/apps/site -czf site-dist.tgz dist
           echo "digest=$(sha256sum site-dist.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
@@ -145,9 +144,46 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Stages wrangler with its locked closure (pnpm deploy of the workspace package that depends on
+  # wrangler only). No secrets, runs no site script (`--ignore-scripts`, no install of the
+  # workspace, no cache a `build` run could write): what it loads is site/package.json,
+  # pnpm-lock.yaml, pnpm-workspace.yaml, .node-version, .npmrc, .pnpmfile.* and
+  # packages/deploy, all quorum trust root (bosun risk::TRUST_ROOT).
+  wrangler:
+    needs: decide
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      digest: ${{ steps.pack.outputs.digest }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.decide.outputs.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          package_json_file: site/package.json
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: site/.node-version
+      - name: Stage wrangler
+        id: pack
+        run: |
+          mkdir stage
+          pnpm --dir site --filter ./packages/deploy deploy --prod --ignore-scripts "$PWD/stage/wrangler"
+          stage/wrangler/node_modules/.bin/wrangler --version
+          tar -C stage -czf wrangler.tgz wrangler
+          echo "digest=$(sha256sum wrangler.tgz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: wrangler
+          path: wrangler.tgz
+          if-no-files-found: error
+          retention-days: 1
+
   # main (push, a manual run on main): deploy the verified build.
   deploy:
-    needs: [decide, build]
+    needs: [decide, build, wrangler]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment: site
@@ -164,16 +200,32 @@ jobs:
       - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           name: site-dist
-          path: artifact
-      # Only the archive build hashed is deployed.
-      - name: Verify the artifact
+          path: artifact/site
+      - uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: wrangler
+          path: artifact/wrangler
+      # Only the archives the jobs hashed are used. From the site archive only `dist/` is taken,
+      # and it may hold regular files and directories only: a symlink (to /proc/self/environ, say)
+      # would upload the token. Wrangler comes from its own archive.
+      - name: Verify the artifacts
         env:
-          DIGEST: ${{ needs.build.outputs.digest }}
+          SITE_DIGEST: ${{ needs.build.outputs.digest }}
+          WRANGLER_DIGEST: ${{ needs.wrangler.outputs.digest }}
         run: |
-          [[ "$DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::build produced no sha256"; exit 1; }
-          echo "$DIGEST  artifact/site-dist.tgz" | sha256sum -c -
-          tar -xzf artifact/site-dist.tgz
+          [[ "$SITE_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::build produced no sha256"; exit 1; }
+          [[ "$WRANGLER_DIGEST" =~ ^[0-9a-f]{64}$ ]] || { echo "::error::wrangler produced no sha256"; exit 1; }
+          echo "$SITE_DIGEST  artifact/site/site-dist.tgz" | sha256sum -c -
+          echo "$WRANGLER_DIGEST  artifact/wrangler/wrangler.tgz" | sha256sum -c -
+          tar -xzf artifact/site/site-dist.tgz dist
+          tar -xzf artifact/wrangler/wrangler.tgz wrangler
           [ -f dist/index.html ] || { echo "::error::the artifact has no index.html"; exit 1; }
+          odd="$(find dist ! -type f ! -type d -print)"
+          if [ -n "$odd" ]; then
+            echo "::error::dist holds something other than regular files and directories:"
+            echo "$odd"
+            exit 1
+          fi
           wrangler/node_modules/.bin/wrangler --version
       - name: Deploy to Cloudflare Pages
         env:

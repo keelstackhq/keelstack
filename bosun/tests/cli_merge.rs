@@ -1284,3 +1284,57 @@ fn merge_refuses_a_bootstrap_skip_when_the_default_branch_has_the_file() {
     assert_eq!(v["data"]["failed_gates"], json!(["deps"]), "{v}");
     assert!(!fake.merged(20));
 }
+
+/// A bootstrap PR (its base has no `.bosun/`) that deletes `tests/t.rs`; no task allows it.
+fn bootstrap_deleting_a_test() -> (FakeGithub, tempfile::TempDir) {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "-b", "claude/t7"]);
+    std::fs::create_dir_all(dir.path().join("tests")).unwrap();
+    std::fs::write(dir.path().join("tests/t.rs"), SEED_TEST).unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::remove_file(dir.path().join("tests/t.rs")).unwrap();
+    std::fs::create_dir_all(dir.path().join(".bosun")).unwrap();
+    std::fs::write(dir.path().join(".bosun/bosun.toml"), NO_CI).unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "head"]);
+    let (fake, dir) = setup_dir(false, Some(NO_CI), dir);
+    // The base had no `.bosun/` at all.
+    fake.absent_at(".bosun/bosun.toml", &base_sha(dir.path()));
+    let owners = "[[owner]]\ngithub = \"ada\"\n";
+    fake.content("governance/owners.toml", "refs/heads/main", owners);
+    fake.content("governance/owners.toml", &base_sha(dir.path()), owners);
+    fake.pull_file(20, "tests/t.rs", "removed", 0, 4, None);
+    owner_approves(&fake);
+    verdict(&fake);
+    (fake, dir)
+}
+
+/// The base is bare but the default branch has `.bosun/bosun.toml`: no bootstrap to borrow, so the
+/// deleted test is a finding.
+#[test]
+fn merge_refuses_the_bootstrap_waiver_when_the_default_branch_has_bosun_toml() {
+    let (fake, dir) = bootstrap_deleting_a_test();
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["test-integrity"]), "{v}");
+    assert!(!fake.merged(20));
+}
+
+/// Same PR, but `.bosun/bosun.toml` is asked of the default branch and the API fails: it counts as
+/// present (fail closed), so the waiver is refused.
+#[test]
+fn merge_refuses_the_bootstrap_waiver_when_the_default_branch_lookup_errors() {
+    let (fake, dir) = bootstrap_deleting_a_test();
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    // The gates read the default branch's `.bosun/bosun.toml` (overlay), then its profile, then ask
+    // whether it has `.bosun/bosun.toml` for the waiver: fail every read of it once the profile is read.
+    fake.after_requests(".bosun/profiles/rust.toml", 0, |s| {
+        s.fail_paths.push((".bosun/bosun.toml".into(), 500));
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["test-integrity"]), "{v}");
+    assert!(!fake.merged(20));
+}

@@ -377,8 +377,10 @@ fn run_offline(dir: Option<&Path>, args: &PrereqsArgs, files: &[String]) -> CmdR
         "no GitHub token: nothing was verified through the API and no checklist issue was read; every item is open"
             .to_string(),
     ];
-    let root = dir.unwrap_or_else(|| Path::new("."));
-    let env = Env::from_dir(root, dir, vec![], &mut warnings)?;
+    // Rules and approvers live at the repo root, whatever directory bosun runs in.
+    let here = dir.unwrap_or_else(|| Path::new("."));
+    let root = crate::cli::gate::repo_root(here).unwrap_or_else(|_| here.to_path_buf());
+    let env = Env::from_dir(&root, dir, vec![], &mut warnings)?;
     let setup = if args.no_setup {
         vec![]
     } else {

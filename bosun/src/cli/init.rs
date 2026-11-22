@@ -785,21 +785,6 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     // one to use. An existing branch is reused only when it is the current one.
     let current = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let local_default = local_default_branch(&root);
-    // With no origin/HEAD and no main or master the default branch is unknown: the current branch
-    // may be it, so it is not reused (fail closed).
-    if args.branch.is_none()
-        && cloud
-        && !current.is_empty()
-        && current != "HEAD"
-        && local_default.is_none()
-    {
-        return Err(BosunError::conflict(
-            format!(
-                "cannot tell whether the current branch {current} is the default branch (no origin/HEAD, no main or master)"
-            ),
-            "run `git remote set-head origin -a`, or pass `--branch <new-branch>` (a branch that does not exist yet)",
-        ));
-    }
     let branch = if args.branch.is_none()
         && cloud
         && !current.is_empty()
@@ -821,6 +806,16 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     )
     .is_ok();
     let reuse = exists && branch == current && local_default.as_deref() != Some(branch);
+    // With no origin/HEAD and no main or master the default branch is unknown: the branch may be
+    // it, so no branch is reused, an explicit --branch included (fail closed).
+    if reuse && local_default.is_none() {
+        return Err(BosunError::conflict(
+            format!(
+                "cannot tell whether the current branch {branch} is the default branch (no origin/HEAD, no main or master)"
+            ),
+            "run `git remote set-head origin -a`, or pass `--branch <new-branch>` (a branch that does not exist yet)",
+        ));
+    }
     if exists && !reuse {
         return Err(BosunError::conflict(
             format!("branch {branch} already exists"),
@@ -942,11 +937,14 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             (c.repo.owner, c.repo.name)
         }
     };
-    let base = match &github {
-        Some((_, b)) => b.clone(),
-        None => local_default.clone().unwrap_or_else(|| "main".into()),
+    // The base is only compared when known: reuse needs a known local default (refused above),
+    // so there is never a literal fallback to compare against.
+    let known_base: Option<String> = match &github {
+        Some((_, b)) => Some(b.clone()),
+        None => local_default.clone(),
     };
-    if reuse && branch == base {
+    let base = known_base.clone().unwrap_or_else(|| "main".into());
+    if reuse && known_base.as_deref() == Some(branch) {
         return Err(BosunError::conflict(
             format!("{branch} is the default branch: init will not commit on it"),
             "switch to a work branch (or pass --branch NAME for a new one) and rerun",
@@ -1162,7 +1160,23 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     let mut labels: Vec<String> = Vec::new();
     let mut labels_todo: Vec<String> = Vec::new();
     if !args.no_pr && github.is_none() {
+        let slug = format!("{}/{}", repo_id.0, repo_id.1);
+        // Labels that exist stay as they are: `gh label create --force` would overwrite them.
+        let have: Vec<String> = if via_gh {
+            crate::github::ghcli::run(&[
+                "label", "list", "--repo", &slug, "--limit", "500", "--json", "name", "--jq",
+                ".[].name",
+            ])
+            .filter(|(ok, _)| *ok)
+            .map(|(_, out)| out.lines().map(|l| l.trim().to_string()).collect())
+            .unwrap_or_default()
+        } else {
+            vec![]
+        };
         for (name, color, desc) in super::adopt::labels_wanted() {
+            if have.contains(&name) {
+                continue;
+            }
             let cmd = format!("gh label create {name} --color {color} --description \"{desc}\"");
             let made = via_gh
                 && crate::github::ghcli::run(&[
@@ -1170,12 +1184,11 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
                     "create",
                     &name,
                     "--repo",
-                    &format!("{}/{}", repo_id.0, repo_id.1),
+                    &slug,
                     "--color",
                     color,
                     "--description",
                     desc,
-                    "--force",
                 ])
                 .is_some_and(|(ok, _)| ok);
             if made {

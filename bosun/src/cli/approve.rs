@@ -713,22 +713,6 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
             "show the owner the new head and sign it only on their word",
         ));
     }
-    // D-022: a signature never counts on the quorum trust root (risk-check ignores it there), so
-    // none is posted, whatever its form: the owner's own review or comment is the approval.
-    let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
-    let files = gh.pull_files(pr)?;
-    let (root, cause) =
-        crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
-    if !root.is_empty() {
-        return Err(BosunError::error(
-            format!(
-                "quorum (D-022) never counts a signature on the trust root ({}{}): nothing was signed",
-                root.join(", "),
-                cause.map(|c| format!("; {c}")).unwrap_or_default()
-            ),
-            "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
-        ));
-    }
     let role = match args.role.as_deref() {
         Some("delegate") => Role::Delegate,
         Some("signer") => Role::Signer,
@@ -756,18 +740,54 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
             "add --bootstrap (`[approvals] policy` at the PR's base must be \"quorum\" or \"autonomous\")",
         ));
     }
+    if args.bootstrap && role == Role::Delegate {
+        return Err(BosunError::usage(
+            "--bootstrap signs with an owner key, not --as delegate",
+            "drop --as delegate, or drop --bootstrap",
+        ));
+    }
+    // D-022: a signature never counts on the quorum trust root (risk-check ignores it there), so
+    // none is posted, whatever its form: the owner's own review or comment is the approval.
+    let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
+    let files = gh.pull_files(pr)?;
+    let (root, cause) =
+        crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
+    if !root.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "quorum (D-022) never counts a signature on the trust root ({}{}): nothing was signed",
+                root.join(", "),
+                cause.map(|c| format!("; {c}")).unwrap_or_default()
+            ),
+            "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
+        ));
+    }
+    // D-022: a diff bosun cannot see may hide the trust root, as risk-check's R-unseen and the
+    // bootstrap signing path (`autonomous_ok`) judge it; plain signing under quorum needs the same.
+    if quorum_at_base(gh, &pull.base_sha)? {
+        let views: Vec<risk::FileView> = (files.iter())
+            .map(|f| risk::FileView {
+                path: f.filename.clone(),
+                status: f.status.clone(),
+                has_patch: f.patch.is_some(),
+                changes: f.additions + f.deletions,
+                same_blob: false,
+            })
+            .collect();
+        if risk::unseen_diff(&views, pull.changed_files).is_some() {
+            return Err(BosunError::error(
+                "quorum (D-022) never counts a signature on a diff bosun cannot see (R-unseen): nothing was signed",
+                "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
+            ));
+        }
+    }
+
     if role == Role::Signer {
         // Fail closed: the default branch (now) and the PR's base must both allow the signer.
         signer_allowed(gh, &crate::app::default_ref(gh)?, "the default branch")?;
         signer_allowed(gh, &pull.base_sha, "the PR's base")?;
     }
     let boot = match args.bootstrap {
-        true if role == Role::Delegate => {
-            return Err(BosunError::usage(
-                "--bootstrap signs with an owner key, not --as delegate",
-                "drop --as delegate, or drop --bootstrap",
-            ));
-        }
         true => Some(bootstrap_mode(
             &app,
             &app.ctx.now.to_string()[..10],
@@ -897,6 +917,17 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
         approved.push(entry);
     }
     Ok(Outcome::data(json!({"approved": approved})))
+}
+
+/// Whether `[approvals] policy` at `base` is quorum; a config that does not parse may be a quorum
+/// one, so it reads as quorum (fail closed).
+fn quorum_at_base(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => {
+            Config::parse(&t, CONFIG_FILE).map_or(true, |c| c.approvals.policy() == Policy::Quorum)
+        }
+        None => false,
+    })
 }
 
 /// Refuses unless `[approvals]` and `[checks]` at `git_ref` let the CI signer sign.

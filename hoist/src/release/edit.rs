@@ -382,7 +382,7 @@ pub fn prepend_changelog(existing: Option<&str>, nv: &NextVersion, date: &str) -
 }
 
 /// Track a fenced code block over `line`; true when the line is a fence or inside one.
-fn fence_step(fence: &mut Option<(char, usize)>, line: &str) -> bool {
+pub(crate) fn fence_step(fence: &mut Option<(char, usize)>, line: &str) -> bool {
     let t = line.trim_start_matches(' ');
     let c = match t.chars().next() {
         Some(c @ ('`' | '~')) => c,

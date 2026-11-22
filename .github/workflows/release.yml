@@ -273,11 +273,8 @@ jobs:
         with:
           toolchain: "1.97"
           targets: ${{ matrix.target }}
-      # One cache per target, shared by the six binaries (each `cargo build -p` below only
-      # compiles what that crate needs; the dependencies are reused).
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-        with:
-          shared-key: release-${{ matrix.target }}
+      # No rust-cache here: this job builds the released binaries, and a cache another job could
+      # write must not reach what gets signed, published and run with secrets.
       # hoard: aws-lc-sys (rustls' crypto provider) compiles C; on Linux zig cc is the C compiler
       # and linker for musl. Its pregenerated bindings cover all five targets, so no cmake/bindgen.
       - if: matrix.zig

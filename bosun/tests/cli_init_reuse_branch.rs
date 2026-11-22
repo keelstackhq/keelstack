@@ -452,3 +452,136 @@ fn a_failed_label_create_keeps_the_kill_switch_owner_step() {
         "{v}"
     );
 }
+
+/// A reused branch with a tracked `.gitignore` and an ignored file, ready for a failing init.
+fn reused_with_ignored(e: &Env) -> String {
+    std::fs::write(e.repo.path().join(".gitignore"), "keep.log\n").unwrap();
+    git(e.repo.path(), &["add", "-A"]);
+    git(e.repo.path(), &["commit", "-q", "-m", "ignore"]);
+    git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    std::fs::write(e.repo.path().join("keep.log"), "mine\n").unwrap();
+    git_out(e.repo.path(), &["rev-parse", "HEAD"])
+}
+
+fn assert_restored(e: &Env, head: &str, v: &Value) {
+    assert_eq!(git_out(e.repo.path(), &["rev-parse", "HEAD"]), head, "{v}");
+    assert_eq!(
+        git_out(e.repo.path(), &["rev-parse", "--abbrev-ref", "HEAD"]),
+        "claude/work-abc"
+    );
+    // The files init created are gone, the ignored file is still there.
+    assert!(!e.repo.path().join(".bosun").exists(), "{v}");
+    assert!(!e.repo.path().join(".splice").exists(), "{v}");
+    assert_eq!(
+        std::fs::read_to_string(e.repo.path().join("keep.log")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(git_out(e.repo.path(), &["status", "--porcelain"]), "");
+    let fix = v["error"]["fix"].as_str().unwrap();
+    assert!(
+        fix.contains(&format!("reset claude/work-abc to {head}")),
+        "{fix}"
+    );
+}
+
+#[test]
+fn a_failed_splice_on_a_reused_branch_restores_head_and_keeps_ignored_files() {
+    let e = Env::new();
+    let head = reused_with_ignored(&e);
+    exec(
+        &e.splice_path(),
+        "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = -C ] && d=\"$2\"; shift; done\nmkdir -p \"$d/.bosun\" \"$d/.splice\"\necho x > \"$d/.bosun/partial.toml\"\necho x > \"$d/.splice/partial.toml\"\necho '{\"ok\":false,\"messages\":[\"boom\"]}'\nexit 1\n",
+    );
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, true, false, &["--owner", "octocat"]);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("boom"),
+        "{v}"
+    );
+    assert_restored(&e, &head, &v);
+    assert!(
+        v["error"]["fix"]
+            .as_str()
+            .unwrap()
+            .contains("fix the splice error above"),
+        "{v}"
+    );
+}
+
+#[test]
+fn a_failed_push_on_a_reused_branch_restores_head_and_keeps_ignored_files() {
+    let e = Env::new();
+    let head = reused_with_ignored(&e);
+    git(
+        e.repo.path(),
+        &["remote", "set-url", "origin", "/nonexistent/origin.git"],
+    );
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, true, false, &["--owner", "octocat"]);
+    assert_ne!(code, 0, "{v}");
+    assert_eq!(v["ok"], false, "{v}");
+    assert_restored(&e, &head, &v);
+}
+
+#[test]
+fn an_explicit_branch_is_not_reused_when_the_default_is_unknown() {
+    // No origin/HEAD and no main or master, no token: the current branch may be the default.
+    let e = Env::new();
+    git(e.repo.path(), &["branch", "-m", "trunk"]);
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(
+        &fake,
+        false,
+        false,
+        &["--owner", "o", "--branch", "trunk", "--no-pr"],
+    );
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot tell whether"),
+        "{v}"
+    );
+    assert_eq!(git_out(e.repo.path(), &["log", "-1", "--format=%s"]), "x");
+    assert!(!e.origin_has("trunk"));
+}
+
+#[test]
+fn an_existing_label_is_never_overwritten_with_force() {
+    let e = Env::new();
+    git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    exec(
+        &e.tools.path().join("gh"),
+        &format!(
+            "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$1 $2\" in\n\"auth token\") exit 1;;\n\"auth status\") exit 0;;\n\"api user\") echo ghuser;;\n\"pr create\") echo https://github.com/acme/widget/pull/7;;\n\"label list\") echo bosun:halt;;\n\"label create\") echo ok;;\nesac\n",
+            e.tools.path().join("gh.log").display()
+        ),
+    );
+    for _ in 0..100 {
+        if Command::new(e.tools.path().join("gh"))
+            .arg("probe")
+            .output()
+            .is_ok()
+        {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = std::fs::remove_file(e.tools.path().join("gh.log"));
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, false, true, &["--owner", "octocat"]);
+    assert_eq!(code, 0, "{v}");
+    let log = e.gh_log();
+    assert!(!log.contains("--force"), "{log}");
+    assert!(!log.contains("label create bosun:halt"), "{log}");
+    assert!(log.contains("label create"), "{log}");
+    assert!(
+        !v["data"]["labels_created"]
+            .to_string()
+            .contains("bosun:halt"),
+        "{v}"
+    );
+    assert_eq!(v["data"]["labels_todo"].as_array().unwrap().len(), 0, "{v}");
+}

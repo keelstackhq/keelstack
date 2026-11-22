@@ -1193,3 +1193,94 @@ fn approve_with_a_base_config_that_does_not_parse_signs_nothing() {
         assert_eq!(fake.comments_of(1).len(), before, "{extra:?}: signed");
     }
 }
+
+/// `approve --sign-key` without `--bootstrap` (the owner's plain signature), with `extra` args.
+fn sign_plain(fake: &FakeGithub, k: &Key, extra: &[&str]) -> (i32, Value) {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let path = dir.join("key.pem");
+    std::fs::write(&path, &k.1).unwrap();
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_NOW", NOW)
+        .env("BOSUN_SESSION", "session_o")
+        .env("CCR_AGENT_PROXY_ENABLED", "true")
+        .args(["approve", &format!("1@{HEAD}"), "--print"])
+        .args(extra)
+        .arg("--sign-key")
+        .arg(&path)
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    if v["ok"] == false {
+        assert!(!v["error"]["fix"].as_str().unwrap().trim().is_empty());
+    }
+    (out.status.code().unwrap(), v)
+}
+
+/// D-022: plain `--sign-key` under quorum signs nothing for a diff bosun cannot see (R-unseen), as
+/// the bootstrap path does; the same PR on a non-quorum base still signs.
+#[test]
+fn plain_sign_key_under_quorum_refuses_an_unseen_diff() {
+    let k = key();
+    let fake = quorum(&k);
+    fake.pull_set(1, "changed_files", json!(5));
+    let (code, v) = sign_plain(&fake, &k, &[]);
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("R-unseen"),
+        "{v}"
+    );
+    // Not quorum at the base: the guard is the quorum's, so a plain signature goes through.
+    let fake = pr(&k, GATE, "owner-gated");
+    fake.pull_set(1, "changed_files", json!(5));
+    let (code, v) = sign_plain(&fake, &k, &[]);
+    assert_eq!(code, 0, "{v}");
+}
+
+/// A usage error (exit 2) comes before the trust-root refusal (exit 1).
+#[test]
+fn approve_usage_errors_come_before_the_trust_root_refusal() {
+    let k = key();
+    for extra in [
+        &["--requester", "session_q"][..],
+        &["--as", "signer", "--bootstrap"][..],
+        &["--as", "delegate", "--bootstrap"][..],
+    ] {
+        let fake = quorum(&k);
+        fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
+        let (code, v) = sign_plain(&fake, &k, extra);
+        assert_eq!(code, 2, "{extra:?}: {v}");
+    }
+    // Without the usage error the trust root refuses.
+    let fake = quorum(&k);
+    fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
+    assert_eq!(sign_plain(&fake, &k, &[]).0, 1);
+}
+
+/// A base without `.bosun/bosun.toml` (404, not the default branch's file) has the default policy
+/// `owner`, whatever the default branch says now: `approve --bootstrap` signs nothing, though main
+/// is on quorum and would sign this PR.
+#[test]
+fn approve_treats_a_base_without_bosun_toml_as_the_owner_policy() {
+    let k = key();
+    let fake = quorum(&k);
+    fake.absent_at(".bosun/bosun.toml", BASE);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("approval policy owner: only the owner approves"),
+        "{v}"
+    );
+    // Control: the same PR with the base on quorum signs.
+    let fake = quorum(&k);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    assert_eq!(sign(&fake, &k, "session_o").0, 0);
+}

@@ -15,6 +15,10 @@ const BOSUN_STATUSES: [&str; 3] = ["main-open", "review-verdict", "risk-check"];
 
 /// One `github/required_check` item per required check: it must be a job id or job `name` in a
 /// workflow under `.github/workflows/`.
+///
+/// Known limit: a commit status verifies when any one job has `statuses: write`; hoist does not
+/// know which job posts which status, so one such job lets every listed status verify, even when
+/// that job posts only some of them.
 pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
     d.github
         .ruleset

@@ -210,6 +210,7 @@ fn under_quorum_a_key_never_clears_an_escalated_verdict() {
         let by = v["data"]["approved_by"].as_str().unwrap_or_default();
         assert!(by.starts_with(by_prefix(s)), "{s:?}: {v}");
         assert!(v["data"].get("verdict_cleared_by").is_none(), "{s:?}: {v}");
+        assert_eq!(verdict_state(&fake, HEAD), "failure", "{s:?}: {v}");
     }
     // Low risk: a key is no owner approval either.
     for s in ALL {
@@ -225,6 +226,7 @@ fn under_quorum_a_key_never_clears_an_escalated_verdict() {
         // Normal level needs no approval: the key is not recorded as the owner either.
         assert_ne!(v["data"]["approved_by"], "ada", "{s:?}: {v}");
         assert!(v["data"].get("verdict_cleared_by").is_none(), "{s:?}: {v}");
+        assert_eq!(verdict_state(&fake, HEAD), "failure", "{s:?}: {v}");
     }
     // The owner's own comment still clears it.
     let (o, d) = (key(), key());
@@ -234,4 +236,14 @@ fn under_quorum_a_key_never_clears_an_escalated_verdict() {
     let (code, v) = check(&fake);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["data"]["verdict_cleared_by"], "ada", "{v}");
+}
+
+/// The state of the newest `review-verdict` status on `sha`.
+fn verdict_state(fake: &FakeGithub, sha: &str) -> Value {
+    fake.statuses_of(sha)
+        .into_iter()
+        .rev()
+        .find(|s| s["context"] == "review-verdict")
+        .expect("a review-verdict status")["state"]
+        .clone()
 }

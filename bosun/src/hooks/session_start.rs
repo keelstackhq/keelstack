@@ -178,14 +178,14 @@ pub fn run(cwd: Option<&Path>, input: &Value) -> String {
         _ => lessons,
     };
     match registered {
-        Ok(text) => {
+        Ok((text, origin)) => {
             // The janitor: expired leases go back to ready (spec §4); a failure is only a warning.
             if let Err(e) = crate::cli::reap::run(dir.as_deref()) {
                 eprintln!("bosun: warning: reap: {}", e.message);
             }
             output(&format!(
                 "{text}{lessons}\n{}",
-                rules_context(dir.as_deref())
+                rules_context(dir.as_deref(), origin.as_deref())
             ))
         }
         Err(why) if why.contains(".bosun/") => {
@@ -193,7 +193,7 @@ pub fn run(cwd: Option<&Path>, input: &Value) -> String {
             output(&format!(
                 "bosun cannot read its config, so this session is not registered: {why}. Fix the \
                  file, then run `bosun join`.{lessons}\n{}",
-                rules_context(dir.as_deref())
+                rules_context(dir.as_deref(), None)
             ))
         }
         Err(why) => {
@@ -202,7 +202,7 @@ pub fn run(cwd: Option<&Path>, input: &Value) -> String {
                 "bosun could not reach GitHub ({why}), so this session is not registered and \
                  edit locks may be stale. Set GH_TOKEN (or GITHUB_TOKEN) and BOSUN_REPO=owner/name, \
                  then run `bosun join`.{lessons}\n{}",
-                rules_context(dir.as_deref())
+                rules_context(dir.as_deref(), None)
             ))
         }
     }
@@ -290,7 +290,8 @@ fn read_notice(file: &Path, now: i64) -> Option<Option<String>> {
         .then(|| v.get("line").and_then(Value::as_str).map(String::from))
 }
 
-fn context(dir: Option<&Path>) -> Result<String, String> {
+/// The context line and the registry's origin for this session.
+fn context(dir: Option<&Path>) -> Result<(String, Option<String>), String> {
     let app = App::load(dir).map_err(|e| e.message)?;
     let (_, member) = registry::join(&app, JoinSpec::default()).map_err(|e| e.message)?;
     let file = dir.and_then(cache::path);
@@ -310,15 +311,19 @@ fn context(dir: Option<&Path>) -> Result<String, String> {
         Some(n) => format!("Main is red: open main-red issue #{n}."),
         None => "No open main-red issue.".to_string(),
     };
-    Ok(format!(
-        "bosun: you are session {} (origin {}). Own live leases: {own}. Kill switch: {}. {red} \
+    let origin = Some(member.origin.clone());
+    Ok((
+        format!(
+            "bosun: you are session {} (origin {}). Own live leases: {own}. Kill switch: {}. {red} \
          Run `bosun status` for the full picture.",
-        member.session,
-        member.origin,
-        if halt {
-            "on or unreadable (work commands exit 4)"
-        } else {
-            "off"
-        },
+            member.session,
+            member.origin,
+            if halt {
+                "on or unreadable (work commands exit 4)"
+            } else {
+                "off"
+            },
+        ),
+        origin,
     ))
 }

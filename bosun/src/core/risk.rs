@@ -1150,9 +1150,20 @@ pub fn autonomous_excluded(
 /// `CLAUDE.local.md` and `.claude/CLAUDE.md` (at the repo root and in each code root), and
 /// `.github/scripts/**`, `scripts/**`, `docs/setup-script.sh`, `.claude-plugin/**` and
 /// `.claude/rules/**`. The scripts that `release.yml` runs in jobs holding a secret or an id-token
-/// are listed by hand (`splice/scripts/**`, `hoard/scripts/**`, `*/npm/**`): "every file a
-/// trust-root workflow executes" is not a rule this compiled-in list can apply, as it reads no
-/// workflow. Under each code root (where bosun's own code is, `bosun/`
+/// are listed by hand (`splice/scripts/**`, `hoard/scripts/**`, `*/npm/**`), and so is what the
+/// other jobs holding a secret or an id-token build or load: "every file a trust-root workflow
+/// executes" is not a rule this compiled-in list can apply, as it reads no workflow. The groups:
+/// - `**/Cargo.toml`, `**/build.rs`, `**/.cargo/config*`: `cargo publish` (id-token) builds every
+///   crate and runs its build script. A proc-macro crate's `src/` would also run at build: none
+///   exists today, add it here when one does.
+/// - `**/.npmrc`: `npm publish` and `npm pkg` load the project config.
+/// - `hoard/src/**`, `hoard/action.yml`, `hoard/action/dist/**`, `hoard/tests/fixtures/**`: the
+///   hoard server that gets the R2 keys in hoard-self-test.yml, and fixture code run beside it.
+/// - `site/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`,
+///   `.pnpmfile.*` (pnpm 10+ also loads `.mjs`), `packages/deploy/**`: what the deploy-site.yml `wrangler` job loads to
+///   stage the wrangler that runs with the Cloudflare token.
+///
+/// Under each code root (where bosun's own code is, `bosun/`
 /// in the monorepo): [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES), so every file under
 /// its `src/` and `profiles/`, its manifest, build script and launchers; and at the repo root
 /// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) (`Cargo.toml`, `Cargo.lock`, the
@@ -1162,7 +1173,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 26] = [
+pub const TRUST_ROOT: [&str; 40] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1185,6 +1196,27 @@ pub const TRUST_ROOT: [&str; 26] = [
     "splice/scripts/**",
     "hoard/scripts/**",
     "*/npm/**",
+    // What `cargo publish` (job `crates`, id-token) builds and runs: every crate's manifest,
+    // build script and cargo config (`**/` also matches the repo root).
+    "**/Cargo.toml",
+    "**/build.rs",
+    "**/.cargo/config*",
+    // Project npm config, loaded by `npm publish` / `npm pkg` (jobs `npm`, cargo-deny-npm).
+    "**/.npmrc",
+    // hoard-self-test.yml hands R2 keys to the server that `uses: ./hoard` starts (action.yml,
+    // action/dist built from src) and then runs the fixtures as the same user.
+    "hoard/src/**",
+    "hoard/action.yml",
+    "hoard/action/dist/**",
+    "hoard/tests/fixtures/**",
+    // deploy-site.yml job `wrangler` stages wrangler that `deploy` runs with the Cloudflare
+    // token: what pnpm loads there. `site/.npmrc` is covered by `**/.npmrc`.
+    "site/package.json",
+    "site/pnpm-lock.yaml",
+    "site/pnpm-workspace.yaml",
+    "site/.node-version",
+    "site/.pnpmfile.*",
+    "site/packages/deploy/**",
     ".claude/settings*.json",
     // Rules and templates that sessions and the guard load, the loop, and every subagent prompt.
     ".bosun/session-rules.toml",
@@ -3276,13 +3308,12 @@ mod monorepo_tests {
         ] {
             assert_eq!(t(f), [f], "{f}");
         }
-        // Without a code root the build files stay ordinary files; the workflows never do.
-        for f in [
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            ".cargo/config.toml",
-        ] {
+        // Without a code root the lockfile and toolchain stay ordinary files (manifests and cargo
+        // config are trust root everywhere: `cargo publish` builds them); the workflows never do.
+        for f in ["Cargo.toml", ".cargo/config.toml"] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+        for f in ["Cargo.lock", "rust-toolchain.toml"] {
             assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
         }
         for f in [
@@ -3350,6 +3381,51 @@ mod monorepo_tests {
             "hoard/scripts/release-complete.sh",
         ] {
             assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+    }
+
+    /// Jobs that hold a secret or an id-token load more than release scripts: cargo build scripts,
+    /// manifests and config, npm config, hoard's action and server, the site's wrangler staging.
+    #[test]
+    fn code_that_secret_holding_jobs_build_or_load_is_trust_root() {
+        for f in [
+            "hull/template-rust/Cargo.toml",
+            "keel/Cargo.toml",
+            "Cargo.toml",
+            "build.rs",
+            "x/build.rs",
+            "keel/.cargo/config.toml",
+            ".cargo/config",
+            ".cargo/config.toml",
+            ".npmrc",
+            "bosun/.npmrc",
+            "site/.npmrc",
+            "hoard/src/main.rs",
+            "hoard/action.yml",
+            "hoard/action/dist/main.js",
+            "hoard/tests/fixtures/turbo-repo/package.json",
+            "site/package.json",
+            "site/pnpm-lock.yaml",
+            "site/pnpm-workspace.yaml",
+            "site/.node-version",
+            "site/.pnpmfile.cjs",
+            "site/.pnpmfile.mjs",
+            "site/packages/deploy/package.json",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+            assert_eq!(
+                trust_root_changed(&[(f, None)], &["bosun".to_string()]),
+                [f],
+                "{f}"
+            );
+        }
+        for f in [
+            "site/apps/site/src/x.ts",
+            "hoard/docs/x.md",
+            "hoard/action/src/main.ts",
+            "keel/src/main.rs",
+        ] {
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
         }
     }
 

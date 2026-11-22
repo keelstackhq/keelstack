@@ -233,3 +233,20 @@ fn the_checklist_reads_the_bullets_plan_import_accepted() {
     assert!(!text.contains("not a valid"), "{v}");
     assert!(text.contains("H1") && text.contains("H3"), "{v}");
 }
+
+#[test]
+fn a_halted_repo_refuses_import_fix_and_leaves_the_file_unchanged() {
+    let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
+    fake.variable("BOSUN_HALT", "1");
+    write(tmp.path());
+    let (code, v) = with_token(&fake, tmp.path(), &["--fix"]);
+    assert_eq!(code, 4, "{v}");
+    let now = std::fs::read_to_string(tmp.path().join("plan.md")).unwrap();
+    assert_eq!(now, plan_text());
+    // No temp file is left beside the plan.
+    let names: Vec<_> = std::fs::read_dir(tmp.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(names, ["plan.md"]);
+}

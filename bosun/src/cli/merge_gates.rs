@@ -7,7 +7,7 @@ use serde_json::json;
 use crate::app::{App, default_ref};
 use crate::cli::stamps;
 use crate::config::{CONFIG_FILE, Config};
-use crate::gates::{self, Request};
+use crate::gates::{self, Request, integrity};
 use crate::github::{Github, Pull};
 use crate::output::BosunError;
 
@@ -270,6 +270,15 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
     // Fail closed: an API error counts as "the default branch has it".
     let default = default_ref(app.gh.as_ref())?;
     let on_default = |path: &str| app.gh.file_at(path, &default).map_or(true, |f| f.is_some());
+    // The test-integrity waivers are judged at the default branch too (an API error: fail closed).
+    let default_view = integrity::DefaultView {
+        has_bosun_toml: on_default(".bosun/bosun.toml"),
+        template_tests: app
+            .gh
+            .file_at(".bosun/template-tests", &default)
+            .ok()
+            .flatten(),
+    };
     let mut failed = Vec::new();
     let private = wt.parent().unwrap_or(wt);
     for (i, gate) in all.iter().enumerate() {
@@ -278,7 +287,13 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
         gates::isolate(&own);
         clean_above(wt, &own)?;
         let res = if gate == "test-integrity" {
-            super::test_integrity::check_with(Some(wt), Some(&pull.base_sha), &pull.body, &allow)
+            super::test_integrity::check_with(
+                Some(wt),
+                Some(&pull.base_sha),
+                &pull.body,
+                &allow,
+                Some(&default_view),
+            )
         } else {
             gates::run(&Request {
                 root: wt,

@@ -8,6 +8,7 @@ use crate::changeset::range::rewrite;
 use crate::changeset::{Changeset, CsConfig, CsType};
 use crate::error::HoistError;
 use crate::release::edit::changelog_section as changelog_body;
+use crate::release::edit::fence_step;
 use crate::release::edit::{
     prepend_changelog, prepend_section, rewrite_cargo_dep, rewrite_package_json_dep,
     set_cargo_dep_version, set_cargo_version, set_package_json_dep, set_package_json_version,
@@ -233,7 +234,28 @@ fn changelog_section(
 ) -> String {
     let text = changelog(existing, nv, next, cs, date);
     let body = changelog_body(&text, &nv.to.to_string()).unwrap_or_default();
-    format!("### {} {} ({date})\n\n{body}\n", p.name, nv.to).replace("\n### ", "\n#### ")
+    format!(
+        "### {} {} ({date})\n\n{}\n",
+        p.name,
+        nv.to,
+        demote_headings(&body)
+    )
+}
+
+/// `body` with CRLF as LF and each `### ` heading one level deeper, so it nests under the
+/// package heading; lines inside fenced code blocks stay as they are.
+fn demote_headings(body: &str) -> String {
+    let mut fence = None;
+    body.replace("\r\n", "\n")
+        .split_inclusive('\n')
+        .map(|l| {
+            let inside = fence_step(&mut fence, l);
+            match l.strip_prefix("### ") {
+                Some(rest) if !inside => format!("#### {rest}"),
+                _ => l.to_string(),
+            }
+        })
+        .collect()
 }
 
 /// An id as a safe inline code span: backticks in it are replaced, whitespace runs (newlines)
@@ -479,7 +501,17 @@ fn rewrite_ranges(
 
 #[cfg(test)]
 mod tests {
-    use super::code_span;
+    use super::{code_span, demote_headings};
+
+    #[test]
+    fn headings_deepen_outside_fences_only_and_crlf_is_normalised() {
+        let body = "### Fixes\r\n\r\n- a\r\n```\r\n### not a heading\r\n```\r\n### More\r\n";
+        assert_eq!(
+            demote_headings(body),
+            "#### Fixes\n\n- a\n```\n### not a heading\n```\n#### More\n"
+        );
+        assert_eq!(demote_headings("~~~\n### x\n~~~\n"), "~~~\n### x\n~~~\n");
+    }
 
     #[test]
     fn ids_render_as_safe_code_spans_and_keep_pipes() {

@@ -107,3 +107,29 @@ fn post_still_needs_a_token() {
     assert_eq!(code, 1, "{v}");
     assert!(v["error"]["fix"].as_str().unwrap().contains("GITHUB_TOKEN"));
 }
+
+#[test]
+fn offline_reads_rules_from_the_repo_root_not_the_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let st = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["init", "-q"])
+        .status()
+        .unwrap();
+    assert!(st.success());
+    // A rule at the repo root: docs/a.md needs the delegate. Run from a subdirectory.
+    write(
+        root,
+        ".bosun/risk.toml",
+        "[[rule]]\nid = \"R-docs\"\nwhy = \"d\"\npaths = [\"docs/a.md\"]\napproval = \"delegate\"\n",
+    );
+    write(root, "plans/x.md", PLAN);
+    std::fs::create_dir_all(root.join("sub")).unwrap();
+    let plan = root.join("plans/x.md");
+    let (code, v) = prereqs(&root.join("sub"), &["--no-setup", plan.to_str().unwrap()]);
+    assert_eq!(code, 0, "{v}");
+    let approvals = v["data"]["plans"][0]["approvals"].as_array().unwrap();
+    assert!(!approvals.is_empty(), "the root's rules were not read: {v}");
+}

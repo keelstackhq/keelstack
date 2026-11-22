@@ -32,7 +32,7 @@ Verdicts: PORT 9, PARTIAL 2, NEEDS-OWNER 13 (Q1 decides 4 of them, Q2 decides 9)
 | bosun#472 | bot budget reports for the old repo (`reports/budget/2026-11.*`) | bot PR | OBSOLETE. Generated data. The root `budget-report.yml` writes `reports/budget/` now |
 | splice#54 | piece discovery: suggestions for an unknown piece, `splice pieces [--json]` (18 files, about +677) | bot verdict approve 0.85; main-open was red then | PORT (WP2). One README hunk conflicts (URL moved to keelstack). Drop the "rule 32 ... (D-003)" sentence: D-023 ended D-003. Re-review under D-022 |
 | splice#19, hull#82, hoard#19, berth#10, site#69 | splice update bot: splice 0.2.0 to 0.6.0, re-renders `docs/agents/org-decisions.md` (table ends at D-020) | bot PRs | OBSOLETE. The folders have no `.splice/` and the bot was not ported (MIGRATION.md). site#69 would remove D-021 to D-024 |
-| hoist#62 | `[github] status_checks`: verify required checks posted as commit statuses (+218/-2) | ci-ok red: macOS runner cancelled | PORT (WP1). Independent; conflicts in config.rs, desired.rs, tests/change.rs, README |
+| hoist#62 | `[github] statuses`: verify required checks posted as commit statuses (+218/-2) | ci-ok red: macOS runner cancelled | PORT (WP1). Independent; conflicts in config.rs, desired.rs, tests/change.rs, README |
 | hoist#63 | changesets design and plan docs (+476) | none | NEEDS-OWNER (Q2) |
 | hoist#64 | CS-1: read and write the changesets format, `src/changeset/` (+761) | risk bot: high (R-gate src/lib.rs, old rules) | NEEDS-OWNER (Q2), then PORT (WP9) |
 | hoist#65 | CS-2: `hoist changeset add` and `init` (+772), on #64 | none | NEEDS-OWNER (Q2), then PORT |

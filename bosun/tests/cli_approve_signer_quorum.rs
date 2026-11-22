@@ -222,3 +222,54 @@ fn signer_off_at_either_ref_is_refused() {
         "{v}"
     );
 }
+
+const OLD: &str = "89abcdef0123456789abcdef0123456789abcdef";
+
+/// Verdicts that name an older head are no verdicts on this one: exit 1, nothing signed.
+#[test]
+fn verdicts_on_an_old_head_do_not_count_for_the_signer() {
+    let k = key();
+    let cfg = config("quorum", true);
+    let fake = pr(&k, &cfg, &cfg, &[]);
+    for session in ["session_r1", "session_r2"] {
+        let r = json!({"bosun": "verdict", "session": session, "head_sha": OLD,
+            "approved": true, "confidence": 0.95, "major": 0});
+        for bot in ["github-actions[bot]", "gate-app[bot]"] {
+            fake.comment_by(1, bot, &format!("Review verdict: approve 0.95.\n\n{r}"));
+        }
+    }
+    let v = refused(&fake, &k, "verdicts on an old head");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("quorum (D-022)"),
+        "{v}"
+    );
+    // Control: the same two reviewers on the head sign.
+    let fake = pr(&k, &cfg, &cfg, &["session_r1", "session_r2"]);
+    assert_eq!(sign(&fake, &k).0, 0);
+}
+
+/// The session that asked (`--requester session_q`) is no reviewer: its verdict does not count.
+#[test]
+fn the_requesters_verdict_does_not_count_for_the_signer() {
+    let k = key();
+    let cfg = config("quorum", true);
+    let fake = pr(&k, &cfg, &cfg, &["session_q", "session_r1"]);
+    refused(&fake, &k, "requester plus one reviewer");
+    // Control: a second independent reviewer makes the quorum.
+    let fake = pr(&k, &cfg, &cfg, &["session_q", "session_r1", "session_r2"]);
+    assert_eq!(sign(&fake, &k).0, 0);
+}
+
+/// The signer's own session (`BOSUN_SESSION`, `signer-ci-1` here) is no reviewer either.
+#[test]
+fn the_signers_own_verdict_does_not_count_for_the_signer() {
+    let k = key();
+    let cfg = config("quorum", true);
+    let fake = pr(&k, &cfg, &cfg, &["signer-ci-1", "session_r1"]);
+    refused(&fake, &k, "signer plus one reviewer");
+    let fake = pr(&k, &cfg, &cfg, &["signer-ci-1", "session_r1", "session_r2"]);
+    assert_eq!(sign(&fake, &k).0, 0);
+}

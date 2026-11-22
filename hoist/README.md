@@ -142,7 +142,8 @@ set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["na
 check verifies when some workflow job has `statuses: write` (or `write-all`) in its effective
 `permissions` (a job's own replace the workflow's; none at all counts only with
 `actions_permissions = "write"`), else it fails. Each `statuses` entry must also be in
-`required_checks` (else exit 3). Mark
+`required_checks` (else exit 3). Known limit: hoist cannot tell which job posts which status, so any
+one job with `statuses: write` makes every listed status verify. Mark
 secrets a workflow names but that may stay unset with `[github] optional_secrets = ["NAME"]`:
 they show as `optional_secret` items (action `ok`), not as pending human steps.
 

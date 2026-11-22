@@ -138,15 +138,34 @@ fn lenient_prereqs(
     if !fix || dry_run || len.fixed.is_empty() {
         return Ok((len, None));
     }
+    write_fixed(dir, file, &len.text)?;
+    Ok((len, Some(file.to_string())))
+}
+
+/// Replace the plan file with `text`: a new temp file beside it (`create_new`, so no other file
+/// is ever overwritten), then a rename over the plan.
+fn write_fixed(dir: Option<&Path>, file: &str, text: &str) -> Result<()> {
+    use std::io::Write;
     let path: std::path::PathBuf = dir.map_or_else(|| file.into(), |d| d.join(file));
-    // Atomic: a temp file beside the plan, then a rename over it.
     let tmp = path.with_file_name(format!(
         ".{}.bosun-fix.{}",
         path.file_name()
             .map_or_else(|| "plan".to_string(), |n| n.to_string_lossy().into_owned()),
         std::process::id()
     ));
-    let written = std::fs::write(&tmp, &len.text).and_then(|()| {
+    let fail = |e: std::io::Error| {
+        BosunError::error(
+            format!("cannot write {file}: {e}"),
+            "make the plan file writable, or fix its prerequisite bullets by hand",
+        )
+    };
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&tmp)
+        .map_err(fail)?;
+    let written = f.write_all(text.as_bytes()).and_then(|()| {
+        drop(f);
         if let Ok(meta) = std::fs::metadata(&path) {
             let _ = std::fs::set_permissions(&tmp, meta.permissions());
         }
@@ -154,12 +173,8 @@ fn lenient_prereqs(
     });
     written.map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
-        BosunError::error(
-            format!("cannot write {file}: {e}"),
-            "make the plan file writable, or fix its prerequisite bullets by hand",
-        )
-    })?;
-    Ok((len, Some(file.to_string())))
+        fail(e)
+    })
 }
 
 /// `data.prereqs_fixed` and, when the file was rewritten, `data.fixed_file`.
@@ -693,21 +708,26 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
     let (file_text, p) = read_plan_text(dir, &a.file)?;
     // Always parsed: a misspelt heading is an error here, never "no section". The bullets are
     // read leniently; the file is rewritten only with `--fix`.
-    let (len, fixed_file) = lenient_prereqs(dir, &a.file, &file_text, &p, a.fix, a.dry_run)?;
+    // Offline there is no kill switch to read: `--fix` writes at once. Online the write waits
+    // until the repo is loaded and not halted.
+    let offline = !amend && !crate::github::http::Http::has_token();
+    let (len, mut fixed_file) =
+        lenient_prereqs(dir, &a.file, &file_text, &p, a.fix && offline, a.dry_run)?;
+    let will_fix = a.fix && !a.dry_run && !len.fixed.is_empty();
     // A dry run with `--fix` plans from the fixed text without writing it.
-    let text = if fixed_file.is_some() || (a.fix && a.dry_run) {
+    let text = if will_fix || (a.fix && a.dry_run) {
         len.text.clone()
     } else {
         file_text
     };
     // The checklist is built from the normalized text; the file itself stays as it is.
     let prereqs = len.prereqs.clone();
-    if !amend && !crate::github::http::Http::has_token() {
+    if offline {
         return offline_import(dir, a, &p, &len, &fixed_file);
     }
     // What reaches GitHub is always written in the file: inferred ids shift when a bullet is
     // inserted earlier, and a checklist or hold names them. `--fix` writes them first.
-    if len.renumbered && fixed_file.is_none() && !a.dry_run {
+    if len.renumbered && !will_fix && !a.dry_run {
         return Err(BosunError::error(
             format!(
                 "{}: prerequisite ids are inferred (missing or duplicate), so they are not stable",
@@ -753,6 +773,10 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
     }
     if !a.dry_run {
         kill_switch(app.gh.as_ref())?;
+    }
+    if will_fix {
+        write_fixed(dir, &a.file, &len.text)?;
+        fixed_file = Some(a.file.clone());
     }
     let base = std::fs::canonicalize(dir.unwrap_or_else(|| Path::new(".")))
         .unwrap_or_else(|_| dir.unwrap_or_else(|| Path::new(".")).to_path_buf());

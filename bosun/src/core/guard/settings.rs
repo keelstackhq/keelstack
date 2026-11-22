@@ -65,8 +65,18 @@ fn plain(path: &str) -> String {
     normalize(&bare)
 }
 
+/// Plans and todos under the user's `~/.claude`: Claude Code's own scratch files, not settings,
+/// hooks or agents config. Only paths strictly below `plans/` and `todos/` (never the folder
+/// itself: `rm -rf ~/.claude/plans; ln -s .. ~/.claude/plans` must stay locked). Judged after
+/// `plain`, so `plans/../settings.json` is not one. Link- and move-creating commands ignore it
+/// (`strict`), so no symlink or move can put a settings path under a free one.
+static FREE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(&format!(r"(?i)^{HOME}/\.claude/(?:plans|todos)/.")).expect("free path regex")
+});
+
 fn protected(path: &str) -> bool {
-    PATH.is_match(&plain(path))
+    let path = plain(path);
+    PATH.is_match(&path) && !FREE.is_match(&path)
 }
 
 /// A word naming a target of a mutating command: a settings file, a glob that could reach one, or
@@ -91,7 +101,19 @@ const FILE_TOOLS: [&str; 5] = [
 ];
 
 fn target(word: &str) -> bool {
+    let word = plain(word);
+    TARGET.is_match(&word) && !FREE.is_match(&word)
+}
+
+/// `target` without the plans/todos exemption, for commands that create links or move files.
+fn strict(word: &str) -> bool {
     TARGET.is_match(&plain(word))
+}
+
+/// Whether a `cp` option word makes links (`-s`, `-l`, `-sf`, `--symbolic-link`, `--link`).
+fn links(arg: &str) -> bool {
+    matches!(arg, "--symbolic-link" | "--link")
+        || (arg.starts_with('-') && !arg.starts_with("--") && arg.contains(['s', 'l']))
 }
 
 /// The value of an option given as `-t X`, `-tX`, `--long X` or `--long=X`.
@@ -208,12 +230,16 @@ pub fn settings_rule(tool: &str, input: &Value, cwd: &str) -> Option<String> {
 fn mutates(cmd: &str, args: &[&str]) -> bool {
     let any = |a: &[&str]| a.iter().any(|w| !w.starts_with('>') && target(w));
     match cmd {
-        "rm" | "rmdir" | "unlink" | "shred" | "truncate" | "touch" | "chmod" | "chown" | "ln"
-        | "mv" => any(args),
+        "rm" | "rmdir" | "unlink" | "shred" | "truncate" | "touch" | "chmod" | "chown" => any(args),
+        // Links and moves are never exempt under plans/todos (a link there could point at the
+        // settings, or the folder itself be replaced by one).
+        "ln" | "mv" => args.iter().any(|w| !w.starts_with('>') && strict(w)),
+        "install" | "rsync" => destination(args).is_some_and(strict),
+        "cp" if args.iter().any(|a| links(a)) => destination(args).is_some_and(strict),
         // `bash_writes` skips `~` and `$HOME` targets: judge them here (a path word only).
         // The destination is the `-t` value (also in a cluster: `-rt DIR`) or the last operand,
         // and may be the `.claude` directory itself.
-        "cp" | "install" => destination(args).is_some_and(target),
+        "cp" => destination(args).is_some_and(target),
         "tee" | "sponge" => args.iter().any(|a| protected(a)),
         // `dd of=FILE` (also after `if=`/`bs=` words).
         "dd" => args
@@ -238,8 +264,6 @@ fn mutates(cmd: &str, args: &[&str]) -> bool {
                 || opt(args, "-O", "--output-document").is_some_and(|o| protected(o) || target(o))
                 || opt(args, "-P", "--directory-prefix").is_some_and(target)
         }
-        // The destination is the last operand (or a `.claude` directory itself).
-        "rsync" => destination(args).is_some_and(target),
         // gawk's in-place extension rewrites its file operands.
         "awk" | "gawk"
             if args.iter().enumerate().any(|(i, a)| {
@@ -424,6 +448,72 @@ mod tests {
     }
     fn sh_in(cwd: &str, cmd: &str) -> Option<String> {
         super::settings_rule("Bash", &json!({"command": cmd}), cwd)
+    }
+
+    #[test]
+    fn plans_and_todos_are_free_but_settings_hooks_and_agents_stay_locked() {
+        for ok in [
+            "~/.claude/plans/x.md",
+            "/root/.claude/plans/a/b.md",
+            "/home/me/.claude/todos/t.json",
+        ] {
+            assert!(file("Write", ok).is_none(), "{ok}");
+        }
+        assert!(sh("echo x > ~/.claude/plans/x.md").is_none());
+        assert!(sh("rm ~/.claude/todos/old.json").is_none());
+        for bad in [
+            "~/.claude/settings.json",
+            "/root/.claude/settings.local.json",
+            "/root/.claude/hooks/pre.sh",
+            "/root/.claude/agents/a.md",
+            "/root/.claude/plans/../settings.json",
+            "/root/.claude/plansx/a.md",
+            "/repo/.claude/settings.json",
+        ] {
+            assert!(file("Write", bad).is_some(), "{bad}");
+        }
+        assert!(sh("echo x > ~/.claude/settings.json").is_some());
+        assert!(sh("echo x > ~/.claude/settings.local.json").is_some());
+        assert!(sh("rm -rf ~/.claude/hooks").is_some());
+        assert!(sh("rm ~/.claude/agents/a.md").is_some());
+        assert!(sh("rm ~/.claude/plans/../settings.json").is_some());
+    }
+
+    #[test]
+    fn links_moves_and_the_folder_itself_stay_locked_under_plans_and_todos() {
+        for c in [
+            "rm -rf ~/.claude/plans; ln -s .. ~/.claude/plans",
+            "ln -s ../settings.json ~/.claude/plans/x",
+            "ln -sf /root/.claude/settings.json /root/.claude/todos/t.json",
+            "ln ../settings.json ~/.claude/plans/x",
+            "mv ~/.claude/settings.json ~/.claude/plans/x",
+            "mv /tmp/x ~/.claude/plans/x",
+            "cp -s ../settings.json ~/.claude/plans/x",
+            "cp -sf ../settings.json ~/.claude/plans/x",
+            "cp --symbolic-link ../settings.json ~/.claude/plans/x",
+            "cp -l /tmp/x ~/.claude/plans/x",
+            "cp --link /tmp/x ~/.claude/plans/x",
+            "install /tmp/x ~/.claude/plans/x",
+            "rsync -a /tmp/x ~/.claude/plans/x",
+            "rm -rf ~/.claude/plans",
+            "rm -rf ~/.claude/plans/",
+            "rm -rf ~/.claude/todos",
+        ] {
+            assert!(sh(c).is_some(), "{c}");
+        }
+        // The file-tool write after such a link, and the folder itself.
+        assert!(file("Write", "~/.claude/plans").is_some());
+        assert!(file("Write", "~/.claude/plans/").is_some());
+        assert!(file("Write", "~/.claude/plans/../settings.json").is_some());
+        // Plain writes below the folders stay free.
+        for c in [
+            "echo x > ~/.claude/plans/x.md",
+            "cp /tmp/x ~/.claude/plans/x.md",
+            "rm ~/.claude/plans/x.md",
+            "touch ~/.claude/todos/t.json",
+        ] {
+            assert!(sh(c).is_none(), "{c}");
+        }
     }
 
     #[test]

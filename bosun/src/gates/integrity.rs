@@ -24,6 +24,17 @@ pub struct Request<'a> {
     /// Finding kinds the task allows: `delete-test`, `skip`, `only`, `fewer-asserts`.
     /// `delete-test` also allows `fewer-tests`.
     pub allow: &'a [String],
+    /// The default branch's view, when the caller has one (`bosun merge`, which has only the PR's
+    /// head and base fetched): the template waivers are judged there, not at the base.
+    pub default: Option<&'a DefaultView>,
+}
+
+/// What the default branch says about the template waivers. An API error is `has_bosun_toml: true`
+/// and no `template_tests` (fail closed: no bootstrap, no listed test files).
+#[derive(Debug, Clone)]
+pub struct DefaultView {
+    pub has_bosun_toml: bool,
+    pub template_tests: Option<String>,
 }
 
 /// One changed path: `old` is its path at the base (none when added), `new` its path at head
@@ -276,11 +287,22 @@ fn marker_present(has_marker: Option<bool>) -> bool {
     has_marker == Some(true)
 }
 
-fn template_waiver(root: &Path, base: &str) -> impl Fn(&str) -> Option<&'static str> {
+fn template_waiver(
+    root: &Path,
+    base: &str,
+    default: Option<&DefaultView>,
+) -> impl Fn(&str) -> Option<&'static str> {
     // Judged at the base tip (what the PR merges into), not the merge base. A git error is no
-    // bootstrap: no waiver is granted (fail closed).
-    let bootstrap = bootstrap_waived(super::git_has(root, base, ".bosun"));
-    let globs: Vec<Glob> = base_text(root, base, ".bosun/template-tests")
+    // bootstrap: no waiver is granted (fail closed). With a default-branch view (`bosun merge`) the
+    // bootstrap also needs the default branch to lack `.bosun/bosun.toml`, and the listed test
+    // files are read there, not at the base.
+    let bootstrap = bootstrap_waived(super::git_has(root, base, ".bosun"))
+        && default.is_none_or(|d| !d.has_bosun_toml);
+    let listed = match default {
+        Some(d) => d.template_tests.clone(),
+        None => base_text(root, base, ".bosun/template-tests"),
+    };
+    let globs: Vec<Glob> = listed
         .unwrap_or_default()
         .lines()
         .map(str::trim)
@@ -361,7 +383,7 @@ pub fn run(req: &Request) -> CmdResult {
     let test_count = |p: &str, t: &str| kit_for(&kits, p).test_count(p, t);
     let assertions = |p: &str, t: &str| kit_for(&kits, p).assertions(p, t);
     let only_count = |p: &str, t: &str| kit_for(&kits, p).only_count(p, t);
-    let waiver = template_waiver(req.root, req.base);
+    let waiver = template_waiver(req.root, req.base, req.default);
     let allows = |name: &str| req.allow.iter().any(|a| a == name);
     let mut findings: Vec<Value> = Vec::new();
     let mut checked: std::collections::BTreeSet<String> = Default::default();

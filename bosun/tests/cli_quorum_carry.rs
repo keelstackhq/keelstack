@@ -248,4 +248,16 @@ fn a_carried_signature_never_clears_an_escalated_verdict() {
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["data"]["approval_carried_from"], H, "{v}");
     assert!(v["data"].get("verdict_cleared_by").is_none(), "{v}");
+    // The escalated status stays on the head: nothing cleared it.
+    assert_eq!(verdict_state(&fake, H2), "failure", "{v}");
+}
+
+/// The state of the newest `review-verdict` status on `sha`.
+fn verdict_state(fake: &FakeGithub, sha: &str) -> Value {
+    fake.statuses_of(sha)
+        .into_iter()
+        .rev()
+        .find(|s| s["context"] == "review-verdict")
+        .expect("a review-verdict status")["state"]
+        .clone()
 }

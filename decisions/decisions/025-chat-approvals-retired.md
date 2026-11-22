@@ -19,7 +19,8 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
   answer to an `AskUserQuestion` form) no longer counts as an approval. Agents do not ask the owner
   for one. This overrides the batched chat approvals clause of D-009.
 - An owner approves with a GitHub comment `/bosun approve <sha>` (the full 40-character head SHA,
-  posted as a login in `governance/owners.toml`), or the repo uses the quorum approvals policy
+  posted as a login in `governance/owners.toml`) or with the owner's own GitHub review (an
+  approving review on the head), or the repo uses the quorum approvals policy
   (D-022, bosun#705: `[approvals] policy = "quorum"`). The port PR that carries this decision adds
   that policy to bosun and switches the root `.bosun/` of keelstackhq/keelstack to it; the
   switch is a trust-root edit, so the owner approves it.

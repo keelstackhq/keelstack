@@ -44,10 +44,6 @@ NEXTEST_LINUX_ARM64_SHA256="$(pin nextest linux_arm64_sha256)"
 CARGO_DENY_BIN_VERSION="$(pin cargo-deny version)"
 CARGO_DENY_BIN_LINUX_X64_SHA256="$(pin cargo-deny linux_x64_sha256)"
 CARGO_DENY_BIN_LINUX_ARM64_SHA256="$(pin cargo-deny linux_arm64_sha256)"
-if [ ! -f "$PINS" ] || [ -z "$NEXTEST_VERSION" ] || [ -z "$CARGO_DENY_BIN_VERSION" ]; then
-  echo "setup-script: $PINS is missing or incomplete; cargo-deny and cargo-nextest are skipped (restore it: splice update --channel bosun)" >&2
-  NEXTEST_VERSION="" CARGO_DENY_BIN_VERSION=""
-fi
 # Claude Code plugins. `keelstack` is bosun's marketplace (.claude-plugin/marketplace.json on this
 # branch of keelstackhq/bosun, owner-reviewed); it pins each plugin source by sha. A marketplace ref
 # must be a branch or tag (`#<sha>` fails to clone). Move the plugin pins with marketplace.json;
@@ -67,6 +63,12 @@ HAS_RUST=""
 if [ -f Cargo.toml ] || [ -f rust-toolchain.toml ]; then HAS_RUST=1; fi
 HAS_PNPM=""
 if [ -f pnpm-lock.yaml ] || [ -f pnpm-workspace.yaml ] || grep -Eq '"packageManager"[[:space:]]*:[[:space:]]*"pnpm@' package.json 2>/dev/null; then HAS_PNPM=1; fi
+if [ ! -f "$PINS" ] || [ -z "$NEXTEST_VERSION" ] || [ -z "$CARGO_DENY_BIN_VERSION" ]; then
+  if [ -n "$HAS_RUST" ]; then
+    echo "setup-script: $PINS is missing or incomplete; cargo-deny and cargo-nextest are skipped (restore it: splice update --channel bosun)" >&2
+  fi
+  NEXTEST_VERSION="" CARGO_DENY_BIN_VERSION=""
+fi
 
 # Rust is not pinned here: the version is the `channel` of the checkout's rust-toolchain.toml.
 # Without one a Rust checkout warns, skips the pinned toolchain and still installs cargo-deny. A
@@ -259,10 +261,10 @@ if [ -f pins.toml ] && [ -f scripts/pins.mjs ] && command -v node >/dev/null 2>&
   done <<EOF_PINS
 $hull_pins
 EOF_PINS
-  if [ -n "${PIN_NEXTEST:-}" ] && [ "$PIN_NEXTEST" != "$NEXTEST_VERSION" ]; then
+  if [ -n "${PIN_NEXTEST:-}" ] && [ -n "$NEXTEST_VERSION" ] && [ "$PIN_NEXTEST" != "$NEXTEST_VERSION" ]; then
     echo "setup-script: hull's pins.toml pins nextest $PIN_NEXTEST, which differs from .bosun/pins.toml ($NEXTEST_VERSION); installing the checksummed $NEXTEST_VERSION, align the two pins files" >&2
   fi
-  if [ -n "${PIN_CARGO_DENY:-}" ] && [ "$PIN_CARGO_DENY" != "$CARGO_DENY_BIN_VERSION" ]; then
+  if [ -n "${PIN_CARGO_DENY:-}" ] && [ -n "$CARGO_DENY_BIN_VERSION" ] && [ "$PIN_CARGO_DENY" != "$CARGO_DENY_BIN_VERSION" ]; then
     echo "setup-script: hull's pins.toml pins cargo-deny $PIN_CARGO_DENY, which differs from .bosun/pins.toml ($CARGO_DENY_BIN_VERSION); installing the checksummed $CARGO_DENY_BIN_VERSION, align the two pins files" >&2
   fi
   :

@@ -3109,3 +3109,76 @@ fn setup_scripts_assert_the_installed_bosun_is_the_pinned_one() {
         assert!(!e.contains("WARNING"), "{e}");
     }
 }
+
+/// The missing-pins warning is for Rust checkouts only (the pins are cargo tools), and no pins
+/// warning ever prints an empty version.
+#[test]
+fn setup_scripts_warn_about_missing_pins_only_for_rust_checkouts() {
+    let rust = variant(&["rust"], "");
+    let ts = variant(&["ts-pnpm"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    for (name, script) in [
+        ("channel-rust", file(&rust, "docs/setup-script.sh")),
+        ("channel-ts", file(&ts, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        let warns = |files: &[(&str, &str)]| {
+            let repo = tempfile::tempdir().unwrap();
+            for (rel, text) in files {
+                let p = repo.path().join(rel);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(p, text).unwrap();
+            }
+            let (_, _, err) = setup_rust_version(script, repo.path());
+            assert!(!err.contains("()"), "{name}: {err}");
+            err.contains("is missing or incomplete")
+        };
+        let cargo = ("Cargo.toml", "[package]\n");
+        assert!(!warns(&[("package.json", "{}")]), "{name}: non-Rust warns");
+        assert_eq!(
+            warns(&[cargo]),
+            name != "channel-ts",
+            "{name}: Rust checkout"
+        );
+    }
+    // The hull-pins mismatch warnings are skipped when the .bosun pin is empty.
+    for (name, script) in [
+        ("channel", file(&rust, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        let start = script.find("# A repo with hull's pins.toml").expect(name);
+        let end = start + script[start..].find("\ncase \"$(uname -m)\"").unwrap();
+        let block = &script[start..end];
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("pins.toml"), "").unwrap();
+        fs::create_dir_all(repo.path().join("scripts")).unwrap();
+        fs::write(
+            repo.path().join("scripts/pins.mjs"),
+            "console.log(\"PIN_NEXTEST='0.9.1'\");console.log(\"PIN_CARGO_DENY='0.18.0'\");\n",
+        )
+        .unwrap();
+        let run = |n: &str, d: &str| {
+            let cmd = format!("NEXTEST_VERSION='{n}'\nCARGO_DENY_BIN_VERSION='{d}'\n{block}");
+            let out = Command::new("bash")
+                .args(["-c", &cmd])
+                .current_dir(repo.path())
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stderr).into_owned()
+        };
+        let err = run("", "");
+        if Command::new("node").arg("--version").output().is_ok() {
+            assert!(
+                !err.contains("()") && !err.contains("differs"),
+                "{name}: {err}"
+            );
+            let err = run("0.9.0", "0.17.0");
+            assert!(
+                err.contains("(0.9.0)") && err.contains("(0.17.0)"),
+                "{name}: {err}"
+            );
+        }
+    }
+}

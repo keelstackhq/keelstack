@@ -129,7 +129,17 @@ pub fn load(root: Option<&Path>) -> (Rules, String) {
     (rules, note)
 }
 
-pub fn rules_context(dir: Option<&Path>) -> String {
+/// The role: the registry's `spawned` record wins (in the cloud every session carries the child
+/// flag, so the environment resolves a spawned child to `local`); else the env origin decides.
+pub fn role_for(env_origin: &str, registry_origin: Option<&str>) -> Role {
+    if registry_origin == Some("spawned") {
+        Role::Worker
+    } else {
+        role(env_origin)
+    }
+}
+
+pub fn rules_context(dir: Option<&Path>, registry_origin: Option<&str>) -> String {
     let child = std::env::var("CLAUDE_CODE_CHILD_SESSION").ok();
     let remote = std::env::var("CLAUDE_CODE_REMOTE").ok();
     let origin = Origin::resolve_env(
@@ -141,7 +151,7 @@ pub fn rules_context(dir: Option<&Path>) -> String {
         // An invalid BOSUN_ORIGIN falls back to the child-session marker alone.
         Origin::resolve_env(None, child.as_deref(), remote.as_deref()).unwrap_or(Origin::Local)
     });
-    let role = role(origin.as_str());
+    let role = role_for(origin.as_str(), registry_origin);
     let dir = dir
         .map(Path::to_path_buf)
         .or_else(|| std::env::current_dir().ok());
@@ -160,6 +170,19 @@ mod tests {
         for o in ["local", "slack", "routine"] {
             assert_eq!(role(o), Role::Orchestrator);
         }
+    }
+
+    #[test]
+    fn registry_spawned_gives_child_rules_in_the_cloud() {
+        // Cloud env resolves to local; the registry record says spawned.
+        assert_eq!(role_for("local", Some("spawned")), Role::Worker);
+        assert_eq!(role_for("local", Some("local")), Role::Orchestrator);
+        assert_eq!(role_for("local", None), Role::Orchestrator);
+        assert_eq!(role_for("spawned", None), Role::Worker);
+        assert!(
+            block(&Rules::default(), role_for("local", Some("spawned")))
+                .contains("Spawn no sessions.")
+        );
     }
 
     #[test]

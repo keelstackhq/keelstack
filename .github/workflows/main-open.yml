@@ -59,11 +59,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: "1.97"
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: bosun
-          cache-bin: "false"
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+      # No rust-cache here: this job holds a secret, and a cache another job could write must not
+      # reach what it builds or runs.
       # No pinned-release fallback yet: no monorepo release exists, and the old keelstackhq/bosun
       # releases (<= 0.21.0, .bosun/version) cannot read [[folders]], so they would mis-judge. A
       # base whose bosun does not build fails this gate closed (.github/SETUP.md, "Main does not

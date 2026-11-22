@@ -45,21 +45,32 @@ pub(crate) fn cmd(program: &str) -> Command {
 /// From now on children get `PATH`, `LANG`, `TERM`, the proxy and CA variables, the rustup home, a
 /// new `HOME`, `CARGO_HOME` and `TMPDIR` under `private` (call again for new ones), no global git config.
 pub fn isolate(private: &Path) {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let rustup = std::env::var("RUSTUP_HOME").unwrap_or(format!("{home}/.rustup"));
+    let env = isolated_env(private, |n| std::env::var(n).ok());
+    if let Ok(mut g) = ISOLATED.lock() {
+        *g = Some(env);
+    }
+}
+
+/// Variables copied from the parent into an isolated environment.
+const KEEP: &str = "PATH LANG LC_ALL TERM HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy ALL_PROXY all_proxy NODE_EXTRA_CA_CERTS CARGO_HTTP_CAINFO SSL_CERT_FILE SSL_CERT_DIR CURL_CA_BUNDLE GIT_SSL_CAINFO REQUESTS_CA_BUNDLE";
+
+/// The isolated environment; `get` reads the parent's variables.
+fn isolated_env(
+    private: &Path,
+    get: impl Fn(&str) -> Option<String>,
+) -> Vec<(&'static str, String)> {
+    let home = get("HOME").unwrap_or_default();
+    let rustup = get("RUSTUP_HOME").unwrap_or(format!("{home}/.rustup"));
     let mut env = vec![("RUSTUP_HOME", rustup), ("GIT_CONFIG_NOSYSTEM", "1".into())];
     env.push(("GIT_CONFIG_GLOBAL", "/dev/null".into()));
-    let keep = "PATH LANG LC_ALL TERM HTTPS_PROXY https_proxy NO_PROXY SSL_CERT_FILE SSL_CERT_DIR CURL_CA_BUNDLE GIT_SSL_CAINFO REQUESTS_CA_BUNDLE";
-    for n in keep.split(' ') {
-        env.extend(std::env::var(n).ok().map(|v| (n, v)));
+    for n in KEEP.split(' ') {
+        env.extend(get(n).map(|v| (n, v)));
     }
     for (k, v) in [("HOME", "home"), ("CARGO_HOME", "cargo"), ("TMPDIR", "tmp")] {
         let _ = std::fs::create_dir_all(private.join(v));
         env.push((k, private.join(v).to_string_lossy().into_owned()));
     }
-    if let Ok(mut g) = ISOLATED.lock() {
-        *g = Some(env);
-    }
+    env
 }
 
 /// Run `git <args>` in `root`; stdout on success.
@@ -555,6 +566,31 @@ mod tests {
             // `cmd` itself is the one `Command::new(program)`.
             assert_eq!(plain, 0, "{name} runs git or cargo outside gates::cmd");
         }
+    }
+
+    #[test]
+    fn isolated_env_keeps_proxy_and_ca_variables_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let names = [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NODE_EXTRA_CA_CERTS",
+            "CARGO_HTTP_CAINFO",
+            "SSL_CERT_FILE",
+        ];
+        let env = isolated_env(tmp.path(), |n| {
+            (names.contains(&n) || n == "SECRET_TOKEN").then(|| format!("v-{n}"))
+        });
+        for n in names {
+            assert!(env.contains(&(n, format!("v-{n}"))), "{n} is kept");
+        }
+        assert!(env.iter().all(|(k, _)| *k != "SECRET_TOKEN"));
     }
 
     #[test]

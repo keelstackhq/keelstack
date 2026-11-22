@@ -692,6 +692,13 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline
       - name: Check (build, lint, format, typecheck, tests incl. facts and link checks)
         run: pnpm run ci
+      # The same staging deploy-site.yml's `wrangler` job does (no secrets), so a PR that breaks it
+      # fails here and not after the merge.
+      - name: Stage wrangler (as deploy-site.yml does)
+        run: |
+          rm -rf "$RUNNER_TEMP/wrangler"
+          pnpm --filter ./packages/deploy deploy --prod --ignore-scripts "$RUNNER_TEMP/wrangler"
+          "$RUNNER_TEMP/wrangler/node_modules/.bin/wrangler" --version
 
   # The one required check. Skipped folder jobs are fine; failed or cancelled ones are not.
   ci-ok:
