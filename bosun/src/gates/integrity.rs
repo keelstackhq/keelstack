@@ -265,21 +265,22 @@ fn finding(
 /// Why `deleted-test` and `fewer-tests` are waived for a test file, besides the plan task's
 /// `allow`: the base is the bare template render (no `.bosun/`), or the base's own
 /// `.bosun/template-tests` lists the file. Read from the base only, never from head.
-/// The bootstrap waiver holds only when git answered that the merge base has no `.bosun`; a git
+/// The bootstrap waiver holds only when git answered that the base tip has no `.bosun`; a git
 /// error (`None`) grants nothing.
 fn bootstrap_waived(has_bosun: Option<bool>) -> bool {
     has_bosun == Some(false)
 }
 
-/// The template-source exemption needs a marker git confirmed at the merge base; an error is none.
+/// The template-source exemption needs a marker git confirmed at the base tip; an error is none.
 fn marker_present(has_marker: Option<bool>) -> bool {
     has_marker == Some(true)
 }
 
-fn template_waiver(root: &Path, merge_base: &str) -> impl Fn(&str) -> Option<&'static str> {
-    // A git error is no bootstrap: no waiver is granted (fail closed).
-    let bootstrap = bootstrap_waived(super::git_has(root, merge_base, ".bosun"));
-    let globs: Vec<Glob> = base_text(root, merge_base, ".bosun/template-tests")
+fn template_waiver(root: &Path, base: &str) -> impl Fn(&str) -> Option<&'static str> {
+    // Judged at the base tip (what the PR merges into), not the merge base. A git error is no
+    // bootstrap: no waiver is granted (fail closed).
+    let bootstrap = bootstrap_waived(super::git_has(root, base, ".bosun"));
+    let globs: Vec<Glob> = base_text(root, base, ".bosun/template-tests")
         .unwrap_or_default()
         .lines()
         .map(str::trim)
@@ -345,13 +346,13 @@ pub fn run(req: &Request) -> CmdResult {
         .map(|g| Glob::parse(g).expect("built-in glob"))
         .collect();
     // The exemption holds only in a template or channel repo: the path's top dir carries a
-    // `splice.toml` or `template.toml` at the merge base, never at HEAD, so a PR cannot add its own
+    // `splice.toml` or `template.toml` at the base tip, never at HEAD, so a PR cannot add its own
     // marker (a git error counts as none: fail closed).
     let is_source = |p: &str| {
         sources.iter().any(|g| g.matches(p))
             && p.split_once("/pieces/").is_some_and(|(top, _)| {
                 ["splice.toml", "template.toml"].iter().any(|m| {
-                    marker_present(super::git_has(req.root, &merge_base, &format!("{top}/{m}")))
+                    marker_present(super::git_has(req.root, req.base, &format!("{top}/{m}")))
                 })
             })
     };
@@ -360,7 +361,7 @@ pub fn run(req: &Request) -> CmdResult {
     let test_count = |p: &str, t: &str| kit_for(&kits, p).test_count(p, t);
     let assertions = |p: &str, t: &str| kit_for(&kits, p).assertions(p, t);
     let only_count = |p: &str, t: &str| kit_for(&kits, p).only_count(p, t);
-    let waiver = template_waiver(req.root, &merge_base);
+    let waiver = template_waiver(req.root, req.base);
     let allows = |name: &str| req.allow.iter().any(|a| a == name);
     let mut findings: Vec<Value> = Vec::new();
     let mut checked: std::collections::BTreeSet<String> = Default::default();

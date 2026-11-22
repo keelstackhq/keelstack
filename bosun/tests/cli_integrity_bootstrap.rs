@@ -176,3 +176,36 @@ fn a_head_that_deletes_bosun_does_not_make_itself_a_bootstrap() {
     assert_eq!(code, 1, "{v}");
     assert_eq!(finding(&v, "deleted-test")["allowed"], false);
 }
+
+/// Main moves on after `work` branched: commits `files` on main, then back to `work`.
+fn advance_base(r: &Repo, files: &[(&str, &str)]) {
+    git(&r.root, &["checkout", "-q", "main"]);
+    for (p, t) in files {
+        r.put(p, t);
+    }
+    git(&r.root, &["add", "-A"]);
+    git(&r.root, &["commit", "-q", "-m", "base moves"]);
+    git(&r.root, &["checkout", "-q", "work"]);
+}
+
+#[test]
+fn a_bosun_dir_at_the_base_tip_but_not_the_merge_base_gives_no_bootstrap_waiver() {
+    let r = repo(&[]);
+    advance_base(&r, &[(".bosun/bosun.toml", "")]);
+    fs::remove_file(r.root.join("tests/t.rs")).unwrap();
+    r.commit();
+    let (code, v) = r.check();
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(finding(&v, "deleted-test")["allowed"], false);
+}
+
+#[test]
+fn template_tests_globs_are_read_from_the_base_tip() {
+    let r = repo(&[(".bosun/bosun.toml", "")]);
+    advance_base(&r, &[(".bosun/template-tests", "tests/t.rs\n")]);
+    fs::remove_file(r.root.join("tests/t.rs")).unwrap();
+    r.commit();
+    let (code, v) = r.check();
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(finding(&v, "deleted-test")["allowed"], true);
+}

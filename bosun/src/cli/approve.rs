@@ -940,9 +940,10 @@ fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
 /// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
 type Boot = (Option<String>, String, Policy, &'static str);
 
-/// How strict a policy is, lowest first: the default branch must rank no lower than the PR's base.
-/// Quorum ranks looser than autonomous (it ignores R-weaken), so a default branch that moved from
-/// quorum to autonomous fails closed for a PR whose base still says quorum.
+/// How much a policy lets bosun sign, strictest first (0 = owner: bosun signs nothing). A PR whose
+/// base ranks higher (looser) than the default branch fails closed. Quorum ranks above autonomous
+/// (it ignores R-weaken), so a default branch that moved from quorum to autonomous fails closed
+/// for a PR whose base still says quorum.
 fn policy_rank(p: Policy) -> u8 {
     match p {
         Policy::Owner => 0,

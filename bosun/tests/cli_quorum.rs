@@ -1120,6 +1120,9 @@ fn a_base_config_that_does_not_parse_makes_every_path_quorum_trust_root() {
         .output()
         .unwrap();
     let err = String::from_utf8_lossy(&out.stderr);
+    let v = one_object(&out.stdout);
+    assert_eq!(out.status.code(), Some(5), "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
     assert!(
         err.contains("the PR changes the quorum trust root ("),
         "{err}"
@@ -1131,4 +1134,41 @@ fn a_base_config_that_does_not_parse_makes_every_path_quorum_trust_root() {
         err.contains("(src/feature/a.rs): signed approvals do not count"),
         "{err}"
     );
+}
+
+/// D-022, fail closed: `approve --sign-key` against a base config that does not parse signs
+/// nothing, with or without `--bootstrap` (it may be a quorum config).
+#[test]
+fn approve_with_a_base_config_that_does_not_parse_signs_nothing() {
+    let k = key();
+    let dir = tempfile::tempdir().unwrap().keep();
+    let path = dir.join("key.pem");
+    std::fs::write(&path, &k.1).unwrap();
+    for extra in [&["--bootstrap"][..], &[][..]] {
+        let fake = quorum(&k);
+        fake.content(".bosun/bosun.toml", BASE, "[approvals\npolicy = ");
+        let before = fake.comments_of(1).len();
+        let out = bosun()
+            .env("BOSUN_GITHUB_API", fake.url())
+            .env("BOSUN_NOW", NOW)
+            .env("BOSUN_SESSION", "session_o")
+            .env("CCR_AGENT_PROXY_ENABLED", "true")
+            .args(["approve", &format!("1@{HEAD}")])
+            .args(extra)
+            .arg("--sign-key")
+            .arg(&path)
+            .output()
+            .unwrap();
+        let v = one_object(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{extra:?}: {v}");
+        assert_eq!(v["ok"], false, "{extra:?}: {v}");
+        assert!(v["data"]["body"].is_null(), "{extra:?}: {v}");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .is_some_and(|m| !m.is_empty()),
+            "{extra:?}: {v}"
+        );
+        assert_eq!(fake.comments_of(1).len(), before, "{extra:?}: signed");
+    }
 }

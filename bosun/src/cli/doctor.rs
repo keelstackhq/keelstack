@@ -1654,6 +1654,11 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool, all: bool) -> CmdR
         items.push(it);
     }
 
+    // Steps run in the order their data is ready, not their number: list them by step (spec
+    // section 11). The sort is stable, and hoist's findings below address steps 3, 5 and 10 by
+    // position, which this leaves alone.
+    items.sort_by_key(|i| i["step"].as_u64().unwrap_or(0));
+
     let hoist_data = remote.then(|| apply_hoist(&mut items, root, release_set, release_step));
     if let (true, Some(gh), Ok(Some(info))) = (remote, gh, &repo) {
         let warnings = pin_warnings(gh, ctx, &info.default_branch);
