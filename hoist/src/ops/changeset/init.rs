@@ -41,7 +41,22 @@ fn write_new(dir: &Path, rel: &str, text: &str) -> Result<(), HoistError> {
         .create_new(true)
         .open(dir.join(rel))
         .map_err(io)?;
-    f.write_all(text.as_bytes()).map_err(io)
+    if let Err(e) = f.write_all(text.as_bytes()) {
+        drop(f);
+        let _ = std::fs::remove_file(dir.join(rel));
+        return Err(io(e));
+    }
+    Ok(())
+}
+
+/// Remove what `init` wrote so far (files first, then the directory if `init` created it).
+fn rollback(dir: &Path, written: &[&str], made_dir: bool) {
+    for rel in written {
+        let _ = std::fs::remove_file(dir.join(rel));
+    }
+    if made_dir {
+        let _ = std::fs::remove_dir(dir.join(".changeset"));
+    }
 }
 
 /// File name (no `.md`) of the changeset that carries the bumps pending in commit history.
@@ -158,6 +173,7 @@ fn pending_changeset(dir: &Path, m: &ReleaseModel) -> Result<Option<Changeset>, 
 }
 
 pub fn init(dir: &Path, from_commits: bool) -> Result<Report, HoistError> {
+    super::check_changeset_dir(dir)?;
     if dir.join(".changeset/config.json").exists() {
         return Err(HoistError::Usage(
             ".changeset/config.json exists; edit it, or delete it and run `hoist changeset init` again"
@@ -188,9 +204,15 @@ pub fn init(dir: &Path, from_commits: bool) -> Result<Report, HoistError> {
             NpmAccess::Public => "public",
             NpmAccess::Restricted => "restricted",
         });
+    let made_dir = super::check_changeset_dir(dir)?;
     std::fs::create_dir_all(dir.join(".changeset"))
         .map_err(|e| HoistError::Io(format!("cannot create .changeset/: {e}")))?;
-    write_new(dir, ".changeset/config.json", &config_text(&base, access))?;
+    let mut written: Vec<&str> = Vec::new();
+    if let Err(e) = write_new(dir, ".changeset/config.json", &config_text(&base, access)) {
+        rollback(dir, &written, made_dir);
+        return Err(e);
+    }
+    written.push(".changeset/config.json");
     let mut items = vec![created(
         "config",
         "config.json",
@@ -199,9 +221,10 @@ pub fn init(dir: &Path, from_commits: bool) -> Result<Report, HoistError> {
     )];
     if !dir.join(".changeset/README.md").exists() {
         if let Err(e) = write_new(dir, ".changeset/README.md", README) {
-            let _ = std::fs::remove_file(dir.join(".changeset/config.json"));
+            rollback(dir, &written, made_dir);
             return Err(e);
         }
+        written.push(".changeset/README.md");
         items.push(created(
             "config",
             "README.md",
@@ -214,10 +237,7 @@ pub fn init(dir: &Path, from_commits: bool) -> Result<Report, HoistError> {
             Some(cs) => {
                 let rel = format!(".changeset/{MIGRATE_ID}.md");
                 if let Err(e) = write_new(dir, &rel, &render(&cs)) {
-                    let _ = std::fs::remove_file(dir.join(".changeset/config.json"));
-                    if items.len() > 1 {
-                        let _ = std::fs::remove_file(dir.join(".changeset/README.md"));
-                    }
+                    rollback(dir, &written, made_dir);
                     return Err(e);
                 }
                 let list: Vec<String> = cs

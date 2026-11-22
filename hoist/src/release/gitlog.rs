@@ -89,7 +89,9 @@ fn parse_log(out: &str) -> Vec<Commit> {
 
 /// The 7-character sha of the commit that added `path` (changesets' changelog-git), if any.
 pub fn added_by(dir: &Path, path: &str) -> Result<Option<String>, HoistError> {
-    let args = ["log", "--diff-filter=A", "-1", "--format=%H", "--", path];
+    // `:(literal)`: an id with glob characters must not match other files.
+    let spec = format!(":(literal){path}");
+    let args = ["log", "--diff-filter=A", "-1", "--format=%H", "--", &spec];
     let out = run(Tool::Git, dir, &args, &[])?;
     Ok(out.trim().get(..7).map(str::to_string))
 }
@@ -170,6 +172,39 @@ pub fn read_history(dir: &Path, m: &ReleaseModel) -> Result<History, HoistError>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn added_by_treats_the_path_literally() {
+        let d = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| {
+            let o = std::process::Command::new("git")
+                .current_dir(d.path())
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}");
+            String::from_utf8(o.stdout).unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::create_dir(d.path().join(".changeset")).unwrap();
+        std::fs::write(d.path().join(".changeset/a*.md"), "x").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "one"]);
+        let first = git(&["rev-parse", "HEAD"]);
+        std::fs::write(d.path().join(".changeset/ab.md"), "x").unwrap();
+        git(&["add", "-A"]);
+        git(&["commit", "-q", "-m", "two"]);
+        let got = added_by(d.path(), ".changeset/a*.md").unwrap();
+        assert_eq!(got.as_deref(), first.get(..7));
+    }
 
     #[test]
     fn parses_commits_with_paths_and_multiline_bodies() {

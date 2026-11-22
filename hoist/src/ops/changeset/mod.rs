@@ -45,3 +45,17 @@ fn report(command: &str, items: Vec<crate::Item>) -> Report {
         hint: None,
     }
 }
+
+/// Exit 3 when `<dir>/.changeset` is a symlink: writing through it would leave the repo.
+/// Returns whether the directory is absent (so a failing command can remove what it created).
+fn check_changeset_dir(dir: &Path) -> Result<bool, HoistError> {
+    match std::fs::symlink_metadata(dir.join(".changeset")) {
+        Ok(m) if m.file_type().is_symlink() => Err(HoistError::Config {
+            file: ".changeset".into(),
+            message: "is a symlink; .changeset must be a regular directory".into(),
+        }),
+        Ok(_) => Ok(false),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(true),
+        Err(e) => Err(HoistError::Io(format!("cannot read .changeset: {e}"))),
+    }
+}

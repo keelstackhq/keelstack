@@ -542,9 +542,9 @@ fn held_pr_not_reasked_same_head() {
         v["data"]["approve_command"],
         json!(format!("bosun approve 13@{h13}"))
     );
-    let q = v["next"][0]["args"]["questions"][0].to_string();
-    assert!(!q.contains("#12"), "{q}");
-    // Only the held PR waits: nothing to ask.
+    let q = v["data"]["owner_step"].to_string();
+    assert!(!q.contains("#12") && q.contains("#13"), "{q}");
+    // Only the held PR waits: nothing for the owner step.
     let fake2 = FakeGithub::start();
     ready(&fake2, 12, &h12);
     let v = list(&fake2, r.path());
@@ -562,7 +562,12 @@ fn held_pr_reasked_new_head() {
     let v = list(&fake, r.path());
     assert_eq!(v["data"]["ready"][0]["pr"], json!(12), "{v}");
     assert_eq!(v["data"]["held"], json!([]));
-    assert_eq!(v["next"][0]["tool"], json!("AskUserQuestion"));
+    // D-025: no form; the new head is listed with the owner's comment.
+    assert_eq!(v["next"], json!([]), "{v}");
+    assert_eq!(
+        v["data"]["ready"][0]["owner_comment"],
+        json!(format!("/bosun approve {h_new}"))
+    );
 }
 
 #[test]

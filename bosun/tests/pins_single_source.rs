@@ -176,3 +176,12 @@ fn setup_scripts_keep_the_checksummed_pin_on_a_hull_pin_mismatch() {
         );
     }
 }
+
+#[test]
+fn setup_scripts_parse_hull_pins_without_eval() {
+    for rel in [READERS[2], READERS[3]] {
+        let t = read(rel);
+        assert!(!t.contains("eval "), "{rel} evaluates text it read");
+        assert!(t.contains("PIN_NEXTEST) PIN_NEXTEST=\"$v\""), "{rel}");
+    }
+}

@@ -134,13 +134,14 @@ fn owner_path(fake: &FakeGithub, v: &Value, what: &str) {
 }
 
 #[test]
-fn two_verdicts_pass_a_critical_floor_pr_with_workflows_and_weaken() {
+fn two_verdicts_pass_a_critical_floor_pr_with_hoist_toml_and_weaken() {
     let k = key();
     let fake = quorum(&k);
     fake.content(".bosun/bosun.toml", BASE, &config_checks("quorum"));
-    // The critical floor (workflows, `src/**`), a CI workflow and the weaken capability (D-022
-    // approves a weakening too: it superseded D-017's R-weaken exception).
-    fake.pull_file(1, ".github/workflows/x.yml", "modified", 1, 0, Some(PLAIN));
+    // The critical floor (`hoist.toml`, `src/**`) and the weaken capability (D-022 approves a
+    // weakening too: it superseded D-017's R-weaken exception). A workflow is trust root now, in
+    // every mode (`a_workflow_change_is_the_owners_in_every_checks_mode`).
+    fake.pull_file(1, "hoist.toml", "modified", 1, 0, Some(PLAIN));
     fake.pull_file(1, "src/core/meta.rs", "modified", 1, 0, Some(PLAIN));
     fake.label(1, "bosun:capability/weaken");
     let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
@@ -397,10 +398,10 @@ fn no_mode_preset_is_a_quorum() {
     }
 }
 
-/// Outside `[checks] mode = "checks"` any workflow change is trust root under quorum: a workflow
-/// the PR adds runs as the verdict author and could post verdicts (bosun#706).
+/// A workflow change is trust root under quorum in every `[checks]` mode: a workflow the PR adds
+/// runs as the verdict author and could post verdicts (bosun#706).
 #[test]
-fn a_workflow_change_is_the_owners_unless_checks_mode() {
+fn a_workflow_change_is_the_owners_in_every_checks_mode() {
     let k = key();
     let fake = quorum(&k);
     fake.pull_file(1, ".github/workflows/x.yml", "added", 1, 0, Some(PLAIN));
@@ -411,7 +412,21 @@ fn a_workflow_change_is_the_owners_unless_checks_mode() {
     fake.content(".bosun/bosun.toml", BASE, &config_checks("quorum"));
     fake.pull_file(1, ".github/workflows/x.yml", "added", 1, 0, Some(PLAIN));
     let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
-    assert_eq!(code, 0, "{v}");
+    assert_eq!(code, 5, "{v}");
+    owner_path(&fake, &v, "workflow, checks mode");
+}
+
+/// A strong secret (a PEM private key) in the added lines is the owner's under quorum: two
+/// verdicts never cover a real credential.
+#[test]
+fn a_strong_secret_is_the_owners_under_quorum() {
+    let k = key();
+    let fake = quorum(&k);
+    let pem = "@@ -0,0 +1,1 @@\n+-----BEGIN PRIVATE KEY-----";
+    fake.pull_file(1, "docs/notes.txt", "added", 1, 0, Some(pem));
+    let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
+    assert_eq!(code, 5, "{v}");
+    owner_path(&fake, &v, "strong secret");
 }
 
 /// A trust-root change is high risk and the owner's whatever the base rules say: a base whose
@@ -481,7 +496,7 @@ fn approve_signs_the_autonomous_form_after_two_clean_verdicts() {
     let fake = quorum(&k);
     fake.content(".bosun/bosun.toml", BASE, &config_checks("quorum"));
     fake.label(1, "bosun:capability/weaken");
-    fake.pull_file(1, ".github/workflows/x.yml", "modified", 1, 0, Some(PLAIN));
+    fake.pull_file(1, "hoist.toml", "modified", 1, 0, Some(PLAIN));
     post_verdict(&fake, "session_r", HEAD);
     post_verdict(&fake, "session_s", HEAD);
     let (code, v) = sign(&fake, &k, "session_o");
@@ -771,7 +786,8 @@ fn approve_refuses_a_pin_downgrade_and_signs_a_released_upgrade() {
 
 /// `approve` reads the policy where risk-check does, at the PR's base (the same read as the
 /// trust root): a default branch that moved to quorum after this PR's base signs nothing for a
-/// PR that changes the trust root, and a base on quorum signs although the default branch left it.
+/// PR that changes the trust root, and a base on quorum signs nothing once the default branch left
+/// it (fail closed: both refs must hold quorum or autonomous).
 #[test]
 fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
     let k = key();
@@ -791,8 +807,15 @@ fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
     post_verdict(&fake, "session_r", HEAD);
     post_verdict(&fake, "session_s", HEAD);
     let (code, v) = sign(&fake, &k, "session_o");
-    assert_eq!(code, 0, "{v}");
-    assert_eq!(v["data"]["policy"], "quorum", "{v}");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("on the default branch it is owner"),
+        "{v}"
+    );
 }
 
 /// A verdict comment of `session` on HEAD with `confidence`, posted by `author`.

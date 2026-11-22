@@ -351,3 +351,28 @@ fn from_commits_fixed_with_no_tags_writes_no_changeset() {
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     assert!(!d.join(".changeset/hoist-migrate.md").exists());
 }
+
+#[test]
+fn init_refuses_symlinked_changeset_dir() {
+    let repo = tagged_repo();
+    let outside = TempDir::new().unwrap();
+    std::os::unix::fs::symlink(outside.path(), repo.path().join(".changeset")).unwrap();
+    let o = init(repo.path(), &[]);
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    assert!(stderr(&o).contains("symlink"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}
+
+#[test]
+fn init_failure_leaves_no_partial_files() {
+    let repo = tagged_repo();
+    let d = repo.path();
+    commit_in(d, "packages/b/x.ts", "feat: add thing");
+    // A dangling symlink: `exists()` is false, but creating the file fails.
+    std::fs::create_dir_all(d.join(".changeset")).unwrap();
+    std::os::unix::fs::symlink("nowhere", d.join(".changeset/hoist-migrate.md")).unwrap();
+    let o = init(d, &["--from-commits"]);
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    assert!(!d.join(".changeset/config.json").exists());
+    assert!(!d.join(".changeset/README.md").exists());
+}

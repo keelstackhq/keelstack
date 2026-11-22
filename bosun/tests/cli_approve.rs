@@ -119,7 +119,18 @@ fn list_shows_ready_and_waiting_sorted_with_the_command() {
     let (code, v) = approve(&fake, &["--list"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["command"], "approve");
-    assert_eq!(v["next"][0]["tool"], "AskUserQuestion");
+    // D-025: no form, no next step for a session; the owner comments on the PR.
+    assert_eq!(v["next"], json!([]));
+    assert!(
+        v["data"]["owner_step"]
+            .as_str()
+            .unwrap()
+            .contains("/bosun approve <sha> on the PR")
+    );
+    assert_eq!(
+        v["data"]["ready"][0]["owner_comment"],
+        format!("/bosun approve {}", sha(1))
+    );
     let ready = v["data"]["ready"].as_array().unwrap();
     assert_eq!(ready.len(), 2);
     assert_eq!(ready[0]["pr"], 1);

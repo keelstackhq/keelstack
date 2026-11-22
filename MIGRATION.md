@@ -118,7 +118,7 @@ orchestrator's signature plus two clean verdicts from different reviewer session
 relayers) pass every PR except the trust root, which bosun re-roots under each code root
 (`bosun/` here): the trust files above, `.bosun/approvers.toml`, `.bosun/bosun.toml`,
 `.bosun/risk.toml`, the risk, verdict, signer, main-open, review and release workflows,
-`.claude/settings*.json`, and under `bosun/` the judging, record, config, GitHub and launcher
-code (`bosun/src/core/risk.rs` `TRUST_ROOT_CODE`, spec §8). With `[checks] mode = "dual"` every
-workflow change is trust root too. `.bosun/version` stays `unreleased`: moving it to the first
+`.claude/settings*.json`, and under `bosun/` every file of `src/` and `profiles/`, its
+`Cargo.toml` and launchers (`bosun/src/core/risk.rs` `QUORUM_CODE_FILES`, spec §8). Every
+`.github/workflows/**` and `.github/actions/**` change is trust root in every `[checks]` mode. `.bosun/version` stays `unreleased`: moving it to the first
 monorepo release is the owner's (the pin rule fails closed from an unreleased base).

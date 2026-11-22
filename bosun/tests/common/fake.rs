@@ -81,6 +81,8 @@ pub struct State {
     /// (slug, id) of the App the token belongs to, for check runs the client creates.
     pub token_app: (String, u64),
     pub contents: HashMap<String, String>,
+    /// `<ref>:<path>` keys a test wrote itself (not copied from the default branch to a base sha).
+    pub explicit: std::collections::HashSet<String>,
     pub reviews: HashMap<u64, Vec<Value>>,
     pub timeline: HashMap<u64, Vec<Value>>,
     /// `base...head` -> files of the comparison.
@@ -621,13 +623,22 @@ impl FakeGithub {
     /// A file at a ref; the contents API serves it base64-encoded.
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
-        s.contents.insert(format!("{git_ref}:{path}"), text.into());
-        // The default branch is what each pull's base sha stands for (a missing file stays missing).
+        let key = format!("{git_ref}:{path}");
+        s.contents.insert(key.clone(), text.into());
+        if git_ref != "refs/heads/main" {
+            s.explicit.insert(key);
+            return;
+        }
+        // The default branch is what each pull's base sha stands for (a missing file stays
+        // missing), unless a test wrote that base sha's path itself: that one stays.
         let bases: Vec<String> = (s.pulls.iter())
             .filter_map(|p| p["base"]["sha"].as_str().map(String::from))
             .collect();
-        for b in bases.iter().filter(|_| git_ref == "refs/heads/main") {
-            s.contents.insert(format!("{b}:{path}"), text.into());
+        for b in bases {
+            let key = format!("{b}:{path}");
+            if !s.explicit.contains(&key) {
+                s.contents.insert(key, text.into());
+            }
         }
     }
 

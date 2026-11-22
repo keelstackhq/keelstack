@@ -555,7 +555,7 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// main-open check and the review; a signed PR that weakened one would have every later PR
 /// judged by the weakened copy. Dependency manifests (`Cargo.toml`, `Cargo.lock`) are no trust
 /// files: they are owner-approved under R-deps.
-pub const TRUST_FILES: [&str; 15] = [
+pub const TRUST_FILES: [&str; 16] = [
     APPROVERS_PATH,
     APPROVALS_CONFIG,
     "governance/owners.toml",
@@ -564,6 +564,7 @@ pub const TRUST_FILES: [&str; 15] = [
     "docs/CODEOWNERS",
     DECISIONS_INDEX,
     DECISION_TRUST_ROOT,
+    DECISION_CHAT_APPROVALS,
     ".bosun/risk.toml",
     ".github/workflows/risk.yml",
     ".github/workflows/verdict.yml",
@@ -583,6 +584,12 @@ pub const TRUST_BUILD_FILES: [&str; 4] = [
     ".cargo/config",
     ".cargo/config.toml",
 ];
+
+/// What the quorum adds to [`TRUST_BUILD_FILES`] at the repo root when there is a code root: the
+/// workspace manifest and lockfile that build the judge. Quorum trust root only
+/// (`risk::trust_root_changed`), not trust files of every policy: a signed approval may still
+/// cover a dependency bump where the policy is not quorum (R-deps).
+pub const QUORUM_BUILD_FILES: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
 
 /// The bosun config that holds `[approvals]` (D-022 trust root).
 pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
@@ -633,10 +640,26 @@ pub const TRUST_CODE_FILES: [&str; 30] = [
     "src/core/shape.rs",
 ];
 
+/// bosun's own code under quorum, as a rule and not a list of files: everything that builds or
+/// decides the judge. Every file under a code root's `src/` and `profiles/` (the gate profiles),
+/// its manifest, build script and launchers, so a new file needs no list edit. A superset of
+/// [`TRUST_CODE_FILES`] (the trust files of every policy); `risk::trust_root_changed` uses it.
+pub const QUORUM_CODE_FILES: [&str; 6] = [
+    "src/**",
+    "profiles/**",
+    // Compiled into the binary with `include_str!` (adopt.rs).
+    "channel/**",
+    "Cargo.toml",
+    "build.rs",
+    "npm/**",
+];
+
 /// The org decisions index (D-002), read in place in the monorepo.
 pub const DECISIONS_INDEX: &str = "decisions/DECISIONS.md";
 /// D-022, whose row and file set the trust root and the merge quorum.
 pub const DECISION_TRUST_ROOT: &str = "decisions/decisions/022-hands-off-approvals.md";
+/// D-025, which retired chat approvals: the approval channels are part of the trust root.
+pub const DECISION_CHAT_APPROVALS: &str = "decisions/decisions/025-chat-approvals-retired.md";
 
 /// The changed trust files among `(path, previous path)` pairs.
 pub fn trust_files_changed<'a>(
@@ -925,6 +948,22 @@ mod tests {
             trust_files_changed_in([("src/core/guarded.rs", None)], &[String::new()]).is_empty()
         );
     }
+    /// The trust files of every policy are a subset of the quorum trust root: a path a signed
+    /// approval may not cover is never one a quorum may cover.
+    #[test]
+    fn every_trust_file_is_quorum_trust_root() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for t in trust_files_in(&roots) {
+                let p = t.replace("**", "x/y").replace('*', "z");
+                assert_eq!(
+                    super::super::risk::trust_root_changed(&[(p.as_str(), None)], &roots),
+                    [p.as_str()],
+                    "{t}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn orchestrator_root_local_slack() {
         let m = vec![

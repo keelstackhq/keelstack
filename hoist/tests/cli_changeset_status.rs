@@ -459,3 +459,14 @@ fn no_merge_base_exit_3_says_how() {
     let e = stderr_3(&run(d, &[]));
     assert!(e.contains("--since HEAD^1"), "{e}");
 }
+
+#[test]
+fn symlinked_changeset_exit_3() {
+    let r = repo();
+    let d = r.path();
+    std::os::unix::fs::symlink("README.md", d.join(".changeset/evil.md")).unwrap();
+    commit(d, "feat: link");
+    let e = stderr_3(&run(d, &[]));
+    assert!(e.contains(".changeset/evil.md"), "{e}");
+    assert!(e.contains("symlink"), "{e}");
+}

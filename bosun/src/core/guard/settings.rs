@@ -104,6 +104,16 @@ fn opt<'a>(args: &[&'a str], short: &str, long: &str) -> Option<&'a str> {
     })
 }
 
+/// Whether a short-option cluster ending in `flag` (`-sSLo F`, `-qO F`) is followed by a target.
+fn cluster_value(args: &[&str], flag: char) -> bool {
+    args.iter().enumerate().any(|(i, a)| {
+        a.starts_with('-')
+            && !a.starts_with("--")
+            && a.ends_with(flag)
+            && args.get(i + 1).is_some_and(|n| target(n))
+    })
+}
+
 /// The index of the git subcommand: the first word that is not an option or its value.
 fn git_sub(args: &[&str]) -> Option<usize> {
     let valued = ["-C", "-c", "--work-tree", "--git-dir", "--namespace"];
@@ -208,7 +218,42 @@ fn mutates(cmd: &str, args: &[&str]) -> bool {
         // The destination is the `-t` value (also in a cluster: `-rt DIR`) or the last operand,
         // and may be the `.claude` directory itself.
         "cp" | "install" => destination(args).is_some_and(target),
-        "tee" => args.iter().any(|a| protected(a)),
+        "tee" | "sponge" => args.iter().any(|a| protected(a)),
+        // `dd of=FILE` (also after `if=`/`bs=` words).
+        "dd" => args
+            .iter()
+            .any(|a| a.strip_prefix("of=").is_some_and(protected)),
+        // The output file (`-o F`, `-oF`, `--output F`) or directory (`--output-dir D`).
+        "curl" => {
+            cluster_value(args, 'o')
+                || opt(args, "-o", "--output").is_some_and(|o| protected(o) || target(o))
+                || args.iter().enumerate().any(|(i, a)| {
+                    let dir = a.strip_prefix("--output-dir=").or_else(|| {
+                        (*a == "--output-dir")
+                            .then(|| args.get(i + 1).copied())
+                            .flatten()
+                    });
+                    dir.is_some_and(target)
+                })
+        }
+        // `-O F`, `--output-document[=]F`, and the directory for downloads (`-P D`).
+        "wget" => {
+            cluster_value(args, 'O')
+                || opt(args, "-O", "--output-document").is_some_and(|o| protected(o) || target(o))
+                || opt(args, "-P", "--directory-prefix").is_some_and(target)
+        }
+        // The destination is the last operand (or a `.claude` directory itself).
+        "rsync" => destination(args).is_some_and(target),
+        // gawk's in-place extension rewrites its file operands.
+        "awk" | "gawk"
+            if args.iter().enumerate().any(|(i, a)| {
+                a.strip_prefix("-i").is_some_and(|r| {
+                    r == "inplace" || (r.is_empty() && args.get(i + 1) == Some(&"inplace"))
+                }) || *a == "--include=inplace"
+            }) =>
+        {
+            any(args)
+        }
         "sed"
             if args.iter().any(|a| {
                 a.starts_with("--in-place")
@@ -249,7 +294,10 @@ fn mutates(cmd: &str, args: &[&str]) -> bool {
 fn redirects(seg: &[String], dir: Option<&str>) -> bool {
     seg.iter().enumerate().any(|(i, w)| {
         let op = w.trim_start_matches(|c: char| c.is_ascii_digit() || c == '&');
-        let rest = op.strip_prefix('>').map(|r| r.trim_start_matches('>'));
+        // `>|` forces a write past noclobber.
+        let rest = op
+            .strip_prefix('>')
+            .map(|r| r.trim_start_matches(['>', '|']));
         // `2>&1` duplicates a descriptor: no file.
         let to = rest.map(|r| match r.strip_prefix('&').unwrap_or(r) {
             "" => seg.get(i + 1).map_or("", |n| n),
@@ -265,6 +313,8 @@ fn redirects(seg: &[String], dir: Option<&str>) -> bool {
 /// to the end, which only makes it stricter). Subshell groups are scanned in line; `sh -c`,
 /// `eval` and `env -S` strings are scanned again with the current `cwd`.
 fn mutated(text: &str, mut cwd: Option<String>, depth: usize) -> bool {
+    // `>|` is a plain redirect that overrides noclobber; `|` would otherwise split the command.
+    let text = &text.replace(">|", ">");
     let words = shell_words(&split_heredocs(text).0);
     for seg in words.split(|w| w == SEP) {
         let (cmd, args, dirs) = command_of(seg);
@@ -375,6 +425,45 @@ mod tests {
         assert!(sh_in(c, "cd .. && rm settings.json").is_none());
         assert!(sh_in("/repo/src", "rm settings.json").is_none());
         assert!(sh_in("/repo", "cd src && rm settings.json").is_none());
+    }
+
+    #[test]
+    fn other_writers_of_a_settings_file_are_denied() {
+        for c in [
+            "dd if=/tmp/x of=.claude/settings.json",
+            "dd of=~/.claude/settings.json < /tmp/x",
+            "curl -o .claude/settings.json https://x.test/s",
+            "curl -sSLo .claude/settings.local.json https://x.test/s",
+            "curl --output .claude/settings.json https://x.test/s",
+            "curl -o.claude/settings.json https://x.test/s",
+            "curl -O --output-dir .claude https://x.test/settings.json",
+            "wget -O .claude/settings.json https://x.test/s",
+            "wget -qO .claude/settings.json https://x.test/s",
+            "wget --output-document=.claude/settings.json https://x.test/s",
+            "wget -P .claude https://x.test/settings.json",
+            "rsync /tmp/s.json .claude/settings.json",
+            "rsync -a /tmp/new/ .claude/",
+            "cat /tmp/x | sponge .claude/settings.json",
+            "awk -i inplace '{print}' .claude/settings.json",
+            "gawk -iinplace '{print}' .claude/settings.local.json",
+            "echo '{}' >| .claude/settings.json",
+            "echo '{}' >|.claude/settings.json",
+            "echo '{}' 2>| ~/.claude/settings.json",
+        ] {
+            assert!(sh(c).is_some(), "{c}");
+        }
+        for c in [
+            "dd if=.claude/settings.json of=/tmp/backup",
+            "curl -o /tmp/s.json https://x.test/s",
+            "wget -O /tmp/s.json https://x.test/s",
+            "rsync .claude/settings.json /tmp/backup/",
+            "sponge /tmp/x",
+            "awk '{print}' .claude/settings.json",
+            "awk -i inplace '{print}' src/a.txt",
+            "echo hi >| /tmp/x",
+        ] {
+            assert!(sh(c).is_none(), "{c}");
+        }
     }
 
     #[test]

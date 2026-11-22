@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use super::ApproveArgs;
 use crate::app::App;
-use crate::app::{Result, default_ref, kill_switch, main_red};
+use crate::app::{Result, kill_switch, main_red};
 use crate::cli::pr_no_ci::provider_default;
 use crate::cli::risk_check::{
     autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
@@ -30,7 +30,7 @@ use crate::core::approve::{
 use crate::core::ask;
 use crate::core::records::{PrHead, Record};
 use crate::core::risk;
-use crate::ctx::{Ctx, Origin};
+use crate::ctx::Ctx;
 use crate::gates::main_open::{is_mainfix, judge};
 use crate::github::{Github, IssueState, LiveGithub, Pull, b64};
 use crate::hooks::answers;
@@ -370,7 +370,7 @@ fn exec(
         if !b.skipped.is_empty() {
             data["skipped_fix"] = json!(SKIPPED_FIX);
         }
-        return Ok(ask_next(ctx, &b.ready, data));
+        return Ok(ask_next(&b.ready, data));
     }
     kill_switch(gh)?;
     if let Some(n) = args.main_open {
@@ -456,53 +456,27 @@ fn approve_one(gh: &dyn Github, pr: u64, sha: &str, base: &str) -> Result<(u64, 
     ))
 }
 
-/// Each ready item gains its `ask`; `next` asks the owner: one AskUserQuestion, or a Claude Tag
-/// thread post. Nothing ready, no `next`.
-fn ask_next(ctx: &Ctx, ready: &[Ready], mut data: Value) -> Outcome {
-    let repo = ctx.repo.to_string();
-    let unix = ctx.now.0;
+/// Chat approvals are retired (D-025): no form, no `next`. Each ready item names the comment the
+/// owner posts, and `data.owner_step` says so. Nothing ready, no `owner_step`.
+fn ask_next(ready: &[Ready], mut data: Value) -> Outcome {
     let items: Vec<ask::Item> = (ready.iter())
         .map(|r| ask::Item {
             pr: r.pr,
-            title: &r.title,
             head: &r.head_sha,
-            risk: &r.risk,
-            verdict: &r.verdict,
         })
         .collect();
     for (i, item) in items.iter().enumerate() {
-        data["ready"][i]["ask"] = ask::ask(&repo, item, unix);
+        data["ready"][i]["owner_comment"] = json!(ask::owner_comment(item.head));
     }
-    // A spawned or routine session does not ask the owner: it hands the question up.
-    if matches!(ctx.origin, Origin::Spawned | Origin::Routine) {
-        data["handoff"] = json!(
-            "hand this question to the orchestrator: send data.ready[].ask (question id, text, options) to the orchestrator session, which asks the owner; a child session never asks"
-        );
-        return Outcome::data(data);
+    if let Some(t) = ask::owner_step(&items) {
+        data["owner_step"] = json!(t);
     }
-    let out = if ctx.origin == Origin::Slack {
-        ask::slack_text(&repo, &items, unix).map(|text| {
-            let mut a = json!({"text": text});
-            let channel = ctx.config.slack.as_ref().map(|s| s.channel.trim());
-            if let Some(c) = channel.filter(|c| !c.is_empty()) {
-                a["channel"] = json!(c);
-            }
-            ("slack_post", a)
-        })
-    } else {
-        data["ask_more"] = json!(items.len().saturating_sub(ask::MAX_ASKED));
-        ask::ask_user_question(&repo, &items, unix).map(|a| ("AskUserQuestion", a))
-    };
-    let o = Outcome::data(data);
-    match out {
-        Some((tool, a)) => o.with_next(tool, a),
-        None => o,
-    }
+    Outcome::data(data)
 }
 
 fn ready_json(r: &Ready) -> Value {
     json!({"pr": r.pr, "title": r.title, "head_sha": r.head_sha,
-        "risk_from_status": r.risk, "files": r.files,
+        "risk_from_status": r.risk, "verdict": r.verdict, "files": r.files,
         "files_truncated": r.files.len() >= COMPARE_FILES_CAP})
 }
 
@@ -762,41 +736,14 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     }
     if role == Role::Signer && !args.bootstrap {
         return Err(BosunError::usage(
-            "--as signer signs only the autonomous form (D-017): it needs --bootstrap",
-            "add --bootstrap (the policy at the default branch must be autonomous)",
+            "--as signer signs only under the quorum (D-022) or autonomous (D-017) policy: it needs --bootstrap",
+            "add --bootstrap (`[approvals] policy` at the PR's base must be \"quorum\" or \"autonomous\")",
         ));
     }
     if role == Role::Signer {
-        let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
-        let config = match text {
-            Some(t) => Config::parse(&t, CONFIG_FILE)?,
-            None => Config::default(),
-        };
-        let policy = config.approvals.policy();
-        if !matches!(policy, Policy::Autonomous | Policy::Quorum) {
-            return Err(BosunError::error(
-                format!(
-                    "--as signer signs only under the autonomous policy (D-017); the default branch's policy is {}",
-                    policy.name()
-                ),
-                "set `[approvals] policy = \"autonomous\"` (or the booster mode) on the default branch with a PR the owner approves, or ask the owner",
-            ));
-        }
-        if !config.approvals.signer {
-            return Err(BosunError::error(
-                "the CI signer is off: `[approvals] signer` is not true on the default branch; nothing was signed",
-                "the owner decides: set `[approvals] signer = true` in .bosun/bosun.toml with a PR (R-weaken, owner-approved); the default is the orchestrator-held key (`--sign-key` as owner)",
-            ));
-        }
-        let gate_app = config.checks.mode == crate::config::CheckMode::Checks
-            && config.checks.app_id.is_some()
-            && crate::github::gate::trusted_app_id() == config.checks.app_id;
-        if !gate_app {
-            return Err(BosunError::error(
-                "the CI signer needs `[checks] mode = \"checks\"` with the gate App on the default branch (and in this checkout): in statuses mode any push workflow can post a ci-ok; nothing was signed",
-                "set `[checks] mode = \"checks\"`, `app_id` and `app_slug` (spec section 15), or sign with the orchestrator-held key",
-            ));
-        }
+        // Fail closed: the default branch (now) and the PR's base must both allow the signer.
+        signer_allowed(gh, &crate::app::default_ref(gh)?, "the default branch")?;
+        signer_allowed(gh, &pull.base_sha, "the PR's base")?;
     }
     let boot = match args.bootstrap {
         true if role == Role::Delegate => {
@@ -936,6 +883,44 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     Ok(Outcome::data(json!({"approved": approved})))
 }
 
+/// Refuses unless `[approvals]` and `[checks]` at `git_ref` let the CI signer sign.
+fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
+    let config = match gh.file_at(CONFIG_FILE, git_ref)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)?,
+        None => Config::default(),
+    };
+    let policy = config.approvals.policy();
+    if !matches!(policy, Policy::Autonomous | Policy::Quorum) {
+        return Err(BosunError::error(
+            format!(
+                "--as signer signs only under the quorum (D-022) or autonomous (D-017) policy; the policy at {what} is {}",
+                policy.name()
+            ),
+            "set `[approvals] policy = \"quorum\"` or `\"autonomous\"` with a PR the owner approves (it counts once it is on the default branch and at the PR's base), or ask the owner",
+        ));
+    }
+    if !config.approvals.signer {
+        return Err(BosunError::error(
+            format!(
+                "the CI signer is off: `[approvals] signer` is not true at {what}; nothing was signed"
+            ),
+            "the owner decides: set `[approvals] signer = true` in .bosun/bosun.toml with a PR (R-weaken, owner-approved); the default is the orchestrator-held key (`--sign-key` as owner)",
+        ));
+    }
+    let gate_app = config.checks.mode == crate::config::CheckMode::Checks
+        && config.checks.app_id.is_some()
+        && crate::github::gate::trusted_app_id() == config.checks.app_id;
+    if !gate_app {
+        return Err(BosunError::error(
+            format!(
+                "the CI signer needs `[checks] mode = \"checks\"` with the gate App at {what} (and in this checkout): in statuses mode any push workflow can post a ci-ok; nothing was signed"
+            ),
+            "set `[checks] mode = \"checks\"`, `app_id` and `app_slug` (spec section 15), or sign with the orchestrator-held key",
+        ));
+    }
+    Ok(())
+}
+
 /// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
 type Boot = (Option<String>, String, Policy, &'static str);
 
@@ -952,6 +937,21 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     };
     let (policy, src) = (approvals.policy(), approvals.policy_source());
     if matches!(policy, Policy::Autonomous | Policy::Quorum) {
+        // Fail closed: the default branch must hold the same kind of policy as the base.
+        let main = match gh.file_at(CONFIG_FILE, &crate::app::default_ref(gh)?)? {
+            Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals.policy(),
+            None => Policy::Orchestrator,
+        };
+        if !matches!(main, Policy::Autonomous | Policy::Quorum) {
+            return Err(BosunError::error(
+                format!(
+                    "the policy at the PR's base is {} but on the default branch it is {}; nothing was signed",
+                    policy.name(),
+                    main.name()
+                ),
+                "the owner restores the policy on the default branch with a PR they approve, then run again",
+            ));
+        }
         autonomous_ok(app, pull, requester, policy)?;
         let line = if policy == Policy::Quorum {
             QUORUM_LINE

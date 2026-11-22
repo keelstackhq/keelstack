@@ -75,8 +75,10 @@ pub fn run(_g: &GlobalArgs, a: &PiecesArgs) -> Result<Report, SpliceError> {
         if p.base {
             line.push_str("  [base]");
         }
-        if let Some(d) = &p.default_name {
-            line.push_str(&format!("  multiple (default name: {d})"));
+        match (&p.default_name, p.multiple) {
+            (Some(d), _) => line.push_str(&format!("  multiple (default name: {d})")),
+            (None, true) => line.push_str("  multiple"),
+            (None, false) => {}
         }
         if !p.requires.is_empty() {
             line.push_str(&format!("  requires: {}", p.requires.join(", ")));

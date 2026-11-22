@@ -1,0 +1,1 @@
+- Approve list returns the owner comment, not a chat form (D-025); signer policy read at the PR base.

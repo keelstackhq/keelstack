@@ -226,7 +226,9 @@ pub fn verify(app: &App, pull: &Pull) -> Result<Vec<String>, BosunError> {
 }
 
 fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunError> {
-    let overlay = Overlay::load(app.gh.as_ref(), &pull.base_sha)?;
+    // The gate list and tool files come from the default branch's current sha, as `required_gates`
+    // (`pr --ready`) reads them: not from the PR's base, which may predate a stricter default branch.
+    let overlay = Overlay::load(app.gh.as_ref(), &default_ref(app.gh.as_ref())?)?;
     overlay.apply(wt)?;
     let all = non_empty(stamps::ready_gates(wt)?)?;
     let config = &overlay.config;

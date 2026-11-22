@@ -1860,9 +1860,11 @@ pub(crate) fn quorum_clean(
 pub const TRUST_RULE: &str = "R-trust";
 
 /// The quorum trust root (D-022) the PR changes, when `[approvals] policy = "quorum"` at base:
-/// [`risk::trust_root_changed`] under the code `roots`, the pin rule ([`pin_trust_root`]), and
-/// every workflow file unless `[checks] mode = "checks"` (a workflow the PR adds runs as the
-/// verdict author, bosun#706). Empty under any other policy. A base config that does not parse
+/// [`risk::trust_root_changed`] under the code `roots` (workflows and actions in every `[checks]`
+/// mode: a workflow the PR adds runs as the verdict author, bosun#706), the pin rule
+/// ([`pin_trust_root`]), every CI file of [`risk::workflow_files`], and an added line with a
+/// strong secret ([`risk::strong_secret_files`]): a real credential never rides on a quorum.
+/// Empty under any other policy. A base config that does not parse
 /// is no quorum (`orchestrator_window` then refuses every signature).
 pub(crate) fn quorum_trust_root(
     gh: &dyn Github,
@@ -1885,9 +1887,11 @@ pub(crate) fn quorum_trust_root(
         .collect();
     let mut out = risk::trust_root_changed(&paths, roots);
     out.extend(pin_trust_root(gh, &paths, (base, head)));
-    if config.checks.mode != crate::config::CheckMode::Checks {
-        out.extend(risk::workflow_files(&paths));
-    }
+    out.extend(risk::workflow_files(&paths));
+    let patches: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.patch.as_deref()))
+        .collect();
+    out.extend(risk::strong_secret_files(&patches));
     out.sort();
     out.dedup();
     Ok(out)

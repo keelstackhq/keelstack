@@ -166,13 +166,14 @@ fn happy_path_commits_pushes_and_opens_the_pr() {
     // --owner seeds owners.toml and the token makes the labels: four steps are left.
     assert_eq!(d["owner_steps"].as_array().unwrap().len(), 4);
     assert!(d["labels_created"].to_string().contains("bosun:halt"));
-    // D-012: signed approvals count once the orchestrator's key is enrolled.
+    // D-025: the owner approves with a `/bosun approve <sha>` comment; no chat form.
     let steps = d["owner_steps"].to_string();
-    assert_eq!(
-        steps
-            .matches("once its key is in .bosun/approvers.toml")
-            .count(),
-        1,
+    assert!(
+        steps.contains("commenting `/bosun approve <sha>`"),
+        "{steps}"
+    );
+    assert!(
+        !steps.contains("Claude Code chat") && !steps.contains("a form"),
         "{steps}"
     );
     assert!(d["pr"]["number"].as_u64().is_some());
@@ -198,7 +199,8 @@ fn happy_path_commits_pushes_and_opens_the_pr() {
     assert!(
         body.contains("R-gov")
             && !body.contains("hoist apply")
-            && body.contains("form in the Claude Code chat"),
+            && body.contains("`/bosun approve <sha>` comment")
+            && !body.contains("Claude Code chat"),
         "{body}"
     );
 }

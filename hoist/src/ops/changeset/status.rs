@@ -109,8 +109,7 @@ fn read_head(dir: &Path) -> Result<Vec<Changeset>, HoistError> {
             }
             continue;
         }
-        // A symlink's blob is its target path, not a changeset.
-        if kind != "blob" || mode == "120000" {
+        if kind != "blob" {
             continue;
         }
         let Some(id) = name.strip_suffix(".md") else {
@@ -118,6 +117,13 @@ fn read_head(dir: &Path) -> Result<Vec<Changeset>, HoistError> {
         };
         if is_skipped(name) {
             continue;
+        }
+        // A symlink's blob is its target path, not a changeset: refuse, as `read_dir` does.
+        if mode == "120000" {
+            return Err(HoistError::Config {
+                file: rel.to_string(),
+                message: "is a symlink; changesets must be regular files".into(),
+            });
         }
         let text = git(dir, &["show", &format!("HEAD:./{rel}")])?;
         out.push(parse(id, &text).map_err(|message| HoistError::Config {

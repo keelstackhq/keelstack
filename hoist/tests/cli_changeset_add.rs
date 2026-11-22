@@ -280,3 +280,15 @@ fn init_broken_hoist_toml_exit_3() {
     assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
     assert!(!r.path().join(".changeset/config.json").exists());
 }
+
+#[test]
+fn add_refuses_symlinked_changeset_dir() {
+    let r = repo();
+    let d = r.path();
+    let outside = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(outside.path(), d.join(".changeset")).unwrap();
+    let o = run(d, &["add", "tool:minor", "-m", "x"]);
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    assert!(stderr(&o).contains("symlink"), "{}", stderr(&o));
+    assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
+}

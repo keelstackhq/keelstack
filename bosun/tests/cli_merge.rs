@@ -588,6 +588,84 @@ fn merge_in_the_cloud_refuses_a_session_the_registry_records_as_spawned() {
     assert!(merge_puts(&fake).is_empty());
 }
 
+/// In the cloud a child without any registry record (no spawn record) is no orchestrator: the
+/// child flag does not make it one, and nothing is merged. A registered orchestrator still merges
+/// (`merge_in_a_cloud_top_level_session_ignores_the_child_flag`).
+#[test]
+fn merge_in_the_cloud_refuses_a_session_without_a_registry_record() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", "session_unrecorded_child")
+        .env("BOSUN_GIT_URL", dir.path())
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env("CLAUDE_CODE_REMOTE", "true")
+        .env("BOSUN_NOW", NOW)
+        .arg("-C")
+        .arg(dir.path())
+        .args(["merge", "20"])
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    assert_eq!(out.status.code().unwrap(), 5, "{v}");
+    assert!(merge_puts(&fake).is_empty());
+}
+
+/// The owner's approval is judged again after the gates ran: an approval withdrawn meanwhile
+/// stops the merge (exit 5).
+#[test]
+fn merge_rechecks_the_owner_approval_after_the_gates() {
+    let (fake, dir) = setup(true, Some(NO_CI));
+    verdict(&fake);
+    owner_approves(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    // The gates read the profile first thing: the approval is gone by the time they have run.
+    fake.after_requests("/contents/.bosun/profiles/rust.toml", 0, |s| {
+        s.comments.retain(|c| !c.body.starts_with("/bosun approve"));
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert!(merge_puts(&fake).is_empty(), "merged without the approval");
+}
+
+/// Main going red while the gates ran (after the first main-open judgment) stops the merge.
+#[test]
+fn merge_rechecks_main_open_judged_after_the_gates() {
+    let (fake, dir) = setup(true, Some(NO_CI));
+    verdict(&fake);
+    owner_approves(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    fake.issue(9, "main is red", &["bosun:main-red"], "");
+    fake.hide_from_list(9);
+    fake.after_requests("/contents/.bosun/profiles/rust.toml", 0, |s| {
+        s.issues.iter_mut().find(|i| i.number == 9).unwrap().hidden = false;
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 4, "{v}");
+    assert!(merge_puts(&fake).is_empty(), "merged while main was red");
+}
+
+/// The gate list is the default branch's current one, not the PR base's older copy.
+#[test]
+fn merge_runs_the_default_branchs_gates_not_the_pr_bases() {
+    let (fake, dir) = setup_files(false, Some(NO_CI), &[("bad.txt", "x")]);
+    verdict(&fake);
+    // `--ready` judges against the default branch (the failing `fmt` is stamped green here).
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    // The PR's base sha holds an older, laxer profile; the default branch's TINY still judges.
+    fake.content(
+        ".bosun/profiles/rust.toml",
+        &base_sha(dir.path()),
+        "[adapters]\npackages = \"cargo-metadata\"\npending = \"rust-ignore\"\nassertions = \"rust\"\n[gates.fmt]\ncmd = [\"true\"]\n[gates.lint]\ncmd = [\"true\"]\n",
+    );
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["fmt"]), "{v}");
+    assert!(merge_puts(&fake).is_empty());
+}
+
 #[test]
 fn merge_summary_from_a_non_writer_is_ignored() {
     let (fake, dir) = setup(false, Some(NO_CI));
@@ -865,9 +943,10 @@ fn merge_counts_a_skipped_gate_as_failed() {
     assert_eq!(v["data"]["failed_gates"], json!(["fmt"]), "{v}");
 }
 
-/// The overlay is the PR's base commit: the branch name moving on changes nothing.
+/// The overlay is the default branch's, as `--ready` reads it: an older profile at the PR's base
+/// sha changes nothing.
 #[test]
-fn merge_overlays_the_pr_base_sha_not_the_branch() {
+fn merge_overlays_the_default_branch_not_the_pr_base_sha() {
     let (fake, dir) = merge_ready("true");
     let base = base_sha(dir.path());
     fake.content(
@@ -876,8 +955,8 @@ fn merge_overlays_the_pr_base_sha_not_the_branch() {
         &profile("false", "true"),
     );
     let (code, v) = merge(&fake, dir.path());
-    assert_eq!(code, 5, "{v}");
-    assert_eq!(v["data"]["failed_gates"], json!(["fmt"]), "{v}");
+    assert_eq!(code, 0, "{v}");
+    assert!(fake.merged(20));
 }
 
 /// The commits come from the fetch URL only, never from the shared checkout's objects: with an

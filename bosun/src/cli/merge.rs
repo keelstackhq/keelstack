@@ -170,6 +170,26 @@ fn check_no_ci(app: &App, pull: &Pull) -> Result<(), BosunError> {
     // verdict and main-open already let through gets there. Stamp files are never trusted: the
     // base's required gates run on a worktree of the exact head.
     super::merge_gates::verify(app, pull)?;
+    // The gates took a while: an owner hold or a withdrawn approval that landed meanwhile, or a
+    // verdict that no longer counts, stops the merge. The same checks as above, judged afresh.
+    super::risk_check::evaluate_local(app, pull)?;
+    if super::pr_no_ci::clean_by_other(app, pull)?.is_empty() {
+        return Err(BosunError::needs_human(
+            format!("PR #{pr} has no clean verdict on head {head} from another session"),
+            format!(
+                "a reviewer session posts a fresh signed verdict, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
+    let main = judge_local(gh, pull, &crate::gates::main_open::main_state(gh)?)?;
+    if !main.pass {
+        return Err(BosunError::halted(
+            main.description,
+            format!(
+                "fix main with a bosun:kind/mainfix PR, or wait for main-red to close, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
     Ok(())
 }
 

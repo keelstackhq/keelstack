@@ -51,8 +51,8 @@ const STEP_HOIST: &str = "Run `hoist apply` once: branch protection, auto-merge 
 const STEP_HALT: &str =
     "Create the kill-switch label: `gh label create bosun:halt --color B60205`.";
 const STEP_ENV: &str = "Create the environment splice-bot (deployment branches: main only), then add the secret SPLICE_BOT_TOKEN (a fine-grained or app token) to it, never as a repository secret, so the splice update bot's PRs run CI.";
-const STEP_APPROVE: &str = "Review this setup PR; it is R-gov, so approve its head SHA: the session asks you with a form in the Claude Code chat and the orchestrator posts the signed `bosun approve` comment once its key is in .bosun/approvers.toml (fallback: comment `/bosun approve <sha>` yourself). While main has no bosun workflows, risk-check, review-verdict and main-open cannot run on it: merge it yourself, then apply the required checks.";
-const STEP_UPDATES: &str = "Each weekly splice update PR touches .splice/** and is R-gov: approve its head SHA the same way (a form in the Claude Code chat; the orchestrator posts the signed comment).";
+const STEP_APPROVE: &str = "Review this setup PR; it is R-gov, so approve its head SHA by commenting `/bosun approve <sha>` (the full 40-character head) on the PR as one of the owners (D-025: agents never ask you for an approval in chat). While main has no bosun workflows, risk-check, review-verdict and main-open cannot run on it: merge it yourself, then apply the required checks.";
+const STEP_UPDATES: &str = "Each weekly splice update PR touches .splice/** and is R-gov: approve its head SHA the same way (comment `/bosun approve <sha>` on the PR).";
 const BOOTSTRAP_STEP: &str = "For each new package that publishes, run `hoist release bootstrap` once on a computer after `npm login` and `cargo login`, then set up the crates.io trusted publisher; every release then needs a tap on the `release` environment.";
 
 /// The `create_trigger` call of one Routine from `doctor::routines`. Each firing starts a fresh
@@ -577,7 +577,7 @@ fn pr_body(pieces: &[String], changes: &Value, kept: &[String], warnings: &[Stri
     if !kept.is_empty() {
         s += &format!("\nKept the repo's own `{}`.\n", kept.join("`, `"));
     }
-    s += "\nRisk: high (R-gov). It needs the owner's approval on the head SHA (a form in the Claude Code chat). The other owner steps are in the session's `owner_steps`, not repeated here.\n";
+    s += "\nRisk: high (R-gov). It needs the owner's `/bosun approve <sha>` comment on the head SHA (D-025). The other owner steps are in the session's `owner_steps`, not repeated here.\n";
     if !warnings.is_empty() {
         s += "\nWarnings:\n";
         for w in warnings {

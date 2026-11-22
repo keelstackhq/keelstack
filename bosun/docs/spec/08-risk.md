@@ -187,7 +187,7 @@ High-risk PRs:
   delegate has no v2. Keys stand for the owners: any enrolled owner key's v2 clears any
   owner's dismissed review, whichever owner the key belongs to. A v2 signed for another PR
   number or another repo does not verify and clears nothing.
-- Chat approvals are retired (D-022, superseding D-018's chat forms). `bosun approve <pr>@<head> --chat` no longer exists (clap rejects `--chat`, `--question` and `--slack-user` on `approve`), risk-check never counts a `/bosun approve <head> chat` record or its `<!-- bosun:chat-approval ... -->` marker as an approval (such a comment is plain text; a PR with only that waits for the owner, exit 5), and `[approvals] chat` is a deprecated key that is still parsed (so an old `.bosun/bosun.toml`, and a pinned release that reads it, keep loading) and ignored: it cannot turn anything on. Ignoring is the safe choice, because the key only ever made more approvals count. What counts now, as before: the owner's own unedited `/bosun approve <head>` comment (a plain user token, no app footer) or GitHub review on the exact head, a signed approval (`bosun approve <pr>@<head> --sign-key <pem>`; bootstrap, autonomous and quorum forms under their policies), and the verdict forms the class allows. An owner's answer to a D-012 ask form (AskUserQuestion, Claude Tag post) is not an approval: the owner then posts the comment or review, or an orchestrator holding an enrolled key signs. A `hold` answer still keeps a PR off the `approve --list` board (`answers.json`, spec 14). `bosun approve --list` and the risk-check `fix` point to the owner's `/bosun approve <sha>` comment or GitHub review. `data.approved_by` is the owner's login or `key <id>`.
+- Chat approvals are retired (D-025, superseding D-018). Agents never ask the owner for an approval, in chat or with a form: `bosun approve --list` returns the ready PRs, `data.ready[].owner_comment` and `data.owner_step` ("the owner comments /bosun approve <sha> on the PR"), never an `AskUserQuestion` or `slack_post` in `next`. `bosun approve <pr>@<head> --chat` no longer exists (clap rejects `--chat`, `--question` and `--slack-user` on `approve`), risk-check never counts a `/bosun approve <head> chat` record or its `<!-- bosun:chat-approval ... -->` marker as an approval (such a comment is plain text; a PR with only that waits for the owner, exit 5), and `[approvals] chat` is a deprecated key that is still parsed (so an old `.bosun/bosun.toml`, and a pinned release that reads it, keep loading) and ignored: it cannot turn anything on. Ignoring is the safe choice, because the key only ever made more approvals count. What counts now, as before: the owner's own unedited `/bosun approve <head>` comment (a plain user token, no app footer) or GitHub review on the exact head, a signed approval (`bosun approve <pr>@<head> --sign-key <pem>`; bootstrap, autonomous and quorum forms under their policies), and the verdict forms the class allows. An owner's answer to any ask form (AskUserQuestion, Claude Tag post) is not an approval: the owner then posts the comment or review, or an orchestrator holding an enrolled key signs. A `hold` answer recorded earlier still keeps a PR off the `approve --list` board (`answers.json`, spec 14), but this path is legacy: `approve --list` no longer asks, so no new hold can be recorded through it; only an answer to a question from an older bosun (carrying its `[bosun:<id>]` marker) is still stored by the PostToolUse hook and read by `--list`. `bosun approve --list` and the risk-check `fix` point to the owner's `/bosun approve <sha>` comment or GitHub review. `data.approved_by` is the owner's login or `key <id>`.
 - Intakes (D-014 as amended): `bosun intake verify` needs the ed25519 intake signature; the planned chat-record alternative to `--sig` is dropped with the chat approvals (D-022).
 - Reviewer model (operating model #8). A verdict comment carries the reviewer's model as `<!-- bosun:model <id> -->` next to the session tag (`BOSUN_MODEL`, else `ANTHROPIC_MODEL`; `bosun review-ci` passes its own `model`), and `verdict apply` and `verdict post` copy it into the verdict record as `model` (absent in older records, which stay valid). `[approvals] review_models = ["<exact model id>", ...]` in `.bosun/bosun.toml`, read at the PR's base like `bootstrap_until`, limits which verdicts count for two-verdicts, delegate (clean verdict) and autonomous (D-017) approval: a record counts only if its `model` is in the list, exact match, and a record without a model never counts. Unset: any model counts (unchanged). A new model id therefore stops counting until the owner adds it (`.bosun/bosun.toml` is R-gov). The model is self-declared like the session, so this guards against accidents (a swapped reviewer), not against a lying author. The list limits only these gated approvals, not the low-risk `review-verdict` status. A base config that does not parse counts as an empty list: no verdict counts. When the list is set and a verdict class is missing, the risk-check `fix` names the list. Release ordering: a pinned release rejects the unknown key, so a repo sets it only after its `.bosun/version` pins a release that reads it. Carrying a `review-verdict` status to a new head (`carry_verdict`) is filtered the same way: the older head's independent approving record must name a listed model (the list is read at the PR's base; an unreadable one means no carry).
 - Bootstrap mode (D-012). `[approvals] bootstrap_until = "YYYY-MM-DD"` in `.bosun/bosun.toml`
@@ -323,20 +323,24 @@ High-risk PRs:
     nor signer counts), no trust-root path and bosun not halted.
   - Halt: in risk-check, if `halt_reason` says halted or cannot tell (a read error), the
     signature does not count (reason on stderr); `approve` refuses with exit 4 as everywhere.
-  - Trust root (`risk::TRUST_ROOT`, `risk::TRUST_ROOT_CODE`, `trust_root_changed`,
-    `risk_check::quorum_trust_root`; always the owner's own GitHub review or `/bosun approve
-    <sha>` comment). At the repo root and under each code root: `.bosun/approvers.toml` (who may
-    sign), `.bosun/bosun.toml`, `.bosun/risk.toml`, `**/workflows/risk.yml*` (also channel
-    template copies), the verdict, signer, main-open, review and release workflows,
-    `.claude/settings*.json` (the hooks that run bosun) and every trust file (`TRUST_FILES`:
-    owners, CODEOWNERS, the decisions index and D-022's file). Under each code root (`""` when
-    `src/cli/risk_check.rs` is at the root, and each `[[folders]]` path, plus `bosun`, that holds
-    it at the base: `bosun/` in the monorepo): the code that holds the list, judges, parses the
-    records and config, talks to GitHub and ships the binary: `src/core/{risk,approve,folders,glob,mode,weaken,records,verdict,carry,meta,touch}.rs` (`meta` picks the linked task whose lease holders are excluded, `touch` filters the files risk-check evaluates), `src/time.rs`,
-    `src/{config,ctx,app,main,lib}.rs`, `src/cli/{mod,approve,verdict,carry_over}.rs`,
-    `src/cli/risk_check.rs`, `src/github/**`, `build.rs`, `Cargo.toml` and `npm/**`. And every
-    `.github/workflows/**` file unless `[checks] mode = "checks"`: elsewhere a workflow the PR
-    adds runs as the verdict author and could post verdict records for invented sessions.
+  - Trust root (`risk::TRUST_ROOT`, `approve::TRUST_FILES`, `approve::QUORUM_CODE_FILES`, `approve::QUORUM_BUILD_FILES`,
+    `trust_root_changed`, `risk_check::quorum_trust_root`; always the owner's own GitHub review or
+    `/bosun approve <sha>` comment). The rule is a property, not a file list: everything that
+    builds or decides the judge is trust root. A property test walks the files on disk. At the
+    repo root and under each code root: `.bosun/approvers.toml` (who may sign), `.bosun/bosun.toml`,
+    `.bosun/risk.toml`, `.bosun/pins.toml` (applies everywhere, with or without a code root),
+    `**/workflows/risk.yml*` (also channel template copies), every `.github/workflows/**` and
+    `.github/actions/**` file in every `[checks]` mode (verdicts count by the author
+    `github-actions[bot]`, so a workflow the PR adds could post verdict records for invented
+    sessions), `.claude/settings*.json` (the hooks that run bosun), the reviewers' prompts
+    (`.claude/agents/reviewer.md`, `REVIEW.md`, `docs/lessons.toml`) and every trust file
+    (`TRUST_FILES`: owners, CODEOWNERS, the decisions index, D-022's and D-025's files). Under
+    each code root (`""` when `src/cli/risk_check.rs` is at the root, and each `[[folders]]`
+    path, plus `bosun`, that holds it at the base: `bosun/` in the monorepo): every file under
+    `src/**` and `profiles/**` (the gate profiles), plus `Cargo.toml`, `build.rs` and `npm/**`; a
+    new file there needs no list edit. With any code root, the root `Cargo.toml`, `Cargo.lock`,
+    `rust-toolchain*` and `.cargo/config*` that build the judge. Tests (`bosun/tests/**`), docs
+    and other folders' code are not trust root.
     Built in, whatever the rules say: a change of a trust file, and under quorum of the trust
     root, adds the owner-only match `R-trust` before the level is set, so it is high risk and
     waits for the owner even when the base rules (which a PR could have rewritten) match nothing
@@ -344,15 +348,17 @@ High-risk PRs:
     `[approvals]`) is not done, so any edit of it needs the owner. A rename counts on both
     sides, any case, and a `..` segment is a hit. The list is compiled into the binary that
     judges the PR; the risk workflow builds bosun at the PR's base (or runs the base pin), and
-    the policy is read from the base config, so a single PR cannot widen or narrow it. Not in
-    the list (known limits): the root `Cargo.toml` and `Cargo.lock` (every lockstep version
-    bump and dependency PR changes them; R-deps and two reviewers judge them) and the other
-    folders' code.
+    the policy is read from the base config, so a single PR cannot widen or narrow it. Lockstep version
+    bumps and dependency PRs that change the root `Cargo.toml` or `Cargo.lock` are therefore the
+    owner's under quorum.
   - `.bosun/version` pin rule: an upgrade to a released version stays under quorum, but a change of the pin is trust root (owner only) when the base pins no release (absent, `unreleased` or not plain `x.y.z`: the owner sets the first released pin, bosun#706), the head pin is a downgrade (head semver below base), not a published release, not plain `x.y.z` (no `v`, suffix or leading zeros; surrounding whitespace is fine), or deleted or renamed away. "Published" means the ref `v{version}` exists in bosun's upstream repo (`Github::tag_exists_in(owner, repo, name)`, `GET /repos/<owner>/<repo>/git/ref/tags/<name>`, same token and API base, 404 is no), in every repo, whatever repo the PR is in: `[approvals] bosun_repo = "owner/name"` (default `keelstackhq/keelstack`, the monorepo that tags every lockstep release `vX.Y.Z` since D-023), read from `.bosun/bosun.toml` at the PR's base only, never the head (a head-only change has no effect; changing it is owner-only, the file is trust root). The value must be exactly `owner/name` (parts of letters, digits, `.`, `_`, `-`; not empty, `.` or `..`); an invalid value, a base config that does not parse, and any API error reading the pin, the config or the ref fail closed (owner only). A pinned release older than 0.22.0 rejects the key: pin first, then set it. The base pin is read at base, the head pin at head; the rule applies only when `.bosun/version` (or a rename from it) is among the changed files, in risk-check and in `bosun approve` alike (`risk::pin_change_trust_root`, pure; `risk_check::pin_trust_root`, I/O). Two identical versions (whitespace aside) are no change. Known limit: the tag names a release, while a repo's risk workflow may install the npm package of that version; both come from the one release workflow (D-006). Mitigations that remain: every judging file above is trust root, two independent reviewers, `bosun halt`.
-  - Secrets: quorum counts on R-secrets hits (path or content). Every counting verdict is already
-    clean (approve, no major finding), so a reviewer treats a real secret value in the diff as a
-    blocker (`approved = false`: nothing counts) and approves only the false positives; a
-    placeholder or test fixture is not a blocker.
+  - Secrets: quorum refuses a strong secret. An added line that matches `STRONG_SECRETS` (PEM
+    or PGP private key, age key, GitHub, Anthropic, OpenAI, Stripe, AWS or Slack token) makes
+    the file trust-root-like (`risk::strong_secret_files`, in `quorum_trust_root`): owner only,
+    no quorum approval counts. Other R-secrets hits (path or weaker content) still count on a
+    quorum: every counting verdict is already clean (approve, no major finding), so a reviewer
+    treats a real secret value in the diff as a blocker (`approved = false`: nothing counts) and
+    approves only the false positives; a placeholder or test fixture is not a blocker.
 - Keyless fast lane: the CI signer (D-017 in ephemeral sessions). Off by default: `[approvals]
   signer = true` turns it on (an `[approvals]` change, so R-weaken: the owner decides), it needs
   `[checks] mode = "checks"` with the gate App (`approve --as signer` refuses otherwise, exit 1, and
@@ -505,8 +511,7 @@ High-risk PRs:
   `<pr>@<head>` lines) and `message_pairs` (at most 10, the binding). Titles are untrusted and
   shown inert; only the latest relayed message is answerable, PR numbers come only from the
   owner's chat, and each (id, pr) is signed at most once (design F7). Each ready item has an
-  `ask` and `next` holds the owner question (AskUserQuestion, or `slack_post` for origin
-  `slack`; §14); a PR the owner held at its current head is in `data.held[]`, not asked
+  `owner_comment` (`/bosun approve <full head>`) and `data.owner_step` says the owner comments it on the PR (D-025); `next` is empty; a PR the owner held at its current head is in `data.held[]`, not asked
   again (§14). `--list` shows each
   open PR whose `risk-check` status is `failure` with a description that starts `high risk,
   owner approval needed`, whose `review-verdict` is `success` and whose `ci-ok` is green. Only
@@ -633,6 +638,9 @@ Decisive reviews (APPROVED, CHANGES_REQUESTED, DISMISSED) are ordered by `submit
 Known limits (merge and gates):
 - `merge_gates` is not a sandbox: `bosun merge` runs the base's gates on the exact head in a temp worktree with a clean environment, but the head's code runs with the orchestrator's user rights. The base may move between the gates and the merge call: the kill switch and main-open are read again right before the merge call and the merge sends `sha = head` (a push is refused, exit 3), but a moved base is not re-gated.
 - The `ts-pnpm` sealed gates gap: for the `ts-pnpm` profile the gates are not sealed the way the Rust ones are (the install and the scripts run the head's `package.json` and lockfile); treat a head that changes them as untrusted code.
-- The root `Cargo.toml` and `Cargo.lock` also build the judge in the monorepo, but they are not quorum trust root (only `bosun/Cargo.toml` is): they are owner paths under R-deps for signed approvals, and making them trust root would send every dependency bump to the owner. That is an owner decision (D-022 trust root), not changed here.
+- Other folders that workflows run (`hoard/`, `splice/action`, `scripts/*.mjs`) are not quorum trust root: only `.github/workflows/**`, `.github/actions/**` and `.github/scripts/**` are. The trust-root text of D-022 and D-025 is narrower than the code (which also covers `.github/scripts/**`, `channel/**`, the root `Cargo.toml` and `Cargo.lock`); aligning the text, or widening the code to those folders, needs an owner decisions PR (D-002).
 - The subagent lock's fail-closed check is a text heuristic: a command name split at run time passes it, and an unrelated command that names `bosun` with an expansion can be refused.
 - The hoist `status_checks` writer check is repo-wide: it looks at who may post a required status anywhere in the repository, not per folder.
+- The signed approval message (`bosun-<form> v1 <owner>/<repo>#<pr> <head>`) carries no session, so risk-check cannot exclude the signer's own session from the quorum: only `bosun approve` (at signing, the signer's session and the CI signer's `--requester`) enforces signer != reviewer. Carrying the session in the message would be a signed-format change (an owner decision).
+- The `session_start` "adopted" cache (`<git common dir>/bosun/adopted`) is a plain file the session itself can write: a forged fresh entry makes the hook skip the "bosun is not set up here" notice (and a stale-key one forces a refetch). It only gates that notice; every judge reads the remote, not the cache.
+- In a Claude Code cloud session every session, the top-level one too, has `CLAUDE_CODE_CHILD_SESSION=1`, so a child without a spawn record is told apart from the orchestrator only by the registry. `bosun merge` fails closed (no registry record that says orchestrator, no merge), but such a child can still `bosun join` itself as a root session and then merge; the signing key, the signed verdicts and the owner's approval, not the session label, are the control.

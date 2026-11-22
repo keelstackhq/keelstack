@@ -52,7 +52,14 @@ pub fn release_plan(dir: &Path) -> Result<Report, HoistError> {
             let next = crate::changeset::plan::plan_versions(&model, &history, &sets, &cfg, &pins)?;
             (next, Some(("changesets", why, ".changeset/config.json")))
         }
-        None => (plan_versions(&model, &history, &pins)?, None),
+        None => (
+            plan_versions(&model, &history, &pins)?,
+            Some((
+                "commits",
+                "commits: conventional commits since each tag".to_string(),
+                "git log",
+            )),
+        ),
     };
     let waiting = awaiting_publish(&model, &history);
     let mut items = Vec::new();

@@ -155,6 +155,7 @@ pub fn add(
         summary,
     });
     let rel = format!(".changeset/{id}.md");
+    let made_dir = super::check_changeset_dir(dir)?;
     std::fs::create_dir_all(dir.join(".changeset"))
         .map_err(|e| HoistError::Io(format!("cannot create .changeset/: {e}")))?;
     let mut f = std::fs::OpenOptions::new()
@@ -162,6 +163,9 @@ pub fn add(
         .create_new(true)
         .open(dir.join(&rel))
         .map_err(|e| {
+            if made_dir {
+                let _ = std::fs::remove_dir(dir.join(".changeset"));
+            }
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 usage(format!(
                     "{rel} exists; pick another with `--id <id>` or edit that file"
@@ -173,6 +177,9 @@ pub fn add(
     if let Err(e) = f.write_all(text.as_bytes()) {
         drop(f);
         let _ = std::fs::remove_file(dir.join(&rel));
+        if made_dir {
+            let _ = std::fs::remove_dir(dir.join(".changeset"));
+        }
         return Err(HoistError::Io(format!("cannot write {rel}: {e}")));
     }
     let reason = if releases.is_empty() {

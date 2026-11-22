@@ -173,3 +173,41 @@ fn default_name_matches_new_yes() {
         .assert()
         .code(2);
 }
+
+#[test]
+fn multiple_marker_shows_without_a_default_name() {
+    let tpl = common::inline_template(&[
+        ("base", "id = \"base\"\ndescription = \"b\"\n", &[]),
+        (
+            "nodflt",
+            "id = \"nodflt\"\ndescription = \"n\"\nmultiple = true\n[vars]\nname = { prompt = \"n\" }\n",
+            &[],
+        ),
+        (
+            "dflt",
+            "id = \"dflt\"\ndescription = \"d\"\nmultiple = true\n[vars]\nname = { prompt = \"n\", default = \"web\" }\n",
+            &[],
+        ),
+    ]);
+    tagged(tpl.path());
+    let out = splice_cmd()
+        .args(["pieces", s(&tpl)])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let text = String::from_utf8(out).unwrap();
+    let line = |id: &str| {
+        text.lines()
+            .find(|l| l.starts_with(id))
+            .unwrap_or_else(|| panic!("{id} in {text}"))
+            .to_string()
+    };
+    assert!(line("nodflt").contains("  multiple"), "{text}");
+    assert!(!line("nodflt").contains("default name"), "{text}");
+    assert!(
+        line("dflt").contains("multiple (default name: web)"),
+        "{text}"
+    );
+}

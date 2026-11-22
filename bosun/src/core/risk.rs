@@ -838,7 +838,7 @@ pub const CRITICAL_RULES: [&str; 3] = ["R-secrets", "R-prod-write", "R-unseen"];
 /// approving such a change: a same-repo PR's own `on: pull_request` copy can post a forged
 /// status on its head before anyone approves, so it is no owner gate (spec §8 residual; B2, a
 /// check run from a dedicated GitHub App pinned in the ruleset, closes it).
-pub const CRITICAL_PATHS: [&str; 21] = [
+pub const CRITICAL_PATHS: [&str; 22] = [
     ".bosun/**",
     "governance/**",
     "CODEOWNERS",
@@ -847,6 +847,7 @@ pub const CRITICAL_PATHS: [&str; 21] = [
     // The trust-root decisions (D-022): trust files, so on the floor too.
     "decisions/DECISIONS.md",
     "decisions/decisions/022-hands-off-approvals.md",
+    "decisions/decisions/025-chat-approvals-retired.md",
     // The required checks `hoist apply` puts in the ruleset: only the root file has `[github]`.
     "hoist.toml",
     ".github/workflows/**",
@@ -1136,64 +1137,40 @@ pub fn autonomous_excluded(
 /// The list is compiled into the binary that judges the PR, and risk-check is built from the
 /// PR's base (or runs the base pin), so a single PR cannot widen or shrink it for itself.
 ///
-/// It names, in every repo (and under each code root), the approval config and rules, the trust
-/// files of [`TRUST_FILES`](super::approve::TRUST_FILES) (keys, owners, CODEOWNERS, the D-022
-/// record), the workflows that build and run the judgment or publish the binary, and the
-/// session settings that run bosun's hooks. Under each code root (where bosun's own code is,
-/// `bosun/` in the monorepo) it names [`TRUST_ROOT_CODE`] and
-/// [`TRUST_CODE_FILES`](super::approve::TRUST_CODE_FILES) (every other file that judges or gates
-/// a merge), and at the repo root the toolchain and cargo config that build it. A `.github/workflows/**` change is
-/// trust root too unless `[checks] mode = "checks"` (risk-check adds it): a workflow the PR adds
-/// runs as the verdict author and could post verdict records.
+/// The rule, not a file list: everything that builds or decides the judge is trust root. In every
+/// repo (and under each code root): the approval config and rules, the trust files of
+/// [`TRUST_FILES`](super::approve::TRUST_FILES) (keys, owners, CODEOWNERS, `.bosun/pins.toml`,
+/// the decisions index, D-022 and D-025), every `.github/workflows/**` and `.github/actions/**`
+/// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the session
+/// settings that run bosun's hooks, and the reviewers' prompts (`.claude/agents/reviewer.md`,
+/// `REVIEW.md`, `docs/lessons.toml`). Under each code root (where bosun's own code is, `bosun/`
+/// in the monorepo): [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES), so every file under
+/// its `src/` and `profiles/`, its manifest, build script and launchers; and at the repo root
+/// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) (`Cargo.toml`, `Cargo.lock`, the
+/// toolchain and cargo config) that build it.
 ///
 /// `.bosun/version` (the release that judges every PR) is not listed: an upgrade to a released
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 10] = [
+pub const TRUST_ROOT: [&str; 11] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
     "**/workflows/risk.yml*",
-    ".github/workflows/verdict.yml",
-    ".github/workflows/signer.yml",
-    ".github/workflows/main-open.yml",
-    ".github/workflows/review.yml",
-    ".github/workflows/release.yml",
+    // Every workflow and local action, in every `[checks]` mode: verdicts are counted by the
+    // author `github-actions[bot]`, which any workflow the PR adds can post as.
+    ".github/workflows/**",
+    ".github/actions/**",
+    // Scripts the workflows run.
+    ".github/scripts/**",
     ".claude/settings*.json",
+    // The reviewers' prompts and what they are taught: they decide what a verdict says.
+    ".claude/agents/reviewer.md",
+    "REVIEW.md",
+    "docs/lessons.toml",
 ];
 
-/// The trust root under each code root (D-022): the code that holds the trust-root list, judges,
-/// parses the records and config it reads, talks to GitHub, and the manifest and launchers that
-/// build and ship that binary.
-pub const TRUST_ROOT_CODE: [&str; 26] = [
-    "src/core/risk.rs",
-    "src/core/approve.rs",
-    "src/cli/risk_check.rs",
-    "src/core/folders.rs",
-    "src/core/glob.rs",
-    "src/core/mode.rs",
-    "src/core/weaken.rs",
-    "src/core/records.rs",
-    "src/core/verdict.rs",
-    "src/core/carry.rs",
-    "src/core/meta.rs",
-    "src/core/touch.rs",
-    "src/time.rs",
-    "src/config.rs",
-    "src/ctx.rs",
-    "src/app.rs",
-    "src/main.rs",
-    "src/lib.rs",
-    "src/cli/mod.rs",
-    "src/cli/approve.rs",
-    "src/cli/verdict.rs",
-    "src/cli/carry_over.rs",
-    "src/github/**",
-    "build.rs",
-    "Cargo.toml",
-    "npm/**",
-];
 /// Counting verdicts from different sessions a quorum approval needs (D-022). One verdict's bar is
 /// [`VERDICT_MIN_CONFIDENCE`] (0.9), stricter than D-022's 0.85; it stays 0.9.
 pub const QUORUM_VERDICTS: usize = 2;
@@ -1271,9 +1248,9 @@ pub fn pin_change_trust_root(
 
 /// The changed trust-root paths among `(path, previous path)` pairs: [`TRUST_ROOT`] and
 /// [`TRUST_FILES`](super::approve::TRUST_FILES) at the repo root and under each of `roots`,
-/// and [`TRUST_ROOT_CODE`] and [`TRUST_CODE_FILES`](super::approve::TRUST_CODE_FILES) under
-/// each of `roots` (the code roots, `""` is the repo root); with any code root also
-/// [`TRUST_BUILD_FILES`](super::approve::TRUST_BUILD_FILES) at the repo root. A
+/// and [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES) under each of `roots` (the code
+/// roots, `""` is the repo root); with any code root also
+/// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) at the repo root. A
 /// rename counts on both sides, any case; a `..` segment counts as a hit. Empty: a quorum can
 /// count.
 pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> Vec<String> {
@@ -1283,17 +1260,17 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
         .collect();
     let mut texts: Vec<String> = everywhere.iter().map(|g| g.to_string()).collect();
     if !roots.is_empty() {
-        // A repo with bosun's code: the toolchain and cargo config at the root build the judge.
+        // A repo with bosun's code: the manifest, lockfile, toolchain and cargo config at the
+        // root build the judge.
         texts.extend(
-            super::approve::TRUST_BUILD_FILES
-                .iter()
+            (super::approve::TRUST_BUILD_FILES.iter())
+                .chain(&super::approve::QUORUM_BUILD_FILES)
                 .map(|g| g.to_string()),
         );
     }
     for r in roots {
         texts.extend(super::folders::under(r, &everywhere));
-        texts.extend(super::folders::under(r, &TRUST_ROOT_CODE));
-        texts.extend(super::folders::under(r, &super::approve::TRUST_CODE_FILES));
+        texts.extend(super::folders::under(r, &super::approve::QUORUM_CODE_FILES));
     }
     let globs: Vec<Glob> = (texts.iter())
         .map(|g| Glob::parse(g).expect("built-in trust-root glob"))
@@ -1303,6 +1280,18 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
             (std::iter::once(path).chain(prev)).any(|p| {
                 p.split('/').any(|s| s == "..") || globs.iter().any(|g| matches_any_case(g, p))
             })
+        })
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
+/// The paths among `(path, patch)` pairs whose added lines hold a strong secret (PEM or PGP
+/// private key, age key, GitHub, Anthropic, OpenAI, Stripe, AWS or Slack token). Under quorum
+/// such a PR is the owner's: two reviewers must not be the only ones to see a real credential.
+pub fn strong_secret_files(files: &[(&str, Option<&str>)]) -> Vec<String> {
+    (files.iter())
+        .filter(|(_, patch)| {
+            (patch.map(added_lines).unwrap_or_default().iter()).any(|l| strong_secret(l))
         })
         .map(|(path, _)| path.to_string())
         .collect()
@@ -2980,6 +2969,7 @@ paths = ["channel/**", ".github/workflows/**", "deny.toml"]
         for t in crate::core::approve::TRUST_CODE_FILES
             .iter()
             .chain(&crate::core::approve::TRUST_BUILD_FILES)
+            .chain(&crate::core::approve::QUORUM_BUILD_FILES)
         {
             let f = ChangedFile {
                 path: t.to_string(),
@@ -3153,12 +3143,12 @@ mod monorepo_tests {
     }
 
     #[test]
-    fn trust_root_names_the_files_and_counts_renames_case_and_dotdot() {
+    fn trust_root_counts_renames_case_and_dotdot() {
         let t = |files: &[(&str, Option<&str>)], code: bool| {
             let roots: Vec<String> = if code { vec![String::new()] } else { vec![] };
             trust_root_changed(files, &roots)
         };
-        assert!(t(&[("src/a.rs", None), ("docs/x.md", None)], true).is_empty());
+        assert!(t(&[("docs/x.md", None)], true).is_empty());
         assert_eq!(t(&[(".bosun/approvers.toml", None)], false).len(), 1);
         assert_eq!(t(&[(".bosun/bosun.toml", None)], false).len(), 1);
         // Whole file: any edit of bosun.toml counts, not only `[approvals]`.
@@ -3171,17 +3161,13 @@ mod monorepo_tests {
         assert_eq!(t(&[(".BOSUN/Approvers.TOML", None)], false).len(), 1);
         assert_eq!(t(&[("a/../.bosun/bosun.toml", None)], false).len(), 1);
         assert_eq!(t(&[("src/../x", None)], false).len(), 1);
-        // The code that judges counts only in bosun's own repo.
-        for f in [
-            "src/core/risk.rs",
-            "src/core/approve.rs",
-            "src/cli/risk_check.rs",
-        ] {
+        // The code that judges counts only under a code root.
+        for f in ["src/core/risk.rs", "src/cli/claim.rs", "profiles/rust.toml"] {
             assert!(t(&[(f, None)], false).is_empty(), "{f}");
             assert_eq!(t(&[(f, None)], true), [f], "{f}");
-            assert_eq!(t(&[("src/z.rs", Some(f))], true).len(), 1, "{f}");
+            assert_eq!(t(&[("docs/z.md", Some(f))], true).len(), 1, "{f}");
+            assert_eq!(t(&[(&f.to_uppercase(), None)], true).len(), 1, "{f}");
         }
-        assert!(t(&[("src/core/risk_other.rs", None)], true).is_empty());
         // The risk workflow and its channel template copies count in every repo, any case.
         for f in [
             ".github/workflows/risk.yml",
@@ -3191,19 +3177,85 @@ mod monorepo_tests {
             assert_eq!(t(&[(f, None)], false), [f], "{f}");
             assert_eq!(t(&[("docs/z.md", Some(f))], false).len(), 1, "{f}");
         }
-        assert!(t(&[(".github/workflows/ci.yml", None)], true).is_empty());
-        // The rest of the judging code counts only in bosun's own repo.
+    }
+
+    /// The rest of the trust root, by rule: what builds the judge at the repo root, the
+    /// workflows and actions in every mode, the pins, the decisions and the reviewer prompts.
+    #[test]
+    fn the_rest_of_the_trust_root_under_quorum() {
+        let roots = vec!["bosun".to_string()];
+        let t = |p: &str| trust_root_changed(&[(p, None)], &roots);
         for f in [
-            "src/core/glob.rs",
-            "src/core/mode.rs",
-            "src/config.rs",
-            "src/cli/approve.rs",
-            "src/core/records.rs",
-            "src/github/gate.rs",
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain",
+            "rust-toolchain.toml",
+            ".cargo/config",
+            ".cargo/config.toml",
+            "bosun/Cargo.toml",
+            "bosun/build.rs",
+            "bosun/npm/bosun/package.json",
+            ".bosun/pins.toml",
+            ".bosun/risk.toml",
+            ".claude/settings.json",
+            ".github/workflows/ci.yml",
+            ".github/workflows/x.yml",
+            ".github/actions/setup/action.yml",
+            "decisions/DECISIONS.md",
+            "decisions/decisions/022-hands-off-approvals.md",
+            "decisions/decisions/025-chat-approvals-retired.md",
+            ".claude/agents/reviewer.md",
+            "REVIEW.md",
+            "bosun/REVIEW.md",
+            "docs/lessons.toml",
+            "bosun/docs/lessons.toml",
         ] {
-            assert!(t(&[(f, None)], false).is_empty(), "{f}");
-            assert_eq!(t(&[(f, None)], true), [f], "{f}");
+            assert_eq!(t(f), [f], "{f}");
         }
+        // Without a code root the build files stay ordinary files; the workflows never do.
+        for f in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".cargo/config.toml",
+        ] {
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
+        }
+        for f in [
+            ".github/workflows/ci.yml",
+            ".github/actions/a/action.yml",
+            "REVIEW.md",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+        // A consumer repo's `src/` and another folder's files are no trust root.
+        for f in [
+            "src/core/risk.rs",
+            "hoist/src/core/risk.rs",
+            "bosun/tests/cli_quorum.rs",
+            "bosun/tests/x.rs",
+            "bosun/docs/spec/08-risk.md",
+            ".claude/agents/explorer.md",
+            "decisions/decisions/021-gated-prs-no-line-cap.md",
+        ] {
+            assert!(t(f).is_empty(), "{f}");
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
+        }
+    }
+
+    #[test]
+    fn a_strong_secret_in_the_added_lines_is_named() {
+        let pem = "-----BEGIN RSA PRIVATE KEY-----";
+        let ghp = format!("token = \"ghp_{}\"", "a".repeat(36));
+        let files = [
+            ("a.txt", format!("@@ -0,0 +1,2 @@\n+ok\n+{pem}")),
+            ("b.txt", format!("@@ -0,0 +1,1 @@\n+{ghp}")),
+            ("c.txt", "@@ -0,0 +1,1 @@\n+password = \"x\"".to_string()),
+            ("d.txt", format!("@@ -1,1 +0,0 @@\n-{pem}")),
+        ];
+        let f: Vec<(&str, Option<&str>)> =
+            files.iter().map(|(p, b)| (*p, Some(b.as_str()))).collect();
+        assert_eq!(strong_secret_files(&f), ["a.txt", "b.txt"]);
     }
 
     #[test]
@@ -3227,73 +3279,6 @@ mod monorepo_tests {
         let ex = |e: &str| vec![e.to_string()];
         assert!(autonomous_verdicts(c, "h", &ex("s"), None).is_empty());
         assert_eq!(autonomous_verdicts(c, "h", &ex("t"), None), ["s/x"]);
-    }
-
-    #[test]
-    fn trust_root_is_re_rooted_under_each_code_root() {
-        let roots = vec!["bosun".to_string()];
-        let t = |p: &str| trust_root_changed(&[(p, None)], &roots);
-        for f in [
-            "bosun/src/core/risk.rs",
-            "bosun/src/github/mod.rs",
-            "bosun/src/app.rs",
-            "bosun/src/cli/mod.rs",
-            "bosun/Cargo.toml",
-            "bosun/npm/bosun/package.json",
-            ".bosun/risk.toml",
-            ".bosun/approvers.toml",
-            ".github/workflows/verdict.yml",
-            ".github/workflows/release.yml",
-            ".claude/settings.json",
-            "decisions/DECISIONS.md",
-            ".github/CODEOWNERS",
-            // Every other file that judges or gates a merge (spec 08: every judging file is
-            // trust root), and what builds the judge at the repo root.
-            "bosun/src/core/risk_default.toml",
-            "bosun/src/core/lease.rs",
-            "bosun/src/output.rs",
-            "bosun/src/cli/pr_no_ci.rs",
-            "bosun/src/cli/merge.rs",
-            "bosun/src/cli/merge_gates.rs",
-            "bosun/src/gates/mod.rs",
-            "bosun/src/gates/profiles/rust.toml",
-            "bosun/src/hooks/pre_tool_use.rs",
-            "bosun/src/core/guard.rs",
-            "bosun/src/core/guard/settings.rs",
-            ".bosun/pins.toml",
-            "rust-toolchain.toml",
-            ".cargo/config",
-            ".cargo/config.toml",
-            "rust-toolchain",
-            "bosun/src/cli/pr.rs",
-            "bosun/src/cli/stamps.rs",
-            "bosun/src/cli/test_integrity.rs",
-            "bosun/src/cli/review_ci.rs",
-            "bosun/src/cli/review_pack.rs",
-            "bosun/src/cli/budget.rs",
-            "bosun/src/cli/risk_local.rs",
-            "bosun/src/core/lockmerge.rs",
-            "bosun/src/core/state.rs",
-            "bosun/src/core/plan.rs",
-            "bosun/src/core/shape.rs",
-        ] {
-            assert_eq!(t(f), [f], "{f}");
-        }
-        // Without a code root (a consumer repo) the build files stay ordinary R-ci files.
-        for f in ["rust-toolchain.toml", ".cargo/config.toml"] {
-            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
-        }
-        for f in [
-            "src/core/risk.rs",
-            "hoist/src/core/risk.rs",
-            "bosun/src/cli/claim.rs",
-            "bosun/tests/cli_quorum.rs",
-            ".github/workflows/ci.yml",
-            "Cargo.lock",
-            ".claude/agents/explorer.md",
-        ] {
-            assert!(t(f).is_empty(), "{f}");
-        }
     }
 
     #[test]

@@ -82,10 +82,20 @@ fn plan_reads_changesets_not_commits() {
 fn without_changeset_dir_plan_is_unchanged_commits_mode() {
     let repo = tagged_repo(false);
     let r = plan_json(repo.path(), 0);
-    let items = r["items"].as_array().unwrap();
+    // changesets spec §3: `release/source` says "commits" without .changeset/config.json.
+    let src = item(&r, "source", "commits");
+    assert_eq!(src["action"], "ok", "{r}");
     assert!(
-        items.iter().all(|i| i["kind"] != "source"),
-        "no release/source item without .changeset/: {r}"
+        src["reason"].as_str().unwrap().starts_with("commits"),
+        "{r}"
+    );
+    assert!(
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|i| !(i["kind"] == "source" && i["key"] == "changesets")),
+        "{r}"
     );
     assert_eq!(item(&r, "version", "tool")["action"], "ok");
 }

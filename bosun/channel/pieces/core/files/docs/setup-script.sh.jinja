@@ -254,7 +254,17 @@ cargo_tool() {
 # never dropped) and the mismatch is reported. Align the two pins files in a reviewed PR.
 if [ -f pins.toml ] && [ -f scripts/pins.mjs ] && command -v node >/dev/null 2>&1 &&
   hull_pins="$(node scripts/pins.mjs --shell 2>/dev/null | grep -E "^PIN_[A-Z_]+='?[0-9A-Za-z._-]*'?\$")"; then
-  eval "$hull_pins"
+  # Parsed, never evaluated: only the two known keys are read, quotes stripped.
+  PIN_NEXTEST='' PIN_CARGO_DENY=''
+  while IFS='=' read -r k v; do
+    v="${v#\'}" && v="${v%\'}"
+    case "$k" in
+      PIN_NEXTEST) PIN_NEXTEST="$v" ;;
+      PIN_CARGO_DENY) PIN_CARGO_DENY="$v" ;;
+    esac
+  done <<EOF_PINS
+$hull_pins
+EOF_PINS
   if [ -n "${PIN_NEXTEST:-}" ] && [ "$PIN_NEXTEST" != "$NEXTEST_VERSION" ]; then
     echo "setup-script: hull's pins.toml pins nextest $PIN_NEXTEST, which differs from .bosun/pins.toml ($NEXTEST_VERSION); installing the checksummed $NEXTEST_VERSION, align the two pins files" >&2
   fi
