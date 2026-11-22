@@ -42,6 +42,9 @@ clippy.toml              @urbanisierung
 .clippy.toml             @urbanisierung
 rustfmt.toml             @urbanisierung
 .rustfmt.toml            @urbanisierung
+# R-ci: the tool pins (hull's pins.toml, bosun's .bosun/pins.toml).
+/pins.toml               @urbanisierung
+/bosun/pins.toml         @urbanisierung
 build.rs                 @urbanisierung
 # R-secrets.
 secrets.toml             @urbanisierung

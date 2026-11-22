@@ -58,7 +58,7 @@ fn is_writer(gh: &dyn Github, user: &str) -> Result<bool, BosunError> {
     ))
 }
 
-fn current_branch(dir: &Path) -> Result<String, BosunError> {
+pub(crate) fn current_branch(dir: &Path) -> Result<String, BosunError> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -76,7 +76,7 @@ fn current_branch(dir: &Path) -> Result<String, BosunError> {
 }
 
 /// The subject line of the head commit; `None` when git cannot say.
-fn head_subject(dir: &Path) -> Option<String> {
+pub(crate) fn head_subject(dir: &Path) -> Option<String> {
     let out = Command::new("git")
         .arg("-C")
         .arg(dir)
@@ -411,6 +411,9 @@ pub fn run(dir: Option<&Path>, args: &PrArgs) -> CmdResult {
     }
     if args.one_off {
         return super::pr_oneoff::run(dir, args);
+    }
+    if args.single {
+        return super::pr_single::run(dir, args);
     }
     let app = App::load(dir)?;
     let gh = app.gh.as_ref();
