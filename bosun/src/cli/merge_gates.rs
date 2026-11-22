@@ -225,6 +225,20 @@ pub fn verify(app: &App, pull: &Pull) -> Result<Vec<String>, BosunError> {
     run_gates(app, pull, &repo)
 }
 
+/// Whether a gate's skip vouches for nothing. Only the bootstrap-neutral skip (reason ending in
+/// "bootstrap PR, gate neutral") counts as done. Any other skip fails the merge, also one with no
+/// reason or an empty plan (no stack matched): deleting a file or the manifest must not switch a
+/// gate off.
+fn skip_vouches_nothing(data: &serde_json::Value) -> bool {
+    let runs = (data["runs"].as_array().cloned()).unwrap_or_else(|| vec![data.clone()]);
+    runs.iter().any(|r| {
+        r["skipped"] == true
+            && !r["reason"]
+                .as_str()
+                .is_some_and(|w| w.ends_with("bootstrap PR, gate neutral"))
+    })
+}
+
 fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunError> {
     // The gate list and tool files come from the default branch's current sha, as `required_gates`
     // (`pr --ready`) reads them: not from the PR's base, which may predate a stricter default branch.
@@ -233,6 +247,8 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
     let all = non_empty(stamps::ready_gates(wt)?)?;
     let config = &overlay.config;
     let want = snapshot(wt)?;
+    // The PR's allow list, as `test-integrity --pr` reads it (a linked task whose touch covers the PR).
+    let (_, allow, _) = super::test_integrity::pr_allow(app, pull)?;
     let mut failed = Vec::new();
     let private = wt.parent().unwrap_or(wt);
     for (i, gate) in all.iter().enumerate() {
@@ -241,13 +257,13 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
         gates::isolate(&own);
         clean_above(wt, &own)?;
         let res = if gate == "test-integrity" {
-            super::test_integrity::check_with(Some(wt), Some(&pull.base_sha), &pull.body, &[])
+            super::test_integrity::check_with(Some(wt), Some(&pull.base_sha), &pull.body, &allow)
         } else {
             gates::run(&Request {
                 root: wt,
                 stacks: &config.stack,
                 gate,
-                base: "HEAD",
+                base: &pull.base_sha,
                 all: true,
             })
         };
@@ -260,7 +276,7 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
                 "the author removes whatever in the head rewrites them; the owner reviews the head",
             ));
         }
-        if !res.is_ok_and(|o| !o.data.to_string().contains("\"skipped\":true")) {
+        if !res.is_ok_and(|o| !skip_vouches_nothing(&o.data)) {
             failed.push(gate.clone());
         }
     }
@@ -273,4 +289,28 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
         format!("the author fixes them on the PR branch and reruns `bosun pr <task> --ready`, then rerun `bosun merge {n}`"),
     )
     .with_data(json!({"pr": n, "head_sha": pull.head_sha, "failed_gates": failed})))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_bootstrap_neutral_skip_vouches() {
+        let neutral = json!({"skipped": true,
+            "reason": "no deny.toml in base: bootstrap PR, gate neutral"});
+        assert!(!skip_vouches_nothing(&neutral));
+        assert!(!skip_vouches_nothing(&json!({"runs": [neutral]})));
+        // An empty plan has no reason; another reason is no neutral skip either.
+        assert!(skip_vouches_nothing(
+            &json!({"skipped": true, "stack": null})
+        ));
+        assert!(skip_vouches_nothing(
+            &json!({"skipped": true, "reason": "no lockfile"})
+        ));
+        assert!(skip_vouches_nothing(
+            &json!({"runs": [neutral, {"skipped": true}]})
+        ));
+        assert!(!skip_vouches_nothing(&json!({"skipped": false})));
+    }
 }

@@ -16,6 +16,20 @@ fn is_redirect(word: &str) -> bool {
     })
 }
 
+/// Whether a word is `--target-directory` or a unique GNU abbreviation of it (`--t`, `--target`,
+/// `--target-dir=D`): `Some(Some(D))` when the value is attached with `=`, `Some(None)` when it is
+/// the next word. Shared by every guard that reads a copy or move destination.
+pub(super) fn target_directory_option(word: &str) -> Option<Option<&str>> {
+    if word == "--" || !word.starts_with("--") {
+        return None;
+    }
+    let (name, value) = match word.split_once('=') {
+        Some((n, v)) => (n, Some(v)),
+        None => (word, None),
+    };
+    (name.len() >= "--t".len() && "--target-directory".starts_with(name)).then_some(value)
+}
+
 /// A `>` inside quotes or after a backslash, which `shell_words` would no longer tell apart.
 const QUOTED_GT: char = '\u{1}';
 
@@ -124,7 +138,7 @@ pub fn bash_writes(command: &str) -> Vec<String> {
             .filter(|a| !a.starts_with('-'))
             .collect();
         let target_dir = args.iter().any(|a| {
-            a.starts_with("--target-directory")
+            target_directory_option(a).is_some()
                 || (a.starts_with('-') && !a.starts_with("--") && a.contains('t'))
         });
         let in_place = |a: &&str| {
@@ -274,6 +288,8 @@ mod tests {
             "cd src && echo x > lib.rs",
             "cp -t /tmp src/a.rs",
             "cp --target-directory=/tmp src/a.rs src/b.rs",
+            "cp --target=/tmp src/a.rs src/b.rs",
+            "cp --target /tmp src/a.rs src/b.rs",
             "git commit -m 'a > b'",
             "grep -- '->' src/a.rs",
             "cp -rt /tmp src/a.rs",

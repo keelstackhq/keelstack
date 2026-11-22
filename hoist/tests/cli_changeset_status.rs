@@ -470,3 +470,12 @@ fn symlinked_changeset_exit_3() {
     assert!(e.contains(".changeset/evil.md"), "{e}");
     assert!(e.contains("symlink"), "{e}");
 }
+
+#[test]
+fn blank_changeset_id_exit_3() {
+    let r = repo();
+    let d = r.path();
+    change(d, &[(".changeset/ .md", "---\n---\n")]);
+    let e = stderr_3(&run(d, &[]));
+    assert!(e.contains("blank"), "{e}");
+}

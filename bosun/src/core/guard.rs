@@ -506,10 +506,12 @@ fn answers_read_only(command: &str) -> bool {
     })
 }
 
-/// `.../bosun/answers.json` or anything under `.../.claude/projects/` once lexically normalised.
+/// `.../bosun/answers.json`, the adopted-check cache `.../bosun/adopted`, or anything under `.../.claude/projects/` once lexically normalised.
 fn is_answers_path(path: &str) -> bool {
     let norm = format!("/{}", lexical(&path.replace('\\', "/")).to_lowercase());
-    norm.ends_with("/bosun/answers.json") || norm.contains("/.claude/projects/")
+    norm.ends_with("/bosun/answers.json")
+        || norm.ends_with("/bosun/adopted")
+        || norm.contains("/.claude/projects/")
 }
 
 /// Only a `git commit` or `gh pr|issue create|edit|comment` message, title or body names the file
@@ -566,12 +568,61 @@ fn is_bosun_dir_path(w: &str) -> bool {
 
 fn removes_bosun_dir(command: &str, depth: usize) -> bool {
     let words = shell_words(command);
+    // Whether a `cd`/`pushd` put the shell in `.bosun` (relative paths then name its files).
+    let mut in_bosun = false;
     for seg in words.split(|w| w == SEP) {
         let (name, args, _) = writes::command_of(seg);
         let (kind, args) = match name {
+            "cd" | "pushd" => {
+                let to = args.iter().find(|a| !a.starts_with('-')).copied();
+                in_bosun = match to {
+                    Some(t) if is_bosun_dir_path(t) => true,
+                    Some(t) => in_bosun && !t.starts_with(['/', '~']),
+                    None => false,
+                };
+                continue;
+            }
+            "find" => {
+                let roots = args
+                    .iter()
+                    .skip_while(|a| matches!(**a, "-H" | "-L" | "-P"))
+                    .take_while(|a| !a.starts_with('-') && !matches!(**a, "(" | "!"));
+                let destructive = args.iter().any(|a| {
+                    matches!(
+                        *a,
+                        "-delete"
+                            | "-exec"
+                            | "-execdir"
+                            | "-ok"
+                            | "-okdir"
+                            | "rm"
+                            | "unlink"
+                            | "rmdir"
+                            | "mv"
+                            | "shred"
+                    )
+                });
+                if destructive && (in_bosun || roots.into_iter().any(|r| is_bosun_dir_path(r))) {
+                    return true;
+                }
+                continue;
+            }
             "rm" | "unlink" | "rmdir" | "mv" => (name, args),
             "git" => match args.iter().position(|w| matches!(*w, "rm" | "mv")) {
-                Some(k) => (args[k], args[k + 1..].to_vec()),
+                Some(k) => {
+                    // `git -C .bosun rm x`: the directory git moves to, before the subcommand.
+                    let moved = args[..k]
+                        .windows(2)
+                        .any(|p| matches!(p[0], "-C" | "--work-tree") && is_bosun_dir_path(p[1]))
+                        || args[..k].iter().any(|a| {
+                            a.strip_prefix("--work-tree=")
+                                .is_some_and(is_bosun_dir_path)
+                        });
+                    if moved {
+                        return true;
+                    }
+                    (args[k], args[k + 1..].to_vec())
+                }
                 None => continue,
             },
             _ => continue,
@@ -586,14 +637,10 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
             if std::mem::take(&mut skip_value) {
                 continue;
             }
-            if kind == "mv" && *a != "--" && a.starts_with("--") && a.len() > 2 {
-                let (name, has_value) = match a.split_once('=') {
-                    Some((n, _)) => (n, true),
-                    None => (*a, false),
-                };
-                if name.len() >= "--t".len() && "--target-directory".starts_with(name) {
+            if kind == "mv" && a.starts_with("--") && a.len() > 2 {
+                if let Some(value) = writes::target_directory_option(a) {
                     by_option = true;
-                    skip_value = !has_value;
+                    skip_value = value.is_none();
                 }
             } else if kind == "mv" && a.starts_with('-') && !a.starts_with("--") && a.len() > 1 {
                 // Clustered short flags: `-ft DIR` takes the next word, `-tDIR` carries it.
@@ -610,7 +657,11 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
         } else {
             paths.len() - usize::from(kind == "mv" && paths.len() > 1)
         };
-        if paths[..n].iter().any(|p| is_bosun_dir_path(p)) {
+        let relative = |p: &str| in_bosun && !p.starts_with(['/', '~']);
+        if paths[..n]
+            .iter()
+            .any(|p| is_bosun_dir_path(p) || relative(p))
+        {
             return true;
         }
     }
@@ -7485,6 +7536,9 @@ mod tests {
         assert!(edit("/r/.git/bosun//answers.json"));
         assert!(edit("/r/.git/bosun/ANSWERS.json"));
         assert!(!edit("/r/.git/bosun/other.json"));
+        assert!(edit("/r/.git/bosun/adopted"));
+        assert!(edit("/r/.git/bosun/x/../ADOPTED"));
+        assert!(!edit("/r/src/adopted"));
         assert!(edit("/root/.claude/projects/p/s.jsonl"));
         assert!(edit("~/.claude/projects/p/../q/s.jsonl"));
         assert!(!edit("/r/.claude/settings.json"));
@@ -7674,9 +7728,26 @@ mod tests {
             "mv --target /tmp/x .bosun",
             "mv --target=/tmp/x .bosun",
             "mv --target-dir /tmp/x .bosun",
+            "git -C .bosun rm version",
+            "git -C /r/.bosun rm -r .",
+            "git -C .bosun mv version /tmp/x",
+            "cd .bosun && rm version",
+            "cd /r/.bosun; rm -rf .",
+            "cd .bosun && git rm version",
+            "find .bosun -delete",
+            "find /r/.bosun -type f -exec rm {} +",
+            "cd .bosun && find . -delete",
             "rm -rf .BOSUN",
             "rm .Bosun/Version",
             "mv .BOSUN /tmp/x",
+            "find .bosun -exec /bin/rm {} +",
+            "find .bosun -exec sh -c 'rm \"$1\"' _ {} \\;",
+            "find .bosun -execdir /usr/bin/unlink {} +",
+            "find .bosun -ok rm {} \\;",
+            "find .bosun -okdir mv {} /tmp \\;",
+            "cd .bosun && find . -exec /bin/rm {} +",
+            "git --work-tree=.bosun rm x",
+            "git --work-tree=/r/.bosun rm -r .",
         ] {
             assert!(hit(c), "{c}");
         }
@@ -7689,6 +7760,15 @@ mod tests {
             "git rm src/a.rs",
             "echo rm .bosun",
             "ls .bosun",
+            "git -C .bosun status",
+            "git -C /r rm src/a.rs",
+            "cd .bosun && cat version",
+            "cd .bosun && cd /tmp && rm x",
+            "find .bosun -name version",
+            "find src -delete",
+            "find . -name .bosun",
+            "find src -exec rm {} +",
+            "git --work-tree=src rm x",
         ] {
             assert!(!hit(c), "{c}");
         }

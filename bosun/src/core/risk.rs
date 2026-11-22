@@ -285,7 +285,8 @@ fn lock_source_moved(path: &str, line: &str) -> bool {
 }
 
 /// Secret formats that are never exempt (R-secrets): age, PEM and PGP private keys, GitHub,
-/// Anthropic, OpenAI, Stripe, AWS and Slack tokens. They match even where the rule's own
+/// Anthropic, OpenAI, Stripe, AWS, Slack, npm, GitLab, Google API and Hugging Face tokens, and Slack
+/// webhook URLs. They match even where the rule's own
 /// `content` does not.
 const STRONG_SECRETS: &str = concat!(
     r"AGE-SECRET-KEY-[1]|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
@@ -293,6 +294,8 @@ const STRONG_SECRETS: &str = concat!(
     r"|\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{22,}",
     r"|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|\b[sr]k_live_[A-Za-z0-9]{16,}",
     r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,}",
+    r"|\bnpm_[A-Za-z0-9]{36}\b|\bglpat-[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{35}",
+    r"|\bhf_[A-Za-z0-9]{30,}|hooks\.slack\.com/services/[A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+",
 );
 
 fn strong_secret(line: &str) -> bool {
@@ -1143,8 +1146,13 @@ pub fn autonomous_excluded(
 /// the decisions index, D-022 and D-025), every `.github/workflows/**` and `.github/actions/**`
 /// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the session
 /// settings that run bosun's hooks, and the reviewers' prompts (`.claude/agents/reviewer.md`,
-/// `REVIEW.md`, `docs/lessons.toml`) and the agent notes `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` (at the
-/// repo root and in each code root), and `.github/scripts/**`. Under each code root (where bosun's own code is, `bosun/`
+/// `REVIEW.md`, `docs/lessons.toml`) and the agent notes `AGENTS.md`, `CLAUDE.md` (in every folder),
+/// `CLAUDE.local.md` and `.claude/CLAUDE.md` (at the repo root and in each code root), and
+/// `.github/scripts/**`, `scripts/**`, `docs/setup-script.sh`, `.claude-plugin/**` and
+/// `.claude/rules/**`. The scripts that `release.yml` runs in jobs holding a secret or an id-token
+/// are listed by hand (`splice/scripts/**`, `hoard/scripts/**`, `*/npm/**`): "every file a
+/// trust-root workflow executes" is not a rule this compiled-in list can apply, as it reads no
+/// workflow. Under each code root (where bosun's own code is, `bosun/`
 /// in the monorepo): [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES), so every file under
 /// its `src/` and `profiles/`, its manifest, build script and launchers; and at the repo root
 /// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) (`Cargo.toml`, `Cargo.lock`, the
@@ -1154,7 +1162,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 15] = [
+pub const TRUST_ROOT: [&str; 22] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1165,14 +1173,26 @@ pub const TRUST_ROOT: [&str; 15] = [
     ".github/actions/**",
     // Scripts the workflows run.
     ".github/scripts/**",
+    // What sessions run or load: the setup script, repo scripts (`bump-version.sh`), the plugin
+    // and the rules.
+    "docs/setup-script.sh",
+    "scripts/**",
+    ".claude-plugin/**",
+    ".claude/rules/**",
+    // What `release.yml` runs in the jobs that hold the tag key or an OIDC token (`release`,
+    // `npm`, `crates`): listed by hand, because this list is compiled in and cannot read the
+    // workflow. Add a script here when a release job starts to run it.
+    "splice/scripts/**",
+    "hoard/scripts/**",
+    "*/npm/**",
     ".claude/settings*.json",
     // The reviewers' prompts and what they are taught: they decide what a verdict says.
     ".claude/agents/reviewer.md",
     "REVIEW.md",
     "docs/lessons.toml",
-    // What every session is told, reviewers included: at the root and in each code root.
-    "AGENTS.md",
-    "CLAUDE.md",
+    // What every session is told, reviewers included: at the root and in every folder.
+    "**/AGENTS.md",
+    "**/CLAUDE.md",
     // The memory files Claude Code loads besides `CLAUDE.md`.
     "CLAUDE.local.md",
     ".claude/CLAUDE.md",
@@ -1293,7 +1313,7 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
 }
 
 /// The paths among `(path, patch)` pairs whose added lines hold a strong secret (PEM or PGP
-/// private key, age key, GitHub, Anthropic, OpenAI, Stripe, AWS or Slack token). Under quorum
+/// private key, age key, GitHub, Anthropic, OpenAI, Stripe, AWS, Slack, npm, GitLab, Google API or Hugging Face token, or a Slack webhook URL). Under quorum
 /// such a PR is the owner's: two reviewers must not be the only ones to see a real credential.
 pub fn strong_secret_files(files: &[(&str, Option<&str>)]) -> Vec<String> {
     (files.iter())
@@ -3228,6 +3248,22 @@ mod monorepo_tests {
             // Scripts the workflows run, and what bosun compiles in (`include_str!`).
             ".github/scripts/verdict.sh",
             ".github/scripts/lib/x.py",
+            // Scripts, plugin and rules that sessions or the release run; folder notes.
+            "docs/setup-script.sh",
+            "scripts/bump-version.sh",
+            "scripts/a/b.sh",
+            ".claude-plugin/plugin.json",
+            ".claude-plugin/skills/x/SKILL.md",
+            ".claude/rules/rust.md",
+            "hoist/AGENTS.md",
+            "hoist/CLAUDE.md",
+            "docs/AGENTS.md",
+            "a/b/c/CLAUDE.md",
+            // Executed by release.yml jobs that hold a secret or an id-token.
+            "splice/scripts/npm-stage.mjs",
+            "hoard/scripts/write-checksums.mjs",
+            "hoard/scripts/verify-build-shas.sh",
+            "splice/npm/splice/package.json",
             "bosun/channel/bosun.toml.jinja",
             "bosun/channel/pieces/core/files/x.md",
             "bosun/profiles/rust.toml",
@@ -3252,6 +3288,14 @@ mod monorepo_tests {
             "CLAUDE.local.md",
             ".claude/CLAUDE.md",
             ".github/scripts/x.sh",
+            "docs/setup-script.sh",
+            "scripts/bump-version.sh",
+            ".claude-plugin/plugin.json",
+            ".claude/rules/rust.md",
+            "hoist/CLAUDE.md",
+            "hoard/AGENTS.md",
+            "splice/scripts/npm-stage.mjs",
+            "hoard/scripts/write-checksums.mjs",
         ] {
             assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
         }
@@ -3262,14 +3306,40 @@ mod monorepo_tests {
             "bosun/tests/cli_quorum.rs",
             "bosun/tests/x.rs",
             "bosun/docs/spec/08-risk.md",
-            "hoist/AGENTS.md",
-            "hoist/CLAUDE.md",
-            "docs/AGENTS.md",
+            "hoist/src/lib.rs",
+            "docs/setup.md",
+            "hoist/scripts/x.sh",
             ".claude/agents/explorer.md",
             "decisions/decisions/021-gated-prs-no-line-cap.md",
         ] {
             assert!(t(f).is_empty(), "{f}");
             assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
+        }
+    }
+
+    /// Every entry of the list is trust root, with and without a code root, and every script the
+    /// release jobs with a secret or id-token run (`release.yml`) is covered.
+    #[test]
+    fn every_trust_root_entry_and_release_script_is_trust_root() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for g in TRUST_ROOT {
+                let p = g.replace("**", "x/y").replace('*', "z");
+                assert_eq!(
+                    trust_root_changed(&[(p.as_str(), None)], &roots),
+                    [p.as_str()],
+                    "{g}"
+                );
+            }
+        }
+        for f in [
+            "scripts/bump-version.sh",
+            "splice/scripts/npm-stage.mjs",
+            "splice/scripts/smoke.sh",
+            "hoard/scripts/write-checksums.mjs",
+            "hoard/scripts/verify-build-shas.sh",
+            "hoard/scripts/release-complete.sh",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
         }
     }
 
@@ -3286,6 +3356,40 @@ mod monorepo_tests {
         let f: Vec<(&str, Option<&str>)> =
             files.iter().map(|(p, b)| (*p, Some(b.as_str()))).collect();
         assert_eq!(strong_secret_files(&f), ["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn more_token_formats_are_strong_secrets() {
+        let hit = [
+            format!("NPM_TOKEN=npm_{}", "a1B2".repeat(9)),
+            format!("t: glpat-{}", "x".repeat(20)),
+            format!(
+                "key = \"AIza{}\"",
+                "Sy-_".repeat(9).chars().take(35).collect::<String>()
+            ),
+            format!("HF=hf_{}", "a".repeat(34)),
+            "url: https://hooks.slack.com/services/T0000/B0000/XXXXXXXXXXXXXXXX".to_string(),
+        ];
+        for (i, line) in hit.iter().enumerate() {
+            let patch = format!("@@ -0,0 +1,1 @@\n+{line}");
+            let f = [("a.txt", Some(patch.as_str()))];
+            assert_eq!(strong_secret_files(&f), ["a.txt"], "{i}: {line}");
+        }
+        for line in [
+            "use npm_config_cache",
+            "see npm_ packages",
+            "glpat-short",
+            "AIzaShort",
+            "hf_short",
+            "https://hooks.slack.com/docs",
+            "the AIza prefix",
+        ] {
+            let patch = format!("@@ -0,0 +1,1 @@\n+{line}");
+            assert!(
+                strong_secret_files(&[("a.txt", Some(&patch))]).is_empty(),
+                "{line}"
+            );
+        }
     }
 
     #[test]

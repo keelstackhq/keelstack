@@ -648,7 +648,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         &roots,
     );
     // D-022: under the quorum policy (read at base) its trust root is the owner's too.
-    let quorum_root = quorum_trust_root(gh, &pr_files, &roots, (base, head))?;
+    let (quorum_root, root_cause) = quorum_trust_root(gh, &pr_files, &roots, (base, head))?;
     // Built in, whatever the repo's rules say (bosun#706): a trust-root change is high risk and
     // the owner's, so a PR that rewrites the base rules cannot make itself normal risk.
     let mut root_hits: Vec<String> = trust.iter().chain(&quorum_root).cloned().collect();
@@ -721,6 +721,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "bosun: risk-check: the PR changes the quorum trust root ({}): signed approvals do not count",
             quorum_root.join(", ")
         );
+        if let Some(cause) = &root_cause {
+            eprintln!("bosun: risk-check: {cause}");
+        }
     }
     let signed_ok = trust.is_empty() && quorum_root.is_empty() && !unseen;
     let requirement = requirement(&matches);
@@ -1249,6 +1252,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     } = *need;
     let mut found = Found::default();
     let mut bootstrap = need.bootstrap;
+    let mut signed_ok = need.signed_ok;
     if let Some((comments, excluded)) = need.autonomous {
         found.autonomous_verdicts = if need.quorum {
             quorum_clean(comments, sha, excluded, need.models)
@@ -1264,6 +1268,11 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
             bootstrap = None;
         }
     }
+    // D-022: under quorum an owner-role key signature (v1, v2) counts only together with the
+    // quorum of clean verdicts, never alone (also when no autonomous verdict can count at all).
+    if need.quorum && found.autonomous_verdicts.len() < risk::QUORUM_VERDICTS {
+        signed_ok = false;
+    }
     // Under the autonomous policy only its own form counts, else only the bootstrap form.
     let form = if need.autonomous.is_some() {
         Form::Autonomous
@@ -1277,7 +1286,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         pr,
         sha,
         owners,
-        need.signed_ok,
+        signed_ok,
         (bootstrap, need.signer_on),
     )?;
     found.owner_own = by.as_ref().is_some_and(|b| b.1);
@@ -1872,23 +1881,35 @@ pub const TRUST_RULE: &str = "R-trust";
 /// mode: a workflow the PR adds runs as the verdict author, bosun#706), the pin rule
 /// ([`pin_trust_root`]), every CI file of [`risk::workflow_files`], and an added line with a
 /// strong secret ([`risk::strong_secret_files`]): a real credential never rides on a quorum.
-/// Empty under any other policy. A base config that does not parse
-/// is no quorum (`orchestrator_window` then refuses every signature).
+/// Empty under any other policy or with no base config. A base config that does not parse fails
+/// closed whatever its policy: every changed path is trust root. The list holds paths only; the
+/// second value is the cause in that case (for messages, never a path).
 pub(crate) fn quorum_trust_root(
     gh: &dyn Github,
     files: &[PrFile],
     roots: &[String],
     (base, head): (&str, &str),
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Option<String>)> {
     let config = match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {
             Ok(c) => c,
-            Err(_) => return Ok(Vec::new()),
+            // Fail closed: a base config that does not parse may be a quorum one, so every
+            // changed path is trust root (owner only).
+            Err(e) => {
+                let all = files.iter().flat_map(|f| {
+                    std::iter::once(f.filename.clone()).chain(f.previous_filename.clone())
+                });
+                let mut all: Vec<String> = all.collect();
+                all.sort();
+                all.dedup();
+                let cause = format!("base config does not parse: {}", e.message);
+                return Ok((all, Some(cause)));
+            }
         },
-        None => return Ok(Vec::new()),
+        None => return Ok((Vec::new(), None)),
     };
     if config.approvals.policy() != Policy::Quorum {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), None));
     }
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))
@@ -1902,7 +1923,7 @@ pub(crate) fn quorum_trust_root(
     out.extend(risk::strong_secret_files(&patches));
     out.sort();
     out.dedup();
-    Ok(out)
+    Ok((out, None))
 }
 
 /// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A

@@ -163,8 +163,6 @@ pub fn batch_message(ready: &[(u64, String, String)]) -> Option<BatchMessage> {
     if ready.len() > shown.len() {
         text.push_str(&format!("\n- … and {} more", ready.len() - shown.len()));
     }
-    let nums: Vec<String> = shown.iter().map(|(pr, ..)| pr.to_string()).collect();
-    text.push_str(&format!("\nReply: approve {}", nums.join(" ")));
     Some(BatchMessage { id, text, pairs })
 }
 
@@ -1417,15 +1415,14 @@ mod tests {
         let m = batch_message(&[item(1, &h, "`**x**`"), item(2, &h, " ")]).unwrap();
         assert_eq!(m.pairs, vec![format!("1@{h}"), format!("2@{h}")]);
         assert_eq!(m.id, message_id(&m.pairs));
-        assert!(
-            m.text
-                .contains("\n- #1@abcdef0 `ˋ**x**ˋ`\n- #2@abcdef0\nReply")
-        );
+        assert!(m.text.ends_with("\n- #1@abcdef0 `ˋ**x**ˋ`\n- #2@abcdef0"));
+        // D-025: no chat reply is asked for.
+        assert!(!m.text.contains("Reply") && !m.text.contains("approve 1 2"));
         let many: Vec<_> = (1..=11).map(|n| item(n, &h, "t")).collect();
         let m = batch_message(&many).unwrap();
         assert_eq!(m.pairs.len(), 10);
-        assert!(m.text.contains("- … and 1 more\n"));
-        assert!(m.text.ends_with("Reply: approve 1 2 3 4 5 6 7 8 9 10"));
+        assert!(m.text.ends_with("\n- … and 1 more"));
+        assert!(!m.text.contains("Reply"));
     }
 
     #[test]

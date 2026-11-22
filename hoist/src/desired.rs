@@ -620,20 +620,6 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             .collect(),
     };
 
-    if let Some(stray) = root
-        .github
-        .statuses
-        .iter()
-        .find(|s| !required_checks.iter().any(|c| &c.value == *s))
-    {
-        return Err(HoistError::Config {
-            file: "hoist.toml".to_string(),
-            message: format!(
-                "statuses entry `{stray}` is not in required_checks; list it there too or drop it"
-            ),
-        });
-    }
-
     let mut github = DesiredGithub {
         settings: DesiredSettings {
             visibility: root.github.visibility.clone().map(|value| Sourced {

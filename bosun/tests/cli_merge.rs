@@ -29,12 +29,29 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// A base commit (the config) and a head commit (`files` on top): `merge` fetches both.
 fn repo(files: &[(&str, &str)]) -> tempfile::TempDir {
+    repo_from(&[], &[], files)
+}
+
+/// Like `repo`, with `base_files` in the base commit and `removed` deleted by the head commit.
+fn repo_from(
+    base_files: &[(&str, &str)],
+    removed: &[&str],
+    files: &[(&str, &str)],
+) -> tempfile::TempDir {
     let dir = tempfile::tempdir().unwrap();
     git(dir.path(), &["init", "-q", "-b", "claude/t7"]);
     std::fs::create_dir_all(dir.path().join(".bosun")).unwrap();
     std::fs::write(dir.path().join(".bosun/bosun.toml"), NO_CI).unwrap();
+    for (path, text) in base_files {
+        let p = dir.path().join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
     git(dir.path(), &["add", "-A"]);
     git(dir.path(), &["commit", "-q", "-m", "base"]);
+    for path in removed {
+        std::fs::remove_file(dir.path().join(path)).unwrap();
+    }
     for (path, text) in files {
         let p = dir.path().join(path);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -65,6 +82,14 @@ fn setup_files(
     high: bool,
     ci: Option<&str>,
     files: &[(&str, &str)],
+) -> (FakeGithub, tempfile::TempDir) {
+    setup_dir(high, ci, repo(files))
+}
+
+fn setup_dir(
+    high: bool,
+    ci: Option<&str>,
+    dir: tempfile::TempDir,
 ) -> (FakeGithub, tempfile::TempDir) {
     let fake = FakeGithub::start();
     fake.issue(
@@ -102,7 +127,6 @@ fn setup_files(
             "{{\"bosun\":\"join\",\"session\":\"session_kid\",\"origin\":\"spawned\",\"depth\":2,\"parent\":\"{ORCH}\",\"expires\":\"{LIVE}\"}}"
         ),
     );
-    let dir = repo(files);
     stamps::ready_all(&fake, dir.path());
     // The PR's base is a real commit of the checkout, as in production.
     let base = base_sha(dir.path());
@@ -1163,4 +1187,75 @@ fn identity_trusting_commands_refuse_a_foreign_session() {
             );
         }
     }
+}
+
+const SEED_TEST: &str = "#[test]\nfn t() {\n    assert!(true);\n}\n";
+
+/// A PR that deletes `tests/t.rs`, linking task 8 whose `allow` is `allow`.
+fn deleting_a_test(allow: &str) -> (FakeGithub, tempfile::TempDir) {
+    let dir = repo_from(&[("tests/t.rs", SEED_TEST)], &["tests/t.rs"], &[]);
+    let (fake, dir) = setup_dir(false, Some(NO_CI), dir);
+    tiny_base(&fake);
+    // Deleting a test is R-weaken: it needs the owner, as in `merge_gated_*`.
+    let owners = "[[owner]]\ngithub = \"ada\"\n";
+    fake.content("governance/owners.toml", "refs/heads/main", owners);
+    fake.content("governance/owners.toml", &base_sha(dir.path()), owners);
+    fake.issue(
+        8,
+        "M1/T1: drop",
+        &[],
+        &format!(
+            "<!-- bosun:plan M1/T1 -->\n<!-- bosun:task {{\"item\":\"M1\",\"task\":\"T1\",\"touch\":[\"tests/**\"],\"allow\":{allow}}} -->"
+        ),
+    );
+    fake.pull_set(20, "body", json!("Closes #7\nCloses #8"));
+    fake.pull_file(20, "tests/t.rs", "removed", 0, 4, None);
+    owner_approves(&fake);
+    verdict(&fake);
+    (fake, dir)
+}
+
+/// The merge's test-integrity uses the PR's allow list, as `test-integrity --pr` does.
+#[test]
+fn merge_test_integrity_honours_the_linked_tasks_allow_list() {
+    let (fake, dir) = deleting_a_test(r#"["delete-test"]"#);
+    let (rc, rv) = ready(&fake, dir.path());
+    assert_eq!(rc, 0, "{rv}");
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 0, "{v}");
+    assert!(fake.merged(20));
+}
+
+#[test]
+fn merge_test_integrity_without_an_allow_list_still_fails() {
+    let (fake, dir) = deleting_a_test("[]");
+    let (rc, rv) = ready(&fake, dir.path());
+    assert_eq!(rc, 0, "{rv}");
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["test-integrity"]), "{v}");
+}
+
+/// The bootstrap PR (the base has no `.bosun/`, no deny.toml): the `deps` gate is neutral there,
+/// judged by the PR's base, and its skip counts as done in a merge as its `skipped` stamp does for
+/// `--ready`. (A skip for a file the head lacks still fails: `merge_counts_a_skipped_gate_as_failed`.)
+#[test]
+fn merge_counts_a_bootstrap_neutral_gate_as_done() {
+    let dir = tempfile::tempdir().unwrap();
+    git(dir.path(), &["init", "-q", "-b", "claude/t7"]);
+    std::fs::write(dir.path().join("README.md"), "x").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "base"]);
+    std::fs::create_dir_all(dir.path().join(".bosun")).unwrap();
+    std::fs::write(dir.path().join(".bosun/bosun.toml"), NO_CI).unwrap();
+    std::fs::write(dir.path().join("deny.toml"), "").unwrap();
+    git(dir.path(), &["add", "-A"]);
+    git(dir.path(), &["commit", "-q", "-m", "head"]);
+    let (fake, dir) = setup_dir(false, Some(NO_CI), dir);
+    let deps = format!("{TINY}[gates.deps]\nbase_requires = [\"deny.toml\"]\ncmd = [\"false\"]\n");
+    fake.content(".bosun/profiles/rust.toml", "refs/heads/main", &deps);
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 0, "{v}");
 }

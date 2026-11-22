@@ -977,17 +977,97 @@ fn a_key_signed_owner_approval_never_counts_on_the_quorum_trust_root() {
         assert_eq!(v["data"]["approved_by"], Value::Null, "{message}: {v}");
         assert!(description(&fake).starts_with(WAITING), "{message}");
     }
-    // The same signature counts on a path that is not trust root.
+    // Off the trust root under quorum a key signature (D-022) counts only together with the
+    // QUORUM_VERDICTS clean verdicts: alone it is no owner approval.
+    let s = |k: &Key| b64::encode(k.0.sign(v1.as_bytes()).as_ref());
     let k = key();
     let fake = quorum(&k);
-    let s = b64::encode(k.0.sign(v1.as_bytes()).as_ref());
     fake.comment_by(
         1,
         "claude",
-        &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {s}"),
+        &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {}", s(&k)),
+    );
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "a key alone: {v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+    let k = key();
+    let fake = quorum(&k);
+    post_verdict(&fake, "session_r", HEAD);
+    fake.comment_by(
+        1,
+        "claude",
+        &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {}", s(&k)),
+    );
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "a key and one verdict: {v}");
+    let k = key();
+    let fake = quorum(&k);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    fake.comment_by(
+        1,
+        "claude",
+        &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {}", s(&k)),
     );
     let (code, v) = check(&fake);
     assert_eq!(code, 0, "{v}");
+}
+
+/// Under quorum an owner-role key signature counts only with the quorum of clean verdicts, also
+/// when no autonomous verdict can count at all: no open linked task leased by the author, or a
+/// path the autonomous form never covers.
+#[test]
+fn a_key_signature_alone_never_counts_under_quorum_without_an_autonomous_path() {
+    let v1 = format!("bosun-approve v1 acme/widget#1 {HEAD}");
+    let sign = |fake: &FakeGithub, k: &Key| {
+        let s = b64::encode(k.0.sign(v1.as_bytes()).as_ref());
+        let body = format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {s}");
+        fake.comment_by(1, "claude", &body);
+    };
+    // No linked task.
+    let k = key();
+    let fake = quorum(&k);
+    fake.pull_set(1, "body", json!(""));
+    sign(&fake, &k);
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "no linked task: {v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+    // A path outside what the autonomous form covers (`hoist.toml`: high risk, not in the allowed set).
+    let k = key();
+    let fake = pr(&k, "hoist.toml", "quorum");
+    sign(&fake, &k);
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "excluded path: {v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}
+
+/// D-022: a key never counts on the quorum trust root, whatever the file: a workflow, a
+/// folder `AGENTS.md`, the Claude settings, the risk rules (and the rule files of `.bosun`).
+#[test]
+fn a_key_never_counts_on_the_quorum_trust_root_for_any_trust_root_file() {
+    let v1 = format!("bosun-approve v1 acme/widget#1 {HEAD}");
+    for file in [
+        ".github/workflows/ci.yml",
+        "AGENTS.md",
+        ".claude/settings.json",
+        ".bosun/risk.toml",
+    ] {
+        let k = key();
+        let fake = pr(&k, file, "quorum");
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict(&fake, "session_s", HEAD);
+        let s = b64::encode(k.0.sign(v1.as_bytes()).as_ref());
+        fake.comment_by(
+            1,
+            "claude",
+            &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {s}"),
+        );
+        post_sig(&fake, &k);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{file}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{file}: {v}");
+        assert!(description(&fake).starts_with(WAITING), "{file}");
+    }
 }
 
 /// `approve --sign-key` without `--bootstrap` refuses too: it would post a v1 signature that
@@ -1023,4 +1103,32 @@ fn approve_refuses_any_signature_on_the_quorum_trust_root() {
             "{extra:?}: {v}"
         );
     }
+}
+
+/// D-022, fail closed: a base `.bosun/bosun.toml` that does not parse may be a quorum config, so
+/// every changed path counts as quorum trust root (owner only, no signature).
+#[test]
+fn a_base_config_that_does_not_parse_makes_every_path_quorum_trust_root() {
+    let k = key();
+    let fake = quorum(&k);
+    fake.content(".bosun/bosun.toml", BASE, "[approvals\npolicy = ");
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", "session_test")
+        .env("BOSUN_NOW", NOW)
+        .args(["risk-check", "1"])
+        .output()
+        .unwrap();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        err.contains("the PR changes the quorum trust root ("),
+        "{err}"
+    );
+    assert!(err.contains("src/feature/a.rs"), "{err}");
+    assert!(err.contains("base config does not parse"), "{err}");
+    // The cause is not a path: the list holds paths only.
+    assert!(
+        err.contains("(src/feature/a.rs): signed approvals do not count"),
+        "{err}"
+    );
 }

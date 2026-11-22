@@ -425,3 +425,22 @@ fn ready_without_ci_refuses_for_the_owner_and_turns_nothing_on() {
             .all(|r| !r.path.ends_with("/graphql") && !r.path.ends_with("/merge"))
     );
 }
+
+#[test]
+fn a_halt_label_refuses_single_and_single_ready() {
+    for args in [vec!["--single"], vec!["--single", "--ready"]] {
+        let (fake, dir) = setup();
+        fake.content(
+            "governance/owners.toml",
+            "refs/heads/main",
+            "[[owner]]\ngithub = \"octocat\"\n",
+        );
+        fake.issue(9, "stop", &["bosun:halt"], "");
+        let (code, v) = pr(&fake, dir.path(), &args);
+        assert_eq!(code, 4, "{v}");
+        assert!(
+            fake.requests().iter().all(|r| r.method == "GET"),
+            "nothing is written under a halt"
+        );
+    }
+}

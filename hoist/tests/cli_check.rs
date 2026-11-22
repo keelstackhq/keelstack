@@ -445,6 +445,8 @@ fn a_configured_status_that_is_not_a_required_check_is_a_config_error() {
         stderr.contains("statuses entry `risk-chek` is not in required_checks"),
         "{stderr}"
     );
+    // The config is judged before any network read.
+    assert_eq!(api.requests().len(), 0);
 }
 
 #[test]
@@ -518,4 +520,31 @@ fn usage_error_prints_version_and_path_hint() {
             env!("CARGO_PKG_VERSION")
         )))
         .stderr(predicate::str::contains("which -a hoist"));
+}
+
+#[test]
+fn a_stray_status_fails_check_but_not_other_commands() {
+    let repo = status_repo(JUDGE_JOB, Some(r#"["risk-chek"]"#));
+    for args in [&["explain"][..], &["plan"][..]] {
+        let api = fake(&[]);
+        let out = check(&api, &pages(200))
+            .current_dir(repo.path())
+            .args(args)
+            .assert()
+            .get_output()
+            .clone();
+        assert_ne!(
+            out.status.code(),
+            Some(3),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // The same repo: `check` is the one command that refuses it.
+    let api = fake(&[]);
+    check(&api, &pages(200))
+        .current_dir(repo.path())
+        .args(["check"])
+        .assert()
+        .code(3);
 }

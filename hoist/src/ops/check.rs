@@ -2,6 +2,7 @@
 
 use crate::cli::Area;
 use crate::cloudflare::PagesProject;
+use crate::desired::build_desired;
 use crate::error::HoistError;
 use crate::github::Fetch;
 use crate::ops::plan::{PlanState, run_with_state};
@@ -32,6 +33,24 @@ fn verifiable(item: &Item) -> bool {
 }
 
 pub fn check(dir: &Path, areas: &[Area], adopt: bool, verbose: bool) -> Result<Report, HoistError> {
+    // Only `check` refuses a stray `statuses` entry; the other commands never read it. Judged on
+    // the config alone, before any network read.
+    let desired = build_desired(dir)?;
+    if let Some(stray) = desired.github.statuses.iter().find(|s| {
+        !desired
+            .github
+            .ruleset
+            .required_checks
+            .iter()
+            .any(|c| &c.value == *s)
+    }) {
+        return Err(HoistError::Config {
+            file: "hoist.toml".to_string(),
+            message: format!(
+                "statuses entry `{stray}` is not in required_checks; list it there too or drop it"
+            ),
+        });
+    }
     let state = run_with_state(dir, areas, verbose, "check", adopt)?;
     verify_state(dir, areas, state, &[])
 }

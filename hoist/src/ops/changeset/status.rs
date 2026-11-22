@@ -118,6 +118,12 @@ fn read_head(dir: &Path) -> Result<Vec<Changeset>, HoistError> {
         if is_skipped(name) {
             continue;
         }
+        if id.trim().is_empty() {
+            return Err(HoistError::Config {
+                file: rel.to_string(),
+                message: "blank changeset id; give the file a name before `.md`".into(),
+            });
+        }
         // A symlink's blob is its target path, not a changeset: refuse, as `read_dir` does.
         if mode == "120000" {
             return Err(HoistError::Config {

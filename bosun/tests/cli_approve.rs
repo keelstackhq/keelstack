@@ -4,8 +4,6 @@ use common::fake::FakeGithub;
 use common::{bosun, one_object, run};
 use serde_json::{Value, json};
 
-const HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-025) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
-
 const OWNER_TOKEN: &str = "canary-owner-token-7f3a";
 const WAITING: &str = "high risk, owner approval needed: R-gov, R-ci";
 const MAIN_OPEN_YML: &str = ".github/workflows/main-open.yml";
@@ -139,9 +137,22 @@ fn list_shows_ready_and_waiting_sorted_with_the_command() {
     assert_eq!(ready[0]["risk_from_status"], json!(["R-gov", "R-ci"]));
     assert_eq!(ready[0]["files"], json!(["governance/f1.toml"]));
     assert_eq!(ready[0]["files_truncated"], json!(false));
-    assert_eq!(v["data"]["hint"], HINT);
-    // Chat approvals are retired (D-025): the hint never tells anyone to ask the owner in chat.
-    assert!(!HINT.contains("AskUserQuestion") && !HINT.contains("ask the owner"));
+    // Chat approvals are retired (D-025): the hint (the command's own output) names the owner's
+    // comment and never tells anyone to relay, ask or answer in chat.
+    let hint = v["data"]["hint"].as_str().unwrap();
+    assert!(
+        hint.contains("`/bosun approve <sha>`") && hint.contains("D-025"),
+        "{hint}"
+    );
+    for word in [
+        "relay",
+        "answer",
+        "Reply",
+        "AskUserQuestion",
+        "ask the owner",
+    ] {
+        assert!(!hint.contains(word), "{word} in {hint}");
+    }
     assert_eq!(ready[1]["pr"], 3);
     assert_eq!(
         v["data"]["approve_command"],

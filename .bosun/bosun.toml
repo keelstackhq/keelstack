@@ -29,8 +29,8 @@ bootstrap_until = "2026-11-30"
 # D-022 (owner answer Q3, 2026-11-21, recorded in docs/plans/port-open-prs.md
 # section 3 "Owner answers"): the orchestrator's signature plus two clean
 # verdicts from different reviewer sessions approve every PR except the trust root. The trust-root
-# path list is compiled into bosun (bosun/src/core/risk.rs `TRUST_ROOT`, `TRUST_ROOT_CODE` under
-# each code root, here `bosun/`; spec §8) and read with this file from the PR's base. This file is
+# path list is compiled into bosun (bosun/src/core/risk.rs `TRUST_ROOT`, and `QUORUM_CODE_FILES` of
+# bosun/src/core/approve.rs under each code root, here `bosun/`; spec §8) and read with this file from the PR's base. This file is
 # trust root as a whole: every edit of it needs the owner.
 policy = "quorum"
 

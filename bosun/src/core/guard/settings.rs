@@ -7,7 +7,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde_json::Value;
 
-use super::writes::command_of;
+use super::writes::{command_of, target_directory_option};
 use super::{
     SEP, bash_writes, edited_path, prose, read_only, shell_words, split_heredocs, word_scripts,
 };
@@ -145,16 +145,12 @@ fn destination<'a>(args: &[&'a str]) -> Option<&'a str> {
     let args: Vec<&str> = args.iter().copied().take_while(|a| !is_redir(a)).collect();
     let dir = args.iter().enumerate().find_map(|(i, a)| {
         let next = args.get(i + 1).copied().unwrap_or("");
-        if let Some(v) = a.strip_prefix("--target-directory=") {
-            return Some(v);
+        if let Some(v) = target_directory_option(a) {
+            return Some(v.unwrap_or(next));
         }
         let short = a.starts_with('-') && !a.starts_with("--");
-        let at = a.find('t').filter(|_| short || *a == "--target-directory");
-        at.map(|at| {
-            Some(&a[at + 1..])
-                .filter(|r| short && !r.is_empty())
-                .unwrap_or(next)
-        })
+        let at = a.find('t').filter(|_| short);
+        at.map(|at| Some(&a[at + 1..]).filter(|r| !r.is_empty()).unwrap_or(next))
     });
     dir.or_else(|| args.iter().rev().find(|a| !a.starts_with('-')).copied())
 }
@@ -617,6 +613,10 @@ mod tests {
             "git rm .claude/settings.json",
             "cp -t .claude x.json",
             "cp --target-directory=.claude/ x.json",
+            "cp --target=.claude /tmp/settings.json",
+            "cp --target .claude /tmp/settings.json",
+            "cp --t .claude /tmp/settings.json",
+            "install --target-dir=.claude x",
             "install -t ~/.claude x",
             "tar -xf a.tar -C .claude",
             "tar xf a.tar -C.claude",

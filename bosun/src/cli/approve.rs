@@ -85,7 +85,7 @@ const CLOUD_FIX: &str = "the owner approves with their own `/bosun approve <sha>
 /// Shown with every list: an approval comment counts only when posted with a plain user token, as
 /// this command does (an owner review counts too). The Claude GitHub tool posts through an app and
 /// adds a footer, so its comments never count.
-const LIST_HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-025) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+const LIST_HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; chat is never an approval (D-025), and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts";
 
 #[derive(Default)]
 pub(crate) struct Board {
@@ -717,13 +717,14 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     // none is posted, whatever its form: the owner's own review or comment is the approval.
     let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
     let files = gh.pull_files(pr)?;
-    let root =
+    let (root, cause) =
         crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
     if !root.is_empty() {
         return Err(BosunError::error(
             format!(
-                "quorum (D-022) never counts a signature on the trust root ({}): nothing was signed",
-                root.join(", ")
+                "quorum (D-022) never counts a signature on the trust root ({}{}): nothing was signed",
+                root.join(", "),
+                cause.map(|c| format!("; {c}")).unwrap_or_default()
             ),
             "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
         ));
@@ -939,6 +940,19 @@ fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
 /// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
 type Boot = (Option<String>, String, Policy, &'static str);
 
+/// How strict a policy is, lowest first: the default branch must rank no lower than the PR's base.
+/// Quorum ranks looser than autonomous (it ignores R-weaken), so a default branch that moved from
+/// quorum to autonomous fails closed for a PR whose base still says quorum.
+fn policy_rank(p: Policy) -> u8 {
+    match p {
+        Policy::Owner => 0,
+        Policy::OwnerGated => 1,
+        Policy::Orchestrator => 2,
+        Policy::Autonomous => 3,
+        Policy::Quorum => 4,
+    }
+}
+
 /// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
 /// and its note line, or (after it) the note line of the approval policy (D-014) and no date. The
 /// setting is read at the PR's base, exactly as risk-check and the quorum trust root read it.
@@ -958,12 +972,7 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
         None => Default::default(),
     };
     let signs = |p: Policy| matches!(p, Policy::Autonomous | Policy::Quorum);
-    let rank = |p: Policy| match p {
-        Policy::Owner => 0,
-        Policy::OwnerGated => 1,
-        Policy::Orchestrator => 2,
-        Policy::Autonomous | Policy::Quorum => 3,
-    };
+    let rank = policy_rank;
     let end_of = |a: &crate::config::Approvals| {
         (a.bootstrap_until.as_ref()).map(|u| u.clone().min(BOOTSTRAP_END.to_string()))
     };
@@ -1071,7 +1080,7 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy
         }
         // D-022: the trust root is the owner's (a halt refused the signature at the top already).
         let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
-        let root = crate::cli::risk_check::quorum_trust_root(
+        let (root, cause) = crate::cli::risk_check::quorum_trust_root(
             gh,
             &files,
             &roots,
@@ -1080,8 +1089,9 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy
         if !root.is_empty() {
             return Err(BosunError::error(
                 format!(
-                    "quorum (D-022) never covers the trust root ({}): the owner approves",
-                    root.join(", ")
+                    "quorum (D-022) never covers the trust root ({}{}): the owner approves",
+                    root.join(", "),
+                    cause.map(|c| format!("; {c}")).unwrap_or_default()
                 ),
                 "nothing was signed: the owner approves this PR (their GitHub review or `/bosun approve <sha>` comment)",
             ));
@@ -1231,4 +1241,18 @@ pub(crate) fn read_key(path: &Path) -> Result<ring::signature::Ed25519KeyPair> {
         .collect();
     let der = b64::decode(&b64_body).ok_or_else(bad)?;
     ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der).map_err(|_| bad())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Quorum ignores R-weaken, so autonomous is the stricter of the two: a default branch that
+    /// went quorum -> autonomous leaves a quorum base looser (fail closed), never the reverse.
+    #[test]
+    fn autonomous_ranks_stricter_than_quorum() {
+        assert!(policy_rank(Policy::Autonomous) < policy_rank(Policy::Quorum));
+        assert!(policy_rank(Policy::Orchestrator) < policy_rank(Policy::Autonomous));
+        assert!(policy_rank(Policy::Owner) < policy_rank(Policy::OwnerGated));
+    }
 }

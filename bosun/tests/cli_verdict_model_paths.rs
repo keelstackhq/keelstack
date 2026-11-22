@@ -106,5 +106,12 @@ fn an_unparsable_base_config_counts_no_verdict() {
     verdict(&fake, "s2", "m-old");
     let (code, v) = check(&fake);
     assert_eq!(code, 5, "{v}");
-    assert_eq!(v["data"]["verdicts"], serde_json::json!([]));
+    // Fail closed: every path is quorum trust root, so the owner is needed and no verdict counts.
+    assert_eq!(v["data"]["requirement"], "owner", "{v}");
+    assert!(
+        v["data"]["verdicts"]
+            .as_array()
+            .is_none_or(|a| a.is_empty()),
+        "{v}"
+    );
 }
