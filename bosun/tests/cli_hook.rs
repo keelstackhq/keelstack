@@ -1142,6 +1142,27 @@ fn adopted_is_read_when_the_commit_is_not_local() {
 }
 
 #[test]
+fn a_missing_local_blob_does_not_make_an_adopted_repo_unadopted() {
+    // A blob-less partial clone has the tree entry of `.bosun/version` but not its blob.
+    let tmp = bare_repo();
+    let r = tmp.path();
+    std::fs::create_dir_all(r.join(".bosun")).unwrap();
+    std::fs::write(r.join(".bosun/version"), "0.21.0\n").unwrap();
+    let blob = Command::new("git")
+        .arg("-C")
+        .arg(r)
+        .args(["hash-object", ".bosun/version"])
+        .output()
+        .unwrap();
+    let blob = String::from_utf8_lossy(&blob.stdout).trim().to_string();
+    adopted_on_remote(r);
+    let loose = r.join(".git/objects").join(&blob[..2]).join(&blob[2..]);
+    assert!(loose.is_file(), "the blob is loose");
+    std::fs::remove_file(&loose).unwrap();
+    assert!(!adopted_start(r).contains("bosun adopt --policy"));
+}
+
+#[test]
 fn an_unreachable_remote_counts_as_adopted() {
     let tmp = bare_repo();
     git(

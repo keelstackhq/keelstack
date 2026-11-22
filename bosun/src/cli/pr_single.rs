@@ -150,7 +150,11 @@ fn single_reason(app: &App, pull: &Pull, base: &str) -> Result<&'static str, Bos
     if inside && lines <= ONE_OFF_MAX {
         // The guards of a one-off task: no gated path (the default branch's risk rules, wildcards
         // resolved against its files), and the session's lease touch when it has one.
-        let gated = crate::app::gated_from_default(gh)?;
+        // The rules of the PR's base plus those of the default branch, as `pr --one-off` reads them.
+        let mut gated = crate::app::gated_from_default(gh)?;
+        gated.extend(crate::core::shape::gated_globs(
+            &crate::cli::risk_check::base_rules(gh, base)?,
+        ));
         let tree_files = crate::app::base_files(gh)?;
         let paths: Vec<String> = files
             .iter()

@@ -111,12 +111,15 @@ fn unadopted_remote(root: &Path, url: Option<String>) -> bool {
     let Some(sha) = heads.split_whitespace().next() else {
         return true; // reachable, no default branch yet
     };
-    let spec = [format!("{sha}:.bosun/version"), format!("{sha}^{{commit}}")];
-    if git_remote(root, &["cat-file", "-e", &spec[0]]).is_some() {
-        return false;
-    }
-    if git_remote(root, &["cat-file", "-e", &spec[1]]).is_some() {
-        return true;
+    // The tree entry, not the blob: a blob-less partial clone has the entry but not the blob. A
+    // failed command (the commit is not local) is neither answer: fetch it below.
+    match git_remote(
+        root,
+        &["ls-tree", "--name-only", sha, "--", ".bosun/version"],
+    ) {
+        Some(t) if !t.is_empty() => return false,
+        Some(_) => return true,
+        None => {}
     }
     let Some(tmp) = private_repo() else {
         return false;

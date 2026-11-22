@@ -265,6 +265,26 @@ fn a_base_without_bosun_is_not_a_bootstrap_unless_the_pr_adds_it() {
 }
 
 #[test]
+fn ready_refuses_a_pr_of_a_non_writer() {
+    let (fake, dir) = setup();
+    with_bosun_base(&fake);
+    let (_, first) = pr(&fake, dir.path(), &["--single"]);
+    let n = first["data"]["pr"]["number"].as_u64().unwrap();
+    stamps::ready(&fake, dir.path(), n);
+    fake.pull_file(n, "src/a.rs", "modified", 1, 0, None);
+    fake.permission("octocat", "read");
+    let (code, v) = pr(&fake, dir.path(), &["--single", "--ready"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not a repo writer")
+    );
+    assert!(fake.auto_merge_enabled(n).is_none());
+}
+
+#[test]
 fn ready_refuses_a_gated_path_even_inside_the_allow_set() {
     let (fake, dir) = setup();
     with_bosun_base(&fake);
