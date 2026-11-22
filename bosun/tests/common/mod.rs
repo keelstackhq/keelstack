@@ -50,6 +50,8 @@ pub fn bosun() -> Command {
         .env_remove("CCR_AGENT_PROXY_ENABLED")
         .env_remove("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE")
         .env_remove("CLAUDE_CODE_CHILD_SESSION")
+        // A cloud container sets it for every session; a test that wants the cloud sets it.
+        .env_remove("CLAUDE_CODE_REMOTE")
         .env_remove("CLAUDE_CODE_REMOTE_SESSION_ID");
     cmd
 }

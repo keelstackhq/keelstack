@@ -28,7 +28,8 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
     let members = crate::registry::load(gh)?
         .map(|(_, notes)| crate::core::lease::members(&notes))
         .unwrap_or_default();
-    let child = std::env::var("CLAUDE_CODE_CHILD_SESSION").is_ok_and(|v| !v.trim().is_empty());
+    // Outside the cloud the env flag marks a child; in the cloud the registry does (spawn record).
+    let child = crate::ctx::child_flag();
     if app.ctx.origin == Origin::Spawned
         || child
         || !is_orchestrator(&members, session, app.ctx.now)

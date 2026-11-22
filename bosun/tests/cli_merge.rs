@@ -516,6 +516,52 @@ fn merge_child_session_env_is_refused_whatever_the_origin() {
     assert!(merge_puts(&fake).is_empty());
 }
 
+/// In a Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`) every session, the top-level one
+/// too, has `CLAUDE_CODE_CHILD_SESSION=1`: the flag alone is no child there, and the registry
+/// decides (the orchestrator's join, or a spawn record that no child can relabel).
+#[test]
+fn merge_in_a_cloud_top_level_session_ignores_the_child_flag() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", ORCH)
+        .env("BOSUN_GIT_URL", dir.path())
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env("CLAUDE_CODE_REMOTE", "true")
+        .env("BOSUN_NOW", NOW)
+        .arg("-C")
+        .arg(dir.path())
+        .args(["merge", "20"])
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    assert_eq!(out.status.code().unwrap(), 0, "{v}");
+    assert!(fake.merged(20));
+}
+
+/// In the cloud a session the registry records as spawned (by `bosun spawn`) stays a child.
+#[test]
+fn merge_in_the_cloud_refuses_a_session_the_registry_records_as_spawned() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", "session_kid")
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env("CLAUDE_CODE_REMOTE", "true")
+        .env("BOSUN_NOW", NOW)
+        .arg("-C")
+        .arg(dir.path())
+        .args(["merge", "20"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code().unwrap(), 5);
+    assert!(merge_puts(&fake).is_empty());
+}
+
 #[test]
 fn merge_summary_from_a_non_writer_is_ignored() {
     let (fake, dir) = setup(false, Some(NO_CI));

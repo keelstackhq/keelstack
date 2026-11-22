@@ -614,9 +614,8 @@ pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<Stri
     })
 }
 
-const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION or CLAUDE_CODE_REMOTE_SESSION_ID, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
-const IDENTITY: &str =
-    "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID";
+const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_REMOTE_SESSION_ID or CLAUDE_CODE_REMOTE, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
+const IDENTITY: &str = "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_REMOTE";
 
 /// The `<task>` of a `BOSUN_SESSION` value `<own>/<task>` (`[A-Za-z0-9._-]+`).
 pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
@@ -626,7 +625,8 @@ pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
 }
 
 /// D-019, everywhere (stops confused workers, not liars; spec 04): refuses `NAME=v`, or a name
-/// beside a verb (export, unset, env, read, ...), for the four identity names, any `${!`, and
+/// beside a verb (export, unset, env, read, ...), for the five identity names (`CLAUDE_CODE_REMOTE`
+/// too: in the cloud it makes the child flag no evidence), any `${!`, and
 /// `env -i`, `env -`, `exec -c`; git, gh, rg, grep, echo text passes. Allowed: `BOSUN_SESSION=
 /// <own>/<task>` and `BOSUN_ORIGIN=routine` (prefix or one `export`) when `own` is set and the
 /// text has no `$`, `--origin`, merge, approve or verdict.
@@ -7428,6 +7428,9 @@ mod tests {
             "export CLAUDE_CODE_CHILD_SESSION= ; bosun merge 1",
             "unset CLAUDE_CODE_CHILD_SESSION && \\bosun merge 1",
             "CLAUDE_CODE_REMOTE_SESSION_ID=o command bosun merge 1",
+            "CLAUDE_CODE_REMOTE=true bosun merge 1",
+            "export CLAUDE_CODE_REMOTE=true; bosun merge 1",
+            "unset CLAUDE_CODE_REMOTE",
             "bash -c 'unset CLAUDE_\"CODE\"_CHILD_SESSION; bosun merge 1'",
             "env -u CLAUDE_CODE_CHILD_SESSION nice bosun merge 1",
             "n=BOSUN_SESSION; export ${!n}=x",

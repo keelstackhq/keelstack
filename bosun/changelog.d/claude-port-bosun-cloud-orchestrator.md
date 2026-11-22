@@ -1,0 +1,1 @@
+- In a Claude Code cloud session (`CLAUDE_CODE_REMOTE=true`), where every session has `CLAUDE_CODE_CHILD_SESSION=1`, the flag alone no longer makes a session a child: `bosun merge`, the origin and the session rules rely on the registry (the spawn record, which a plain re-join keeps); `CLAUDE_CODE_REMOTE` is a guarded identity name.
