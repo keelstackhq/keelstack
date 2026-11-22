@@ -210,7 +210,10 @@ pub fn check(f: &CarryFacts) -> Result<(), Refusal> {
         locks.insert(*path);
     }
     // Rule 4.
-    if let Some(path) = p.iter().find(|x| f.trust_files.contains(x)) {
+    if let Some(path) = p
+        .iter()
+        .find(|x| crate::core::approve::is_trust_path(f.trust_files, x))
+    {
         return Err(Refusal::TrustFile { path: s(path) });
     }
     // Rule 3.

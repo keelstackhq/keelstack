@@ -555,7 +555,7 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// main-open check and the review; a signed PR that weakened one would have every later PR
 /// judged by the weakened copy. Dependency manifests (`Cargo.toml`, `Cargo.lock`) are no trust
 /// files: they are owner-approved under R-deps.
-pub const TRUST_FILES: [&str; 14] = [
+pub const TRUST_FILES: [&str; 15] = [
     APPROVERS_PATH,
     APPROVALS_CONFIG,
     "governance/owners.toml",
@@ -570,7 +570,15 @@ pub const TRUST_FILES: [&str; 14] = [
     ".github/workflows/signer.yml",
     ".github/workflows/main-open.yml",
     ".github/workflows/review.yml",
+    // What the judge is pinned by.
+    ".bosun/pins.toml",
 ];
+
+/// What bosun's own build reads at the repo root: the toolchain and cargo's config. Trust files
+/// only in a repo that has bosun's code (a code root), where they are on the critical floor
+/// through `APPROVAL_CODE_PATHS`; in any other repo they are ordinary R-ci tool files.
+pub const TRUST_BUILD_FILES: [&str; 3] =
+    ["rust-toolchain.toml", ".cargo/config", ".cargo/config.toml"];
 
 /// The bosun config that holds `[approvals]` (D-022 trust root).
 pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
@@ -583,8 +591,8 @@ pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
 /// and applies them (`src/cli/verdict.rs`) and the approval carry-over (`src/core/carry.rs`,
 /// `src/cli/carry_over.rs`). Trust files only under a code root (where bosun's code is: the repo
 /// root of bosun itself, `bosun/` in the monorepo), so another repo's `src/core/risk.rs` is no
-/// trust file.
-pub const TRUST_CODE_FILES: [&str; 9] = [
+/// trust file. Entries are globs (`**` for a folder), matched by [`is_trust_path`].
+pub const TRUST_CODE_FILES: [&str; 19] = [
     "src/core/risk.rs",
     "src/core/approve.rs",
     "src/cli/risk_check.rs",
@@ -594,6 +602,18 @@ pub const TRUST_CODE_FILES: [&str; 9] = [
     "src/cli/verdict.rs",
     "src/core/carry.rs",
     "src/cli/carry_over.rs",
+    // Every other file that judges or gates a merge: the default rules, the lease check, the
+    // output envelope, `bosun merge` and its gates, the gate and hook code and the guard.
+    "src/core/risk_default.toml",
+    "src/core/lease.rs",
+    "src/output.rs",
+    "src/cli/pr_no_ci.rs",
+    "src/cli/merge.rs",
+    "src/cli/merge_gates.rs",
+    "src/gates/**",
+    "src/hooks/**",
+    "src/core/guard.rs",
+    "src/core/guard/**",
 ];
 
 /// The org decisions index (D-002), read in place in the monorepo.
@@ -609,9 +629,13 @@ pub fn trust_files_changed<'a>(
 }
 
 /// [`TRUST_FILES`] at the root and under each of `roots` (bosun's folder in a monorepo), and
+/// [`TRUST_BUILD_FILES`] at the root when there is a code root, and
 /// [`TRUST_CODE_FILES`] under each of `roots` (`""` is the repo root).
 pub fn trust_files_in(roots: &[String]) -> Vec<String> {
     let mut out: Vec<String> = TRUST_FILES.iter().map(|t| t.to_string()).collect();
+    if !roots.is_empty() {
+        out.extend(TRUST_BUILD_FILES.iter().map(|t| t.to_string()));
+    }
     for r in roots {
         out.extend(super::folders::under(r, &TRUST_FILES));
         out.extend(super::folders::under(r, &TRUST_CODE_FILES));
@@ -619,6 +643,14 @@ pub fn trust_files_in(roots: &[String]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Whether `path` is one of `trust` (entries of [`trust_files_in`]: exact paths or globs).
+pub fn is_trust_path<S: AsRef<str>>(trust: &[S], path: &str) -> bool {
+    trust.iter().any(|t| {
+        let t = t.as_ref();
+        t == path || super::glob::Glob::parse(t).is_ok_and(|g| g.matches(path))
+    })
 }
 
 /// [`trust_files_changed`] with the trust files also under each of `roots`.
@@ -632,7 +664,7 @@ pub fn trust_files_changed_in<'a>(
         .filter(|(p, prev)| {
             std::iter::once(*p)
                 .chain(*prev)
-                .any(|x| trust.iter().any(|t| t == x))
+                .any(|x| is_trust_path(&trust, x))
         })
         .map(|(p, _)| p.to_string())
         .collect()
@@ -816,6 +848,57 @@ mod tests {
         }
     }
 
+    /// Every file the judge reads is a trust file: the build inputs at the repo root, the pins, and
+    /// the gate, hook, guard and merge code (under each code root), by glob.
+    #[test]
+    fn trust_root_is_re_rooted_under_each_code_root() {
+        let mono = vec!["bosun".to_string()];
+        let at_root = vec![String::new()];
+        assert_eq!(
+            trust_files_changed_in([(".bosun/pins.toml", None)], &[]),
+            [".bosun/pins.toml"]
+        );
+        assert_eq!(
+            trust_files_changed_in([(".bosun/pins.toml", None)], &mono),
+            [".bosun/pins.toml"]
+        );
+        // The build inputs at the repo root: trust files where bosun's code is, in a monorepo too;
+        // in any other repo they are plain tool files.
+        for p in TRUST_BUILD_FILES {
+            assert_eq!(trust_files_changed_in([(p, None)], &mono), [p], "{p}");
+            assert_eq!(trust_files_changed_in([(p, None)], &at_root), [p], "{p}");
+            assert!(trust_files_changed_in([(p, None)], &[]).is_empty(), "{p}");
+        }
+        for p in [
+            "src/core/risk_default.toml",
+            "src/core/lease.rs",
+            "src/output.rs",
+            "src/cli/pr_no_ci.rs",
+            "src/cli/merge.rs",
+            "src/cli/merge_gates.rs",
+            "src/gates/ts.rs",
+            "src/gates/sub/deep.rs",
+            "src/hooks/pre_tool_use.rs",
+            "src/core/guard.rs",
+            "src/core/guard/writes.rs",
+        ] {
+            let at_root = trust_files_changed_in([(p, None)], &[String::new()]);
+            assert_eq!(at_root, [p], "{p}");
+            let q = format!("bosun/{p}");
+            assert_eq!(
+                trust_files_changed_in([(q.as_str(), None)], &mono),
+                [q.as_str()],
+                "{q}"
+            );
+            assert!(trust_files_changed_in([(p, None)], &[]).is_empty(), "{p}");
+            let other = format!("splice/{p}");
+            assert!(trust_files_changed_in([(other.as_str(), None)], &mono).is_empty());
+        }
+        // A near miss is no trust file.
+        assert!(
+            trust_files_changed_in([("src/core/guarded.rs", None)], &[String::new()]).is_empty()
+        );
+    }
     #[test]
     fn orchestrator_root_local_slack() {
         let m = vec![

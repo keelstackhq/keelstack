@@ -16,7 +16,8 @@ fn io_err(what: &str, e: std::io::Error) -> BosunError {
 }
 
 /// Files that steer how the gates build and run; the base's version (or none) always wins.
-const TOOL_FILES: [&str; 9] = [
+const TOOL_FILES: [&str; 10] = [
+    ".config/nextest.toml",
     ".cargo/config",
     ".cargo/config.toml",
     "rust-toolchain",

@@ -222,6 +222,7 @@ fn excluded_paths_always_need_the_owner() {
         ("src/github/mod.rs", PLAIN),
         ("build.rs", PLAIN),
         (".cargo/config.toml", PLAIN),
+        ("rust-toolchain.toml", PLAIN),
         ("npm/bosun/install.js", PLAIN),
         (".github/workflows/release.yml", PLAIN),
         (".bosun/version", PLAIN),
@@ -266,6 +267,8 @@ fn excluded_paths_always_need_the_owner() {
             ".bosun/risk.toml",
             "src/cli/risk_check.rs",
             "src/core/approve.rs",
+            ".cargo/config.toml",
+            "rust-toolchain.toml",
             ".github/workflows/risk.yml",
         ]
         .contains(&file);

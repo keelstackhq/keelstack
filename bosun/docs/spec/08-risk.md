@@ -59,10 +59,9 @@ High-risk PRs:
 - Owners: with one owner, nothing that needs an owner merges while that owner is away (fail
   closed, by design); list at least two owners, or a team once §16 (B4) is built.
 - A high PR needs an approval on the head SHA by a user in `governance/owners.toml`, and
-  CODEOWNERS. The default way (D-012): the session asks the owner with a form in the Claude Code
-  chat (repo, PR, head SHA; approve or hold), and on approve the orchestrator posts the signed
-  `bosun approve` comment (signed approvals, below). The owner's own review or comment is the
-  fallback. Either counts: a GitHub review that approves the head SHA (the owner's newest
+  CODEOWNERS. The way (D-025 retired chat approvals): the owner's own `/bosun approve <head_sha>`
+  comment or GitHub review, or the signed form (`bosun approve --sign-key`, signed approvals,
+  below). Any of them counts: a GitHub review that approves the head SHA (the owner's newest
   approve, request-changes or dismissed review on that SHA; read on the next run, as no review
   event runs the `risk` workflow: a push, a `/bosun recheck` comment or a re-run), or a PR comment by the owner whose
   body, trimmed, is exactly `/bosun approve <head_sha>` with the full 40-character SHA. The
@@ -135,7 +134,14 @@ High-risk PRs:
   risk path lists; `src/core/approve.rs`, this list; the code that applies them:
   `src/cli/risk_check.rs`, `src/core/folders.rs`, `src/core/glob.rs`; and the code that sets and
   applies the verdict quorum: `src/core/verdict.rs` (`APPROVE_MIN`), `src/cli/verdict.rs`,
-  `src/core/carry.rs`, `src/cli/carry_over.rs`; `TRUST_CODE_FILES`: at the root in
+  `src/core/carry.rs`, `src/cli/carry_over.rs`; and every other file that judges or gates a
+  merge, so that every judging file is trust root: `src/core/risk_default.toml` (the default
+  rules), `src/core/lease.rs`, `src/output.rs`, `src/cli/pr_no_ci.rs`, `src/cli/merge.rs`,
+  `src/cli/merge_gates.rs`, `src/gates/**`, `src/hooks/**`, `src/core/guard.rs` and
+  `src/core/guard/**` (entries are globs, matched by `is_trust_path`); at the repo root also the
+  inputs that build and pin the judge: `rust-toolchain.toml`, `.cargo/config` and
+  `.cargo/config.toml` (also on the critical floor in `CRITICAL_PATHS`) and `.bosun/pins.toml`
+  (`.bosun/**` is critical); `TRUST_CODE_FILES`: at the root in
   bosun's repo, `bosun/src/core/risk.rs` in the monorepo, never another repo's `src/`; all are
   on the critical floor there through `APPROVAL_CODE_PATHS`), since a signed PR that weakened
   any of them would have every later PR judged by the weakened copy (dependency manifests,
@@ -623,3 +629,8 @@ Approval carry-over (design §3 C7): a high-risk head `H2` that is at most 5 cle
 Lockfile merges (rule 6, both carries): parallel tasks that add crates all change `Cargo.lock`, so a merge of main into an approved head usually conflicts there and the lockfile is regenerated. `core::carry` (rule 2) still refuses any path both the PR and main changed, except a lockfile (`Cargo.lock` or `pnpm-lock.yaml`, any directory) that each side modified in place (listed once, `modified`, no rename). For it, rule 3's blob equality is replaced by an entry check on the texts read through the API at `h`, `M` and `H2` by commit sha (`core::lockmerge`): every whole entry of `H2`'s file must be byte for byte an entry of `h`'s or `M`'s file, and no entry may appear twice. A Cargo entry is a `[...]` block (a `[[package]]` with name, version, source, checksum and dependencies) or the text before the first block; a pnpm entry is a top-level line, or a key two spaces in with everything under it, tied to its top-level section. Entries are compared byte for byte (only the newlines that end an entry are dropped; a `\r` counts, so a CRLF copy is refused). An entry of one side may be dropped (a merge prunes it), but every entry both `h` and `M` hold must stay, so a subset or an empty file is refused; none may be new, changed or moved to another section, so one package's name cannot be stitched to another's checksum or tarball, and a workspace member whose dependency list mixes both sides is refused. The entry must be a plain `100644` blob in `H2`; its directories must match between `B` and `M`; any unreadable text, other overlap or other tree difference refuses. Every other file of `H2` is still checked exactly. Second line of defence: the gates build and test with `--locked` (`profiles/rust.toml`) and install with `pnpm install --frozen-lockfile`, so a lockfile that does not match its manifests fails CI on `H2` whatever the carry decided.
 
 Decisive reviews (APPROVED, CHANGES_REQUESTED, DISMISSED) are ordered by `submitted_at`, ties by review id, never by list position; a decisive review without a usable time fails closed: on the head the most withdrawing state of that owner on that commit wins, and a carry is refused.
+
+Known limits (merge and gates):
+- `merge_gates` is not a sandbox: `bosun merge` runs the base's gates on the exact head in a temp worktree with a clean environment, but the head's code runs with the orchestrator's user rights. The base may move between the gates and the merge call: the kill switch and main-open are read again right before the merge call and the merge sends `sha = head` (a push is refused, exit 3), but a moved base is not re-gated.
+- The `ts-pnpm` sealed gates gap: for the `ts-pnpm` profile the gates are not sealed the way the Rust ones are (the install and the scripts run the head's `package.json` and lockfile); treat a head that changes them as untrusted code.
+- The hoist `status_checks` writer check is repo-wide: it looks at who may post a required status anywhere in the repository, not per folder.

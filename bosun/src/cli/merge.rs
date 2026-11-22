@@ -79,6 +79,18 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
     } else {
         check_ci(gh, &pull, &base)?;
     }
+    // The gates ran the head's code for a while: a halt or a red main since the start of the
+    // command still stops the merge (exit 4).
+    kill_switch(gh)?;
+    let main = judge_local(gh, &pull, &crate::gates::main_open::main_state(gh)?)?;
+    if !main.pass {
+        return Err(BosunError::halted(
+            main.description,
+            format!(
+                "fix main with a bosun:kind/mainfix PR, or wait for main-red to close, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
     gh.merge_pull(pr, &head, &args.method)
         .map_err(|e| match e.exit {
             Exit::Conflict => e,

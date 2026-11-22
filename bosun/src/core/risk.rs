@@ -870,13 +870,14 @@ pub const CRITICAL_PATHS: [&str; 21] = [
 /// forks). All of `src/**`: the modules that judge approvals call most of the others, and any
 /// of them can do I/O with the workflow's token once released. Also what builds or installs
 /// the binary.
-pub const APPROVAL_CODE_PATHS: [&str; 7] = [
+pub const APPROVAL_CODE_PATHS: [&str; 8] = [
     "src/**",
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
     "**/build.rs",
     ".cargo/**",
+    "rust-toolchain.toml",
     "npm/**",
 ];
 
@@ -2962,9 +2963,12 @@ paths = ["channel/**", ".github/workflows/**", "deny.toml"]
             assert!(!critical(&[], &[f], false).is_empty(), "{t}");
         }
         // bosun's trust code is on the floor wherever bosun's code is.
-        for t in crate::core::approve::TRUST_CODE_FILES {
+        for t in crate::core::approve::TRUST_CODE_FILES
+            .iter()
+            .chain(&crate::core::approve::TRUST_BUILD_FILES)
+        {
             let f = ChangedFile {
-                path: t.into(),
+                path: t.to_string(),
                 previous_path: None,
                 added_lines: Vec::new(),
             };

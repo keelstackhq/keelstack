@@ -275,6 +275,40 @@ fn merge_no_ci_main_red_halts() {
     assert!(merge_puts(&fake).is_empty());
 }
 
+/// The kill switch is read again right before the merge call: a halt that lands while the gates
+/// run (they execute the head's code, for as long as they take) stops the merge, exit 4.
+#[test]
+fn merge_rechecks_the_kill_switch_after_the_gates() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    // The first read (the start of the command) sees no halt; the second sees it.
+    fake.after_requests("/actions/variables/BOSUN_HALT", 1, |s| {
+        s.variables.insert("BOSUN_HALT".into(), "1".into());
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 4, "{v}");
+    assert!(merge_puts(&fake).is_empty(), "merged after the halt");
+}
+
+/// Main-open is judged again right before the merge call too: main going red while the gates
+/// ran stops the merge, exit 4.
+#[test]
+fn merge_rechecks_main_open_after_the_gates() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    fake.issue(9, "main is red", &["bosun:main-red"], "");
+    fake.hide_from_list(9);
+    // Main turns red only at the second kill-switch read, which is the re-check's.
+    fake.after_requests("/actions/variables/BOSUN_HALT", 1, |s| {
+        s.issues.iter_mut().find(|i| i.number == 9).unwrap().hidden = false;
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 4, "{v}");
+    assert!(merge_puts(&fake).is_empty(), "merged while main was red");
+}
+
 fn green(fake: &FakeGithub, except: Option<&str>) {
     let head = fake.pull_head(20);
     for c in ["ci-ok", "risk-check", "review-verdict", "main-open"] {
@@ -623,6 +657,19 @@ fn merge_deletes_head_tool_files_the_base_lacks() {
     let want = "[adapters]\npackages = \"cargo-metadata\"\npending = \"rust-ignore\"\nassertions = \"rust\"\n[gates.lint]\ncmd = [\"sh\", \"-c\", \"grep -q real rust-toolchain.toml\"]\n";
     fake.content(".bosun/profiles/rust.toml", "refs/heads/main", want);
     fake.content("rust-toolchain.toml", "refs/heads/main", "# real\n");
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 0, "{v}");
+}
+
+/// The head's nextest config (`retries`, a test filter) is a tool file too: the base's wins.
+#[test]
+fn merge_deletes_a_head_nextest_config_the_base_lacks() {
+    let files = [(".config/nextest.toml", "[profile.default]\nretries = 9\n")];
+    let (fake, dir) = setup_files(false, Some(NO_CI), &files);
+    let check = "[adapters]\npackages = \"cargo-metadata\"\npending = \"rust-ignore\"\nassertions = \"rust\"\n[gates.lint]\ncmd = [\"sh\", \"-c\", \"test ! -e .config/nextest.toml\"]\n";
+    fake.content(".bosun/profiles/rust.toml", "refs/heads/main", check);
     verdict(&fake);
     assert_eq!(ready(&fake, dir.path()).0, 0);
     let (code, v) = merge(&fake, dir.path());
