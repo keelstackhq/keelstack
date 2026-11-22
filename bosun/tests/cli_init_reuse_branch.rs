@@ -418,3 +418,25 @@ fn an_agent_login_passed_as_owner_is_refused() {
         );
     }
 }
+
+#[test]
+fn a_failed_label_create_keeps_the_kill_switch_owner_step() {
+    let e = Env::new();
+    git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    // `gh label create` fails: the labels stay in `labels_todo`, so the owner step stays too.
+    exec(
+        &e.tools.path().join("gh"),
+        "#!/bin/sh\ncase \"$1 $2\" in\n\"auth token\") exit 1;;\n\"auth status\") exit 0;;\n\"api user\") echo ghuser;;\n\"pr create\") echo https://github.com/acme/widget/pull/7;;\n\"label create\") exit 1;;\nesac\n",
+    );
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, false, true, &["--owner", "octocat"]);
+    assert_eq!(code, 0, "{v}");
+    assert!(
+        !v["data"]["labels_todo"].as_array().unwrap().is_empty(),
+        "{v}"
+    );
+    assert!(
+        v["data"]["owner_steps"].to_string().contains("bosun:halt"),
+        "{v}"
+    );
+}

@@ -1207,6 +1207,18 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             }
         }
     }
+    // A label that could not be made leaves the kill switch an owner step, whatever `make_labels` said.
+    let halt_missing = !labels_todo.is_empty()
+        || warnings
+            .iter()
+            .any(|w| w.starts_with("cannot create the label "));
+    if intake.is_none() && halt_missing && !steps.iter().any(|s| s == STEP_HALT) {
+        let at = steps
+            .iter()
+            .position(|s| s == STEP_HOIST)
+            .map_or(0, |i| i + 1);
+        steps.insert(at, STEP_HALT.into());
+    }
     let mut out = json!({
         "labels_created": labels,
         "channel": "bosun", "source": args.source, "ref": git_ref, "pieces": pieces,

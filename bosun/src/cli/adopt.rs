@@ -54,6 +54,8 @@ fn templates() -> Vec<Tpl> {
         tpl!(".bosun/version", ".bosun/version.jinja", true),
         tpl!(".bosun/limits.toml", ".bosun/limits.toml", false),
         tpl!(".bosun/risk.toml", ".bosun/risk.toml.jinja", true),
+        // The tool pins bosun.yml, the CircleCI bosun-ok job and docs/setup-script.sh read.
+        tpl!(".bosun/pins.toml", ".bosun/pins.toml", false),
         tpl!(
             ".bosun/session-rules.toml",
             ".bosun/session-rules.toml",

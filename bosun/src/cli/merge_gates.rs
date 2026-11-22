@@ -225,18 +225,36 @@ pub fn verify(app: &App, pull: &Pull) -> Result<Vec<String>, BosunError> {
     run_gates(app, pull, &repo)
 }
 
-/// Whether a gate's skip vouches for nothing. Only the bootstrap-neutral skip (reason ending in
-/// "bootstrap PR, gate neutral") counts as done. Any other skip fails the merge, also one with no
-/// reason or an empty plan (no stack matched): deleting a file or the manifest must not switch a
-/// gate off.
-fn skip_vouches_nothing(data: &serde_json::Value) -> bool {
+/// Whether a gate's skip vouches for nothing. Only the bootstrap-neutral skip (reason
+/// "no <files> in base: bootstrap PR, gate neutral") counts as done, and only while the default
+/// branch lacks those files too (`on_default(path)` is true when it has one, in the stack directory
+/// or a parent): a PR on an old base must not borrow the bootstrap skips. Any other skip fails the
+/// merge, also one with no reason or an empty plan (no stack matched): deleting a file or the
+/// manifest must not switch a gate off.
+fn skip_vouches_nothing(data: &serde_json::Value, on_default: &dyn Fn(&str) -> bool) -> bool {
     let runs = (data["runs"].as_array().cloned()).unwrap_or_else(|| vec![data.clone()]);
-    runs.iter().any(|r| {
-        r["skipped"] == true
-            && !r["reason"]
-                .as_str()
-                .is_some_and(|w| w.ends_with("bootstrap PR, gate neutral"))
-    })
+    runs.iter()
+        .any(|r| r["skipped"] == true && !neutral_on_default(r, on_default))
+}
+
+fn neutral_on_default(run: &serde_json::Value, on_default: &dyn Fn(&str) -> bool) -> bool {
+    let Some(files) = (run["reason"].as_str())
+        .and_then(|w| w.strip_suffix(" in base: bootstrap PR, gate neutral"))
+        .and_then(|w| w.strip_prefix("no "))
+    else {
+        return false;
+    };
+    let mut dir = std::path::PathBuf::from(gates::stack_rel(run["stack"].as_str().unwrap_or("")));
+    loop {
+        for f in files.split(", ") {
+            if on_default(&dir.join(f).to_string_lossy()) {
+                return false;
+            }
+        }
+        if !dir.pop() {
+            return true;
+        }
+    }
 }
 
 fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunError> {
@@ -249,6 +267,9 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
     let want = snapshot(wt)?;
     // The PR's allow list, as `test-integrity --pr` reads it (a linked task whose touch covers the PR).
     let (_, allow, _) = super::test_integrity::pr_allow(app, pull)?;
+    // Fail closed: an API error counts as "the default branch has it".
+    let default = default_ref(app.gh.as_ref())?;
+    let on_default = |path: &str| app.gh.file_at(path, &default).map_or(true, |f| f.is_some());
     let mut failed = Vec::new();
     let private = wt.parent().unwrap_or(wt);
     for (i, gate) in all.iter().enumerate() {
@@ -276,7 +297,7 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
                 "the author removes whatever in the head rewrites them; the owner reviews the head",
             ));
         }
-        if !res.is_ok_and(|o| !skip_vouches_nothing(&o.data)) {
+        if !res.is_ok_and(|o| !skip_vouches_nothing(&o.data, &on_default)) {
             failed.push(gate.clone());
         }
     }
@@ -297,20 +318,39 @@ mod tests {
 
     #[test]
     fn only_the_bootstrap_neutral_skip_vouches() {
-        let neutral = json!({"skipped": true,
+        let lacks = |_: &str| false;
+        let neutral = json!({"skipped": true, "stack": ".",
             "reason": "no deny.toml in base: bootstrap PR, gate neutral"});
-        assert!(!skip_vouches_nothing(&neutral));
-        assert!(!skip_vouches_nothing(&json!({"runs": [neutral]})));
+        assert!(!skip_vouches_nothing(&neutral, &lacks));
+        assert!(!skip_vouches_nothing(&json!({"runs": [neutral]}), &lacks));
         // An empty plan has no reason; another reason is no neutral skip either.
         assert!(skip_vouches_nothing(
-            &json!({"skipped": true, "stack": null})
+            &json!({"skipped": true, "stack": null}),
+            &lacks
         ));
         assert!(skip_vouches_nothing(
-            &json!({"skipped": true, "reason": "no lockfile"})
+            &json!({"skipped": true, "reason": "no lockfile"}),
+            &lacks
         ));
         assert!(skip_vouches_nothing(
-            &json!({"runs": [neutral, {"skipped": true}]})
+            &json!({"runs": [neutral, {"skipped": true}]}),
+            &lacks
         ));
-        assert!(!skip_vouches_nothing(&json!({"skipped": false})));
+        assert!(!skip_vouches_nothing(&json!({"skipped": false}), &lacks));
+    }
+
+    #[test]
+    fn a_bootstrap_skip_vouches_nothing_once_the_default_branch_has_the_file() {
+        let neutral = json!({"skipped": true, "stack": "crates/x",
+            "reason": "no deny.toml, .deny.toml in base: bootstrap PR, gate neutral"});
+        // The default branch has it in the stack directory, in a parent, or at the root.
+        for at in ["crates/x/deny.toml", "crates/.deny.toml", ".deny.toml"] {
+            let has = |p: &str| p == at;
+            assert!(skip_vouches_nothing(&neutral, &has), "{at}");
+            assert!(skip_vouches_nothing(&json!({"runs": [neutral]}), &has));
+        }
+        assert!(!skip_vouches_nothing(&neutral, &|_: &str| false));
+        // An unrelated file on the default branch changes nothing.
+        assert!(!skip_vouches_nothing(&neutral, &|p: &str| p == "README.md"));
     }
 }
