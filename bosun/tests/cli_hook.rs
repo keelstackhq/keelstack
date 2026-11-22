@@ -1038,6 +1038,31 @@ fn unadopted_repo_keeps_pure_guards_and_makes_no_github_api_call() {
     assert!(fake.requests().is_empty(), "{:?}", fake.requests());
 }
 
+/// A subagent (an `agent_id` in the hook input) shares its parent's session: in the cloud only
+/// this tells it from the orchestrator, so it never runs `bosun merge` or signs.
+#[test]
+fn a_subagent_may_not_merge_or_sign() {
+    let (fake, tmp) = (FakeGithub::start(), repo());
+    let cwd = tmp.path().to_str().unwrap();
+    let bash = |c: &str, agent: Option<&str>| {
+        let mut i = json!({"hook_event_name":"PreToolUse","session_id":"u","cwd":cwd,
+            "tool_name":"Bash","tool_input":{"command":c}});
+        if let Some(a) = agent {
+            i["agent_id"] = json!(a);
+        }
+        hook(Some(&fake), tmp.path(), T0, "pre-tool-use", &i).stdout
+    };
+    for c in [
+        "bosun merge 12",
+        "bosun approve 1@abc --sign-key k.pem --bootstrap",
+    ] {
+        let o = bash(c, Some("agent-1"));
+        assert!(o.contains("deny") && o.contains("subagent"), "{c}: {o}");
+        assert!(!bash(c, None).contains("subagent"), "{c}");
+    }
+    assert!(!bash("bosun approve --list", Some("agent-1")).contains("deny"));
+}
+
 /// Monorepo (D-023): the root `.bosun/version` holds `unreleased` and the session starts in a
 /// folder; the repo counts as adopted.
 #[test]

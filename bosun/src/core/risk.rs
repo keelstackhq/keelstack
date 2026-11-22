@@ -1162,7 +1162,7 @@ pub const TRUST_ROOT: [&str; 10] = [
 /// The trust root under each code root (D-022): the code that holds the trust-root list, judges,
 /// parses the records and config it reads, talks to GitHub, and the manifest and launchers that
 /// build and ship that binary.
-pub const TRUST_ROOT_CODE: [&str; 23] = [
+pub const TRUST_ROOT_CODE: [&str; 26] = [
     "src/core/risk.rs",
     "src/core/approve.rs",
     "src/cli/risk_check.rs",
@@ -1173,6 +1173,9 @@ pub const TRUST_ROOT_CODE: [&str; 23] = [
     "src/core/records.rs",
     "src/core/verdict.rs",
     "src/core/carry.rs",
+    "src/core/meta.rs",
+    "src/core/touch.rs",
+    "src/time.rs",
     "src/config.rs",
     "src/ctx.rs",
     "src/app.rs",

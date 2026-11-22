@@ -301,9 +301,13 @@ High-risk PRs:
     different sessions: wave agents `S/r1` and `S/r2` are one session, and a verdict also stands
     for the session that relayed it (`relayed_by`), so a relayer that posts records under two
     session ids counts once; two verdicts count only when their session roots and their carriers
-    (the relayer, else the session) all differ. Known limit: bosun cannot see whether the
-    orchestrator dispatched a reviewer session; the verdict author (the verdict workflow) and the
-    carrier rule are what binds it. One verdict's bar stays `VERDICT_MIN_CONFIDENCE` = 0.9
+    (the relayer, else the session) all differ. Known limits: bosun cannot see whether the
+    orchestrator dispatched a reviewer session, and the reviewer id is self-declared (`BOSUN_SESSION`),
+    so one session that posts two unrelayed verdicts under two invented ids is not caught here;
+    the verdict author (the verdict workflow), the carrier rule and the reviewers' dispatch are
+    what bind it, and risk-check cannot see the signer's session (only `bosun approve` excludes it).
+    Quorum reviewers must be separate sessions (`bosun spawn`): an in-process subagent shares the
+    orchestrator's session root, which is the signer's and never counts. One verdict's bar stays `VERDICT_MIN_CONFIDENCE` = 0.9
     (approve, no major finding), stricter than the 0.85 of D-022's text; lowering it is its own
     decision. `data.quorum_verdicts` lists the counted sessions. Waiting is `high risk, quorum
     (D-022): 2 clean verdicts and orchestrator signature needed: <ids>`, which does not start
@@ -322,7 +326,7 @@ High-risk PRs:
     owners, CODEOWNERS, the decisions index and D-022's file). Under each code root (`""` when
     `src/cli/risk_check.rs` is at the root, and each `[[folders]]` path, plus `bosun`, that holds
     it at the base: `bosun/` in the monorepo): the code that holds the list, judges, parses the
-    records and config, talks to GitHub and ships the binary: `src/core/{risk,approve,folders,glob,mode,weaken,records,verdict,carry}.rs`,
+    records and config, talks to GitHub and ships the binary: `src/core/{risk,approve,folders,glob,mode,weaken,records,verdict,carry,meta,touch}.rs` (`meta` picks the linked task whose lease holders are excluded, `touch` filters the files risk-check evaluates), `src/time.rs`,
     `src/{config,ctx,app,main,lib}.rs`, `src/cli/{mod,approve,verdict,carry_over}.rs`,
     `src/cli/risk_check.rs`, `src/github/**`, `build.rs`, `Cargo.toml` and `npm/**`. And every
     `.github/workflows/**` file unless `[checks] mode = "checks"`: elsewhere a workflow the PR

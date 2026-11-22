@@ -17,7 +17,8 @@ pub fn run(cwd: Option<&Path>, input: &Value) -> Option<String> {
     if input.get("tool_name").and_then(Value::as_str) != Some("AskUserQuestion") {
         return None;
     }
-    if std::env::var_os("CLAUDE_CODE_CHILD_SESSION").is_some_and(|v| !v.is_empty()) {
+    // In the cloud every session has the child flag: `child_flag` ignores it there.
+    if crate::ctx::child_flag() {
         eprintln!("bosun: warning: a child session's answer is not stored");
         return None;
     }

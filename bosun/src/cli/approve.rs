@@ -1004,7 +1004,7 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
 /// this is where signer != reviewer is enforced.
 fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy) -> Result<()> {
     let gh = app.gh.as_ref();
-    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer";
+    let fix = "nothing was signed: get the clean verdicts this names and sign again, or the owner approves with their own `/bosun approve <sha>` comment or a GitHub review";
     let files = gh.pull_files(pull.number)?;
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))

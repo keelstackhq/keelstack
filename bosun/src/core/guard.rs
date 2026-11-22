@@ -614,6 +614,40 @@ pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<Stri
     })
 }
 
+/// Subagent-lock (spec §4): a Claude Code subagent (the hook input carries an `agent_id`) runs
+/// inside its parent's session, with its session id and environment, so in the cloud (where the
+/// child flag is no evidence) only this tells it from the orchestrator itself. It may not run
+/// `bosun merge` or sign an approval (`bosun approve` with `--sign-key`, `--via-signer` or
+/// `--as`). Lexical and best effort, like the other locks: any `bosun` word followed in its
+/// segment by `merge`, or by `approve` and a signing flag, is refused.
+pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
+    if tool != "Bash" {
+        return None;
+    }
+    let command = input.get("command").and_then(Value::as_str)?;
+    for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
+        let words = shell_words(seg);
+        let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
+            continue;
+        };
+        let rest = &words[i + 1..];
+        let has = |w: &str| rest.iter().any(|r| r == w);
+        let signs = ["--sign-key", "--via-signer", "--as"].iter().any(|f| {
+            rest.iter()
+                .any(|r| r == f || r.starts_with(&format!("{f}=")))
+        });
+        if has("merge") || (has("approve") && signs) {
+            return Some(
+                "a subagent never merges or signs an approval (D-022: child sessions never merge): \
+                 report the PR to the orchestrator, which runs `bosun merge` or `bosun approve` \
+                 itself"
+                    .into(),
+            );
+        }
+    }
+    None
+}
+
 const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_REMOTE_SESSION_ID or CLAUDE_CODE_REMOTE, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
 const IDENTITY: &str = "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_REMOTE";
 
@@ -7408,6 +7442,31 @@ mod tests {
         assert!(edit("/root/.claude/projects/p/s.jsonl"));
         assert!(edit("~/.claude/projects/p/../q/s.jsonl"));
         assert!(!edit("/r/.claude/settings.json"));
+    }
+
+    #[test]
+    fn subagent_lock_refuses_merge_and_signing_only() {
+        let hit = |c: &str| subagent_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "bosun merge 12",
+            "./target/debug/bosun merge 12",
+            "cd /r && bosun -C /r merge 12 2>&1 | jq .",
+            "bosun approve 1@abc --sign-key k.pem --bootstrap",
+            "bosun approve 1@abc --via-signer",
+            "bosun approve 1@abc --as=signer",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "bosun approve --list",
+            "bosun pr 7 --ready",
+            "git merge-base a b",
+            "cargo test --test cli_merge",
+            "echo merge; bosun status",
+        ] {
+            assert!(!hit(c), "{c}");
+        }
+        assert!(subagent_lock("Edit", &json!({"command": "bosun merge 1"})).is_none());
     }
 
     #[test]

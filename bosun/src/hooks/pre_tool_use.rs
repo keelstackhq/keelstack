@@ -12,7 +12,7 @@ use crate::config::Config;
 use crate::core::guard::{
     ChildTask, Script, answers_lock, bash_writes, bosun_dir_lock, child_task_create,
     config_fetch_risk, edit_lock, edited_path, foreign_lock, prereqs_lock, prereqs_lock_for,
-    pushes, script_rules, settings_rule, tool_rules,
+    pushes, script_rules, settings_rule, subagent_lock, tool_rules,
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
@@ -99,6 +99,16 @@ fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
     )
     .map(|b| b.strip_prefix("origin/").unwrap_or(&b).to_string())
     .unwrap_or_else(|| "main".into());
+    // A subagent shares its parent's session and environment: it never merges or signs.
+    let agent = input
+        .get("agent_id")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if !agent.trim().is_empty()
+        && let Some(why) = subagent_lock(tool, &tool_input)
+    {
+        return Some(deny(&why));
+    }
     // The settings-lock starts in the hook's own directory (which may be inside `.claude`).
     if let Some(why) = settings_rule(tool, &tool_input, &dir.to_string_lossy()) {
         return Some(deny(&why));
