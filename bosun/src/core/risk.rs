@@ -1232,9 +1232,10 @@ fn parse_pin(text: &str) -> Option<(u64, u64, u64)> {
 }
 
 /// Why a change of `.bosun/version` is trust root (owner only) under quorum (D-022), else `None`:
-/// the head pin is deleted or renamed away (`None`), not plain `x.y.z`, lower than the base pin,
+/// the head pin is deleted or renamed away (`head` is `None`), not plain `x.y.z`, the base pin is
+/// absent or not a release (the owner sets the first pin), the head is lower than the base pin,
 /// or not a published release (`released`: the tag `v{head}` exists; unused when both pins are
-/// the same version). An upgrade to a released version, or a new pin where none stood, is fine.
+/// the same version). Only an upgrade between two release pins to a released version is fine.
 pub fn pin_change_trust_root(
     base: Option<&str>,
     head: Option<&str>,

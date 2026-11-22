@@ -81,6 +81,14 @@ fn file_for(s: Sig) -> &'static str {
     }
 }
 
+/// How `approved_by` names the key of each form: never the owner `ada`.
+fn by_prefix(s: Sig) -> &'static str {
+    match s {
+        Sig::Delegate => "delegate d1",
+        _ => "key o1",
+    }
+}
+
 fn post(fake: &FakeGithub, o: &Key, d: &Key, s: Sig) {
     let (k, id, msg, first) = match s {
         Sig::V1 => (
@@ -190,7 +198,7 @@ fn while_halted_no_key_signature_counts() {
 #[test]
 fn under_quorum_a_key_never_clears_an_escalated_verdict() {
     // High risk: the key passes with two verdicts, but it is not the owner's own approval.
-    for s in [Sig::V1, Sig::V2] {
+    for s in ALL {
         let (o, d) = (key(), key());
         let fake = world(&o, &d, file_for(s));
         fake.status(HEAD, "review-verdict", "failure", ESCALATED);
@@ -199,10 +207,12 @@ fn under_quorum_a_key_never_clears_an_escalated_verdict() {
         post(&fake, &o, &d, s);
         let (code, v) = check(&fake);
         assert_eq!(code, 0, "{s:?}: {v}");
+        let by = v["data"]["approved_by"].as_str().unwrap_or_default();
+        assert!(by.starts_with(by_prefix(s)), "{s:?}: {v}");
         assert!(v["data"].get("verdict_cleared_by").is_none(), "{s:?}: {v}");
     }
     // Low risk: a key is no owner approval either.
-    for s in [Sig::V1, Sig::V2] {
+    for s in ALL {
         let (o, d) = (key(), key());
         let fake = world(&o, &d, "notes/a.txt");
         fake.status(HEAD, "review-verdict", "failure", ESCALATED);
@@ -212,6 +222,8 @@ fn under_quorum_a_key_never_clears_an_escalated_verdict() {
         let (code, v) = check(&fake);
         assert_eq!(code, 0, "{s:?}: {v}");
         assert_eq!(v["data"]["level"], "normal", "{s:?}: {v}");
+        // Normal level needs no approval: the key is not recorded as the owner either.
+        assert_ne!(v["data"]["approved_by"], "ada", "{s:?}: {v}");
         assert!(v["data"].get("verdict_cleared_by").is_none(), "{s:?}: {v}");
     }
     // The owner's own comment still clears it.

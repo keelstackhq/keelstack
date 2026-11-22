@@ -743,10 +743,10 @@ pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
                         .is_some_and(bosun),
                 }
             });
-            if let Some(d) = words.iter().position(|w| w == "--")
-                && named
-                && refused(&words[d + 1..])
-            {
+            // Without `--` the words follow the package name directly (cargo rejects that, but
+            // refuse the intent): the whole segment is searched.
+            let from = words.iter().position(|w| w == "--").map_or(0, |d| d + 1);
+            if named && refused(&words[from..]) {
                 return refuse();
             }
         }
@@ -7584,6 +7584,8 @@ mod tests {
             "cargo run --bin bosun -- merge 3",
             "cargo run --bin=bosun -- approve 1@a --via-signer",
             "cd bosun && cargo run -q -p keel-bosun -- -C /r merge 12",
+            "cargo run -p keel-bosun merge 12",
+            "cargo run --bin bosun approve 1@abc --sign-key k.pem",
         ] {
             assert!(hit(c), "{c}");
         }
@@ -7591,6 +7593,7 @@ mod tests {
             "cargo run -p keel-bosun -- status",
             "cargo run -p keel-bosun -- approve --list",
             "cargo run -p keel-splice -- merge 12",
+            "cargo run -p keel-splice merge 12",
             "bosun approve --list",
             "bosun pr 7 --ready",
             "git merge-base a b",

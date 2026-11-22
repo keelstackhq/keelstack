@@ -216,3 +216,36 @@ fn a_carried_owner_role_key_signature_needs_two_verdicts_on_the_new_head() {
         assert_eq!(v["data"]["approval_carried_from"], H, "{v}");
     }
 }
+
+#[test]
+fn while_halted_a_carried_signature_does_not_count() {
+    let (fake, k) = world();
+    fake.variable("BOSUN_HALT", "1");
+    sign(&fake, &k, H);
+    two(&fake, H);
+    two(&fake, H2);
+    let (code, v) = go(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+    assert_eq!(v["data"]["approval_carried_from"], Value::Null, "{v}");
+}
+
+#[test]
+fn a_carried_signature_never_clears_an_escalated_verdict() {
+    // The carry passes with two verdicts on the new head, but a key is not the owner: an
+    // escalated verdict on the new head stays escalated.
+    let (fake, k) = world();
+    fake.status(
+        H2,
+        "review-verdict",
+        "failure",
+        "escalated to the owner (approvable): approve 0.95 (approves at 0.85), 0 blocker, 0 major",
+    );
+    sign(&fake, &k, H);
+    two(&fake, H);
+    two(&fake, H2);
+    let (code, v) = go(&fake);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["approval_carried_from"], H, "{v}");
+    assert!(v["data"].get("verdict_cleared_by").is_none(), "{v}");
+}

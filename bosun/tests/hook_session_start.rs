@@ -116,3 +116,43 @@ fn the_default_rules_stay_short() {
     let rules = text.split("Session rules").nth(1).unwrap();
     assert!(rules.len() < 420, "{} chars: {rules}", rules.len());
 }
+
+/// An origin URL that starts with `-` is an option for git, not a repository: it is never passed
+/// on (here `--upload-pack=touch MARK` would run `touch` against the local bare repo `HEAD`), and
+/// the repo counts as adopted (fail closed).
+#[test]
+fn an_origin_url_starting_with_a_dash_is_never_given_to_git() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("work");
+    let mark = tmp.path().join("MARK");
+    std::fs::create_dir_all(&dir).unwrap();
+    let git = |a: &[&str]| {
+        let o = Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(a)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{a:?}: {o:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    // A local bare repo named `HEAD`: the repository the unprotected command would end up using.
+    git(&["init", "-q", "--bare", "HEAD"]);
+    let url = format!("--upload-pack=touch {}", mark.display());
+    git(&["config", "remote.origin.url", &url]);
+    let out = bosun()
+        .current_dir(&dir)
+        .env("BOSUN_SESSION", "session_me")
+        .env("BOSUN_ADOPTED_CACHE_SECS", "0")
+        .args(["hook", "session-start"])
+        .write_stdin(json!({"cwd": dir.to_str().unwrap()}).to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(!mark.exists(), "git ran the URL as an option");
+    let v: Value = common::one_object(&out.stdout);
+    let text = v["hookSpecificOutput"]["additionalContext"]
+        .as_str()
+        .unwrap();
+    assert!(!text.contains("not set up"), "{text}");
+}

@@ -173,7 +173,7 @@ fn one_verdict_or_none_does_not_pass_and_the_wait_is_not_an_owner_wait() {
 }
 
 #[test]
-fn a_signature_alone_does_not_pass_even_with_two_verdicts_missing() {
+fn two_verdicts_without_a_signature_do_not_pass() {
     let k = key();
     let fake = quorum(&k);
     post_verdict(&fake, "session_r", HEAD);
@@ -800,15 +800,21 @@ fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
     let (code, v) = sign(&fake, &k, "session_o");
     assert_eq!(code, 1, "{v}");
     assert!(v["data"]["body"].is_null(), "{v}");
-    // And the trust root, with the base on owner.
+    // And the trust root, with the base on quorum: only the trust-root refusal can stop it.
     let fake = quorum(&k);
-    fake.content(".bosun/bosun.toml", BASE, &config("owner"));
     fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
     post_verdict(&fake, "session_r", HEAD);
     post_verdict(&fake, "session_s", HEAD);
     let (code, v) = sign(&fake, &k, "session_o");
     assert_eq!(code, 1, "{v}");
     assert!(v["data"]["body"].is_null(), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("trust root"),
+        "{v}"
+    );
 
     let fake = quorum(&k);
     fake.content(".bosun/bosun.toml", MAIN, &config("owner"));

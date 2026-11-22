@@ -105,7 +105,12 @@ fn unadopted_remote(root: &Path, url: Option<String>) -> bool {
     let Some(url) = url else {
         return !root.join(".bosun").is_dir();
     };
-    let Some(heads) = git_remote(root, &["ls-remote", &url, "HEAD"]) else {
+    // An origin URL that starts with `-` is an option to git, never a repository: fail closed
+    // (adopted) without running anything; `--` keeps any other URL a repository argument.
+    if url.starts_with('-') {
+        return false;
+    }
+    let Some(heads) = git_remote(root, &["ls-remote", "--", &url, "HEAD"]) else {
         return false;
     };
     let Some(sha) = heads.split_whitespace().next() else {
@@ -127,7 +132,7 @@ fn unadopted_remote(root: &Path, url: Option<String>) -> bool {
     let mut args: Vec<&str> = "fetch -q --depth=1 --filter=blob:none --no-tags"
         .split(' ')
         .collect();
-    args.extend([&*url, sha]);
+    args.extend(["--", &*url, sha]);
     let fetched = git_remote(&tmp, &args).is_some();
     let tree = git_remote(
         &tmp,

@@ -1971,8 +1971,6 @@ pub(crate) fn quorum_trust_root(
     Ok((out, None))
 }
 
-/// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
-/// base config that does not parse fails closed (an empty list: no verdict counts).
 /// Whether `[approvals] policy` at base is quorum; a config that does not parse may be a quorum
 /// one, so it reads as quorum (fail closed).
 fn quorum_policy_at(gh: &dyn Github, base: &str) -> Result<bool> {
@@ -2016,6 +2014,8 @@ pub(crate) fn oneoff_allow(gh: &dyn Github, base: &str) -> Result<Vec<crate::cor
         .collect())
 }
 
+/// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
+/// base config that does not parse fails closed (an empty list: no verdict counts).
 pub(crate) fn review_models(gh: &dyn Github, base: &str) -> Result<Option<Vec<String>>> {
     Ok(match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {

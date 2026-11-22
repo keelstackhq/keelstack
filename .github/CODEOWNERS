@@ -9,8 +9,8 @@
 # CODEOWNERS is case-sensitive, risk-check matches in any case: a name the rules write in lower
 # case (`**/agents.md`) is listed in lower case and in its usual spelling (`AGENTS.md`).
 # Delegate or two-verdict paths outside the floor are not listed: R-gate and R-ci-review. Under
-# quorum (D-022) bosun's quorum trust root is the owner's too (QUORUM_CODE_FILES and TRUST_ROOT in
-# bosun/src/core/risk.rs), so the folders it compiles in, `bosun/channel/` and `bosun/profiles/`,
+# quorum (D-022) bosun's quorum trust root is the owner's too (QUORUM_CODE_FILES in
+# bosun/src/core/approve.rs, TRUST_ROOT in bosun/src/core/risk.rs), so the folders it compiles in, `bosun/channel/` and `bosun/profiles/`,
 # and `bosun/build.rs` are listed here as well.
 
 # Anywhere in the repo (no leading or middle slash matches at any depth): the `**/` globs.

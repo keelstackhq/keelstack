@@ -154,3 +154,16 @@ fn without_an_owners_file_a_plain_approve_comment_of_the_user_repo_owner_approve
     fake.comment_by(1, "ada", &format!("/bosun approve {HEAD}"));
     refused(&fake);
 }
+
+#[test]
+fn empty_owners_file_is_not_the_fallback() {
+    // An owners file that exists but names nobody keeps the empty-owners halt (fail closed),
+    // even for the repo owner's own plain `/bosun approve` comment.
+    let fake = high_pr(false);
+    fake.content("governance/owners.toml", BASE, "");
+    fake.repo_set("owner", json!({"login": "ada", "type": "User"}));
+    fake.comment_by(1, "ada", &format!("/bosun approve {HEAD}"));
+    let (code, v) = check(&fake);
+    assert_ne!(code, 0, "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}

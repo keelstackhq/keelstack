@@ -118,8 +118,8 @@ orchestrator's signature plus two clean verdicts from different reviewer session
 relayers) pass every PR except the trust root, which bosun re-roots under each code root
 (`bosun/` here): the trust files above, `.bosun/approvers.toml`, `.bosun/bosun.toml`,
 `.bosun/risk.toml`, the risk, verdict, signer, main-open, review and release workflows,
-`.claude/settings*.json`, `.claude/loop.md`, `.claude/agents/**`, `.bosun/session-rules.toml`, `.bosun/template-tests`, the reviewers' prompts and lessons (`REVIEW.md`, `docs/lessons.toml`), and under `bosun/` every file of `src/` and `profiles/`, its
-`Cargo.toml` and launchers (`bosun/src/core/approve.rs` `QUORUM_CODE_FILES`, spec §8). Every
+`.claude/settings*.json`, `.claude/loop.md`, `.claude/agents/**`, `.bosun/session-rules.toml`, `.bosun/template-tests`, the reviewers' prompts and lessons (`REVIEW.md`, `docs/lessons.toml`), and under `bosun/` every file of `src/`, `profiles/` and `channel/**` (compiled in with `include_str!`), its
+`Cargo.toml`, `build.rs`, `.bosun/pins.toml` and launchers (`bosun/src/core/approve.rs` `QUORUM_CODE_FILES`, spec §8). Every
 CI file of `risk::workflow_files` (`.github/workflows/**`, `.github/actions/**`, `**/action.yml`,
 `.circleci/**`, `.gitlab-ci.yml`, `**/jenkinsfile`, ...) is trust root in every `[checks]` mode; so are
 `.github/scripts/**`, `scripts/**`, `docs/setup-script.sh`, `.claude-plugin/**`, `.claude/rules/**`,

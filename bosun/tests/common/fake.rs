@@ -80,8 +80,11 @@ pub struct State {
     pub check_runs: HashMap<String, Vec<Value>>,
     /// (slug, id) of the App the token belongs to, for check runs the client creates.
     pub token_app: (String, u64),
+    /// `<ref>:<path>` -> text; a pull's base sha falls back to the default branch for a path no
+    /// test wrote at that sha (`content`), unless `absent_at` marks the path absent there.
     pub contents: HashMap<String, String>,
-    /// `<ref>:<path>` keys a test wrote itself (not copied from the default branch to a base sha).
+    /// `<ref>:<path>` keys that answer 404 even where the default branch has the file.
+    pub absent: std::collections::HashSet<String>,
     pub reviews: HashMap<u64, Vec<Value>>,
     pub timeline: HashMap<u64, Vec<Value>>,
     /// `base...head` -> files of the comparison.
@@ -622,7 +625,16 @@ impl FakeGithub {
     /// A file at a ref; the contents API serves it base64-encoded.
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
+        s.absent.remove(&format!("{git_ref}:{path}"));
         s.contents.insert(format!("{git_ref}:{path}"), text.into());
+    }
+
+    /// `path` does not exist at `git_ref` (404), even though the default branch has it: a file
+    /// a pull adds, read at its base sha.
+    pub fn absent_at(&self, path: &str, git_ref: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.contents.remove(&format!("{git_ref}:{path}"));
+        s.absent.insert(format!("{git_ref}:{path}"));
     }
 
     /// A workflow run of `sha` with one job and its log.
@@ -1599,6 +1611,9 @@ fn route(
             // A pull's base sha stands for the default branch unless a test wrote that sha's
             // path itself; resolved here, at read time, so write order never matters.
             let is_base = s.pulls.iter().any(|p| p["base"]["sha"] == asked);
+            if s.absent.contains(&format!("{asked}:{file}")) {
+                return msg(404, "Not Found");
+            }
             let mut candidates = vec![asked];
             if is_base {
                 candidates.push("refs/heads/main");
