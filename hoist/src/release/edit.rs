@@ -490,7 +490,13 @@ pub fn changelog_section(text: &str, version: &str) -> Option<String> {
         l.strip_prefix(&heading)
             .is_some_and(|r| r.starts_with(" (") || r.trim_end().is_empty())
     })?;
-    let body: String = lines.take_while(|l| !l.starts_with("## ")).collect();
+    let mut fence = None;
+    let body: String = lines
+        .take_while(|l| {
+            let inside = fence_step(&mut fence, l);
+            inside || !l.starts_with("## ")
+        })
+        .collect();
     let body = body.trim_matches(['\r', '\n']);
     (!body.trim().is_empty()).then(|| body.to_string())
 }

@@ -24,6 +24,11 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
   in a repo with no `access.toml` or `secrets.toml` exits 0 (one `secrets/config` item, `ok`).
 - Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only),
   `bootstrap` (first publish, local, human).
+- Changesets (no HTTP): `hoist changeset init [--from-commits]` writes `.changeset/config.json` and
+  `README.md`; `changeset add <pkg>:<major|minor|patch|none>... -m TEXT [--empty] [--id ID]` writes
+  `.changeset/<id>.md`; `changeset status [--since REV]` exits 1 when a changed package has no
+  changeset. You commit the files; `release prepare` then consumes them and moves a changelog's
+  `## Unreleased` notes under the new version.
 - `init` human steps: `ci-ok` (hand-written workflow needs the job), `ci-ok-npm-test` (npm `test`
   script is the placeholder; the gate runs cargo only), `ci-ok-duplicate` (delete hoist's ci.yml),
   `release-workflow` (repo has its own release.yml, left alone: keep it and add `environment: release`

@@ -204,6 +204,15 @@ fn changelog_section_is_the_body_of_that_version() {
 }
 
 #[test]
+fn changelog_section_ignores_headings_inside_fences() {
+    let text = "## 1.1.0 (d)\n\n```md\n## example\n```\n- a\n\n## 1.0.0 (d)\n\n- old\n";
+    assert_eq!(
+        changelog_section(text, "1.1.0").as_deref(),
+        Some("```md\n## example\n```\n- a")
+    );
+}
+
+#[test]
 fn changelog_section_bare_heading_is_exact() {
     use hoist::release::edit::changelog_section;
     assert_eq!(

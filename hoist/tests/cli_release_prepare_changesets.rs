@@ -244,8 +244,14 @@ fn unreleased_moves_under_version() {
     );
     write(d, ".changeset/x.md", "---\n\"b\": patch\n---\n\nFix\n");
     let sha = commit(d, "chore: changeset");
-    let (r, _) = prepare(&env);
+    let (r, post) = prepare(&env);
     assert_eq!(r["exit_code"], 0, "{r}");
+    let body = post.expect("POST /pulls")["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(body.contains("- folded fragment"), "PR body: {body}");
+    assert!(!body.contains("- old"), "PR body: {body}");
     assert_eq!(
         show(&env, "packages/b/CHANGELOG.md"),
         format!(

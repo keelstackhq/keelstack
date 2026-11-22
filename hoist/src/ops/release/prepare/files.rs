@@ -7,6 +7,7 @@ use crate::changeset::plan::Rewrite;
 use crate::changeset::range::rewrite;
 use crate::changeset::{Changeset, CsConfig, CsType};
 use crate::error::HoistError;
+use crate::release::edit::changelog_section as changelog_body;
 use crate::release::edit::{
     prepend_changelog, prepend_section, rewrite_cargo_dep, rewrite_package_json_dep,
     set_cargo_dep_version, set_cargo_version, set_package_json_dep, set_package_json_version,
@@ -221,20 +222,18 @@ fn changelog(
     }
 }
 
+/// The new section of `nv` for the PR body, including an `## Unreleased` body moved under it.
 fn changelog_section(
     p: &Package,
     nv: &NextVersion,
     next: &[NextVersion],
     cs: Option<&Cs>,
+    existing: Option<&str>,
     date: &str,
 ) -> String {
-    let text = changelog(None, nv, next, cs, date);
-    let section = text.strip_prefix("# Changelog\n\n").unwrap_or(&text);
-    match section.strip_prefix("## ") {
-        Some(rest) => format!("### {} {rest}", p.name),
-        None => section.to_string(),
-    }
-    .replace("\n### ", "\n#### ")
+    let text = changelog(existing, nv, next, cs, date);
+    let body = changelog_body(&text, &nv.to.to_string()).unwrap_or_default();
+    format!("### {} {} ({date})\n\n{body}\n", p.name, nv.to).replace("\n### ", "\n#### ")
 }
 
 /// An id as a safe inline code span: backticks in it are replaced, whitespace runs (newlines)
@@ -248,7 +247,13 @@ pub(super) fn code_span(id: &str) -> String {
     format!("`{clean}`")
 }
 
-fn pr_body(model: &ReleaseModel, next: &[NextVersion], cs: Option<&Cs>, date: &str) -> String {
+fn pr_body(
+    model: &ReleaseModel,
+    next: &[NextVersion],
+    cs: Option<&Cs>,
+    existing: &BTreeMap<String, String>,
+    date: &str,
+) -> String {
     let mut body = String::from(
         "Prepared by `hoist release prepare`. Merging this PR releases the packages below; \
          `hoist release publish` then creates the tags.\n\n\
@@ -274,7 +279,17 @@ fn pr_body(model: &ReleaseModel, next: &[NextVersion], cs: Option<&Cs>, date: &s
         }
         let tag = model.tag_for(p, &n.to.to_string());
         body.push_str(&format!("| `{}` | {version} | `{tag}` |\n", n.package));
-        sections.push_str(&format!("\n{}", changelog_section(p, n, next, cs, date)));
+        sections.push_str(&format!(
+            "\n{}",
+            changelog_section(
+                p,
+                n,
+                next,
+                cs,
+                existing.get(&n.package).map(String::as_str),
+                date
+            )
+        ));
         tags.push_str(&format!("- `{tag}`\n"));
     }
     if let Some(cs) = cs {
@@ -357,6 +372,7 @@ pub(super) fn prepare_files(
     }
     let date = today();
     let mut created = Vec::new();
+    let mut old_logs = BTreeMap::new();
     for n in next {
         let Some(p) = find(&n.package) else { continue };
         if p.launcher.is_some() || cs.is_some_and(|c| !c.cfg.changelog) {
@@ -372,6 +388,9 @@ pub(super) fn prepare_files(
             Err(e) => return Err(e),
         };
         let text = changelog(existing.as_deref(), n, next, cs, &date);
+        if let Some(old) = existing {
+            old_logs.insert(n.package.clone(), old);
+        }
         files.map.insert(rel, text);
     }
     let kind_of = |n: &NextVersion| find(&n.package).map(|p| p.kind);
@@ -397,7 +416,7 @@ pub(super) fn prepare_files(
         npm,
         cargo,
         title: format!("release: {}", list.join(", ")),
-        body: pr_body(model, next, cs, &date),
+        body: pr_body(model, next, cs, &old_logs, &date),
     })
 }
 
