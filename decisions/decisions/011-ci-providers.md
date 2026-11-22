@@ -2,7 +2,7 @@
 
 - Date: 2026-10-27
 - Scope: all
-- Status: accepted
+- Status: accepted (amended 2026-11-10: `none` provider, D-019)
 - Supersedes: —
 
 ## Context
@@ -16,6 +16,9 @@ Design: hull docs/superpowers/specs/2026-10-27-secrets-and-ci-providers-design.m
 - A repo picks its provider when rendered from hull: no piece = GitHub Actions; `circleci` = both
   (GitHub's ci-ok required, CircleCI advisory); `circleci` + `circleci-only` = CircleCI. The bosun
   channel uses the same pieces as the main template.
+- `none`: `.bosun/bosun.toml` `[ci] provider = "none"` for a repo with no `.github/workflows/*` and no
+  `.circleci/` (D-019). No hull piece, no required checks; the orchestrator merges only with
+  `bosun merge <pr>`. The rules below on ci-ok, parity and D-007 do not apply to such a repo.
 - Every CI job (ci-ok, bosun gates, deploy, scheduled desktop/Storybook/nightly) is
   generated for both providers from one step list (hull CI_PLAN) and parity-tested.
 - Required check names never change. In CircleCI mode a GitHub `status` workflow mirrors CircleCI's

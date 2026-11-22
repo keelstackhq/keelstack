@@ -43,6 +43,14 @@ cloud sessions install, and the optional Routines: create them from `data.routin
 `BOSUN_ROUTINES_OK=1`). Then write your first plan: section 6 of
 [docs/adopt-existing-repo.md](docs/adopt-existing-repo.md), the long version, which also has undo.
 
+## Fresh cloud repo, no CI
+
+1. Paste `bosun setup-snippet` once as the cloud environment's setup script.
+2. In the repo: `bosun adopt --ci none --policy autonomous --owner <login>`; commit, push, merge the
+   setup PR.
+3. Merge: with `[ci] provider = "none"` there are no required checks, so auto-merge does not apply;
+   the orchestrator runs `bosun merge <pr>` (D-019). With CI, auto-merge does it.
+
 ## For agents
 
 Read [AGENTS.md](AGENTS.md). Every command prints one JSON object (`ok`, `exit_code`, `data`,
