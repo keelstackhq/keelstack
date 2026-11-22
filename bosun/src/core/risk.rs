@@ -1139,7 +1139,9 @@ pub fn autonomous_excluded(
 /// files of [`TRUST_FILES`](super::approve::TRUST_FILES) (keys, owners, CODEOWNERS, the D-022
 /// record), the workflows that build and run the judgment or publish the binary, and the
 /// session settings that run bosun's hooks. Under each code root (where bosun's own code is,
-/// `bosun/` in the monorepo) it names [`TRUST_ROOT_CODE`]. A `.github/workflows/**` change is
+/// `bosun/` in the monorepo) it names [`TRUST_ROOT_CODE`] and
+/// [`TRUST_CODE_FILES`](super::approve::TRUST_CODE_FILES) (every other file that judges or gates
+/// a merge), and at the repo root the toolchain and cargo config that build it. A `.github/workflows/**` change is
 /// trust root too unless `[checks] mode = "checks"` (risk-check adds it): a workflow the PR adds
 /// runs as the verdict author and could post verdict records.
 ///
@@ -1268,7 +1270,9 @@ pub fn pin_change_trust_root(
 
 /// The changed trust-root paths among `(path, previous path)` pairs: [`TRUST_ROOT`] and
 /// [`TRUST_FILES`](super::approve::TRUST_FILES) at the repo root and under each of `roots`,
-/// and [`TRUST_ROOT_CODE`] under each of `roots` (the code roots, `""` is the repo root). A
+/// and [`TRUST_ROOT_CODE`] and [`TRUST_CODE_FILES`](super::approve::TRUST_CODE_FILES) under
+/// each of `roots` (the code roots, `""` is the repo root); with any code root also
+/// [`TRUST_BUILD_FILES`](super::approve::TRUST_BUILD_FILES) at the repo root. A
 /// rename counts on both sides, any case; a `..` segment counts as a hit. Empty: a quorum can
 /// count.
 pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> Vec<String> {
@@ -1277,9 +1281,14 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
         .copied()
         .collect();
     let mut texts: Vec<String> = everywhere.iter().map(|g| g.to_string()).collect();
+    if !roots.is_empty() {
+        // A repo with bosun's code: the toolchain and cargo config at the root build the judge.
+        texts.extend(super::approve::TRUST_BUILD_FILES.iter().map(|g| g.to_string()));
+    }
     for r in roots {
         texts.extend(super::folders::under(r, &everywhere));
         texts.extend(super::folders::under(r, &TRUST_ROOT_CODE));
+        texts.extend(super::folders::under(r, &super::approve::TRUST_CODE_FILES));
     }
     let globs: Vec<Glob> = (texts.iter())
         .map(|g| Glob::parse(g).expect("built-in trust-root glob"))
@@ -3233,8 +3242,29 @@ mod monorepo_tests {
             ".claude/settings.json",
             "decisions/DECISIONS.md",
             ".github/CODEOWNERS",
+            // Every other file that judges or gates a merge (spec 08: every judging file is
+            // trust root), and what builds the judge at the repo root.
+            "bosun/src/core/risk_default.toml",
+            "bosun/src/core/lease.rs",
+            "bosun/src/output.rs",
+            "bosun/src/cli/pr_no_ci.rs",
+            "bosun/src/cli/merge.rs",
+            "bosun/src/cli/merge_gates.rs",
+            "bosun/src/gates/mod.rs",
+            "bosun/src/gates/profiles/rust.toml",
+            "bosun/src/hooks/pre_tool_use.rs",
+            "bosun/src/core/guard.rs",
+            "bosun/src/core/guard/settings.rs",
+            ".bosun/pins.toml",
+            "rust-toolchain.toml",
+            ".cargo/config",
+            ".cargo/config.toml",
         ] {
             assert_eq!(t(f), [f], "{f}");
+        }
+        // Without a code root (a consumer repo) the build files stay ordinary R-ci files.
+        for f in ["rust-toolchain.toml", ".cargo/config.toml"] {
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
         }
         for f in [
             "src/core/risk.rs",

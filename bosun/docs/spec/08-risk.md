@@ -138,8 +138,8 @@ High-risk PRs:
   merge, so that every judging file is trust root: `src/core/risk_default.toml` (the default
   rules), `src/core/lease.rs`, `src/output.rs`, `src/cli/pr_no_ci.rs`, `src/cli/merge.rs`,
   `src/cli/merge_gates.rs`, `src/gates/**`, `src/hooks/**`, `src/core/guard.rs` and
-  `src/core/guard/**` (entries are globs, matched by `is_trust_path`); at the repo root also the
-  inputs that build and pin the judge: `rust-toolchain.toml`, `.cargo/config` and
+  `src/core/guard/**` (entries are globs, matched by `is_trust_path`); at the repo root (in a repo with
+  bosun's code; the quorum trust root counts them too) also the inputs that build and pin the judge: `rust-toolchain.toml`, `.cargo/config` and
   `.cargo/config.toml` (also on the critical floor in `CRITICAL_PATHS`) and `.bosun/pins.toml`
   (`.bosun/**` is critical); `TRUST_CODE_FILES`: at the root in
   bosun's repo, `bosun/src/core/risk.rs` in the monorepo, never another repo's `src/`; all are
