@@ -111,6 +111,10 @@ fn owner_globs() -> Vec<Glob> {
         .flat_map(|r| r.paths.clone())
         .collect();
     out.extend(critical_globs(&roots));
+    // Under quorum (D-022) bosun's own code root is trust root too, and a rule: everything under
+    // `src/**`, `profiles/**` and `channel/**` (compiled in), the manifest, build script, launchers.
+    let quorum = bosun::core::folders::under("bosun", &bosun::core::approve::QUORUM_CODE_FILES);
+    out.extend(quorum.iter().map(|g| Glob::parse(g).unwrap()));
     out
 }
 

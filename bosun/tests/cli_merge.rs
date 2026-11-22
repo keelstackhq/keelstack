@@ -495,6 +495,27 @@ fn ready_reads_the_required_gates_from_the_default_branch() {
     assert_eq!(v["data"]["missing_gates"], json!(["lint"]), "{v}");
 }
 
+/// A stamp missing for a gate the default branch does not require is no gap: its profile has no
+/// `test` gate, so the missing `test` stamp (and `deps`, which it does not name either) is fine.
+#[test]
+fn ready_ignores_a_missing_stamp_for_a_gate_the_default_branch_does_not_require() {
+    let (fake, dir) = setup(false, Some(NO_CI));
+    let lax = "[adapters]\npackages = \"cargo-metadata\"\npending = \"rust-ignore\"\nassertions = \"rust\"\n[gates.fmt]\ncmd = [\"true\"]\n[gates.lint]\ncmd = [\"true\"]\n";
+    fake.content(".bosun/profiles/rust.toml", "refs/heads/main", lax);
+    verdict(&fake);
+    std::fs::remove_file(stamps::stamp_dir(dir.path()).join("test")).unwrap();
+    let (code, v) = ready(&fake, dir.path());
+    assert_eq!(code, 0, "{v}");
+    // The same removal of a required gate's stamp is a gap.
+    let (fake, dir) = setup(false, Some(NO_CI));
+    fake.content(".bosun/profiles/rust.toml", "refs/heads/main", lax);
+    verdict(&fake);
+    std::fs::remove_file(stamps::stamp_dir(dir.path()).join("lint")).unwrap();
+    let (code, v) = ready(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["missing_gates"], json!(["lint"]), "{v}");
+}
+
 /// Merge refuses an unsigned verdict with a forged session tag, and an App record too.
 #[test]
 fn merge_counts_only_app_or_signed_verdicts() {

@@ -1143,7 +1143,8 @@ pub fn autonomous_excluded(
 /// the decisions index, D-022 and D-025), every `.github/workflows/**` and `.github/actions/**`
 /// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the session
 /// settings that run bosun's hooks, and the reviewers' prompts (`.claude/agents/reviewer.md`,
-/// `REVIEW.md`, `docs/lessons.toml`). Under each code root (where bosun's own code is, `bosun/`
+/// `REVIEW.md`, `docs/lessons.toml`) and the agent notes `AGENTS.md` and `CLAUDE.md` (at the
+/// repo root and in each code root), and `.github/scripts/**`. Under each code root (where bosun's own code is, `bosun/`
 /// in the monorepo): [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES), so every file under
 /// its `src/` and `profiles/`, its manifest, build script and launchers; and at the repo root
 /// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) (`Cargo.toml`, `Cargo.lock`, the
@@ -1153,7 +1154,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 11] = [
+pub const TRUST_ROOT: [&str; 13] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1169,6 +1170,9 @@ pub const TRUST_ROOT: [&str; 11] = [
     ".claude/agents/reviewer.md",
     "REVIEW.md",
     "docs/lessons.toml",
+    // What every session is told, reviewers included: at the root and in each code root.
+    "AGENTS.md",
+    "CLAUDE.md",
 ];
 
 /// Counting verdicts from different sessions a quorum approval needs (D-022). One verdict's bar is
@@ -3209,6 +3213,17 @@ mod monorepo_tests {
             "bosun/REVIEW.md",
             "docs/lessons.toml",
             "bosun/docs/lessons.toml",
+            // What the agents (reviewers included) are told, at the root and in the code root.
+            "AGENTS.md",
+            "CLAUDE.md",
+            "bosun/AGENTS.md",
+            "bosun/CLAUDE.md",
+            // Scripts the workflows run, and what bosun compiles in (`include_str!`).
+            ".github/scripts/verdict.sh",
+            ".github/scripts/lib/x.py",
+            "bosun/channel/bosun.toml.jinja",
+            "bosun/channel/pieces/core/files/x.md",
+            "bosun/profiles/rust.toml",
         ] {
             assert_eq!(t(f), [f], "{f}");
         }
@@ -3225,6 +3240,9 @@ mod monorepo_tests {
             ".github/workflows/ci.yml",
             ".github/actions/a/action.yml",
             "REVIEW.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            ".github/scripts/x.sh",
         ] {
             assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
         }
@@ -3235,6 +3253,9 @@ mod monorepo_tests {
             "bosun/tests/cli_quorum.rs",
             "bosun/tests/x.rs",
             "bosun/docs/spec/08-risk.md",
+            "hoist/AGENTS.md",
+            "hoist/CLAUDE.md",
+            "docs/AGENTS.md",
             ".claude/agents/explorer.md",
             "decisions/decisions/021-gated-prs-no-line-cap.md",
         ] {

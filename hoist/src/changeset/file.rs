@@ -192,6 +192,14 @@ pub fn read_dir(root: &Path) -> Result<Vec<Changeset>, HoistError> {
         if super::is_skipped(&name) {
             continue;
         }
+        if id.trim().is_empty() {
+            return Err(err(
+                rel,
+                "the changeset id (the file name before `.md`) is blank; name it, \
+                 for example `.changeset/brave-lions-dance.md`"
+                    .into(),
+            ));
+        }
         let text = std::fs::read_to_string(&path)
             .map_err(|e| err(rel.clone(), format!("cannot read: {e}")))?;
         out.push(parse(id, &text).map_err(|m| err(rel, m))?);

@@ -139,6 +139,15 @@ fn read_dir_errors_name_the_file() {
 }
 
 #[test]
+fn read_dir_refuses_whitespace_only_ids() {
+    for name in [" .md", "  .md", "\t.md"] {
+        let t = repo(&[(&format!(".changeset/{name}"), "---\na: patch\n---\n")]);
+        let e = config_err(read_dir(t.path()));
+        assert!(e.contains("id") && e.contains("blank"), "{name:?}: {e}");
+    }
+}
+
+#[test]
 fn read_dir_skips_readme_and_dotfiles() {
     let t = repo(&[
         (".changeset/README.md", "# not a changeset"),

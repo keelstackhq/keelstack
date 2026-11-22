@@ -43,8 +43,8 @@ fn config(policy: &str) -> String {
     format!("project = \"widget\"\n\n[approvals]\npolicy = \"{policy}\"\n")
 }
 
-/// [`config`] with `[checks] mode = "checks"`: verdicts are posted where a PR's own workflow
-/// cannot forge them, so a workflow change is no trust root.
+/// [`config`] with `[checks] mode = "checks"` (the gate App): it does not make a workflow change
+/// less of a trust root, see `a_workflow_change_is_the_owners_in_every_checks_mode`.
 fn config_checks(policy: &str) -> String {
     format!(
         "{}\n[checks]\nmode = \"checks\"\napp_id = 1\napp_slug = \"gate\"\n",
@@ -791,6 +791,16 @@ fn approve_refuses_a_pin_downgrade_and_signs_a_released_upgrade() {
 #[test]
 fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
     let k = key();
+    // The default branch holds quorum (as `pr` writes it) and would sign this PR; the base says
+    // owner, so nothing is signed. A regression that read the default branch signs here.
+    let fake = quorum(&k);
+    fake.content(".bosun/bosun.toml", BASE, &config("owner"));
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    // And the trust root, with the base on owner.
     let fake = quorum(&k);
     fake.content(".bosun/bosun.toml", BASE, &config("owner"));
     fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
@@ -813,7 +823,7 @@ fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
         v["error"]["message"]
             .as_str()
             .unwrap()
-            .contains("on the default branch it is owner"),
+            .contains("looser than on the default branch"),
         "{v}"
     );
 }
@@ -939,4 +949,78 @@ fn a_bad_signature_counts_nothing() {
     let (code, v) = check(&fake);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}
+
+/// An owner key's v1 or v2 signature stands for the owner only outside the quorum trust root
+/// (spec 08): on `bosun/src` under quorum the owner needs their own review or comment.
+#[test]
+fn a_key_signed_owner_approval_never_counts_on_the_quorum_trust_root() {
+    let v1 = format!("bosun-approve v1 acme/widget#1 {HEAD}");
+    let v2 = format!("bosun-approve v2 acme/widget#1 {HEAD} after-review 7");
+    for (file, message, first) in [
+        ("src/feature/b.rs", &v1, format!("/bosun approve {HEAD}")),
+        (
+            "src/feature/b.rs",
+            &v2,
+            format!("/bosun approve {HEAD} after-review 7"),
+        ),
+    ] {
+        let k = key();
+        let fake = pr(&k, file, "quorum");
+        fake.content("src/cli/risk_check.rs", BASE, "// marker");
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict(&fake, "session_s", HEAD);
+        let s = b64::encode(k.0.sign(message.as_bytes()).as_ref());
+        fake.comment_by(1, "claude", &format!("{first}\nbosun-sig ed25519 k1 {s}"));
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{message}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{message}: {v}");
+        assert!(description(&fake).starts_with(WAITING), "{message}");
+    }
+    // The same signature counts on a path that is not trust root.
+    let k = key();
+    let fake = quorum(&k);
+    let s = b64::encode(k.0.sign(v1.as_bytes()).as_ref());
+    fake.comment_by(
+        1,
+        "claude",
+        &format!("/bosun approve {HEAD}\nbosun-sig ed25519 k1 {s}"),
+    );
+    let (code, v) = check(&fake);
+    assert_eq!(code, 0, "{v}");
+}
+
+/// `approve --sign-key` without `--bootstrap` refuses too: it would post a v1 signature that
+/// risk-check ignores on the quorum trust root.
+#[test]
+fn approve_refuses_any_signature_on_the_quorum_trust_root() {
+    let k = key();
+    let fake = pr(&k, "src/feature/b.rs", "quorum");
+    fake.content("src/cli/risk_check.rs", BASE, "// marker");
+    let dir = tempfile::tempdir().unwrap().keep();
+    let path = dir.join("key.pem");
+    std::fs::write(&path, &k.1).unwrap();
+    for extra in [&["--bootstrap"][..], &[][..]] {
+        let out = bosun()
+            .env("BOSUN_GITHUB_API", fake.url())
+            .env("BOSUN_NOW", NOW)
+            .env("BOSUN_SESSION", "session_o")
+            .env("CCR_AGENT_PROXY_ENABLED", "true")
+            .args(["approve", &format!("1@{HEAD}"), "--print"])
+            .args(extra)
+            .arg("--sign-key")
+            .arg(&path)
+            .output()
+            .unwrap();
+        let v = one_object(&out.stdout);
+        assert_eq!(out.status.code(), Some(1), "{extra:?}: {v}");
+        assert!(v["data"]["body"].is_null(), "{extra:?}: {v}");
+        assert!(
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("trust root"),
+            "{extra:?}: {v}"
+        );
+    }
 }

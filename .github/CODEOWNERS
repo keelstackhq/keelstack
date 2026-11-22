@@ -1,14 +1,17 @@
 # Exactly the owner-only paths of .bosun/risk.toml: every owner-class rule (R-gov, R-ci,
 # R-secrets, R-deps), re-rooted under bosun's code root `bosun/` as risk-check does, and bosun's
 # critical floor (CRITICAL_PATHS and APPROVAL_CODE_PATHS in bosun/src/core/risk.rs), where no
-# delegate approves. bosun/tests/governance_owners.rs pins the parity both ways: every such glob
-# has a line here and every line maps to one. Code owner review is not required by the ruleset;
+# delegate approves, and bosun's quorum trust root (QUORUM_CODE_FILES, D-022).
+# bosun/tests/governance_owners.rs pins the parity both ways: every such glob has a line here
+# and every line maps to one. Code owner review is not required by the ruleset;
 # .bosun/risk.toml decides who approves, this file routes the review requests.
 #
 # CODEOWNERS is case-sensitive, risk-check matches in any case: a name the rules write in lower
 # case (`**/agents.md`) is listed in lower case and in its usual spelling (`AGENTS.md`).
-# Delegate or two-verdict paths are not listed: R-gate outside the floor and R-ci-review
-# (`bosun/channel/**`).
+# Delegate or two-verdict paths outside the floor are not listed: R-gate and R-ci-review. Under
+# quorum (D-022) bosun's quorum trust root is the owner's too (QUORUM_CODE_FILES and TRUST_ROOT in
+# bosun/src/core/risk.rs), so the folders it compiles in, `bosun/channel/` and `bosun/profiles/`,
+# and `bosun/build.rs` are listed here as well.
 
 # Anywhere in the repo (no leading or middle slash matches at any depth): the `**/` globs.
 CODEOWNERS               @urbanisierung
@@ -136,6 +139,9 @@ bunfig.toml              @urbanisierung
 /bosun/rust-toolchain    @urbanisierung
 /bosun/src/              @urbanisierung
 /bosun/npm/              @urbanisierung
+/bosun/channel/          @urbanisierung
+/bosun/profiles/         @urbanisierung
+/bosun/build.rs          @urbanisierung
 /bosun/Cargo.toml        @urbanisierung
 /bosun/Cargo.lock        @urbanisierung
 /bosun/.cargo/           @urbanisierung

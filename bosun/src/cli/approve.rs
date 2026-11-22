@@ -713,6 +713,21 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
             "show the owner the new head and sign it only on their word",
         ));
     }
+    // D-022: a signature never counts on the quorum trust root (risk-check ignores it there), so
+    // none is posted, whatever its form: the owner's own review or comment is the approval.
+    let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
+    let files = gh.pull_files(pr)?;
+    let root =
+        crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
+    if !root.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "quorum (D-022) never counts a signature on the trust root ({}): nothing was signed",
+                root.join(", ")
+            ),
+            "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
+        ));
+    }
     let role = match args.role.as_deref() {
         Some("delegate") => Role::Delegate,
         Some("signer") => Role::Signer,
@@ -936,22 +951,46 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
         None => Default::default(),
     };
     let (policy, src) = (approvals.policy(), approvals.policy_source());
-    if matches!(policy, Policy::Autonomous | Policy::Quorum) {
-        // Fail closed: the default branch must hold the same kind of policy as the base.
-        let main = match gh.file_at(CONFIG_FILE, &crate::app::default_ref(gh)?)? {
-            Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals.policy(),
-            None => Policy::Orchestrator,
-        };
-        if !matches!(main, Policy::Autonomous | Policy::Quorum) {
-            return Err(BosunError::error(
-                format!(
-                    "the policy at the PR's base is {} but on the default branch it is {}; nothing was signed",
-                    policy.name(),
-                    main.name()
-                ),
-                "the owner restores the policy on the default branch with a PR they approve, then run again",
-            ));
+    // Fail closed, for every policy: the default branch (now) must be at least as strict as the
+    // PR's base, and must not end the D-012 window the base still has open.
+    let main = match gh.file_at(CONFIG_FILE, &crate::app::default_ref(gh)?)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals,
+        None => Default::default(),
+    };
+    let signs = |p: Policy| matches!(p, Policy::Autonomous | Policy::Quorum);
+    let rank = |p: Policy| match p {
+        Policy::Owner => 0,
+        Policy::OwnerGated => 1,
+        Policy::Orchestrator => 2,
+        Policy::Autonomous | Policy::Quorum => 3,
+    };
+    let end_of = |a: &crate::config::Approvals| {
+        (a.bootstrap_until.as_ref()).map(|u| u.clone().min(BOOTSTRAP_END.to_string()))
+    };
+    let kind = |p: Policy| {
+        if signs(p) {
+            "a signing policy"
+        } else {
+            p.name()
         }
+    };
+    let stricter = rank(main.policy()) < rank(policy)
+        || (signs(policy) && !signs(main.policy()))
+        // A window the base has open (or had) must not be shortened or dropped.
+        || (!signs(policy) && end_of(&main) < end_of(&approvals));
+    if stricter {
+        return Err(BosunError::error(
+            format!(
+                "the approvals at the PR's base ({}, bootstrap_until {}) are looser than on the default branch ({}, bootstrap_until {}); nothing was signed",
+                kind(policy),
+                end_of(&approvals).as_deref().unwrap_or("unset"),
+                kind(main.policy()),
+                end_of(&main).as_deref().unwrap_or("unset"),
+            ),
+            "the owner restores the settings on the default branch with a PR they approve, then run again",
+        ));
+    }
+    if signs(policy) {
         autonomous_ok(app, pull, requester, policy)?;
         let line = if policy == Policy::Quorum {
             QUORUM_LINE

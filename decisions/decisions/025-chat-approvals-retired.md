@@ -37,4 +37,10 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
   bosun#642, #644, #673, #680.
 - hoist: the changeset commands are ported behind an opt-in; the keelstack release workflow does
   not read `.changeset/`.
-- The trust root is unchanged: only the owner edits `.bosun/approvers.toml` and `[approvals]`.
+- The trust root grows by this decision's own file: `decisions/decisions/025-chat-approvals-retired.md`
+  joins D-022's file and the decisions index as a trust file (`TRUST_FILES` in bosun), because the
+  approval channels are part of the trust root; a PR that changes it needs the owner's own GitHub
+  review or `/bosun approve <sha>` comment, never a signature. bosun's quorum trust root also now
+  covers `AGENTS.md`, `CLAUDE.md`, `.github/scripts/**` and, under bosun's code root, `channel/**`
+  and `profiles/**`. Who may approve is unchanged: only the owner edits `.bosun/approvers.toml` and
+  `[approvals]`.

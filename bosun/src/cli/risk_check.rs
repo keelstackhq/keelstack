@@ -714,7 +714,15 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "bosun: risk-check: bosun could not see the whole diff: signed approvals do not count"
         );
     }
-    let signed_ok = trust.is_empty() && !unseen;
+    // D-022: on the quorum trust root the owner's own review or `/bosun approve <sha>` comment
+    // is the only approval; a key's signature (owner role included) never stands for the owner.
+    if !quorum_root.is_empty() {
+        eprintln!(
+            "bosun: risk-check: the PR changes the quorum trust root ({}): signed approvals do not count",
+            quorum_root.join(", ")
+        );
+    }
+    let signed_ok = trust.is_empty() && quorum_root.is_empty() && !unseen;
     let requirement = requirement(&matches);
     let (mut bootstrap, policy_source) = if high && signed_ok {
         let excluded = bootstrap_excluded(&pr_files, &matches, &roots);

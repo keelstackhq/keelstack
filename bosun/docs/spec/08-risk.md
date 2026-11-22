@@ -127,7 +127,7 @@ High-risk PRs:
   `governance/owners.toml`, `.bosun/bosun.toml` (its `[approvals]` table is the D-022 trust
   root; the whole file is listed, so every edit of it, `[[folders]]` (the code roots) and
   `[slack]` included, is owner-signed only), a `CODEOWNERS` file (root, `.github/`, `docs/`), a trust-root
-  decision (`decisions/DECISIONS.md`, `decisions/decisions/022-hands-off-approvals.md`), or what
+  decision (`decisions/DECISIONS.md`, `decisions/decisions/022-hands-off-approvals.md`, and D-025's `decisions/decisions/025-chat-approvals-retired.md`: the approval channels), or what
   applies this list to the next PR: the risk rules `.bosun/risk.toml` and the workflows that run
   risk-check, the verdict, the signer, the main-open check and the review (`.github/workflows/risk.yml`, `verdict.yml`,
   `signer.yml`, `main-open.yml`, `review.yml`) (`TRUST_FILES` in `src/core/approve.rs`, at the root and under each code root), or bosun's own trust code under each code root (`src/core/risk.rs`, the
@@ -237,7 +237,7 @@ High-risk PRs:
   `orchestrator` counts (`policy orchestrator, D-014`), `owner` never, `owner-gated` only when
   every matched rule is `R-ci` (`policy owner-gated, D-014`). A refusal names the policy and,
   where `bootstrap_until` is set or missing, D-012 and its end date. `bosun approve --bootstrap`
-  reads the same setting on the default branch: inside the window it signs as before; after it
+  reads the setting at the PR's base, and fails closed (exit 1, nothing signed), whatever the policy, when the default branch's `[approvals]` is stricter than the base's (a stricter policy: owner above owner-gated above orchestrator above autonomous or quorum, or a signing policy gone) or ends the D-012 window the base has open (a `bootstrap_until` that is earlier or unset): inside the window it signs as before; after it
   `orchestrator` signs (note line `Signed under approval policy orchestrator (D-014)`), `owner`
   exits 1, and `owner-gated` signs (`... owner-gated (D-014)`) only when the trusted
   `risk-check` status lists `R-ci` alone and the PR changes no workflow file, else exit 1 (the
@@ -332,12 +332,12 @@ High-risk PRs:
     `**/workflows/risk.yml*` (also channel template copies), every `.github/workflows/**` and
     `.github/actions/**` file in every `[checks]` mode (verdicts count by the author
     `github-actions[bot]`, so a workflow the PR adds could post verdict records for invented
-    sessions), `.claude/settings*.json` (the hooks that run bosun), the reviewers' prompts
-    (`.claude/agents/reviewer.md`, `REVIEW.md`, `docs/lessons.toml`) and every trust file
-    (`TRUST_FILES`: owners, CODEOWNERS, the decisions index, D-022's and D-025's files). Under
+    sessions), `.github/scripts/**` (what the workflows run), `.claude/settings*.json` (the hooks that run bosun), the reviewers' prompts
+    (`.claude/agents/reviewer.md`, `REVIEW.md`, `docs/lessons.toml`), the agent notes `AGENTS.md` and `CLAUDE.md` (at the repo root and in each code root) and every trust file
+    (`TRUST_FILES`: owners, CODEOWNERS, the decisions index, D-022's and D-025's files). A key's signature never counts there, an owner key's v1 or v2 included: with a non-empty quorum trust root risk-check counts no signed approval (the PR waits for the owner's own GitHub review or `/bosun approve <sha>` comment) and `bosun approve --sign-key` refuses to sign, with or without `--bootstrap`. Under
     each code root (`""` when `src/cli/risk_check.rs` is at the root, and each `[[folders]]`
     path, plus `bosun`, that holds it at the base: `bosun/` in the monorepo): every file under
-    `src/**` and `profiles/**` (the gate profiles), plus `Cargo.toml`, `build.rs` and `npm/**`; a
+    `src/**`, `profiles/**` (the gate profiles) and `channel/**` (compiled in with `include_str!`), plus `Cargo.toml`, `build.rs` and `npm/**`; a
     new file there needs no list edit. With any code root, the root `Cargo.toml`, `Cargo.lock`,
     `rust-toolchain*` and `.cargo/config*` that build the judge. Tests (`bosun/tests/**`), docs
     and other folders' code are not trust root.
