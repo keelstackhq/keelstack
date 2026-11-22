@@ -270,3 +270,34 @@ fn only_an_exact_unreleased_heading_moves() {
         "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n## Unreleased changes\n\n- kept\n"
     );
 }
+
+#[test]
+fn unreleased_after_a_version_heading_stays_put() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "# Changelog\n\n## 1.0.0 (d)\n\n- old\n\n## Unreleased\n\n- stale\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n## 1.0.0 (d)\n\n- old\n\n## Unreleased\n\n- stale\n"
+    );
+}
+
+#[test]
+fn unreleased_inside_a_code_fence_is_ignored() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "# Changelog\n\n```md\n## Unreleased\n\n- example\n```\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n```md\n## Unreleased\n\n- example\n```\n\n## 1.1.0 (e)\n\n- x\n\n## 1.0.0 (d)\n"
+    );
+    // A fenced `## ` line does not end a real Unreleased section either.
+    let text = "## Unreleased\n\n```\n## not a heading\n```\n- moved\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n```\n## not a heading\n```\n- moved\n\n## 1.0.0 (d)\n"
+    );
+}

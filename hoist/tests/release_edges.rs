@@ -174,6 +174,26 @@ fn cargo_ranges() {
 }
 
 #[test]
+fn rewrites_keep_the_bounds_of_compound_ranges() {
+    let v15 = v("1.5.0");
+    let v21 = v("2.1.0");
+    // A space list: the lower bound follows, an upper bound that still admits stays.
+    assert_eq!(rewrite(">=1.0.0 <2.0.0", &v15), ">=1.5.0 <2.0.0");
+    // An upper bound that would exclude the new version moves up with it.
+    assert_eq!(rewrite(">=1.0.0 <2.0.0", &v21), ">=2.1.0 <3.0.0");
+    assert_eq!(rewrite(">= 1.0.0 <= 1.9.0", &v21), ">=2.1.0 <=2.1.0");
+    // `||`: only the last alternative follows.
+    assert_eq!(rewrite("^1 || ^2", &v21), "^1 || ^2.1.0");
+    assert_eq!(
+        rewrite("^1.0.0 || ^2.0.0 || ^3.0.0", &v21),
+        "^1.0.0 || ^2.0.0 || ^2.1.0"
+    );
+    // Cargo comma list.
+    assert_eq!(rewrite("1.2, <2", &v15), "1.5.0, <2");
+    assert_eq!(rewrite(">=1.2,<2", &v21), ">=2.1.0,<3.0.0");
+}
+
+#[test]
 fn rewrites_keep_the_operator() {
     let n = v("2.1.0");
     assert_eq!(rewrite("^1.0.0", &n), "^2.1.0");
@@ -188,8 +208,6 @@ fn rewrites_keep_the_operator() {
     assert_eq!(rewrite("workspace:^", &n), "workspace:^");
     assert_eq!(rewrite("workspace:~", &n), "workspace:~");
     assert_eq!(rewrite("workspace:^1.0.0", &n), "workspace:^2.1.0");
-    // A list keeps its first operator only, as changesets (`getVersionRangeType`).
-    assert_eq!(rewrite(">=1.0.0 <2.0.0", &n), ">=2.1.0");
     assert_eq!(rewrite("<=1.0.0", &n), "<=2.1.0");
     assert_eq!(rewrite(">1.0.0", &n), ">2.1.0");
     assert_eq!(rewrite(" ^1.0.0", &n), "^2.1.0", "trimmed");

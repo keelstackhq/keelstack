@@ -440,6 +440,14 @@ fn bad_since_exit_3() {
 }
 
 #[test]
+fn since_starting_with_a_dash_is_not_a_git_option() {
+    let r = repo();
+    let e = stderr_3(&run(r.path(), &["--since=--output=/tmp/hoist-since-x"]));
+    assert!(e.contains("--output=/tmp/hoist-since-x"), "{e}");
+    assert!(e.contains("must not start with '-'"), "{e}");
+}
+
+#[test]
 fn no_http_requests() {
     // The API bases point at a closed port; a request would fail the command with exit 3.
     let r = repo();

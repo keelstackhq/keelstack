@@ -23,9 +23,9 @@ frontmatter subset; glob matching hand-written for `*`/`?`). No new crate withou
 - `config.json` unknown keys exit 3; `changelog` only `"@changesets/cli/changelog"`,
   `"@changesets/changelog-git"` or `false`; `commit` only `false`.
 - `changeset status`, `add`, `init` send no HTTP request (tests assert zero requests).
-- D-016: release paths are gated: each PR ≤ 400 changed lines (tests, lockfiles excluded), one task.
+- D-016 (OBSOLETE under lockstep releases, D-023/D-025): release paths are gated: each PR ≤ 400 changed lines (tests, lockfiles excluded), one task.
 - D-007: no new workflow job, trigger or runner; the check is one step in job `ci`.
-- D-015/D-017: agents never merge, tag or publish in these tasks; spec §9 and README change in the
+- D-015/D-017 (D-017 OBSOLETE under lockstep releases, D-023/D-025): agents never merge, tag or publish in these tasks; spec §9 and README change in the
   same PR as the behaviour.
 
 ## Review Focus
@@ -53,11 +53,11 @@ frontmatter subset; glob matching hand-written for `*`/`?`). No new crate withou
 | CS-4 prepare consumes + changelog | hoist | opus | yes | CS-3 |
 | CS-5 `changeset status` | hoist | opus | yes | CS-1 |
 | CS-6 `init --from-commits` | hoist | sonnet | yes | CS-2, CS-3 |
-| CS-7 hoist adopts (release hoist after) | hoist | sonnet | yes | CS-1..6 |
+| CS-7 hoist adopts (release hoist after) - OBSOLETE (D-023/D-025) | hoist | sonnet | yes | CS-1..6 |
 | CS-8 bosun code knows `.changeset/` | bosun | sonnet | yes | — |
-| CS-9 bosun adopts | bosun | sonnet | yes | CS-7 released, CS-8 |
+| CS-9 bosun adopts - OBSOLETE (D-023/D-025) | bosun | sonnet | yes | CS-7 released, CS-8 |
 | CS-10 hull + bosun channel seeds | hull, bosun | sonnet | yes | CS-9 |
-| CS-11 berth, splice, hoard adopt | each repo | sonnet | yes | CS-7 released |
+| CS-11 berth, splice, hoard adopt - OBSOLETE (D-023/D-025) | each repo | sonnet | yes | CS-7 released |
 | CS-12 pre-release mode (O5, not scheduled) | hoist | opus | yes | CS-4 |
 
 Every PR gets an independent reviewer session on opus. CS-2, CS-3, CS-5 can run in parallel after
@@ -145,6 +145,8 @@ README; test `tests/cli_changeset_status.rs`.
 
 ### CS-7 `ci: hoist uses changesets` (then the orchestrator releases hoist)
 
+> **OBSOLETE (D-023/D-025: the monorepo releases in lockstep; changesets are an opt-in for consumer repos).** Do not run this task: keelstack releases one lockstep version for every tool, so no tool adopts changesets here.
+
 **Files:** `.changeset/config.json`, `.changeset/README.md` (via `cargo run -- changeset init
 --from-commits`), `.github/workflows/ci.yml` (in job `ci`: `fetch-depth: 2`; step
 `if: github.event_name == 'pull_request'` → `cargo run --locked -- changeset status --since HEAD^1`),
@@ -166,6 +168,8 @@ not fragments (no edit-lock skip).
 - [ ] Tests first → FAIL → implement → bosun local CI mirror → PASS. Commit.
 
 ### CS-9 `ci: bosun uses changesets` (bosun)
+
+> **OBSOLETE (D-023/D-025: the monorepo releases in lockstep; changesets are an opt-in for consumer repos).** Do not run this task: keelstack releases one lockstep version for every tool, so no tool adopts changesets here.
 
 **Files (bosun):** run `bash scripts/fold-fragments.sh` once (folds the last `changelog.d/`
 fragments into `## Unreleased`), delete `changelog.d/`; `hoist changeset init` (hoist from npm at
@@ -190,6 +194,8 @@ section (already done in CS-9) and the shipped workflow step if the channel ship
 per repo.
 
 ### CS-11 `ci: <repo> uses changesets` (berth, splice, hoard)
+
+> **OBSOLETE (D-023/D-025: the monorepo releases in lockstep; changesets are an opt-in for consumer repos).** Do not run this task: keelstack releases one lockstep version for every tool, so no tool adopts changesets here.
 
 Per repo, the CS-7 recipe with hoist from npm: `hoist changeset init --from-commits`, CI step,
 agent line, `changedFilePatterns` per O3. One PR per repo; repos without a hoist release flow

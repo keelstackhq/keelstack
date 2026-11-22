@@ -130,6 +130,55 @@ pub fn rewrite(old: &str, new: &Version) -> String {
             _ => format!("workspace:{}", rewrite(rest, new)),
         };
     }
+    // `||`: the last alternative follows the new version, the others stay as written.
+    if let Some((head, last)) = old.rsplit_once("||") {
+        return format!("{head}|| {}", rewrite(last, new));
+    }
+    // `,` (Cargo) and spaces (npm) join comparators that all must hold.
+    if old.contains(',') {
+        let parts: Vec<String> = old
+            .split(',')
+            .map(|c| {
+                let lead = &c[..c.len() - c.trim_start().len()];
+                format!("{lead}{}", rewrite_bound(c.trim(), new))
+            })
+            .collect();
+        return parts.join(",");
+    }
+    let mut cmps: Vec<String> = Vec::new();
+    let mut glued = String::new();
+    for w in old.split_whitespace() {
+        glued.push_str(w);
+        if !OPS.contains(&glued.as_str()) {
+            cmps.push(std::mem::take(&mut glued));
+        }
+    }
+    if !glued.is_empty() {
+        cmps.push(glued);
+    }
+    if cmps.len() < 2 {
+        return rewrite_one(old, new);
+    }
+    let parts: Vec<String> = cmps.iter().map(|c| rewrite_bound(c, new)).collect();
+    parts.join(" ")
+}
+
+/// One comparator of a list: lower bounds, carets and the like follow `new`; an upper bound
+/// (`<`, `<=`) stays unless it excludes `new`, then it moves up with it.
+fn rewrite_bound(c: &str, new: &Version) -> String {
+    if c.starts_with('<') && satisfies(c, new, "^") != Some(true) {
+        if c.starts_with("<=") {
+            return format!("<={new}");
+        }
+        return format!("<{}.0.0", new.major + 1);
+    }
+    if c.starts_with('<') {
+        return c.to_string();
+    }
+    rewrite_one(c, new)
+}
+
+fn rewrite_one(old: &str, new: &Version) -> String {
     let op = OPS.iter().find(|o| old.starts_with(**o)).unwrap_or(&"");
     format!("{op}{new}")
 }

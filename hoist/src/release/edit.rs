@@ -381,6 +381,38 @@ pub fn prepend_changelog(existing: Option<&str>, nv: &NextVersion, date: &str) -
     prepend_section(existing, &nv.to.to_string(), date, &blocks, false)
 }
 
+/// Track a fenced code block over `line`; true when the line is a fence or inside one.
+fn fence_step(fence: &mut Option<(char, usize)>, line: &str) -> bool {
+    let t = line.trim_start_matches(' ');
+    let c = match t.chars().next() {
+        Some(c @ ('`' | '~')) => c,
+        _ => return fence.is_some(),
+    };
+    let n = t.chars().take_while(|x| *x == c).count();
+    match *fence {
+        Some((fc, fnn)) if fc == c && n >= fnn && t[n..].trim().is_empty() => {
+            *fence = None;
+            true
+        }
+        Some(_) => true,
+        None if n >= 3 && !(c == '`' && t[n..].contains('`')) => {
+            *fence = Some((c, n));
+            true
+        }
+        None => false,
+    }
+}
+
+/// Byte offset of the first `## ` heading line outside code fences.
+fn first_heading(text: &str) -> Option<usize> {
+    let (mut fence, mut pos) = (None, 0);
+    text.split_inclusive('\n').find_map(|l| {
+        let inside = fence_step(&mut fence, l);
+        pos += l.len();
+        (!inside && l.starts_with("## ")).then_some(pos - l.len())
+    })
+}
+
 /// Put `## <version> (<date>)` with `blocks` (each ends in a newline, `\n` here) above the
 /// previous sections. `unreleased`: a `## Unreleased` section's body moves under it.
 pub fn prepend_section(
@@ -404,18 +436,27 @@ pub fn prepend_section(
         body = r.trim_start_matches(['\r', '\n']);
     }
     let kept;
+    // `## Unreleased` counts only before the first other `## ` heading and outside fences.
     let mut at = 0;
+    let mut fence: Option<(char, usize)> = None;
     let line = body.split_inclusive('\n').find_map(|l| {
         at += l.len();
-        (l.trim_end() == "## Unreleased").then_some((at - l.len(), l.len()))
+        if fence_step(&mut fence, l) {
+            return None;
+        }
+        let t = l.trim_end();
+        (t == "## Unreleased").then_some((at - l.len(), l.len()))
+    });
+    let line = line.filter(|&(i, _)| {
+        let mut fence = None;
+        !body[..i].split_inclusive('\n').any(|l| {
+            let inside = fence_step(&mut fence, l);
+            !inside && l.starts_with("## ")
+        })
     });
     if unreleased && let Some((i, len)) = line {
         let after = &body[i + len..];
-        let end = if after.starts_with("## ") {
-            0
-        } else {
-            after.find("\n## ").map_or(after.len(), |j| j + 1)
-        };
+        let end = first_heading(after).unwrap_or(after.len());
         let moved = after[..end].trim_matches(['\r', '\n', ' ']);
         if !moved.is_empty() {
             blocks.push(format!("{moved}{nl}"));
@@ -425,11 +466,7 @@ pub fn prepend_section(
     }
     let new = format!("## {version} ({date}){nl}{nl}{}", blocks.join(nl));
     // Text before the first `## ` heading (a preamble) stays above the new section.
-    let split = if body.starts_with("## ") {
-        0
-    } else {
-        body.find("\n## ").map_or(body.len(), |i| i + 1)
-    };
+    let split = first_heading(body).unwrap_or(body.len());
     let (pre, rest) = body.split_at(split);
     let pre = pre.trim_end_matches(['\r', '\n']);
     let mut out = format!("# Changelog{nl}{nl}");

@@ -188,6 +188,12 @@ pub fn status(dir: &Path, since: Option<&str>) -> Result<Report, HoistError> {
         return Ok(report("changeset status", vec![i]));
     }
 
+    if let Some(s) = since.filter(|s| s.starts_with('-')) {
+        return Err(usage(format!(
+            "`--since {s}` must not start with '-' (git would read it as an option); pass a \
+             commit, branch or tag"
+        )));
+    }
     let default_base = format!("origin/{}", cfg.base_branch);
     let base = since.unwrap_or(&default_base);
     let verify = format!("{base}^{{commit}}");
