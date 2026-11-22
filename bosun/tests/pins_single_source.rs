@@ -162,7 +162,7 @@ fn circleci_builds_a_tool_whose_hull_pin_overrides_the_checksummed_version() {
 }
 
 #[test]
-fn setup_scripts_fail_on_a_hull_pin_mismatch_instead_of_dropping_checksums() {
+fn setup_scripts_keep_the_checksummed_pin_on_a_hull_pin_mismatch() {
     for rel in [READERS[2], READERS[3]] {
         let t = read(rel);
         assert!(
@@ -171,8 +171,8 @@ fn setup_scripts_fail_on_a_hull_pin_mismatch_instead_of_dropping_checksums() {
             "{rel} drops a pinned checksum on a hull pin mismatch"
         );
         assert!(
-            t.contains("differs from .bosun/pins.toml") && t.contains("exit 1"),
-            "{rel} does not fail on a hull pin mismatch"
+            t.contains("differs from .bosun/pins.toml") && t.contains("installing the checksummed"),
+            "{rel} does not report a hull pin mismatch"
         );
     }
 }

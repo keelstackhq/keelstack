@@ -652,7 +652,10 @@ pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
         }
     }
     // Fail closed when the command name may be built at run time (`B=bosun; $B merge`,
-    // `"$(echo bosun)" merge`): a `bosun` text, an expansion, and the words anywhere.
+    // `"$(echo bosun)" merge`): a `bosun` text, an expansion, and the words anywhere. A text
+    // heuristic, not a parser: a name split at run time (`B=bo; ${B}sun merge`, `eval "bo""sun"`)
+    // passes it, and an unrelated command can be refused (`cd $R/bosun && git merge main`). The
+    // guard is a speed bump for subagents; the merge itself is judged by risk-check and the gates.
     if command.contains("bosun") && command.contains(['$', '`']) && refused(&shell_words(command)) {
         return refuse();
     }

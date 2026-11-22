@@ -870,7 +870,7 @@ pub const CRITICAL_PATHS: [&str; 21] = [
 /// forks). All of `src/**`: the modules that judge approvals call most of the others, and any
 /// of them can do I/O with the workflow's token once released. Also what builds or installs
 /// the binary.
-pub const APPROVAL_CODE_PATHS: [&str; 8] = [
+pub const APPROVAL_CODE_PATHS: [&str; 9] = [
     "src/**",
     "Cargo.toml",
     "Cargo.lock",
@@ -878,6 +878,7 @@ pub const APPROVAL_CODE_PATHS: [&str; 8] = [
     "**/build.rs",
     ".cargo/**",
     "rust-toolchain.toml",
+    "rust-toolchain",
     "npm/**",
 ];
 
@@ -1283,7 +1284,11 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
     let mut texts: Vec<String> = everywhere.iter().map(|g| g.to_string()).collect();
     if !roots.is_empty() {
         // A repo with bosun's code: the toolchain and cargo config at the root build the judge.
-        texts.extend(super::approve::TRUST_BUILD_FILES.iter().map(|g| g.to_string()));
+        texts.extend(
+            super::approve::TRUST_BUILD_FILES
+                .iter()
+                .map(|g| g.to_string()),
+        );
     }
     for r in roots {
         texts.extend(super::folders::under(r, &everywhere));
@@ -1381,7 +1386,7 @@ pub fn critical_in(matches: &[Match], files: &[ChangedFile], roots: &[String]) -
 /// A risk path also matches its lowercased form: on a case-insensitive filesystem (macOS,
 /// Windows) `Secrets.toml` or `.CircleCI/` is the same file, and a wider match only asks for
 /// more review. Patterns are written in lowercase where case can vary.
-fn matches_any_case(g: &Glob, path: &str) -> bool {
+pub(crate) fn matches_any_case(g: &Glob, path: &str) -> bool {
     let lower = path.to_lowercase();
     g.matches(path)
         || g.matches(&lower)
@@ -3259,6 +3264,18 @@ mod monorepo_tests {
             "rust-toolchain.toml",
             ".cargo/config",
             ".cargo/config.toml",
+            "rust-toolchain",
+            "bosun/src/cli/pr.rs",
+            "bosun/src/cli/stamps.rs",
+            "bosun/src/cli/test_integrity.rs",
+            "bosun/src/cli/review_ci.rs",
+            "bosun/src/cli/review_pack.rs",
+            "bosun/src/cli/budget.rs",
+            "bosun/src/cli/risk_local.rs",
+            "bosun/src/core/lockmerge.rs",
+            "bosun/src/core/state.rs",
+            "bosun/src/core/plan.rs",
+            "bosun/src/core/shape.rs",
         ] {
             assert_eq!(t(f), [f], "{f}");
         }

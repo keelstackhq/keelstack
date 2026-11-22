@@ -577,8 +577,12 @@ pub const TRUST_FILES: [&str; 15] = [
 /// What bosun's own build reads at the repo root: the toolchain and cargo's config. Trust files
 /// only in a repo that has bosun's code (a code root), where they are on the critical floor
 /// through `APPROVAL_CODE_PATHS`; in any other repo they are ordinary R-ci tool files.
-pub const TRUST_BUILD_FILES: [&str; 3] =
-    ["rust-toolchain.toml", ".cargo/config", ".cargo/config.toml"];
+pub const TRUST_BUILD_FILES: [&str; 4] = [
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    ".cargo/config",
+    ".cargo/config.toml",
+];
 
 /// The bosun config that holds `[approvals]` (D-022 trust root).
 pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
@@ -592,7 +596,7 @@ pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
 /// `src/cli/carry_over.rs`). Trust files only under a code root (where bosun's code is: the repo
 /// root of bosun itself, `bosun/` in the monorepo), so another repo's `src/core/risk.rs` is no
 /// trust file. Entries are globs (`**` for a folder), matched by [`is_trust_path`].
-pub const TRUST_CODE_FILES: [&str; 19] = [
+pub const TRUST_CODE_FILES: [&str; 30] = [
     "src/core/risk.rs",
     "src/core/approve.rs",
     "src/cli/risk_check.rs",
@@ -614,6 +618,19 @@ pub const TRUST_CODE_FILES: [&str; 19] = [
     "src/hooks/**",
     "src/core/guard.rs",
     "src/core/guard/**",
+    // What those call to judge: the PR gates and stamps, test integrity, the review packs, the
+    // budget and local risk checks, the lockfile merge (carry rule 6), state and plan parsing.
+    "src/cli/pr.rs",
+    "src/cli/stamps.rs",
+    "src/cli/test_integrity.rs",
+    "src/cli/review_ci.rs",
+    "src/cli/review_pack.rs",
+    "src/cli/budget.rs",
+    "src/cli/risk_local.rs",
+    "src/core/lockmerge.rs",
+    "src/core/state.rs",
+    "src/core/plan.rs",
+    "src/core/shape.rs",
 ];
 
 /// The org decisions index (D-002), read in place in the monorepo.
@@ -649,7 +666,10 @@ pub fn trust_files_in(roots: &[String]) -> Vec<String> {
 pub fn is_trust_path<S: AsRef<str>>(trust: &[S], path: &str) -> bool {
     trust.iter().any(|t| {
         let t = t.as_ref();
-        t == path || super::glob::Glob::parse(t).is_ok_and(|g| g.matches(path))
+        // As the quorum check (`risk::trust_root_changed`): any case, and `..` is a hit.
+        t == path
+            || path.split('/').any(|s| s == "..")
+            || super::glob::Glob::parse(t).is_ok_and(|g| super::risk::matches_any_case(&g, path))
     })
 }
 
@@ -862,6 +882,12 @@ mod tests {
             trust_files_changed_in([(".bosun/pins.toml", None)], &mono),
             [".bosun/pins.toml"]
         );
+        // Any case, as the quorum check: a case-insensitive filesystem has one file.
+        assert_eq!(
+            trust_files_changed_in([(".Bosun/Pins.toml", None)], &mono),
+            [".Bosun/Pins.toml"]
+        );
+        assert!(is_trust_path(&["src/gates/**"], "src/Gates/mod.rs"));
         // The build inputs at the repo root: trust files where bosun's code is, in a monorepo too;
         // in any other repo they are plain tool files.
         for p in TRUST_BUILD_FILES {

@@ -242,19 +242,18 @@ cargo_tool() {
     echo "setup-script: no cargo found; skipping $crate" >&2
   fi
 }
-# A repo with hull's pins.toml and scripts/pins.mjs must pin the same nextest and cargo-deny versions
-# as .bosun/pins.toml: a different version has no checksum here, so the script fails (it never
-# drops a pinned checksum). Align the two pins files in a reviewed PR.
+# A repo with hull's pins.toml and scripts/pins.mjs (`--shell` prints PIN_X='v') should pin the
+# same nextest and cargo-deny versions as .bosun/pins.toml. A different version has no checksum
+# here, so it is refused: the checksummed .bosun/pins.toml version installs (a pinned checksum is
+# never dropped) and the mismatch is reported. Align the two pins files in a reviewed PR.
 if [ -f pins.toml ] && [ -f scripts/pins.mjs ] && command -v node >/dev/null 2>&1 &&
-  hull_pins="$(node scripts/pins.mjs --shell 2>/dev/null | grep -E '^PIN_[A-Z_]+=[0-9A-Za-z._-]*$')"; then
+  hull_pins="$(node scripts/pins.mjs --shell 2>/dev/null | grep -E "^PIN_[A-Z_]+='?[0-9A-Za-z._-]*'?\$")"; then
   eval "$hull_pins"
   if [ -n "${PIN_NEXTEST:-}" ] && [ "$PIN_NEXTEST" != "$NEXTEST_VERSION" ]; then
-    echo "setup-script: hull's pins.toml pins nextest $PIN_NEXTEST, which differs from .bosun/pins.toml ($NEXTEST_VERSION); align the two pins files" >&2
-    exit 1
+    echo "setup-script: hull's pins.toml pins nextest $PIN_NEXTEST, which differs from .bosun/pins.toml ($NEXTEST_VERSION); installing the checksummed $NEXTEST_VERSION, align the two pins files" >&2
   fi
   if [ -n "${PIN_CARGO_DENY:-}" ] && [ "$PIN_CARGO_DENY" != "$CARGO_DENY_BIN_VERSION" ]; then
-    echo "setup-script: hull's pins.toml pins cargo-deny $PIN_CARGO_DENY, which differs from .bosun/pins.toml ($CARGO_DENY_BIN_VERSION); align the two pins files" >&2
-    exit 1
+    echo "setup-script: hull's pins.toml pins cargo-deny $PIN_CARGO_DENY, which differs from .bosun/pins.toml ($CARGO_DENY_BIN_VERSION); installing the checksummed $CARGO_DENY_BIN_VERSION, align the two pins files" >&2
   fi
   :
 fi
