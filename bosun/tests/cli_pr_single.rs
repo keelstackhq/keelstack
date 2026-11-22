@@ -284,23 +284,48 @@ fn ready_refuses_a_pr_of_a_non_writer() {
     assert!(fake.auto_merge_enabled(n).is_none());
 }
 
-#[test]
-fn ready_refuses_a_gated_path_even_inside_the_allow_set() {
+const RULE: &str =
+    "[[rule]]\nid = \"R-docs\"\nwhy = \"d\"\napproval = \"owner\"\npaths = [\"docs/secret/**\"]\n";
+const OTHER: &str =
+    "[[rule]]\nid = \"R-other\"\nwhy = \"d\"\napproval = \"owner\"\npaths = [\"nothing/**\"]\n";
+
+/// A PR whose base (sha `base0000`) holds other rules than the default branch's tip, changing `file`.
+fn on_old_base(file: &str, config: Option<&str>, risk: [&str; 2]) -> (i32, Value, u64, FakeGithub) {
     let (fake, dir) = setup();
     with_bosun_base(&fake);
     let (_, first) = pr(&fake, dir.path(), &["--single"]);
     let n = first["data"]["pr"]["number"].as_u64().unwrap();
     stamps::ready(&fake, dir.path(), n);
-    fake.content(
-        ".bosun/risk.toml",
-        "main",
-        "[[rule]]\nid = \"R-docs\"\nwhy = \"d\"\napproval = \"owner\"\npaths = [\"docs/secret/**\"]\n",
-    );
-    fake.pull_file(n, "docs/secret/a.md", "modified", 1, 0, None);
+    // [at the PR's base, on the default branch]
+    fake.content(".bosun/risk.toml", "base0000", risk[0]);
+    fake.content(".bosun/risk.toml", "main", risk[1]);
+    fake.content(".bosun/risk.toml", "refs/heads/main", risk[1]);
+    if let Some(c) = config {
+        fake.content(".bosun/bosun.toml", "main", c);
+        fake.content(".bosun/bosun.toml", "refs/heads/main", c);
+    }
+    fake.pull_file(n, file, "modified", 1, 0, None);
     let (code, v) = pr(&fake, dir.path(), &["--single", "--ready"]);
-    assert_eq!(code, 3, "{v}");
-    assert!(v["error"]["message"].as_str().unwrap().contains("gated"));
-    assert!(fake.auto_merge_enabled(n).is_none());
+    (code, v, n, fake)
+}
+
+#[test]
+fn ready_refuses_a_gated_path_even_inside_the_allow_set() {
+    // The rule only on the PR's base, and the rule only on the default branch: both refuse.
+    for risk in [[RULE, OTHER], [OTHER, RULE]] {
+        let (code, v, n, fake) = on_old_base("docs/secret/a.md", None, risk);
+        assert_eq!(code, 3, "{v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains("gated"));
+        assert!(fake.auto_merge_enabled(n).is_none());
+    }
+}
+
+#[test]
+fn ready_lets_the_owners_oneoff_allow_cover_a_gated_path() {
+    let cfg = "project = \"widget\"\n\n[approvals]\noneoff_allow = [\"docs/secret/**\"]\n";
+    let (code, v, _, _) = on_old_base("docs/secret/a.md", Some(cfg), [RULE, RULE]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["single_reason"], "one-off");
 }
 
 #[test]

@@ -402,3 +402,26 @@ fn approve_refuses_when_the_default_branch_is_stricter_than_the_base() {
         assert_eq!(code, 0, "{base} / {default} at {now}: {v}");
     }
 }
+
+/// A base window that already ended is not one the default branch can end: dropping the stale
+/// date there is no "looser base" (spec 08: it ends the window the base has open). The refusal
+/// that remains is the ordinary "bootstrap mode ended", not the default-branch one; a signing
+/// base policy after the window still signs.
+#[test]
+fn a_stale_base_window_the_default_branch_dropped_is_not_a_stricter_default() {
+    let (code, v) = sign_with(
+        &config(Some("owner"), Some("2026-11-30")),
+        &config(Some("owner"), None),
+        AFTER,
+    );
+    assert_eq!(code, 1, "{v}");
+    let why = v["error"]["message"].as_str().unwrap();
+    assert!(!why.contains("default branch"), "{v}");
+    assert!(why.contains("ended on 2026-11-30"), "{v}");
+    let (code, v) = sign_with(
+        &config(Some("orchestrator"), Some("2026-11-30")),
+        &config(Some("orchestrator"), None),
+        AFTER,
+    );
+    assert_eq!(code, 0, "{v}");
+}

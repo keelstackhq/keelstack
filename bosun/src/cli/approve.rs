@@ -976,8 +976,11 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     };
     let stricter = rank(main.policy()) < rank(policy)
         || (signs(policy) && !signs(main.policy()))
-        // A window the base has open (or had) must not be shortened or dropped.
-        || (!signs(policy) && end_of(&main) < end_of(&approvals));
+        // A window the base has open today must not be shortened or dropped; one that already
+        // ended is not "open", so the default branch dropping its stale date is fine.
+        || (!signs(policy)
+            && end_of(&approvals).is_some_and(|b| today <= b.as_str())
+            && end_of(&main) < end_of(&approvals));
     if stricter {
         return Err(BosunError::error(
             format!(

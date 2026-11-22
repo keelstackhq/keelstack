@@ -153,13 +153,16 @@ fn single_reason(app: &App, pull: &Pull, base: &str) -> Result<&'static str, Bos
         // The rules of the PR's base plus those of the default branch, as `pr --one-off` reads them.
         let mut gated = crate::app::gated_from_default(gh)?;
         gated.extend(crate::core::shape::gated_globs(
-            &crate::cli::risk_check::base_rules(gh, base)?,
+            &crate::cli::risk_check::base_rules(gh, &pull.base_sha)?,
         ));
         let tree_files = crate::app::base_files(gh)?;
         let paths: Vec<String> = files
             .iter()
             .flat_map(|f| [Some(f.filename.clone()), f.previous_filename.clone()])
             .flatten()
+            // The owner's `[approvals] oneoff_allow` may reach a gated path, as in `pr --one-off`
+            // (risk-check still asks the owner for it).
+            .filter(|p| !matches_globs(&extra, p))
             .collect();
         let hit = touch_gated_in(&paths, &gated, tree_files.as_deref()).map_err(|e| {
             BosunError::conflict(e, "name the files the PR edits, without wildcards")
@@ -167,13 +170,15 @@ fn single_reason(app: &App, pull: &Pull, base: &str) -> Result<&'static str, Bos
         if hit {
             return Err(BosunError::conflict(
                 format!(
-                    "`--single --ready` is not allowed for PR #{}: it reaches a gated path (a risk rule of {base})",
+                    "`--single --ready` is not allowed for PR #{}: it reaches a gated path (a risk rule of the PR's base or the default branch)",
                     pull.number
                 ),
                 "gated work needs a planned task with the owner's approval: plan it (`bosun plan import`), or drop the gated changes",
             ));
         }
-        super::pr::touch_check(app, pull.number, || Ok((files.clone(), None)))?;
+        // No `touch_check` here: it looks up leases on the PR number, and a PR with no task has
+        // none (the lease lives on the task issue), so it would never check anything. The checks
+        // that apply to such a PR (the allow set, the gated paths, the size) ran above.
         return Ok("one-off");
     }
     Err(BosunError::conflict(

@@ -586,11 +586,21 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
             if std::mem::take(&mut skip_value) {
                 continue;
             }
-            if kind == "mv" && (*a == "-t" || *a == "--target-directory") {
-                by_option = true;
-                skip_value = true;
-            } else if kind == "mv" && a.starts_with("--target-directory=") {
-                by_option = true;
+            if kind == "mv" && *a != "--" && a.starts_with("--") && a.len() > 2 {
+                let (name, has_value) = match a.split_once('=') {
+                    Some((n, _)) => (n, true),
+                    None => (*a, false),
+                };
+                if name.len() >= "--t".len() && "--target-directory".starts_with(name) {
+                    by_option = true;
+                    skip_value = !has_value;
+                }
+            } else if kind == "mv" && a.starts_with('-') && !a.starts_with("--") && a.len() > 1 {
+                // Clustered short flags: `-ft DIR` takes the next word, `-tDIR` carries it.
+                if let Some(k) = a.find('t') {
+                    by_option = true;
+                    skip_value = k == a.len() - 1;
+                }
             } else if !a.starts_with('-') {
                 paths.push(a);
             }
@@ -7659,6 +7669,11 @@ mod tests {
             "mv -t /tmp/x .bosun/version",
             "mv --target-directory=/tmp/x .bosun",
             "mv --target-directory /tmp/x .bosun/version",
+            "mv -t/tmp/x a .bosun",
+            "mv -ft /tmp/x .bosun/version",
+            "mv --target /tmp/x .bosun",
+            "mv --target=/tmp/x .bosun",
+            "mv --target-dir /tmp/x .bosun",
             "rm -rf .BOSUN",
             "rm .Bosun/Version",
             "mv .BOSUN /tmp/x",

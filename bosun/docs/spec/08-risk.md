@@ -333,7 +333,7 @@ High-risk PRs:
     `.github/actions/**` file in every `[checks]` mode (verdicts count by the author
     `github-actions[bot]`, so a workflow the PR adds could post verdict records for invented
     sessions), `.github/scripts/**` (what the workflows run), `.claude/settings*.json` (the hooks that run bosun), the reviewers' prompts
-    (`.claude/agents/reviewer.md`, `REVIEW.md`, `docs/lessons.toml`), the agent notes `AGENTS.md` and `CLAUDE.md` (at the repo root and in each code root) and every trust file
+    (`.claude/agents/reviewer.md`, `REVIEW.md`, `docs/lessons.toml`), the agent notes `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md` and `.claude/CLAUDE.md` (at the repo root and in each code root) and every trust file
     (`TRUST_FILES`: owners, CODEOWNERS, the decisions index, D-022's and D-025's files). A key's signature never counts there, an owner key's v1 or v2 included: with a non-empty quorum trust root risk-check counts no signed approval (the PR waits for the owner's own GitHub review or `/bosun approve <sha>` comment) and `bosun approve --sign-key` refuses to sign, with or without `--bootstrap`. Under
     each code root (`""` when `src/cli/risk_check.rs` is at the root, and each `[[folders]]`
     path, plus `bosun`, that holds it at the base: `bosun/` in the monorepo): every file under
