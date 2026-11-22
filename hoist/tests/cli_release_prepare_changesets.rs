@@ -174,7 +174,7 @@ fn release_commit_deletes_consumed_changesets() {
     assert_eq!(post["title"], "release: b@1.1.0, a@2.0.1");
     let body = post["body"].as_str().unwrap();
     assert!(
-        body.contains("## Changesets\n\n- `b`: brave-fox\n- no package: calm-owl\n"),
+        body.contains("## Changesets\n\n- `b`: `brave-fox`\n- no package: `calm-owl`\n"),
         "{body}"
     );
     assert!(body.contains("### Minor Changes"), "{body}");

@@ -152,7 +152,19 @@ pub fn read_dir(root: &Path) -> Result<Vec<Changeset>, HoistError> {
         let name = entry.file_name().to_string_lossy().into_owned();
         let rel = format!(".changeset/{name}");
         let path = entry.path();
-        if path.is_dir() {
+        let ftype = entry
+            .file_type()
+            .map_err(|e| err(rel.clone(), format!("cannot read: {e}")))?;
+        if ftype.is_symlink() {
+            if name.ends_with(".md") && !super::is_skipped(&name) {
+                return Err(err(
+                    rel,
+                    "is a symlink; changesets must be regular files".into(),
+                ));
+            }
+            continue;
+        }
+        if ftype.is_dir() {
             if path.join("changes.json").exists() {
                 return Err(err(
                     rel,

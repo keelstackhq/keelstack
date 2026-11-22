@@ -237,6 +237,18 @@ fn changelog_section(
     .replace("\n### ", "\n#### ")
 }
 
+/// An id as a safe inline code span: backticks in it are replaced, whitespace runs (newlines)
+/// collapse to a space and `|` is escaped, so file names cannot inject markdown or mentions.
+pub(super) fn code_span(id: &str) -> String {
+    let clean: String = id
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('`', "'")
+        .replace('|', "\\|");
+    format!("`{clean}`")
+}
+
 fn pr_body(model: &ReleaseModel, next: &[NextVersion], cs: Option<&Cs>, date: &str) -> String {
     let mut body = String::from(
         "Prepared by `hoist release prepare`. Merging this PR releases the packages below; \
@@ -269,10 +281,12 @@ fn pr_body(model: &ReleaseModel, next: &[NextVersion], cs: Option<&Cs>, date: &s
     if let Some(cs) = cs {
         body.push_str("\n## Changesets\n\n");
         for n in next.iter().filter(|n| !n.changesets.is_empty()) {
-            body.push_str(&format!("- `{}`: {}\n", n.package, n.changesets.join(", ")));
+            let ids: Vec<String> = n.changesets.iter().map(|i| code_span(i)).collect();
+            let ids = ids.join(", ");
+            body.push_str(&format!("- `{}`: {}\n", n.package, ids));
         }
         for c in cs.consumed(next).iter().filter(|c| c.releases.is_empty()) {
-            body.push_str(&format!("- no package: {}\n", c.id));
+            body.push_str(&format!("- no package: {}\n", code_span(&c.id)));
         }
     }
     format!("{body}\n## Changelog\n{sections}\n## Tags to create\n\n{tags}")
@@ -443,4 +457,17 @@ fn rewrite_ranges(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::code_span;
+
+    #[test]
+    fn ids_render_as_escaped_code_spans() {
+        assert_eq!(code_span("brave-fox"), "`brave-fox`");
+        let s = code_span("a`b <x>|@y\nz");
+        assert_eq!(s, "`a'b <x>\\|@y z`");
+        assert!(!s.contains('\n'));
+    }
 }

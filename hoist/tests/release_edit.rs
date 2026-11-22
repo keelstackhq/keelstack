@@ -204,6 +204,19 @@ fn changelog_section_is_the_body_of_that_version() {
 }
 
 #[test]
+fn changelog_section_bare_heading_is_exact() {
+    use hoist::release::edit::changelog_section;
+    assert_eq!(
+        changelog_section("## 1.1.0\n\n- a\n", "1.1.0").as_deref(),
+        Some("- a")
+    );
+    for other in ["## 1.1.00", "## 1.1.0-rc.1", "## 1.1.0x", "## 1.1.0.1"] {
+        let text = format!("{other}\n\n- a\n");
+        assert_eq!(changelog_section(&text, "1.1.0"), None, "{other}");
+    }
+}
+
+#[test]
 fn publish_reads_bare_heading() {
     use hoist::release::edit::changelog_section;
     let text = "# Changelog\n\n## 1.2.0\n\n### Minor Changes\n\n- x\n\n## 1.1.0\n\n- y\n";

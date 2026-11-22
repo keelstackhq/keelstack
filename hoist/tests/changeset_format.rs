@@ -163,6 +163,34 @@ fn read_dir_skips_readme_and_dotfiles() {
     assert!(read_dir(none.path()).expect("no dir").is_empty());
 }
 
+#[cfg(unix)]
+#[test]
+fn read_dir_refuses_symlinks() {
+    use std::os::unix::fs::symlink;
+    let t = repo(&[
+        ("outside.md", "---\na: patch\n---\n\nx\n"),
+        ("outdir/changes.json", "{}"),
+    ]);
+    fs::create_dir_all(t.path().join(".changeset")).expect("mkdir");
+    symlink(
+        t.path().join("outside.md"),
+        t.path().join(".changeset/link.md"),
+    )
+    .expect("symlink");
+    let e = config_err(read_dir(t.path()));
+    assert!(e.contains(".changeset/link.md"), "{e}");
+    assert!(
+        e.contains("is a symlink; changesets must be regular files"),
+        "{e}"
+    );
+    fs::remove_file(t.path().join(".changeset/link.md")).expect("rm");
+    symlink(t.path().join("outdir"), t.path().join(".changeset/dirlink")).expect("symlink");
+    assert!(
+        read_dir(t.path()).is_ok(),
+        "non-.md symlinks are ignored like other non-changesets"
+    );
+}
+
 #[test]
 fn legacy_changes_json_dir_is_an_error() {
     let t = repo(&[(".changeset/old-one/changes.json", "{}")]);
