@@ -768,3 +768,152 @@ fn approve_refuses_a_pin_downgrade_and_signs_a_released_upgrade() {
     post_verdict(&fake, "session_s", HEAD);
     assert_eq!(sign(&fake, &k, "session_o").0, 0);
 }
+
+/// `approve` reads the policy where risk-check does, at the PR's base (the same read as the
+/// trust root): a default branch that moved to quorum after this PR's base signs nothing for a
+/// PR that changes the trust root, and a base on quorum signs although the default branch left it.
+#[test]
+fn approve_reads_the_policy_at_the_base_like_the_trust_root() {
+    let k = key();
+    let fake = quorum(&k);
+    fake.content(".bosun/bosun.toml", BASE, &config("owner"));
+    fake.pull_file(1, ".bosun/approvers.toml", "modified", 1, 0, Some(PLAIN));
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+
+    let fake = quorum(&k);
+    fake.content(".bosun/bosun.toml", MAIN, &config("owner"));
+    // The fake lets a default-branch write stand for every PR base: restore this PR's base.
+    fake.content(".bosun/bosun.toml", BASE, &config("quorum"));
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["policy"], "quorum", "{v}");
+}
+
+/// A verdict comment of `session` on HEAD with `confidence`, posted by `author`.
+fn post_verdict_by(fake: &FakeGithub, author: &str, session: &str, confidence: f64) {
+    let r = json!({"bosun": "verdict", "session": session, "head_sha": HEAD,
+        "approved": true, "confidence": confidence, "major": 0});
+    fake.comment_by(
+        1,
+        author,
+        &format!("Review verdict: approve {confidence}, 0 blocker.\n\n{r}"),
+    );
+}
+
+/// A signature of `k` (enrolled as `k1` or not) over `message`, posted as the Claude app.
+fn post_sig_of(fake: &FakeGithub, k: &Key, message: &str) {
+    let s = b64::encode(k.0.sign(message.as_bytes()).as_ref());
+    let body = format!("/bosun approve {HEAD} autonomous\nbosun-sig ed25519 k1 {s}");
+    fake.comment_by(1, "claude", &body);
+    fake.last_comment(|c| c.via_app = Some("claude".into()));
+}
+
+fn autonomous_message(head: &str) -> String {
+    format!("bosun-autonomous v1 acme/widget#1 {head}")
+}
+
+/// The quorum bar is 0.9 (`VERDICT_MIN_CONFIDENCE`, stricter than D-022's 0.85): 0.84 and 0.89
+/// are both below it, so a verdict at either confidence is no clean verdict.
+#[test]
+fn a_verdict_below_the_confidence_bar_does_not_count_on_either_path() {
+    for confidence in [0.84, 0.89] {
+        let k = key();
+        let fake = quorum(&k);
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict_by(&fake, "github-actions[bot]", "session_s", confidence);
+        post_sig(&fake, &k);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{confidence}: {v}");
+        assert!(description(&fake).starts_with(QUORUM), "{confidence}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{confidence}: {v}");
+
+        let fake = quorum(&k);
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict_by(&fake, "github-actions[bot]", "session_s", confidence);
+        let (code, v) = sign(&fake, &k, "session_o");
+        assert_eq!(code, 1, "{confidence}: {v}");
+    }
+    // The bar itself passes.
+    let k = key();
+    let fake = quorum(&k);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict_by(&fake, "github-actions[bot]", "session_s", 0.9);
+    assert_eq!(sign(&fake, &k, "session_o").0, 0);
+}
+
+#[test]
+fn a_verdict_whose_author_is_not_the_bot_does_not_count_on_either_path() {
+    for author in ["mallory", "ada", "claude"] {
+        let k = key();
+        let fake = quorum(&k);
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict_by(&fake, author, "session_s", 0.95);
+        post_sig(&fake, &k);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{author}: {v}");
+        assert!(description(&fake).starts_with(QUORUM), "{author}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{author}: {v}");
+
+        let fake = quorum(&k);
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict_by(&fake, author, "session_s", 0.95);
+        assert_eq!(sign(&fake, &k, "session_o").0, 1, "{author}");
+    }
+}
+
+#[test]
+fn a_signing_key_not_in_approvers_toml_counts_and_signs_nothing() {
+    let (enrolled, stranger) = (key(), key());
+    let fake = quorum(&enrolled);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    post_sig_of(&fake, &stranger, &autonomous_message(HEAD));
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert!(description(&fake).starts_with(QUORUM), "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+
+    let fake = quorum(&enrolled);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let (code, v) = sign(&fake, &stranger, "session_o");
+    assert_eq!(code, 1, "{v}");
+    assert!(v["data"]["body"].is_null(), "{v}");
+    let why = v["error"]["message"].as_str().unwrap();
+    assert!(why.contains("not enrolled in .bosun/approvers.toml"), "{v}");
+}
+
+#[test]
+fn a_bad_signature_counts_nothing() {
+    let k = key();
+    for message in [
+        autonomous_message(OTHER),
+        "bosun-autonomous v1 acme/widget#2 0123456789abcdef0123456789abcdef01234567".to_string(),
+        format!("bosun-approve v1 acme/widget#1 {HEAD}"),
+    ] {
+        let fake = quorum(&k);
+        post_verdict(&fake, "session_r", HEAD);
+        post_verdict(&fake, "session_s", HEAD);
+        post_sig_of(&fake, &k, &message);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{message}: {v}");
+        assert!(description(&fake).starts_with(QUORUM), "{message}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{message}: {v}");
+    }
+    // A signature that is not a valid ed25519 signature at all.
+    let fake = quorum(&k);
+    post_verdict(&fake, "session_r", HEAD);
+    post_verdict(&fake, "session_s", HEAD);
+    let body = format!("/bosun approve {HEAD} autonomous\nbosun-sig ed25519 k1 AAAA");
+    fake.comment_by(1, "claude", &body);
+    fake.last_comment(|c| c.via_app = Some("claude".into()));
+    let (code, v) = check(&fake);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}

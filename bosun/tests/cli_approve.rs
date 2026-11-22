@@ -4,7 +4,7 @@ use common::fake::FakeGithub;
 use common::{bosun, one_object, run};
 use serde_json::{Value, json};
 
-const HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-022) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+const HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-025) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
 
 const OWNER_TOKEN: &str = "canary-owner-token-7f3a";
 const WAITING: &str = "high risk, owner approval needed: R-gov, R-ci";
@@ -129,6 +129,8 @@ fn list_shows_ready_and_waiting_sorted_with_the_command() {
     assert_eq!(ready[0]["files"], json!(["governance/f1.toml"]));
     assert_eq!(ready[0]["files_truncated"], json!(false));
     assert_eq!(v["data"]["hint"], HINT);
+    // Chat approvals are retired (D-025): the hint never tells anyone to ask the owner in chat.
+    assert!(!HINT.contains("AskUserQuestion") && !HINT.contains("ask the owner"));
     assert_eq!(ready[1]["pr"], 3);
     assert_eq!(
         v["data"]["approve_command"],

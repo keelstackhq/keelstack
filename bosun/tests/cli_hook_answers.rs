@@ -765,3 +765,27 @@ fn a_transcript_without_the_tool_result_line_says_no_answer_yet() {
     );
     assert_eq!(stored(r.path()), json!({}));
 }
+
+#[test]
+fn in_the_cloud_the_stored_session_comes_from_the_remote_session_id() {
+    let r = repo();
+    let h = head("abc1234");
+    let mut input = question(&[(12, &h)], "Approve #12 abc1234");
+    input["session_id"] = json!("3f2c9a4e-1b7d-4c55-9a0e-5d6f7a8b9c0d");
+    let out = bosun()
+        .current_dir(r.path())
+        .env("BOSUN_NOW", NOW)
+        .env("CLAUDE_CODE_REMOTE", "true")
+        // every cloud session has the child flag; it must not stop the top-level session
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env_remove("BOSUN_SESSION")
+        .env("CLAUDE_CODE_REMOTE_SESSION_ID", "cse_orch")
+        .env("HOME", r.path().join(".home"))
+        .args(["hook", "post-tool-use"])
+        .write_stdin(with_transcript(r.path(), input).to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let a = &stored(r.path())["12-abc1234-1792663200"];
+    assert_eq!(a["session"], json!("session_orch"), "{a}");
+}

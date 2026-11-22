@@ -803,7 +803,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         None
     } else {
         default_branch(gh).ok().and_then(|branch| {
-            let approve = |h: &str| approval_on(gh, &need, h).ok();
+            // D-022: a quorum signature names the older head `h`; the clean verdicts are counted
+            // again on this head (`found`), so a carry never rests on the verdicts of `h` alone.
+            let approve = |h: &str| {
+                let f = approval_on(gh, &need, h).ok()?;
+                let by_signature = need.quorum && f.approved_by.is_some() && !f.owner_own;
+                let recounted = found.autonomous_verdicts.len() >= risk::QUORUM_VERDICTS;
+                (!by_signature || recounted).then_some(f)
+            };
             carry_approval(gh, &pull, &branch, &owners, &approve)
         })
     };

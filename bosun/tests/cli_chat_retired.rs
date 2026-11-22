@@ -102,3 +102,55 @@ fn the_fix_does_not_offer_a_chat_record() {
         "{text}"
     );
 }
+
+#[test]
+fn approvals_chat_true_in_the_config_grants_nothing_under_any_policy() {
+    for policy in [
+        "owner",
+        "owner-gated",
+        "orchestrator",
+        "autonomous",
+        "quorum",
+    ] {
+        let fake = high_pr(true);
+        let config =
+            format!("project = \"widget\"\n\n[approvals]\nchat = true\npolicy = \"{policy}\"\n");
+        fake.content(".bosun/bosun.toml", BASE, &config);
+        fake.content(".bosun/bosun.toml", "refs/heads/main", &config);
+        app_comment(&fake, "ada", &chat(HEAD, "session_orch"));
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{policy}: {v}");
+        assert_eq!(v["data"]["approved_by"], Value::Null, "{policy}: {v}");
+    }
+}
+
+#[test]
+fn approve_chat_is_a_usage_error_with_one_json_object() {
+    let fake = high_pr(true);
+    let out = common::bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_OWNER_TOKEN", "owner-token")
+        .args(["approve", &format!("1@{HEAD}"), "--chat"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    let v = common::one_object(&out.stdout);
+    assert_eq!(
+        (v["ok"].clone(), v["exit_code"].clone()),
+        (json!(false), json!(2))
+    );
+    assert!(
+        !v["error"]["fix"].as_str().unwrap().trim().is_empty(),
+        "{v}"
+    );
+}
+
+#[test]
+fn without_an_owners_file_a_plain_approve_comment_of_the_user_repo_owner_approves_nothing() {
+    // No governance/owners.toml and the repo owner is the User "ada": ada's own plain
+    // `/bosun approve <head>` comment names no owner, so it counts for no one (fail closed).
+    let fake = high_pr(false);
+    fake.repo_set("owner", json!({"login": "ada", "type": "User"}));
+    fake.comment_by(1, "ada", &format!("/bosun approve {HEAD}"));
+    refused(&fake);
+}

@@ -1,7 +1,7 @@
 //! `bosun approve`: lists the PRs that wait for an owner. The owner approves with their own
 //! comment `/bosun approve <head>` (posted by this command on their machine, or by hand in the
 //! GitHub web or mobile app), a GitHub review, or a signed approval (`--sign-key`; spec section 8).
-//! Chat approvals are retired (D-022): the owner's answer in a chat form is never an approval.
+//! Chat approvals are retired (D-025): the owner's answer in a chat form is never an approval.
 //! Every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
 //! a plain user token, which agent sessions do not have. `--list` only reads: without the owner
 //! token it reads with no token at all and lists what it can. The owner names the head sha of each
@@ -80,12 +80,12 @@ fn withdrawn(gh: &dyn Github, p: &Pull) -> Result<Option<(&'static str, bool)>> 
 }
 
 /// What to do instead in a Claude cloud session.
-const CLOUD_FIX: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR (GitHub web or mobile app) or a GitHub review, or runs `bosun approve` on their own machine; an orchestrator never records a chat answer as an approval (D-022)";
+const CLOUD_FIX: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR (GitHub web or mobile app) or a GitHub review, or runs `bosun approve` on their own machine; an orchestrator never records a chat answer as an approval (D-025)";
 
 /// Shown with every list: an approval comment counts only when posted with a plain user token, as
 /// this command does (an owner review counts too). The Claude GitHub tool posts through an app and
 /// adds a footer, so its comments never count.
-const LIST_HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-022) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+const LIST_HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; a hold answer keeps the PR off this list; a chat answer is never an approval (D-025) and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
 
 #[derive(Default)]
 pub(crate) struct Board {
@@ -697,8 +697,8 @@ fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
     Ok((ci_green(&runs), seen))
 }
 
-/// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session, on the owner's
-/// word in chat) signs `signed_message` for the PR's current head and posts the comment with
+/// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session
+/// holding an enrolled key, or the owner's machine) signs `signed_message` for the PR's current head and posts the comment with
 /// the session's own token. It works in a Claude cloud session: the signature, not the author,
 /// is what risk-check checks. The key is never printed or logged.
 fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
@@ -941,11 +941,11 @@ type Boot = (Option<String>, String, Policy, &'static str);
 
 /// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
 /// and its note line, or (after it) the note line of the approval policy (D-014) and no date. The
-/// setting is read on the default branch, which risk-check reads at the PR's base.
+/// setting is read at the PR's base, exactly as risk-check and the quorum trust root read it.
 fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) -> Result<Boot> {
     let gh = app.gh.as_ref();
     let (pr, head) = (pull.number, pull.head_sha.as_str());
-    let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
+    let text = gh.file_at(CONFIG_FILE, &pull.base_sha)?;
     let approvals = match text {
         Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals,
         None => Default::default(),
@@ -969,10 +969,10 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     let window = match &end {
         Some(d) => format!("bootstrap mode ended on {d} (D-012)"),
         None => format!(
-            "bootstrap mode is off: `[approvals] bootstrap_until` is not set in {CONFIG_FILE} on the default branch (D-012)"
+            "bootstrap mode is off: `[approvals] bootstrap_until` is not set in {CONFIG_FILE} at the PR's base (D-012)"
         ),
     };
-    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer (D-012)";
+    let fix = "nothing was signed: the owner approves with their own `/bosun approve <sha>` comment or a GitHub review, or runs `bosun approve` on their own machine (D-012)";
     let refuse = |why: String| Err(BosunError::error(format!("{why}; {window}"), fix));
     let ok = match policy {
         Policy::Orchestrator | Policy::Autonomous | Policy::Quorum => true,
