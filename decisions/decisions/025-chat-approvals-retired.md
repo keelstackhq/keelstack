@@ -44,3 +44,4 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
   covers `AGENTS.md`, `CLAUDE.md`, `.github/scripts/**` and, under bosun's code root, `channel/**`
   and `profiles/**`. Who may approve is unchanged: only the owner edits `.bosun/approvers.toml` and
   `[approvals]`.
+- The D-012 bootstrap window still ends 2026-11-30 (current behaviour kept); the owner may end it sooner.

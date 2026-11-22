@@ -82,7 +82,6 @@ pub struct State {
     pub token_app: (String, u64),
     pub contents: HashMap<String, String>,
     /// `<ref>:<path>` keys a test wrote itself (not copied from the default branch to a base sha).
-    pub explicit: std::collections::HashSet<String>,
     pub reviews: HashMap<u64, Vec<Value>>,
     pub timeline: HashMap<u64, Vec<Value>>,
     /// `base...head` -> files of the comparison.
@@ -623,23 +622,7 @@ impl FakeGithub {
     /// A file at a ref; the contents API serves it base64-encoded.
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
-        let key = format!("{git_ref}:{path}");
-        s.contents.insert(key.clone(), text.into());
-        if git_ref != "refs/heads/main" {
-            s.explicit.insert(key);
-            return;
-        }
-        // The default branch is what each pull's base sha stands for (a missing file stays
-        // missing), unless a test wrote that base sha's path itself: that one stays.
-        let bases: Vec<String> = (s.pulls.iter())
-            .filter_map(|p| p["base"]["sha"].as_str().map(String::from))
-            .collect();
-        for b in bases {
-            let key = format!("{b}:{path}");
-            if !s.explicit.contains(&key) {
-                s.contents.insert(key, text.into());
-            }
-        }
+        s.contents.insert(format!("{git_ref}:{path}"), text.into());
     }
 
     /// A workflow run of `sha` with one job and its log.
@@ -1612,18 +1595,33 @@ fn route(
         }
         ("GET", ["contents", file @ ..]) => {
             let file = file.join("/");
-            let git_ref = query.get("ref").map(String::as_str).unwrap_or("main");
-            if let Some(text) = s.contents.get(&format!("{git_ref}:{file}")) {
-                return ok(json!({"type": "file", "encoding": "base64", "name": file,
-                    "path": file, "size": text.len(), "content": b64_wrapped(text)}));
+            let asked = query.get("ref").map(String::as_str).unwrap_or("main");
+            // A pull's base sha stands for the default branch unless a test wrote that sha's
+            // path itself; resolved here, at read time, so write order never matters.
+            let is_base = s.pulls.iter().any(|p| p["base"]["sha"] == asked);
+            let mut candidates = vec![asked];
+            if is_base {
+                candidates.push("refs/heads/main");
             }
-            let dir = format!("{git_ref}:{file}/");
-            let mut entries: Vec<Value> = s
-                .contents
-                .keys()
-                .filter(|k| k.starts_with(&dir))
-                .map(|k| json!({"type": "file", "path": &k[git_ref.len() + 1..]}))
-                .collect();
+            for git_ref in &candidates {
+                if let Some(text) = s.contents.get(&format!("{git_ref}:{file}")) {
+                    return ok(json!({"type": "file", "encoding": "base64", "name": file,
+                        "path": file, "size": text.len(), "content": b64_wrapped(text)}));
+                }
+            }
+            let mut entries: Vec<Value> = Vec::new();
+            for git_ref in &candidates {
+                let dir = format!("{git_ref}:{file}/");
+                entries = s
+                    .contents
+                    .keys()
+                    .filter(|k| k.starts_with(&dir))
+                    .map(|k| json!({"type": "file", "path": &k[git_ref.len() + 1..]}))
+                    .collect();
+                if !entries.is_empty() {
+                    break;
+                }
+            }
             entries.sort_by_key(|e| e["path"].to_string());
             if entries.is_empty() {
                 msg(404, "Not Found")

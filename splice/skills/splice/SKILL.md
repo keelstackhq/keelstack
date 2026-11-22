@@ -28,7 +28,7 @@ Run `splice explain <path> --json`; read `class` and `source`.
   without `--commit`, and `add`/`update` refuse a dirty tree. A var with no default needs
   `--data` (else exit 2). A local source needs a `vX.Y.Z` tag or `--ref`.
 - `splice pieces <source> --json`: read-only; run it before guessing `--piece` ids or `--data` keys.
-- `splice add <piece> --name NAME --json`: `--name`, not `ID:NAME`. Leaves changes to commit.
+- `splice add <piece> --name NAME --json`: `--name`, not `ID:NAME`. Leaves changes to commit. `-C <dir>` replaces `cd`.
 - `splice diff --json`: what `update` would do; writes nothing. Run it first. Then
   `splice update --json` (`--to V` or `--ref R`); `splice check --json --offline`: no network.
 
