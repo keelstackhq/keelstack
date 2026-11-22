@@ -76,6 +76,16 @@ hoist auth check [--json]              permissions each token has vs needs
 hoist secrets set NAME                 value from env NAME or hidden prompt; never argv
 hoist secrets rotate [NAME]            for tokens hoist minted (§8.3)
 hoist init [--sha SHA] [--force] [--dry-run]  write release.yml (§12.5)
+hoist changeset add NAME:TYPE… -m TEXT [--id ID] | --empty   write .changeset/<id>.md (no HTTP)
+hoist changeset init [--from-commits]  write .changeset/config.json and README.md; --from-commits also writes hoist-migrate.md, the bumps pending since each tag (no HTTP)
+hoist changeset status [--since REV]   each package changed since merge-base(REV, HEAD) is named in
+                                       a changeset the diff adds (or the diff adds an empty one);
+                                       REV default origin/<baseBranch>; items changeset/package
+                                       <pkg> ok|drift, exit 1 on drift; branch hoist/release
+                                       (GITHUB_HEAD_REF or HEAD; on CI only if the PR head repo
+                                       is this repo) exempt; changesets read from HEAD, not the
+                                       working tree; bad file exit 3; no HTTP
+                                       (changesets spec §6; launcher dirs count for their crate)
 hoist release plan    [--json]         next versions and changelogs, no writes
 hoist release prepare                  open/update the release PR (CI, push to main)
 hoist release publish [--assets DIR] [--dry-run]  tag, release, publish (CI, release PR merged)
@@ -117,8 +127,14 @@ this one knows; the exit code stays 3.
 
 `hoist check` verifies each required check against the workflows: a job id or name, or a commit
 status. Commit statuses (posted by workflows, not jobs) are the built-in bosun set `main-open`,
-`review-verdict`, `risk-check` plus `[github] statuses`; those pass with the detail "a commit
-status". Any other name that is no job fails as before.
+`review-verdict`, `risk-check` plus `[github] statuses`. A status verifies when some workflow
+job's token may post statuses: `statuses: write` or `write-all` in the job's `permissions`, else
+in the workflow's (a job's own `permissions` replace the workflow's; `~` is no override), or no
+`permissions` at all with `actions_permissions = "write"`. The detail names the `file:job`s
+("a commit status (...); `statuses: write` in gate.yml:judge"); hoist cannot tell which job posts
+which status. A status with no such job fails ("is a commit status (...), but no workflow job has
+`statuses: write` to post it"). A `statuses` entry missing from `required_checks` is a config
+error (exit 3). Any other name that is no job fails as before.
 
 `[github] optional_secrets = ["NAME", …]` marks workflow-named secrets that may stay unset (names
 are case-insensitive). They are reported as `github/optional_secret` items, action `ok`
@@ -805,6 +821,11 @@ of a bumped package get a patch bump. `fix` → patch, `feat` → minor, `!` or 
 major; below 1.0.0 a breaking change bumps minor. `docs`, `ci`, `chore`, `test` alone release
 nothing. `.hoist/release.toml` may pin a version or skip a package for the next release.
 
+Changesets mode (`.changeset/config.json` exists; changesets spec §3, §5): bumps come from
+`.changeset/*.md` instead of commits, dependents and `fixed`/`linked` groups follow changesets'
+rules (no always-patch, no 0.x rule), pins and skips still apply; `prepare` uses the same plan.
+`release plan` adds item `release/source` (`ok`): key `changesets` (reason `changesets: <ids>`).
+
 ### 9.2 Release PR
 
 On every push to the default branch, `hoist release prepare` opens or updates one PR (branch
@@ -834,7 +855,13 @@ On every push to the default branch, `hoist release prepare` opens or updates on
 3. Otherwise: `git checkout -B hoist/release`; write the edits (versions; internal dependents'
    requirements: npm `^<new>` unless the spec is `workspace:`, Cargo the exact new version in the
    dependent's `Cargo.toml` and, for `workspace = true` deps, in the root
-   `[workspace.dependencies]`; `CHANGELOG.md` per package); `pnpm install --lockfile-only` when an
+   `[workspace.dependencies]`; `CHANGELOG.md` per package). Changesets mode (changesets spec
+   §5.2, §8): only the ranges the plan rewrites change, keeping their operator, also dev ranges
+   of packages that do not release; CHANGELOG blocks are `### Major|Minor|Patch Changes` with
+   `- <sha>: <summary>` lines and `- Updated dependencies [<sha>]` (none when `changelog` is
+   false), a `## Unreleased` body moves under the new heading; every changeset whose packages
+   all release (empty ones too) is deleted in the release commit, and the body lists them under
+   `## Changesets`. Then `pnpm install --lockfile-only` when an
    npm package changed and `cargo update -w` when a crate changed (their stdout goes to stderr);
    `git commit -m "release: <list>"` (identity `github-actions[bot]` when the checkout has none);
    `git push --force origin HEAD:refs/heads/hoist/release` (the branch belongs to hoist and is rebuilt from the
@@ -884,7 +911,8 @@ step of that package instead of skipping it. With nothing pending the report is 
 2. GitHub Release: `GET /releases/tags/<tag>`; published with every asset matching is done.
    Otherwise reuse the draft for the tag from `GET /releases?per_page=100&page=N` (paging stops
    at the first matching draft or a short page) or create one (`POST /releases`, `draft: true`, `name` = the tag,
-   body = the package's `CHANGELOG.md` section `## <version> (` up to the next `## `, else
+   body = the package's `CHANGELOG.md` section `## <version> (` or a bare `## <version>` line
+   up to the next `## `, else
    "Release <tag>."), upload the missing assets and then `SHA256SUMS` (lines `<hex>  <file>`) to
    `{HOIST_GITHUB_UPLOADS}/repos/{o}/{r}/releases/{id}/assets?name=<file>` as
    `application/octet-stream`, then `PATCH /releases/{id} {"draft": false}`. R20: an existing

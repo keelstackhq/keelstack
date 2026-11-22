@@ -40,7 +40,10 @@ hoist secrets rotate-key NAME [--public AGE1]  # secrets repo: routine rotation 
 hoist secrets sync [--rotate]  # secrets repo: .sops.yaml from access.toml, re-key changed files; --rotate: new data keys, then exit 2 until you rotate the values
 hoist import [--write] [--area ...]  # hoist.toml overrides that match the live state; --write writes them
 hoist init [--sha SHA] [--force] [--dry-run]  # write release.yml (thin call of the release action) and, if the repo has no `ci-ok` job, ci.yml; never commits
-hoist release plan            # next versions from conventional commits, read-only (exit 0)
+hoist changeset add my-crate:minor -m "what changed"  # write .changeset/<branch>.md (or --empty); no HTTP
+hoist changeset init [--from-commits]  # write .changeset/config.json and README.md; --from-commits adds hoist-migrate.md; no HTTP
+hoist changeset status [--since REV]  # PR check: each changed package has a changeset (exit 1 if not); no HTTP
+hoist release plan            # next versions from .changeset/ (if config.json) or conventional commits, read-only (exit 0)
 hoist release prepare         # open/update the release PR on branch hoist/release, or close it
 hoist release publish [--assets DIR] [--dry-run]  # tags, GitHub Releases, npm, crates.io, deploys (CI only)
 hoist release bootstrap [--dry-run] [--yes]  # first publish + trusted publishers, locally with your logins
@@ -48,7 +51,7 @@ hoist release bootstrap [--dry-run] [--yes]  # first publish + trusted publisher
 
 `hoist release prepare` needs a clean tree on the default branch and full history. It rebuilds
 the branch `hoist/release` from the default branch (versions, dependents, `CHANGELOG.md`,
-lockfiles), force-pushes it to `origin` with the checkout's git credentials and opens or updates
+lockfiles; in changesets mode it also deletes the consumed `.changeset/*.md`), force-pushes it to `origin` with the checkout's git credentials and opens or updates
 the PR; when nothing releases it closes the PR and deletes the branch. A package whose manifest
 version is above its last tag but not tagged yet (the PR was merged, publish has not run) is
 "awaiting publish": `release plan` shows it `pending` and `prepare` proposes no second bump for it.
@@ -135,7 +138,11 @@ the text stays on stderr. A usage error also prints the hoist version and a `whi
 (an older hoist earlier on `PATH` may be the one that rejected the flag); the exit code stays 3.
 
 `check` accepts a required check that is a commit status rather than a job: the built-in bosun
-set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["name"]`. Mark
+set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["name"]`; such a
+check verifies when some workflow job has `statuses: write` (or `write-all`) in its effective
+`permissions` (a job's own replace the workflow's; none at all counts only with
+`actions_permissions = "write"`), else it fails. Each `statuses` entry must also be in
+`required_checks` (else exit 3). Mark
 secrets a workflow names but that may stay unset with `[github] optional_secrets = ["NAME"]`:
 they show as `optional_secret` items (action `ok`), not as pending human steps.
 
