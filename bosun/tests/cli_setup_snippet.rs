@@ -438,6 +438,39 @@ fn install_hooks_into_empty_settings() {
 }
 
 #[test]
+fn install_hooks_never_rewrites_another_commands_matcher() {
+    let t = tempfile::tempdir().unwrap();
+    let f = t.path().join("settings.json");
+    // One group holds bosun's hook and the user's own, under the user's matcher.
+    fs::write(
+        &f,
+        r#"{"hooks":{"PostToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"mine"},{"type":"command","command":"bosun hook post-tool-use"}]}]}}"#,
+    )
+    .unwrap();
+    install(&f);
+    let v: serde_json::Value = serde_json::from_str(&fs::read_to_string(&f).unwrap()).unwrap();
+    let groups = v["hooks"]["PostToolUse"].as_array().unwrap();
+    let mine = groups
+        .iter()
+        .find(|g| {
+            g["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|h| h["command"] == "mine")
+        })
+        .unwrap();
+    assert_eq!(mine["matcher"], "Bash", "{v}");
+    assert_eq!(mine["hooks"].as_array().unwrap().len(), 1, "{v}");
+    let ours = groups
+        .iter()
+        .find(|g| g["hooks"][0]["command"] == "bosun hook post-tool-use")
+        .unwrap();
+    assert_eq!(ours["matcher"], "AskUserQuestion", "{v}");
+    assert_eq!(commands(&v, "PostToolUse").len(), 2);
+}
+
+#[test]
 fn install_hooks_idempotent() {
     let t = tempfile::tempdir().unwrap();
     let f = t.path().join("settings.json");

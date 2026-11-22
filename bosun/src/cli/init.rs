@@ -785,6 +785,21 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     // one to use. An existing branch is reused only when it is the current one.
     let current = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let local_default = local_default_branch(&root);
+    // With no origin/HEAD and no main or master the default branch is unknown: the current branch
+    // may be it, so it is not reused (fail closed).
+    if args.branch.is_none()
+        && cloud
+        && !current.is_empty()
+        && current != "HEAD"
+        && local_default.is_none()
+    {
+        return Err(BosunError::conflict(
+            format!(
+                "cannot tell whether the current branch {current} is the default branch (no origin/HEAD, no main or master)"
+            ),
+            "run `git remote set-head origin -a`, or pass `--branch <new-branch>` (a branch that does not exist yet)",
+        ));
+    }
     let branch = if args.branch.is_none()
         && cloud
         && !current.is_empty()

@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 use super::PrArgs;
 use super::pr::{current_branch, head_subject};
 use super::pr_gov::{queue, refuse_task_pr, require_queueable};
-use crate::app::{App, default_branch, kill_switch};
+use crate::app::{App, default_branch, is_writer, kill_switch};
 use crate::core::risk::{autonomous_allow_globs, matches_globs};
-use crate::core::shape::ONE_OFF_MAX;
+use crate::core::shape::{ONE_OFF_MAX, touch_gated_in};
 use crate::core::title::is_conventional;
 use crate::github::http::Http;
 use crate::github::{IssueState, Pull};
@@ -107,31 +107,69 @@ pub fn run(dir: Option<&Path>, args: &PrArgs) -> CmdResult {
     Ok(out)
 }
 
-/// Why `--single --ready` may go ahead: `bootstrap` when the base has no `.bosun/` directory (the
-/// PR that adds bosun; nothing there can judge it), or `one-off` when every changed path lies in
+/// Why `--single --ready` may go ahead: `bootstrap` when the base has no `.bosun/` directory and
+/// the PR adds one (the PR that adds bosun; nothing there can judge it), or `one-off` when every changed path lies in
 /// the one-off allow set and the change is within the one-off cap. Anything else is refused: the
 /// one-off guards (allow set, R-oneoff-size) must not be bypassed by a task-less PR.
 fn single_reason(app: &App, pull: &Pull, base: &str) -> Result<&'static str, BosunError> {
     let gh = app.gh.as_ref();
-    // An unreadable or truncated tree is not proof of a bootstrap: fail closed.
+    // Like `pr --one-off` and `pr --pr`: only a repo writer's PR goes this way.
+    if !is_writer(gh, &pull.user)? {
+        return Err(BosunError::conflict(
+            format!(
+                "PR #{} cannot use `--single --ready`: its author {} is not a repo writer",
+                pull.number, pull.user
+            ),
+            "ask a repo writer to open the PR, or open it for a task",
+        ));
+    }
+    let files = gh.pull_files(pull.number)?;
+    // An unreadable or truncated tree is not proof of a bootstrap: fail closed. The bootstrap is
+    // the PR that adds `.bosun/` to a base that has none.
     let tree = gh.tree(base).unwrap_or(None).filter(|t| !t.truncated);
-    if tree.is_some_and(|t| {
-        !t.entries
-            .iter()
-            .any(|e| e.path == ".bosun" || e.path.starts_with(".bosun/"))
-    }) {
+    let adds_bosun = files
+        .iter()
+        .any(|f| f.filename == ".bosun" || f.filename.starts_with(".bosun/"));
+    if adds_bosun
+        && tree.is_some_and(|t| {
+            !t.entries
+                .iter()
+                .any(|e| e.path == ".bosun" || e.path.starts_with(".bosun/"))
+        })
+    {
         return Ok("bootstrap");
     }
     let allow = crate::cli::risk_check::autonomous_allow(gh, base)?;
     let allow = autonomous_allow_globs(allow.as_deref());
     let extra = crate::cli::risk_check::oneoff_allow(gh, base)?;
     let ok = |f: &str| matches_globs(&allow, f) || matches_globs(&extra, f);
-    let files = gh.pull_files(pull.number)?;
     let lines: u64 = files.iter().map(|f| f.additions + f.deletions).sum();
     let inside = files
         .iter()
         .all(|f| ok(&f.filename) && f.previous_filename.as_deref().is_none_or(ok));
     if inside && lines <= ONE_OFF_MAX {
+        // The guards of a one-off task: no gated path (the default branch's risk rules, wildcards
+        // resolved against its files), and the session's lease touch when it has one.
+        let gated = crate::app::gated_from_default(gh)?;
+        let tree_files = crate::app::base_files(gh)?;
+        let paths: Vec<String> = files
+            .iter()
+            .flat_map(|f| [Some(f.filename.clone()), f.previous_filename.clone()])
+            .flatten()
+            .collect();
+        let hit = touch_gated_in(&paths, &gated, tree_files.as_deref()).map_err(|e| {
+            BosunError::conflict(e, "name the files the PR edits, without wildcards")
+        })?;
+        if hit {
+            return Err(BosunError::conflict(
+                format!(
+                    "`--single --ready` is not allowed for PR #{}: it reaches a gated path (a risk rule of {base})",
+                    pull.number
+                ),
+                "gated work needs a planned task with the owner's approval: plan it (`bosun plan import`), or drop the gated changes",
+            ));
+        }
+        super::pr::touch_check(app, pull.number, || Ok((files.clone(), None)))?;
         return Ok("one-off");
     }
     Err(BosunError::conflict(

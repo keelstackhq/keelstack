@@ -42,8 +42,12 @@ fn run_with(path: &str, moved: &str, marker: bool) -> (i32, Value) {
     put(&root, ".bosun/bosun.toml", "");
     put(&root, path, TWO_TESTS);
     if marker {
-        let top = path.split('/').next().unwrap();
-        put(&root, &format!("{top}/splice.toml"), "");
+        // The marker sits at the template folder's root: the dir holding `pieces/`.
+        let dir = match path.split_once("/pieces/") {
+            Some((dir, _)) => dir,
+            None => path.split('/').next().unwrap(),
+        };
+        put(&root, &format!("{dir}/splice.toml"), "");
     }
     git(&root, &["add", "."]);
     git(&root, &["commit", "-q", "-m", "base"]);
@@ -78,6 +82,33 @@ fn a_channel_piece_test_moved_to_jinja_is_no_finding() {
         "channel/pieces/rust/files/tests/t.rs.jinja",
     );
     assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+fn a_monorepo_template_test_moved_to_jinja_is_no_finding() {
+    let (code, v) = run(
+        "hull/template-rust/pieces/core/files/tests/t.rs",
+        "hull/template-rust/pieces/core/files/tests/t.rs.jinja",
+    );
+    assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+fn a_monorepo_channel_piece_test_moved_to_jinja_is_no_finding() {
+    let (code, v) = run(
+        "bosun/channel/pieces/rust/files/tests/t.rs",
+        "bosun/channel/pieces/rust/files/tests/t.rs.jinja",
+    );
+    assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+fn a_monorepo_marker_added_by_the_pr_does_not_exempt() {
+    let (code, v) = marker_added_by_the_pr(
+        "hull/template/pieces/core/files/tests/t.rs",
+        "hull/template/splice.toml",
+    );
+    assert_eq!(code, 1, "{v}");
 }
 
 #[test]

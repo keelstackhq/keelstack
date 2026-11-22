@@ -126,7 +126,10 @@ fn unadopted_remote(root: &Path, url: Option<String>) -> bool {
         .collect();
     args.extend([&*url, sha]);
     let fetched = git_remote(&tmp, &args).is_some();
-    let tree = git_remote(&tmp, &["ls-tree", "--name-only", sha, ".bosun/version"]);
+    let tree = git_remote(
+        &tmp,
+        &["ls-tree", "--name-only", sha, "--", ".bosun/version"],
+    );
     let _ = std::fs::remove_dir_all(&tmp);
     fetched && tree.is_some_and(|t| t.is_empty())
 }

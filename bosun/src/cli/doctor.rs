@@ -1689,15 +1689,12 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool, all: bool) -> CmdR
     }
     if offline {
         // Nothing on GitHub was checked, so this can never be a full pass.
-        let mut names: Vec<String> = items
+        // `--remote` without a token returned above, so only the skipped steps are named here.
+        let names: Vec<String> = items
             .iter()
             .filter(|i| i["status"] == "skipped" && i["fix"] == NO_TOKEN_FIX)
             .filter_map(|i| i["name"].as_str().map(String::from))
             .collect();
-        if asked_remote {
-            names.push("hoist check".into());
-            names.push("workflow environments".into());
-        }
         // One line for all of them, not one item each.
         items.retain(|i| !(i["status"] == "skipped" && i["fix"] == NO_TOKEN_FIX));
         items.push(json!({

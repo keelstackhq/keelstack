@@ -131,13 +131,29 @@ fn lenient_prereqs(
     text: &str,
     p: &Plan,
     fix: bool,
+    dry_run: bool,
 ) -> Result<(pq::Lenient, Option<String>)> {
     let len = pq::parse_lenient(text, p).map_err(|e| plan_errors(file, &e))?;
-    if !fix || len.fixed.is_empty() {
+    // `--dry-run` writes nothing: `data.prereqs_fixed` shows what `--fix` would change.
+    if !fix || dry_run || len.fixed.is_empty() {
         return Ok((len, None));
     }
-    let path = dir.map_or_else(|| file.into(), |d| d.join(file));
-    std::fs::write(&path, &len.text).map_err(|e| {
+    let path: std::path::PathBuf = dir.map_or_else(|| file.into(), |d| d.join(file));
+    // Atomic: a temp file beside the plan, then a rename over it.
+    let tmp = path.with_file_name(format!(
+        ".{}.bosun-fix.{}",
+        path.file_name()
+            .map_or_else(|| "plan".to_string(), |n| n.to_string_lossy().into_owned()),
+        std::process::id()
+    ));
+    let written = std::fs::write(&tmp, &len.text).and_then(|()| {
+        if let Ok(meta) = std::fs::metadata(&path) {
+            let _ = std::fs::set_permissions(&tmp, meta.permissions());
+        }
+        std::fs::rename(&tmp, &path)
+    });
+    written.map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
         BosunError::error(
             format!("cannot write {file}: {e}"),
             "make the plan file writable, or fix its prerequisite bullets by hand",
@@ -157,7 +173,7 @@ fn add_fixed(data: &mut Value, len: &pq::Lenient, fixed_file: &Option<String>) {
 fn check(dir: Option<&Path>, a: &PlanCheckArgs) -> CmdResult {
     let (text, p) = read_plan_text(dir, &a.file)?;
     let lenient = if a.fix {
-        Some(lenient_prereqs(dir, &a.file, &text, &p, true)?)
+        Some(lenient_prereqs(dir, &a.file, &text, &p, true, false)?)
     } else {
         None
     };
@@ -677,8 +693,9 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
     let (file_text, p) = read_plan_text(dir, &a.file)?;
     // Always parsed: a misspelt heading is an error here, never "no section". The bullets are
     // read leniently; the file is rewritten only with `--fix`.
-    let (len, fixed_file) = lenient_prereqs(dir, &a.file, &file_text, &p, a.fix)?;
-    let text = if fixed_file.is_some() {
+    let (len, fixed_file) = lenient_prereqs(dir, &a.file, &file_text, &p, a.fix, a.dry_run)?;
+    // A dry run with `--fix` plans from the fixed text without writing it.
+    let text = if fixed_file.is_some() || (a.fix && a.dry_run) {
         len.text.clone()
     } else {
         file_text

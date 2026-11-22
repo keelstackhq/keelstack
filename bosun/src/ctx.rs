@@ -104,8 +104,6 @@ pub fn parse_remote_url(url: &str) -> Option<RepoId> {
     parse_repo(path.strip_suffix(".git").unwrap_or(path))
 }
 
-/// Session id (D31): `BOSUN_SESSION`, else the remote session id with `cse_` -> `session_`,
-/// else `local-<host>`.
 /// Whether `CLAUDE_CODE_CHILD_SESSION` marks this process as a child: set and not empty, outside
 /// a Claude Code cloud session (where every session has it, see [`Origin::resolve_env`]).
 pub fn child_flag() -> bool {
@@ -113,6 +111,8 @@ pub fn child_flag() -> bool {
     !cloud && std::env::var("CLAUDE_CODE_CHILD_SESSION").is_ok_and(|v| !v.trim().is_empty())
 }
 
+/// Session id (D31): `BOSUN_SESSION`, else the remote session id with `cse_` -> `session_`,
+/// else `local-<host>`. Blank values count as unset.
 pub fn session_id(bosun_session: Option<&str>, remote_session: Option<&str>, host: &str) -> String {
     let set = |v: Option<&str>| v.map(str::trim).filter(|s| !s.is_empty()).map(String::from);
     if let Some(s) = set(bosun_session) {

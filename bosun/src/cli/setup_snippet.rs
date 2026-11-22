@@ -91,6 +91,26 @@ fn merge_hooks(settings: &mut Value) -> Result<(Vec<&'static str>, Vec<&'static 
         });
         if let Some((g, at)) = found {
             let same = g.get("matcher").and_then(Value::as_str).unwrap_or("") == matcher;
+            let shared = g["hooks"].as_array().is_some_and(|hs| hs.len() > 1);
+            if !same && shared {
+                // The group is another command's too: its matcher is not ours to rewrite. Move
+                // bosun's hook into a group of its own.
+                let mut h = g["hooks"].as_array_mut().expect("array").remove(at);
+                set_key(
+                    &mut h,
+                    "timeout",
+                    false,
+                    (timeout > 0).then(|| json!(timeout)),
+                );
+                let mut ng = Map::new();
+                if !matcher.is_empty() {
+                    ng.insert("matcher".into(), json!(matcher));
+                }
+                ng.insert("hooks".into(), json!([h]));
+                groups.push(Value::Object(ng));
+                updated.push(event);
+                continue;
+            }
             let mut changed = set_key(
                 g,
                 "matcher",

@@ -559,7 +559,8 @@ pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
 }
 
 fn is_bosun_dir_path(w: &str) -> bool {
-    let n = lexical(w.trim_end_matches('/'));
+    // Case-insensitive: a case-insensitive filesystem treats `.BOSUN` as the same directory.
+    let n = lexical(w.trim_end_matches('/')).to_lowercase();
     n == ".bosun" || n.starts_with(".bosun/") || n.ends_with("/.bosun") || n.contains("/.bosun/")
 }
 
@@ -576,8 +577,29 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
             _ => continue,
         };
         // `mv a b`: the last path is the destination, the rest are sources.
-        let paths: Vec<_> = args.iter().filter(|a| !a.starts_with('-')).collect();
-        let n = paths.len() - usize::from(kind == "mv" && paths.len() > 1);
+        // `mv -t DIR a b` / `--target-directory DIR`: the destination is the option's value, every
+        // other path is a source.
+        let mut by_option = false;
+        let mut paths: Vec<&&str> = Vec::new();
+        let mut skip_value = false;
+        for a in &args {
+            if std::mem::take(&mut skip_value) {
+                continue;
+            }
+            if kind == "mv" && (*a == "-t" || *a == "--target-directory") {
+                by_option = true;
+                skip_value = true;
+            } else if kind == "mv" && a.starts_with("--target-directory=") {
+                by_option = true;
+            } else if !a.starts_with('-') {
+                paths.push(a);
+            }
+        }
+        let n = if by_option {
+            paths.len()
+        } else {
+            paths.len() - usize::from(kind == "mv" && paths.len() > 1)
+        };
         if paths[..n].iter().any(|p| is_bosun_dir_path(p)) {
             return true;
         }
@@ -7634,10 +7656,17 @@ mod tests {
             "bash -c 'rm .bosun/version'",
             "unlink .bosun/version",
             "git rm --cached .bosun/version",
+            "mv -t /tmp/x .bosun/version",
+            "mv --target-directory=/tmp/x .bosun",
+            "mv --target-directory /tmp/x .bosun/version",
+            "rm -rf .BOSUN",
+            "rm .Bosun/Version",
+            "mv .BOSUN /tmp/x",
         ] {
             assert!(hit(c), "{c}");
         }
         for c in [
+            "mv -t .bosun/ x",
             "mv x .bosun/version",
             "cp .bosun/version /tmp",
             "cat .bosun/version",

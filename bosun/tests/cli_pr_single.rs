@@ -245,11 +245,42 @@ fn single_ready(fake: &FakeGithub, dir: &Path) -> (i32, Value) {
 }
 
 #[test]
-fn ready_reports_bootstrap_when_the_base_has_no_bosun_dir() {
+fn ready_reports_bootstrap_when_the_pr_adds_bosun_to_a_base_without_it() {
+    let (fake, dir) = setup();
+    let (_, first) = pr(&fake, dir.path(), &["--single"]);
+    let n = first["data"]["pr"]["number"].as_u64().unwrap();
+    stamps::ready(&fake, dir.path(), n);
+    fake.pull_file(n, ".bosun/bosun.toml", "added", 3, 0, None);
+    let (code, v) = pr(&fake, dir.path(), &["--single", "--ready"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["single_reason"], "bootstrap");
+}
+
+#[test]
+fn a_base_without_bosun_is_not_a_bootstrap_unless_the_pr_adds_it() {
     let (fake, dir) = setup();
     let (code, v) = single_ready(&fake, dir.path());
     assert_eq!(code, 0, "{v}");
-    assert_eq!(v["data"]["single_reason"], "bootstrap");
+    assert_eq!(v["data"]["single_reason"], "one-off");
+}
+
+#[test]
+fn ready_refuses_a_gated_path_even_inside_the_allow_set() {
+    let (fake, dir) = setup();
+    with_bosun_base(&fake);
+    let (_, first) = pr(&fake, dir.path(), &["--single"]);
+    let n = first["data"]["pr"]["number"].as_u64().unwrap();
+    stamps::ready(&fake, dir.path(), n);
+    fake.content(
+        ".bosun/risk.toml",
+        "main",
+        "[[rule]]\nid = \"R-docs\"\nwhy = \"d\"\napproval = \"owner\"\npaths = [\"docs/secret/**\"]\n",
+    );
+    fake.pull_file(n, "docs/secret/a.md", "modified", 1, 0, None);
+    let (code, v) = pr(&fake, dir.path(), &["--single", "--ready"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains("gated"));
+    assert!(fake.auto_merge_enabled(n).is_none());
 }
 
 #[test]

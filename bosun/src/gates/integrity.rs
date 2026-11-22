@@ -127,7 +127,14 @@ fn kind(path: &str) -> Kind {
 
 /// Render sources of template and channel repos, never tests of the repo itself (only when the
 /// top dir has a `splice.toml` or `template.toml`).
-const TEMPLATE_SOURCES: [&str; 2] = ["template*/pieces/*/files/**", "channel/pieces/*/files/**"];
+/// The marker sits at the root of the folder that holds `pieces/` (the top dir of a template repo,
+/// `hull/template*` or `bosun/channel` in the monorepo).
+const TEMPLATE_SOURCES: [&str; 4] = [
+    "template*/pieces/*/files/**",
+    "channel/pieces/*/files/**",
+    "hull/template*/pieces/*/files/**",
+    "bosun/channel/pieces/*/files/**",
+];
 
 impl Kit {
     fn is_test_file(&self, path: &str, text: &str) -> bool {
@@ -342,7 +349,7 @@ pub fn run(req: &Request) -> CmdResult {
     // marker (a git error counts as none: fail closed).
     let is_source = |p: &str| {
         sources.iter().any(|g| g.matches(p))
-            && p.split_once('/').is_some_and(|(top, _)| {
+            && p.split_once("/pieces/").is_some_and(|(top, _)| {
                 ["splice.toml", "template.toml"].iter().any(|m| {
                     marker_present(super::git_has(req.root, &merge_base, &format!("{top}/{m}")))
                 })

@@ -251,7 +251,7 @@ const COMPARE_CAP: usize = 300;
 /// comparison of the default branch with the pushed branch when no PR exists (with the number
 /// of files the PR has, when GitHub says); it runs only once a lease is found. Returns the
 /// `touch_check` value; exit 3 when files are outside.
-fn touch_check(
+pub(crate) fn touch_check(
     app: &App,
     n: u64,
     fetch: impl FnOnce() -> Result<(Vec<PrFile>, Option<u64>), BosunError>,

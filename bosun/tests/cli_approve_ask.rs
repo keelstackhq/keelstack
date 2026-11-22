@@ -112,3 +112,14 @@ fn list_is_stable_and_never_prints_the_owner_token() {
     let b = list(&fake, None);
     assert_eq!(a["data"]["owner_step"], b["data"]["owner_step"]);
 }
+
+#[test]
+fn question_ids_stable_per_now() {
+    let fake = FakeGithub::start();
+    ready(&fake, 12, "gov change", &head("abc1234"));
+    let a = list(&fake, None);
+    let b = list(&fake, None);
+    assert_eq!(a["next"], b["next"]);
+    assert_eq!(a["data"]["ready"], b["data"]["ready"]);
+    assert!(!a["data"]["ready"].as_array().unwrap().is_empty(), "{a}");
+}

@@ -84,12 +84,30 @@ fn import_reads_sloppy_bullets_and_reports_what_it_fixed() {
 }
 
 #[test]
-fn fix_rewrites_only_the_prerequisite_section() {
+fn dry_run_with_fix_writes_nothing() {
     let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
     write(tmp.path());
     let (code, v) = with_token(&fake, tmp.path(), &["--dry-run", "--fix"]);
     assert_eq!(code, 0, "{v}");
-    assert_eq!(v["data"]["fixed_file"], "plan.md");
+    assert!(v["data"].get("fixed_file").is_none(), "{v}");
+    assert_eq!(v["data"]["prereqs_fixed"].as_array().unwrap().len(), 2);
+    let now = std::fs::read_to_string(tmp.path().join("plan.md")).unwrap();
+    assert_eq!(now, plan_text());
+}
+
+#[test]
+fn fix_rewrites_only_the_prerequisite_section() {
+    let tmp = tempfile::tempdir().unwrap();
+    write(tmp.path());
+    let run = || {
+        bosun()
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["plan", "check", "plan.md", "--fix"])
+            .output()
+            .unwrap()
+    };
+    assert_eq!(run().status.code(), Some(0));
     let now = std::fs::read_to_string(tmp.path().join("plan.md")).unwrap();
     let want = plan_text()
         .replace("- H: token", "- H1: token")
@@ -97,8 +115,7 @@ fn fix_rewrites_only_the_prerequisite_section() {
     assert_eq!(now, want);
     assert!(now.ends_with("## Notes\n\n- H: x\n"));
     // A second run has nothing left to fix.
-    let (code, v) = with_token(&fake, tmp.path(), &["--dry-run", "--fix"]);
-    assert_eq!(code, 0, "{v}");
+    let v = common::one_object(&run().stdout);
     assert_eq!(v["data"]["prereqs_fixed"], json!([]));
     assert!(v["data"].get("fixed_file").is_none());
 }
@@ -143,14 +160,14 @@ fn without_a_token_dry_run_lists_every_issue_offline() {
 }
 
 #[test]
-fn without_a_token_fix_works_offline() {
+fn without_a_token_dry_run_fix_works_offline_and_writes_nothing() {
     let tmp = tempfile::tempdir().unwrap();
     write(tmp.path());
     let (code, v) = offline(tmp.path(), &["--dry-run", "--fix"]);
     assert_eq!(code, 0, "{v}");
-    assert_eq!(v["data"]["fixed_file"], "plan.md");
+    assert!(v["data"].get("fixed_file").is_none(), "{v}");
     let now = std::fs::read_to_string(tmp.path().join("plan.md")).unwrap();
-    assert!(now.contains("- H1: token\n"));
+    assert_eq!(now, plan_text());
 }
 
 #[test]

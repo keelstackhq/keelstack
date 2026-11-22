@@ -222,6 +222,18 @@ fn the_default_branch_is_never_reused() {
 }
 
 #[test]
+fn a_cloud_branch_that_may_be_the_default_is_refused_when_the_default_is_unknown() {
+    // No origin/HEAD and no main or master: the current branch may be the default branch.
+    let e = Env::new();
+    git(e.repo.path(), &["branch", "-m", "trunk"]);
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(&fake, true, false, &["--owner", "octocat"]);
+    assert_eq!(code, 3, "{v}");
+    assert_eq!(git_out(e.repo.path(), &["log", "-1", "--format=%s"]), "x");
+    assert!(!e.origin_has("trunk"));
+}
+
+#[test]
 fn without_a_token_the_pr_is_an_mcp_call_in_next() {
     let e = Env::new();
     git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
