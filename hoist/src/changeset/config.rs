@@ -72,6 +72,19 @@ pub fn read_config(root: &Path) -> Result<Option<CsConfig>, HoistError> {
         file: FILE.into(),
         message,
     };
+    for (rel, what) in [(".changeset", "directory"), (FILE, "file")] {
+        match std::fs::symlink_metadata(root.join(rel)) {
+            Ok(m) if m.file_type().is_symlink() => {
+                return Err(HoistError::Config {
+                    file: rel.into(),
+                    message: format!("is a symlink; {rel} must be a regular {what}"),
+                });
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(err(format!("cannot read: {e}"))),
+        }
+    }
     let text = match std::fs::read_to_string(root.join(FILE)) {
         Ok(t) => t,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),

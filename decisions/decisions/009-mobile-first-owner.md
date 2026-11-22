@@ -21,8 +21,8 @@ settled that every human step is known and done before agents start the long run
   first, so the owner can finish them in one sitting and do the rest from a phone.
 - Agents verify each step themselves; they do not take "done" on trust where a check exists.
 - After the checklist is done, agents run to the end of the request without waiting on a human.
-  The only allowed waits are batched chat approvals (the owner answers once, e.g. "approve A B C")
-  and taps on release-environment approvals (`release`, D-008).
+  The only allowed waits are owner approvals on GitHub (D-025 retired the batched chat approvals,
+  "approve A B C") and taps on release-environment approvals (`release`, D-008).
 - An agent that meets a human-only step the checklist did not declare adds it to the checklist as
   a prerequisite, tells the owner once, and works on everything that does not depend on it.
 - bosun implements this as `bosun prereqs` (in progress); until it ships, agents keep the checklist

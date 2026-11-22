@@ -160,3 +160,19 @@ fn circleci_builds_a_tool_whose_hull_pin_overrides_the_checksummed_version() {
     assert!(t.contains(r#"cargo "+$fb" install --locked cargo-deny --version "$dv""#));
     assert!(t.contains(r#"[ -z "$v" ] || [[ "$v" =~ ^[0-9a-f]{64}$ ]]"#));
 }
+
+#[test]
+fn setup_scripts_fail_on_a_hull_pin_mismatch_instead_of_dropping_checksums() {
+    for rel in [READERS[2], READERS[3]] {
+        let t = read(rel);
+        assert!(
+            !t.contains(r#"NEXTEST_LINUX_X64_SHA256="""#)
+                && !t.contains(r#"CARGO_DENY_BIN_LINUX_X64_SHA256="""#),
+            "{rel} drops a pinned checksum on a hull pin mismatch"
+        );
+        assert!(
+            t.contains("differs from .bosun/pins.toml") && t.contains("exit 1"),
+            "{rel} does not fail on a hull pin mismatch"
+        );
+    }
+}

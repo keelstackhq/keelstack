@@ -191,6 +191,32 @@ fn read_dir_refuses_symlinks() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_changeset_dir_or_config_is_refused() {
+    use std::os::unix::fs::symlink;
+    let t = repo(&[
+        ("elsewhere/one.md", "---\na: patch\n---\n\nx\n"),
+        ("elsewhere/config.json", INIT),
+    ]);
+    symlink(t.path().join("elsewhere"), t.path().join(".changeset")).expect("symlink");
+    let e = config_err(read_dir(t.path()));
+    assert!(e.contains(".changeset"), "{e}");
+    assert!(e.contains("is a symlink"), "{e}");
+    let e = config_err(read_config(t.path()));
+    assert!(e.contains("is a symlink"), "{e}");
+    fs::remove_file(t.path().join(".changeset")).expect("rm");
+    fs::create_dir_all(t.path().join(".changeset")).expect("mkdir");
+    symlink(
+        t.path().join("elsewhere/config.json"),
+        t.path().join(".changeset/config.json"),
+    )
+    .expect("symlink");
+    let e = config_err(read_config(t.path()));
+    assert!(e.contains(".changeset/config.json"), "{e}");
+    assert!(e.contains("is a symlink"), "{e}");
+}
+
 #[test]
 fn legacy_changes_json_dir_is_an_error() {
     let t = repo(&[(".changeset/old-one/changes.json", "{}")]);

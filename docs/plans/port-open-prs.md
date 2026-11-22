@@ -118,6 +118,16 @@ Dependency order and parallel sessions (overlaps measured on the own-delta file 
 5. bosun#472 budget history: copy the old repo's November report into
    `reports/budget/old-bosun/`, or let it go with the archive?
 
+### Owner answers (orchestrator chat, 2026-11-21)
+
+- Q1: yes, retire the chat yes everywhere (D-025). bosun#642, #680, #673 and #644 are OBSOLETE;
+  WP10 is dropped.
+- Q2: yes, keep changesets as an opt-in feature for consumer repos. WP9 runs.
+- Q3: "yes, switch the root .bosun to quorum inside the big PR". The root `.bosun/bosun.toml`
+  sets `[approvals] policy = "quorum"` in the port PR.
+- Q4: transfer only the plan and bug issues (about 43); close the generated ones.
+- Q5: open.
+
 ## 4. Archive plan for the old repos
 
 Do this after the port PR merges and after the first monorepo release (> 0.21.0) exists.

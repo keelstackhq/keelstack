@@ -2,7 +2,8 @@
 # Per-repo setup script of bosun's Claude Code cloud environment (spec D23). Not pasted by hand:
 # the bosun bootstrap (`bosun setup-snippet`, pasted once into the environment) runs it as root
 # before a session, from inside each checkout, possibly on a warm container. Pins move only by
-# reviewed PRs that edit this file (R-ci reviews it).
+# reviewed PRs: the npm and plugin pins in this file, the cargo tool pins (with their checksums)
+# in .bosun/pins.toml (R-ci reviews both).
 set -euo pipefail
 # hull's proxy CA helper, when the repo has it (before any download below).
 if [ -f scripts/proxy-ca.sh ]; then bash scripts/proxy-ca.sh install || echo "setup-script: scripts/proxy-ca.sh install failed; continuing" >&2; fi
@@ -213,7 +214,7 @@ cargo_tool() {
   dest="${CARGO_HOME:-${HOME:-/root}/.cargo}/bin"
   rec="$SETUP_STATE_DIR/$crate@$ver.bin.sha256"
   if [ -z "$sum" ]; then
-    # No pinned checksum (the version comes from hull's pins.toml): no prebuilt, build that version.
+    # No pinned checksum for this machine in .bosun/pins.toml: no prebuilt, build that version.
     if command -v cargo >/dev/null 2>&1; then
       cargo install --locked "$crate" --version "$ver" || echo "setup-script: cargo install of $crate failed; continuing without it" >&2
     else
@@ -241,16 +242,19 @@ cargo_tool() {
     echo "setup-script: no cargo found; skipping $crate" >&2
   fi
 }
-# A repo with hull's pins.toml and scripts/pins.mjs takes its nextest and cargo-deny versions from
-# there; a version other than the .bosun/pins.toml one has no checksum here and is built with cargo.
+# A repo with hull's pins.toml and scripts/pins.mjs must pin the same nextest and cargo-deny versions
+# as .bosun/pins.toml: a different version has no checksum here, so the script fails (it never
+# drops a pinned checksum). Align the two pins files in a reviewed PR.
 if [ -f pins.toml ] && [ -f scripts/pins.mjs ] && command -v node >/dev/null 2>&1 &&
   hull_pins="$(node scripts/pins.mjs --shell 2>/dev/null | grep -E '^PIN_[A-Z_]+=[0-9A-Za-z._-]*$')"; then
   eval "$hull_pins"
   if [ -n "${PIN_NEXTEST:-}" ] && [ "$PIN_NEXTEST" != "$NEXTEST_VERSION" ]; then
-    NEXTEST_VERSION="$PIN_NEXTEST" NEXTEST_LINUX_X64_SHA256="" NEXTEST_LINUX_ARM64_SHA256=""
+    echo "setup-script: hull's pins.toml pins nextest $PIN_NEXTEST, which differs from .bosun/pins.toml ($NEXTEST_VERSION); align the two pins files" >&2
+    exit 1
   fi
   if [ -n "${PIN_CARGO_DENY:-}" ] && [ "$PIN_CARGO_DENY" != "$CARGO_DENY_BIN_VERSION" ]; then
-    CARGO_DENY_BIN_VERSION="$PIN_CARGO_DENY" CARGO_DENY_BIN_LINUX_X64_SHA256="" CARGO_DENY_BIN_LINUX_ARM64_SHA256=""
+    echo "setup-script: hull's pins.toml pins cargo-deny $PIN_CARGO_DENY, which differs from .bosun/pins.toml ($CARGO_DENY_BIN_VERSION); align the two pins files" >&2
+    exit 1
   fi
   :
 fi

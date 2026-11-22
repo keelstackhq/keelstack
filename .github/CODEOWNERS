@@ -42,7 +42,9 @@ clippy.toml              @urbanisierung
 .clippy.toml             @urbanisierung
 rustfmt.toml             @urbanisierung
 .rustfmt.toml            @urbanisierung
-# R-ci: the tool pins (hull's root pins.toml, re-rooted under bosun/; .bosun/pins.toml is under /.bosun/).
+# R-ci: the tool pins. The rule `pins.toml` (hull's root pins file) at the root and re-rooted under
+# bosun/ (no such file today; governance_owners.rs requires the line); `.bosun/pins.toml` is covered
+# by /.bosun/ and /bosun/.bosun/.
 /pins.toml               @urbanisierung
 /bosun/pins.toml         @urbanisierung
 build.rs                 @urbanisierung

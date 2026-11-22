@@ -141,6 +141,17 @@ pub fn render(c: &Changeset) -> String {
 pub fn read_dir(root: &Path) -> Result<Vec<Changeset>, HoistError> {
     let dir = root.join(".changeset");
     let err = |file: String, message: String| HoistError::Config { file, message };
+    match std::fs::symlink_metadata(&dir) {
+        Ok(m) if m.file_type().is_symlink() => {
+            return Err(err(
+                ".changeset".into(),
+                "is a symlink; .changeset must be a regular directory".into(),
+            ));
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(err(".changeset".into(), format!("cannot read: {e}"))),
+    }
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
