@@ -25,6 +25,7 @@ rule and the allowed alternative. Use the patterns below; they pass.
 | A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                  |
 | Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                        |
 | Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`) |
+| Open a PR                   | `gh pr create --title t --body-file f`, or (cloud: `gh api` only) `gh api -X POST repos/<o>/<r>/pulls -f title=t -f head=<branch> -f base=main -f body="$(cat f)"` |
 
 A script does not hide a command: the guard reads a shell script before it runs (any shell by
 name: `bash`, `sh`, `rbash`, `mksh`, `busybox sh`, ...; also `bash < f`, `< f bash`, scripts it
@@ -75,13 +76,15 @@ with the full path instead, so the guard sees the target.
 - No edits of `.claude/hooks/`, `.claude/settings*.json`, release workflows, `.bosun/`,
   `.git/hooks/`, `.git/config`,
   `pins.toml` (release workflows install its versions), `.splice/lock.toml`; template-owned files ask first (change them with `splice update`).
-- No `gh api` writes to repo settings (rulesets, environments, secrets): those are owner steps.
+- No `gh api` writes but opening a PR (`POST repos/<o>/<r>/pulls`) and starting or re-running a
+  workflow: no merge, auto-merge, review, tag, release or repo settings (owner steps).
 - A target the guard cannot read (`cd "$D"`, `eval`) is refused when it could hide one of the
   above; a pipe into `sh` is always refused: spell the command out.
 - A push, publish, merge, tag, release or secrets command with a word the shell changes when it
   runs is refused: `$(...)`, backticks, `${...}`, `$'...'`, `$"..."`, a brace expansion
-  (`HEAD:{main,x}`) or a line continuation inside a word. Write the word plainly (a PR body from
-  a file: `gh pr create --body-file f`). `gh workflow run <id>` is refused: name the workflow file.
+  (`HEAD:{main,x}`) or a line continuation inside a word. Write the word plainly. Only request
+  data may change: a `gh api -f key="$(cat f)"` value or a `gh pr|issue create|edit|comment
+  --body`/`--title` value (the `$(...)` itself is still judged). `gh workflow run <id>` is refused: name the workflow file.
   A `$(...)` runs after the `cd` and `PATH=` before it (`cd d && x=$(./s.sh)` reads `d/s.sh`).
 
 ## Gaps that stay open
@@ -101,6 +104,9 @@ A rail, not a sandbox. These stay open:
 - Wrappers the guard does not know, given a command as separate words (`foo git push ...` is
   refused only when its text names push, publish or release next to git, gh, npm, ...).
 - A `cd` to a variable inside a script, and a dir from a variable in a flag value (`tar -C "$D"`).
+- `find <dir> -delete` (or `-exec <writer>`) is refused when `<dir>` is guarded, holds a guarded
+  root path (`.`, `.claude`, `.github`, `.git`) or holds the repo; a guarded dir nested deeper
+  (`find apps -delete` over `apps/x/.claude/`) is not found.
 - Edits of guarded files from an interpreter (`python -c "open('.claude/...','w')"`).
 - A file written in an earlier Bash call is read when a later call runs it, as it is at that
   moment: the guard judges each call alone and reads every script that call runs. A binary

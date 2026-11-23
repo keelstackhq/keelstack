@@ -190,3 +190,78 @@ fn a_one_off_may_touch_handoff_notes_but_not_docs_agents() {
     assert_eq!(code, 3, "{v}");
     assert!(!v["error"]["fix"].as_str().unwrap().is_empty());
 }
+
+#[test]
+fn a_refused_one_off_names_the_config_file_and_key_that_widen_it() {
+    let fake = FakeGithub::start();
+    let dir = repo("claude/quick-fix");
+    let (code, v) = one_off(&fake, dir.path(), &["apps/site/**"]);
+    assert_eq!(code, 3, "{v}");
+    let fix = v["error"]["fix"].as_str().unwrap();
+    for want in [
+        "`apps/site/**`",
+        "[approvals] oneoff_allow",
+        ".bosun/bosun.toml",
+    ] {
+        assert!(fix.contains(want), "{want} missing: {fix}");
+    }
+    // With the glob in `oneoff_allow` it passes.
+    let fake = FakeGithub::start();
+    fake.content(
+        ".bosun/bosun.toml",
+        "main",
+        "project = \"widget\"\n\n[approvals]\noneoff_allow = [\"apps/site/**\"]\n",
+    );
+    let (code, v) = one_off(&fake, dir.path(), &["apps/site/**"]);
+    assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+fn workspace_dirs_of_the_base_join_the_default_one_off_allow_set() {
+    let files = [
+        ("apps/site/index.html", "100644", "blob", "a"),
+        ("crates/core/src/lib.rs", "100644", "blob", "b"),
+        ("packages/ui/src/x.ts", "100644", "blob", "c"),
+    ];
+    for touch in ["apps/site/**", "crates/core/src/lib.rs", "packages/ui/**"] {
+        let fake = FakeGithub::start();
+        fake.git_tree("main", &files, false);
+        let dir = repo("claude/quick-fix");
+        let (code, v) = one_off(&fake, dir.path(), &[touch]);
+        assert_eq!(code, 0, "{touch}: {v}");
+    }
+    // Not a workspace dir of the base: refused.
+    let fake = FakeGithub::start();
+    let dir = repo("claude/quick-fix");
+    let (code, _) = one_off(&fake, dir.path(), &["apps/site/**"]);
+    assert_eq!(code, 3);
+    // A gated file inside a workspace dir stays refused (risk rules still apply).
+    let fake = FakeGithub::start();
+    fake.git_tree(
+        "main",
+        &[("apps/site/package.json", "100644", "blob", "d")],
+        false,
+    );
+    let (code, v) = one_off(&fake, dir.path(), &["apps/site/package.json"]);
+    assert_eq!(code, 3, "{v}");
+    // So do the owner's files a wildcard reaches inside one (the autonomous deny set).
+    for (file, touch) in [
+        ("crates/core/Cargo.toml", "crates/core/**"),
+        ("apps/site/AGENTS.md", "apps/**"),
+    ] {
+        let fake = FakeGithub::start();
+        fake.git_tree("main", &[(file, "100644", "blob", "e")], false);
+        let (code, v) = one_off(&fake, dir.path(), &[touch]);
+        assert_eq!(code, 3, "{touch}: {v}");
+    }
+    // The owner's `autonomous_allow` replaces the default set, layout included.
+    let fake = FakeGithub::start();
+    fake.git_tree("main", &files, false);
+    fake.content(
+        ".bosun/bosun.toml",
+        "main",
+        "project = \"widget\"\n\n[approvals]\nautonomous_allow = [\"src/**\"]\n",
+    );
+    let (code, _) = one_off(&fake, dir.path(), &["apps/site/**"]);
+    assert_eq!(code, 3);
+}

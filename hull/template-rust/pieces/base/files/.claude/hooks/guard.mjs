@@ -27,7 +27,10 @@
 // `gh api` with an explicit GET and graphql queries are reads; a POST whose endpoint (the first
 // positional) dispatches a literal workflow file that is not a release workflow (release, publish,
 // deploy; GUARD_RELEASE_WORKFLOWS overrides) or re-runs a run/job matches `gh workflow run` /
-// `gh run rerun`. `-F x=@file` and `--input` read a file into the request: refused (use `-f`).
+// `gh run rerun`; a POST to exactly `repos/<o>/<r>/pulls` opens a PR like `gh pr create`. A word
+// the shell changes at run time is refused in a risky command, except a `gh api -f key=` value or
+// a `gh pr|issue create|edit|comment --body/--title` value (request data; its `$(...)` is judged).
+// `-F x=@file` and `--input` read a file into the request: refused (use `-f`).
 // `cd` into a guarded dir is allowed when the rest of the chain only reads (docs/agents/guard.md
 // lists the safe patterns). A deny names its rule and the match.
 // A script missing at hook time, or run after an earlier command that may write files the guard
@@ -209,7 +212,7 @@ const REASON = {
   secret:
     "Secret files and values are off limits: read .env.example for the variable names, run what needs values as `hoist secrets exec -- <your command>` (never env, printenv or a shell), or ask the human.",
   ghApi:
-    "gh api writes are blocked: use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else ask the human (a PR merges by its owner).",
+    'gh api writes are blocked except opening a PR: `gh api -X POST repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f base=<default> -f body="$(cat <file>)"`; use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else (merge, review, tags, releases) ask the human (a PR merges by its owner).',
   ghField:
     "gh api / gh workflow run -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
   unscanned:
@@ -947,8 +950,11 @@ export function commands(cmd) {
     for (const sub of seg.subs ?? []) for (const inner of commands(sub)) out.push(inner);
     if (caseAt(seg) >= 0) caseDepth++;
     const stripped = stripPrefixes(seg, caseDepth > 0);
-    const t = stripped.flatMap(splitRedirect).map(unmark);
+    const marked = stripped.flatMap(splitRedirect);
+    const t = marked.map(unmark);
     wrap(t, stripped.wrapped);
+    // The words with their quoted `<`/`>` still marked: writesTarget reads a redirect only there.
+    Object.defineProperty(t, "marked", { value: marked, configurable: true });
     if (seg.some((x) => /^esac\b/.test(x)) && caseDepth > 0) caseDepth--;
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
@@ -977,7 +983,11 @@ export function commands(cmd) {
     const segText = seg.join(" ");
     // A risky command (push, publish, merge, release, secrets) with a word that changes at run
     // time (`publish$()`, `--force${x}`, `HEAD:{main,x}`) is not what the guard read.
-    if (seg.raws?.some(changesAtRunTime) && RISKY_RE.test(seg.map(bare).join(" ")))
+    const data = seg.raws ? ghDataWords(seg.raws, seg.map(bare)) : new Set();
+    if (
+      seg.raws?.some((r, i) => changesAtRunTime(r) && !data.has(i)) &&
+      RISKY_RE.test(seg.map(bare).join(" "))
+    )
       out.push(["@deny", "evasion", segText]);
     // `xargs git ...` takes its last arguments from stdin; `find -exec cmd ... ;` runs cmd.
     const viaXargs = base(seg[0].replace(/^[({]+/, "")) === "xargs";
@@ -1371,10 +1381,15 @@ function pushRule(args, projectDir) {
 
 /** True when the command `t` writes, moves or deletes its operand at index `i`. */
 function writesTarget(t, i) {
-  const tok = t[i];
+  // A quoted `<>` or `>` is data (`grep '<>' f`): the marked words keep it apart; a list without
+  // them (a copy) reads every `>` as a redirect (fail closed).
+  const m = t.marked?.length === t.length ? t.marked : t;
+  const tok = m[i];
   if (/^\d*>[>|]?/.test(tok) || /^&>>?/.test(tok) || /^\d*<>/.test(tok)) return true;
-  if (/^\d*>[>|]?$|^&>>?$|^\d*<>$/.test(t[i - 1] ?? "")) return true;
+  if (/^\d*>[>|]?$|^&>>?$|^\d*<>$/.test(m[i - 1] ?? "")) return true;
   const prog = base(t[0]);
+  // `find <root> -delete` or `-exec rm {} ;` writes under each root it starts from.
+  if (prog === "find") return findRoots(t).includes(i) && findWrites(t);
   if (
     ["tee", "mv", "rm", "truncate", "touch", "chmod", "chown", "shred", "unlink", "rmdir"].includes(
       prog,
@@ -1394,6 +1409,28 @@ function writesTarget(t, i) {
     (prog === "sed" || prog === "perl") &&
     t.some((x) => /^-[A-Za-z]*i/.test(x) || /^--in-place/.test(x))
   );
+}
+
+/** Indices of `find`'s start paths: the operands after its global options (-H -L -P -D -O) and
+ * before the first expression word (`-name`, `(`, `!`). */
+function findRoots(t) {
+  const out = [];
+  let i = 1;
+  while (i < t.length && /^-([HLP]|D|O\d*)$/.test(t[i])) i += t[i] === "-D" ? 2 : 1;
+  for (; i < t.length && !/^(-.|[(!])/.test(t[i]); i++) out.push(i);
+  return out;
+}
+
+/** `find` that deletes, or hands what it finds (`{}`) to a program that is not a read-only tool
+ * (wrappers stripped: `-exec timeout 5 cat {} ;` reads). The program itself is judged apart. */
+function findWrites(t) {
+  return t.some((x, e) => {
+    if (x === "-delete") return true;
+    if (!/^-(exec|execdir|ok|okdir)$/.test(x)) return false;
+    const end = t.findIndex((y, n) => n > e && (y === ";" || y === "+"));
+    const inner = stripPrefixes(t.slice(e + 1, end < 0 ? undefined : end));
+    return inner.some((y) => y.includes("{}")) && !READ_ONLY_PROGS.has(base(inner[0] ?? ""));
+  });
 }
 
 /** `gh api` that writes: a non-GET method, or with no method a body/field flag (these imply POST);
@@ -1525,6 +1562,63 @@ function workflowRun(args) {
     input === undefined &&
     !(m[2] && releaseWorkflow(m[2]))
   );
+}
+
+/** `gh api` that opens a PR: a POST to `repos/<owner>/<repo>/pulls` (exactly; no `..`, query or
+ * sub-path such as `/merge`), with no file read into the body. Like `gh pr create`. */
+const PR_CREATE_RE = /^\/?repos\/(?!\.\.?\/)[\w.-]+\/(?!\.\.?\/)[\w.-]+\/pulls\/?$/;
+function prCreate(args) {
+  const { method = "POST", endpoint, fileField, input } = ghApiParse(args);
+  return (
+    String(method).toUpperCase() === "POST" &&
+    PR_CREATE_RE.test(endpoint ?? "") &&
+    fileField === undefined &&
+    input === undefined
+  );
+}
+
+/** Indices of the words of `gh api` / `gh pr|issue create|edit|comment` (`raws`: the words as
+ * typed, `bareWords` without quotes) whose run-time value is only request data: a `-f` /
+ * `--raw-field` value with a literal key (`body="$(cat f)"`), or a `--body`/`-b`/`--title`/`-t`
+ * value. Never `-F` (an `@` from a substitution reads a file), the endpoint, a method or a flag. */
+function ghDataWords(raws, bareWords) {
+  const out = new Set();
+  const k = bareWords.findIndex((w) => base(w) === "gh");
+  if (k < 0) return out;
+  const [a0, a1] = [bareWords[k + 1], bareWords[k + 2]];
+  const literalKey = (r) => /^[\w[\]]+=/.test(r);
+  if (a0 === "api") {
+    // Walk like ghApiParse: a short group is bools, then at most one value flag.
+    for (let i = k + 2; i < raws.length; i++) {
+      const a = bareWords[i];
+      if (a === "--") break;
+      if (a.startsWith("--")) {
+        const eq = /^(--[\w-]+)=/.exec(a);
+        if (eq) {
+          if (eq[1] === "--raw-field" && literalKey(raws[i].slice(eq[0].length))) out.add(i);
+        } else if (GH_API_LONG_VALUE.has(a)) {
+          if (a === "--raw-field" && literalKey(raws[i + 1] ?? "")) out.add(i + 1);
+          i++;
+        }
+      } else if (a.startsWith("-") && a.length > 1) {
+        for (let c = 1; c < a.length; c++) {
+          if (GH_API_SHORT_BOOL.has(a[c])) continue;
+          if (GH_API_SHORT_VALUE.has(a[c]) && c === a.length - 1) {
+            if (a[c] === "f" && literalKey(raws[i + 1] ?? "")) out.add(i + 1);
+            i++;
+          }
+          break;
+        }
+      }
+    }
+    return out;
+  }
+  if (!["pr", "issue"].includes(a0) || !["create", "edit", "comment"].includes(a1)) return out;
+  for (let i = k + 3; i < raws.length; i++) {
+    if (/^(--body|-b|--title|-t)$/.test(bareWords[i])) out.add(++i);
+    else if (/^--(body|title)=/.test(bareWords[i]) && /^--(body|title)=/.test(raws[i])) out.add(i);
+  }
+  return out;
 }
 
 const ADMIN_API_RE =
@@ -1697,7 +1791,7 @@ function bashRule(
       if (api.fields.some((f) => SECRET_VAR_RE.test(f))) return "secret"; // a token sent as input
       if (ghApiWrites(args.slice(1))) {
         if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
-        if (!workflowRun(args.slice(1))) return "ghApi";
+        if (!workflowRun(args.slice(1)) && !prCreate(args.slice(1))) return "ghApi";
       } else if (api.input !== undefined) return "ghField";
     }
     if (a0 === "pr" && a1 === "merge") {
@@ -1841,7 +1935,35 @@ function bashRule(
     if (real && LOCK_RE.test(real)) return "lock";
     if (real && isProtected(real)) return "protected";
   }
+  if (prog === "find" && findWrites(t)) {
+    const roots = findRoots(t).map((i) => stripTok(t[i]));
+    for (const r of roots.length ? roots : ["."]) {
+      const real = realRel(r, projectDir, cwd);
+      if (real === undefined || holdsGuarded(real)) return "protected";
+    }
+  }
   return null;
+}
+
+/** Guarded files a directory may hold, to judge a recursive delete of the directory. */
+const GUARDED_SAMPLES = [
+  ".claude/hooks/x",
+  ".claude/settings.json",
+  ".github/workflows/release.yml",
+  ".bosun/x",
+  ".git/hooks/x",
+  ".git/config",
+  ".splice/lock.toml",
+  "pins.toml",
+  "scripts/release-pre.sh",
+];
+
+/** A repo-relative dir that is guarded, holds a guarded file, or holds the repo itself (`..`). */
+function holdsGuarded(rel) {
+  const r = rel.replace(/\/+$/, "").toLowerCase();
+  if (r === "" || /^\.\.(\/\.\.)*$/.test(r) || isProtected(r) || LOCK_RE.test(r)) return true;
+  if (r.startsWith("../")) return false; // outside the repo
+  return GUARDED_SAMPLES.some((g) => g.startsWith(`${r}/`)) || /(^|\/)\.(claude|bosun)$/.test(r);
 }
 
 const GUARDED_DIR_RE =
