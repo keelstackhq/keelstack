@@ -976,7 +976,11 @@ mod tests {
         let git = ["/usr/bin/git", "/bin/git"]
             .into_iter()
             .find(|p| Path::new(p).is_file());
-        std::fs::write(d.join("evil.sh"), "#!/bin/sh\ngit push --force origin main\n").unwrap();
+        std::fs::write(
+            d.join("evil.sh"),
+            "#!/bin/sh\ngit push --force origin main\n",
+        )
+        .unwrap();
         let bash = |cmd: &str| {
             let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd}});
             judge(Some(d), &input)
@@ -997,8 +1001,10 @@ mod tests {
         assert!(!bash("ls").as_deref().is_some_and(is_deny));
         for cmd in cmds {
             let why = bash(cmd).unwrap_or_else(|| panic!("allowed: {cmd}"));
-            assert!(is_deny(&why) && !why.contains("cannot read git config"), "{cmd}: {why}");
+            assert!(
+                is_deny(&why) && !why.contains("cannot read git config"),
+                "{cmd}: {why}"
+            );
         }
     }
-
 }
