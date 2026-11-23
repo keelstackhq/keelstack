@@ -94,8 +94,9 @@ jobs:
           COMMENT: ${{ github.event.comment.id }}
           BOSUN_RUN_ID: ${{ github.run_id }}
           BOSUN_RUN_ATTEMPT: ${{ github.run_attempt }}
+          LEGACY: ${{ steps.check.outputs.legacy }}
         run: |
-          if [ "${{ steps.check.outputs.legacy }}" = "true" ]; then
+          if [ "$LEGACY" = "true" ]; then
             bosun verdict apply "$COMMENT"
           else
             bosun verdict apply "$COMMENT" --require
