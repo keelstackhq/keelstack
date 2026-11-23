@@ -17,14 +17,14 @@ rule and the allowed alternative. Use the patterns below; they pass.
 
 ## Runs that pass
 
-| Need                        | Use                                                                                                                  |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Tests, globs, regex         | `[ -f x ] && ...`, `grep -E 'a[bc]{2,}' f`, `ls *.md`, `"$(git rev-parse HEAD)"`                                     |
-| A script                    | `bash scripts/x.sh` or `./scripts/x.sh`: the guard reads it like typed commands                                      |
-| Check script syntax         | `bash -n scripts/x.sh`, `for f in scripts/*.sh; do bash -n "$f"; done` (`-n` only parses)                            |
-| A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                  |
-| Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                        |
-| Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`) |
+| Need                        | Use                                                                                                                                                                |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Tests, globs, regex         | `[ -f x ] && ...`, `grep -E 'a[bc]{2,}' f`, `ls *.md`, `"$(git rev-parse HEAD)"`                                                                                   |
+| A script                    | `bash scripts/x.sh` or `./scripts/x.sh`: the guard reads it like typed commands                                                                                    |
+| Check script syntax         | `bash -n scripts/x.sh`, `for f in scripts/*.sh; do bash -n "$f"; done` (`-n` only parses)                                                                          |
+| A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                                                                |
+| Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                                                                      |
+| Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`)                                               |
 | Open a PR                   | `gh pr create --title t --body-file f`, or (cloud: `gh api` only) `gh api -X POST repos/<o>/<r>/pulls -f title=t -f head=<branch> -f base=main -f body="$(cat f)"` |
 
 A script does not hide a command: the guard reads a shell script before it runs (any shell by
