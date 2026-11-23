@@ -1191,7 +1191,11 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 54] = [
+pub const TRUST_ROOT: [&str; 55] = [
+    // Every file of `.bosun/` (limits, registry, pins, rules, ...): CI restores all of it from the
+    // base (`^\.bosun(/|$)`), so a PR's change to one is judged by the base's copy. Only the root
+    // `.bosun/version` is left to [`pin_change_trust_root`].
+    ".bosun/**",
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1384,7 +1388,8 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
     (files.iter())
         .filter(|(path, prev)| {
             (std::iter::once(path).chain(prev)).any(|p| {
-                p.split('/').any(|s| s == "..") || globs.iter().any(|g| matches_any_case(g, p))
+                p.split('/').any(|s| s == "..")
+                    || (*p != PIN_FILE && globs.iter().any(|g| matches_any_case(g, p)))
             })
         })
         .map(|(path, _)| path.to_string())
@@ -3257,6 +3262,44 @@ mod monorepo_tests {
         assert!(pin_changed(&[(".bosun/version", None)]));
         assert!(pin_changed(&[("x", Some(".bosun/version"))]));
         assert!(!pin_changed(&[("src/a.rs", None)]));
+    }
+
+    /// Every file of `.bosun/` is trust root at the repo root and under each code root (CI restores
+    /// all of it from the base); only the root pin file is [`pin_change_trust_root`]'s.
+    #[test]
+    fn every_bosun_file_is_trust_root_but_the_root_pin() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for f in [
+                ".bosun/limits.toml",
+                ".bosun/registry/a.json",
+                ".bosun/registry/deep/b.toml",
+                ".bosun/session-rules.toml",
+                ".bosun/anything-new",
+                ".Bosun/Limits.toml",
+            ] {
+                assert_eq!(trust_root_changed(&[(f, None)], &roots), [f], "{f}");
+            }
+            assert!(trust_root_changed(&[(".bosun/version", None)], &roots).is_empty());
+            // Only the exact name is the pin; any other case is trust root (and no pin change).
+            for f in [".bosun/VERSION", ".Bosun/version", ".bosun/Version"] {
+                assert_eq!(trust_root_changed(&[(f, None)], &roots), [f], "{f}");
+                assert!(!pin_changed(&[(f, None)]), "{f}");
+                assert_eq!(
+                    trust_root_changed(&[("a.txt", Some(f))], &roots),
+                    ["a.txt"],
+                    "{f}"
+                );
+            }
+        }
+        let mono = vec!["bosun".to_string()];
+        for f in ["bosun/.bosun/limits.toml", "bosun/.bosun/registry/x"] {
+            assert_eq!(trust_root_changed(&[(f, None)], &mono), [f], "{f}");
+        }
+        // A rename into the folder counts on the previous path too.
+        assert_eq!(
+            trust_root_changed(&[("a.txt", Some(".bosun/limits.toml"))], &[]),
+            ["a.txt"]
+        );
     }
 
     #[test]

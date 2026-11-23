@@ -1972,7 +1972,7 @@ pub(crate) fn quorum_trust_root(
 
 /// Whether `[approvals] policy` at base is quorum; a config that does not parse may be a quorum
 /// one, so it reads as quorum (fail closed).
-fn quorum_policy_at(gh: &dyn Github, base: &str) -> Result<bool> {
+pub(crate) fn quorum_policy_at(gh: &dyn Github, base: &str) -> Result<bool> {
     Ok(match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {
             Ok(c) => c.approvals.policy() == Policy::Quorum,

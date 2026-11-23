@@ -202,6 +202,32 @@ fn read_dir_refuses_symlinks() {
 
 #[cfg(unix)]
 #[test]
+fn read_dir_refuses_a_fifo_named_like_a_changeset() {
+    let t = repo(&[("x", "")]);
+    fs::create_dir_all(t.path().join(".changeset")).expect("mkdir");
+    let fifo = t.path().join(".changeset/pipe.md");
+    let ok = std::process::Command::new("mkfifo")
+        .arg(&fifo)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(ok, "mkfifo");
+    // Opening a FIFO for reading would block forever; it must be refused or skipped.
+    let (tx, rx) = std::sync::mpsc::channel();
+    let root = t.path().to_path_buf();
+    std::thread::spawn(move || {
+        let r = read_dir(&root);
+        let _ = tx.send(r.map(|v| v.len()).map_err(|e| e.to_string()));
+    });
+    let r = rx
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .expect("read_dir blocked on a FIFO");
+    let e = r.expect_err("a FIFO changeset is refused");
+    assert!(e.contains(".changeset/pipe.md"), "{e}");
+    assert!(e.contains("not a regular file"), "{e}");
+}
+
+#[cfg(unix)]
+#[test]
 fn a_symlinked_changeset_dir_or_config_is_refused() {
     use std::os::unix::fs::symlink;
     let t = repo(&[

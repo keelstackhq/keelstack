@@ -240,6 +240,50 @@ fn the_signer_refuses_a_default_branch_stricter_in_any_dimension() {
     }
 }
 
+/// `review_models` and `autonomous_allow` count too: a base that leaves them unset or wider than
+/// the default branch's is looser, so the signer fails closed.
+#[test]
+fn the_signer_refuses_a_base_with_looser_review_models_or_allow() {
+    let k = key();
+    let plain = config("quorum", true);
+    let with = |line: &str| {
+        plain.replace(
+            "policy = \"quorum\"\n",
+            &format!("policy = \"quorum\"\n{line}\n"),
+        )
+    };
+    let two = ["session_r1", "session_r2"];
+    for (base, main, what) in [
+        (
+            plain.clone(),
+            with("review_models = [\"opus\"]"),
+            "models unset at base",
+        ),
+        (
+            with("review_models = [\"opus\", \"haiku\"]"),
+            with("review_models = [\"opus\"]"),
+            "models wider at base",
+        ),
+        (
+            plain.clone(),
+            with("autonomous_allow = [\"docs/**\"]"),
+            "allow unset at base",
+        ),
+        (
+            with("autonomous_allow = [\"docs/**\", \"src/**\"]"),
+            with("autonomous_allow = [\"docs/**\"]"),
+            "allow wider at base",
+        ),
+    ] {
+        let v = refused(&pr(&k, &base, &main, &two), &k, what);
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(
+            msg.contains("looser than on the default branch"),
+            "{what}: {msg}"
+        );
+    }
+}
+
 #[test]
 fn signer_off_at_either_ref_is_refused() {
     let k = key();

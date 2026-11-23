@@ -344,3 +344,50 @@ fn a_moved_unreleased_block_keeps_its_first_line_indent() {
         "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n    indented code\n- item\n  - nested\n\n## 1.0.0 (d)\n"
     );
 }
+
+/// What `rewrite_package_json_dep` hands its callback for the raw JSON string `raw`.
+fn decoded(raw: &str) -> String {
+    use hoist::release::edit::rewrite_package_json_dep;
+    let pkg = format!("{{\"dependencies\": {{\"core\": \"{raw}\"}}}}\n");
+    let seen = std::cell::RefCell::new(String::new());
+    rewrite_package_json_dep(&pkg, "core", &["dependencies"], |old| {
+        *seen.borrow_mut() = old.to_string();
+        old.to_string()
+    })
+    .unwrap();
+    seen.into_inner()
+}
+
+#[test]
+fn json_surrogate_pair_decodes_to_one_char() {
+    assert_eq!(decoded(r"😀"), "\u{1F600}");
+    assert_eq!(decoded(r"a😀b"), "a\u{1F600}b");
+}
+
+#[test]
+fn json_lone_surrogates_become_replacement_chars() {
+    let fffd = '\u{FFFD}';
+    assert_eq!(decoded(r"\ud83dx"), format!("{fffd}x"));
+    assert_eq!(decoded(r"\ud83d"), fffd.to_string());
+    assert_eq!(decoded(r"\ude00"), fffd.to_string());
+    // A high surrogate followed by a non-low escape keeps that escape.
+    assert_eq!(decoded(r"\ud83dA"), format!("{fffd}A"));
+    assert_eq!(decoded(r"\ud83d\n"), format!("{fffd}\n"));
+    assert_eq!(decoded(r"\ud83d😀"), format!("{fffd}\u{1F600}"));
+}
+
+#[test]
+fn workspace_dep_rewrite_leaves_the_root_packages_own_dependencies() {
+    use hoist::release::edit::rewrite_workspace_dep;
+    let toml = "[package]\nname = \"root\"\n\n[dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n\n[workspace.dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n";
+    let out = rewrite_workspace_dep(toml, "core", &|_| "0.5.0".to_string()).unwrap();
+    assert_eq!(out.matches("version = \"0.5.0\"").count(), 1, "{out}");
+    let (own, ws) = out.split_once("[workspace.dependencies]").unwrap();
+    assert!(
+        own.contains("version = \"0.4\"") && ws.contains("0.5.0"),
+        "{out}"
+    );
+    // Only a root package's own dependency: no workspace entry, so an error.
+    let own_only = "[package]\nname = \"root\"\n\n[dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n";
+    assert!(rewrite_workspace_dep(own_only, "core", &|_| "0.5.0".to_string()).is_err());
+}

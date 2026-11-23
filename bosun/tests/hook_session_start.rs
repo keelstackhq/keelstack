@@ -156,3 +156,69 @@ fn an_origin_url_starting_with_a_dash_is_never_given_to_git() {
         .unwrap();
     assert!(!text.contains("not set up"), "{text}");
 }
+
+/// The adopted check asks the remote with a git that can never prompt: no ssh password or
+/// passphrase prompt, no credential helper dialog, no terminal prompt.
+#[test]
+fn the_adopted_check_runs_git_non_interactively() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let (dir, tools) = (tmp.path().join("work"), tmp.path().join("tools"));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::create_dir_all(&tools).unwrap();
+    let real = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    let log = tmp.path().join("git.log");
+    let wrapper = tools.join("git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\necho \"ssh=$GIT_SSH_COMMAND prompt=$GIT_TERMINAL_PROMPT args=$*\" >> '{}'\nexec {} \"$@\"\n",
+            log.display(),
+            real.trim()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let git = |a: &[&str]| {
+        let o = Command::new(real.trim())
+            .arg("-C")
+            .arg(&dir)
+            .args(a)
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{a:?}: {o:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["remote", "add", "origin", "git@github.com:acme/widget.git"]);
+    let path = format!(
+        "{}:{}",
+        tools.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let out = bosun()
+        .current_dir(&dir)
+        .env("PATH", path)
+        .env("BOSUN_SESSION", "session_me")
+        .env("BOSUN_ADOPTED_CACHE_SECS", "0")
+        .env_remove("GIT_SSH_COMMAND")
+        .args(["hook", "session-start"])
+        .write_stdin(json!({"cwd": dir.to_str().unwrap()}).to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let log = std::fs::read_to_string(&log).unwrap();
+    let line = log
+        .lines()
+        .find(|l| l.contains("ls-remote"))
+        .unwrap_or_else(|| panic!("{log}"));
+    assert!(line.contains("ssh=ssh -o BatchMode=yes"), "{line}");
+    assert!(line.contains("prompt=0"), "{line}");
+    assert!(line.contains("credential.interactive=never"), "{line}");
+}

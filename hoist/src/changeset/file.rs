@@ -192,6 +192,13 @@ pub fn read_dir(root: &Path) -> Result<Vec<Changeset>, HoistError> {
         if super::is_skipped(&name) {
             continue;
         }
+        // A FIFO or device would block or misread; only regular files are changesets.
+        if !ftype.is_file() {
+            return Err(err(
+                rel,
+                "is not a regular file; changesets must be regular files".into(),
+            ));
+        }
         if id.trim().is_empty() {
             return Err(err(
                 rel,

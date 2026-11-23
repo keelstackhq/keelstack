@@ -80,6 +80,15 @@ fn names(out: &str) -> Vec<String> {
 /// Changesets as committed at HEAD, the tree the diff is taken from (not the working tree);
 /// config.json, pins and the release model still come from the working tree.
 fn read_head(dir: &Path) -> Result<Vec<Changeset>, HoistError> {
+    // A symlinked `.changeset` at HEAD (mode 120000) is not listed by the `.changeset/` pathspec
+    // below and would read as "no changesets"; refuse it, as `read_dir` does.
+    let root = git(dir, &["ls-tree", "-z", "HEAD", "--", "./.changeset"]).unwrap_or_default();
+    if root.starts_with("120000 ") {
+        return Err(HoistError::Config {
+            file: ".changeset".into(),
+            message: "is a symlink; .changeset must be a regular directory".into(),
+        });
+    }
     // `<mode> <type> <hash>\t<path>` per entry, paths relative to `dir`.
     let listed = git(dir, &["ls-tree", "-z", "HEAD", "--", "./.changeset/"]);
     let listed = listed.unwrap_or_default(); // no commit yet: later steps say how to fix it

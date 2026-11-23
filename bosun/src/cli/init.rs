@@ -672,14 +672,21 @@ fn rollback(root: &Path, start: &str, detached: bool, branch: &str) -> bool {
     .all(|args| git(root, args).is_ok())
 }
 
-/// The default branch as far as git knows: `origin/HEAD`, else `main` or `master` when it exists.
-fn local_default_branch(root: &Path) -> Option<String> {
-    if let Ok(r) = git(
+/// The default branch git records: `origin/HEAD`.
+fn origin_head_branch(root: &Path) -> Option<String> {
+    let r = git(
         root,
         &["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],
-    ) && let Some(b) = r.strip_prefix("origin/")
-    {
-        return Some(b.to_string());
+    )
+    .ok()?;
+    r.strip_prefix("origin/").map(String::from)
+}
+
+/// The default branch as far as git knows: `origin/HEAD`, else `main` or `master` when it exists.
+/// The second is a guess, never a known default (see `origin_head_branch`).
+fn local_default_branch(root: &Path) -> Option<String> {
+    if let Some(b) = origin_head_branch(root) {
+        return Some(b);
     }
     ["main", "master"]
         .into_iter()
@@ -941,8 +948,18 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     // so there is never a literal fallback to compare against.
     let known_base: Option<String> = match &github {
         Some((_, b)) => Some(b.clone()),
-        None => local_default.clone(),
+        None => origin_head_branch(&root),
     };
+    // A guessed `main`/`master` is no proof: with neither a token nor origin/HEAD the default
+    // branch is unknown, so the branch may be it (fail closed).
+    if reuse && known_base.is_none() {
+        return Err(BosunError::conflict(
+            format!(
+                "cannot tell whether the current branch {branch} is the default branch (no origin/HEAD and no token)"
+            ),
+            "run `git remote set-head origin -a`, set GITHUB_TOKEN, or pass `--branch <new-branch>` (a branch that does not exist yet)",
+        ));
+    }
     let base = known_base.clone().unwrap_or_else(|| "main".into());
     if reuse && known_base.as_deref() == Some(branch) {
         return Err(BosunError::conflict(

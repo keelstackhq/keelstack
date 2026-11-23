@@ -145,37 +145,53 @@ fn json_strings(text: &str) -> Result<Vec<StrMember>, String> {
 }
 
 /// Decode the JSON string escapes of a string's raw content (`\"`, `\\`, `\n`, `\uXXXX`, ...).
+/// A `\uD83D\uDE00` surrogate pair is one char; a lone surrogate (or a malformed `\u`) is
+/// U+FFFD, and the escape after a lone high surrogate is decoded on its own.
 fn json_unescape(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    let mut it = raw.chars().peekable();
-    let hex4 = |it: &mut std::iter::Peekable<std::str::Chars>| -> Option<u32> {
-        let h: String = (0..4).filter_map(|_| it.next()).collect();
+    let chars: Vec<char> = raw.chars().collect();
+    let hex4 = |at: usize| -> Option<u32> {
+        let h: String = chars.get(at..at + 4)?.iter().collect();
         u32::from_str_radix(&h, 16).ok().filter(|_| h.len() == 4)
     };
-    while let Some(c) = it.next() {
+    let mut out = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        i += 1;
         if c != '\\' {
             out.push(c);
             continue;
         }
-        match it.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('b') => out.push('\u{8}'),
-            Some('f') => out.push('\u{c}'),
-            Some('u') => {
-                let mut cp = hex4(&mut it).unwrap_or(0xFFFD);
-                if (0xD800..0xDC00).contains(&cp) && it.peek() == Some(&'\\') {
-                    it.next();
-                    if it.next() == Some('u') {
-                        let lo = hex4(&mut it).unwrap_or(0);
-                        cp = 0x10000 + ((cp - 0xD800) << 10) + lo.wrapping_sub(0xDC00);
+        let Some(&e) = chars.get(i) else { break };
+        i += 1;
+        match e {
+            'n' => out.push('\n'),
+            't' => out.push('\t'),
+            'r' => out.push('\r'),
+            'b' => out.push('\u{8}'),
+            'f' => out.push('\u{c}'),
+            'u' => {
+                let Some(cp) = hex4(i) else {
+                    out.push('\u{FFFD}');
+                    i = chars.len().min(i + 4);
+                    continue;
+                };
+                i += 4;
+                if (0xD800..0xDC00).contains(&cp) {
+                    let lo = (chars.get(i) == Some(&'\\') && chars.get(i + 1) == Some(&'u'))
+                        .then(|| hex4(i + 2))
+                        .flatten()
+                        .filter(|lo| (0xDC00..0xE000).contains(lo));
+                    if let Some(lo) = lo {
+                        i += 6;
+                        let pair = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                        out.push(char::from_u32(pair).unwrap_or('\u{FFFD}'));
+                        continue;
                     }
                 }
                 out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
             }
-            Some(other) => out.push(other),
-            None => {}
+            other => out.push(other),
         }
     }
     out
@@ -348,12 +364,30 @@ pub fn rewrite_cargo_dep(
     kinds: &[&str],
     v: Req,
 ) -> Result<(String, bool), String> {
+    rewrite_cargo(text, dep, kinds, v, false)
+}
+
+/// Rewrite `dep` in `[workspace.dependencies]` only; a root package's own `[dependencies]` and
+/// `[target.*]` tables are left alone.
+pub fn rewrite_workspace_dep(text: &str, dep: &str, v: Req) -> Result<String, String> {
+    Ok(rewrite_cargo(text, dep, &[], v, true)?.0)
+}
+
+fn rewrite_cargo(
+    text: &str,
+    dep: &str,
+    kinds: &[&str],
+    v: Req,
+    workspace_only: bool,
+) -> Result<(String, bool), String> {
     let mut doc = toml_doc(text)?;
     let mut hit = Hit {
         found: false,
         inherits: false,
     };
-    update_dep_tables(doc.as_table_mut(), dep, kinds, v, &mut hit);
+    if !workspace_only {
+        update_dep_tables(doc.as_table_mut(), dep, kinds, v, &mut hit);
+    }
     if let Some(ws) = doc.get_mut("workspace").and_then(|w| w.as_table_like_mut()) {
         // `[workspace.dependencies]` has the shape of `[dependencies]`.
         if let Some(deps) = ws.get_mut("dependencies") {
@@ -365,7 +399,8 @@ pub fn rewrite_cargo_dep(
             }
         }
     }
-    if let Some(targets) = doc.get_mut("target").and_then(|t| t.as_table_like_mut()) {
+    let targets = doc.get_mut("target").and_then(|t| t.as_table_like_mut());
+    if let Some(targets) = targets.filter(|_| !workspace_only) {
         for (_, cfg) in targets.iter_mut() {
             if let Some(t) = cfg.as_table_like_mut() {
                 update_dep_tables(t, dep, kinds, v, &mut hit);

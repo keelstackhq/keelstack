@@ -39,7 +39,7 @@ https://keelstack.dev/llms-full.txt.
 5. **Paste the bootstrap once** (owner). The output of `bosun setup-snippet` runs the repo's own
    `docs/setup-script.sh`; a later pin change needs no new paste. [Cloud environment](/docs/cloud/#short-version).
 6. **Enroll the orchestrator's signing key** (orchestrator makes the key, owner approves the pull
-   request on GitHub). After this, the owner approves in chat.
+   request on GitHub). After this, the owner approves with a `/bosun approve <sha>` comment on GitHub.
    [Risk and review](/docs/risk/#signed-approvals).
 7. **Write the plan** (agent). `plans/<project>.md` with items, tasks (`touch:` paths, at most 400
    lines each) and "Done when" lines; `bosun plan check` validates it.
@@ -56,7 +56,7 @@ https://keelstack.dev/llms-full.txt.
    through bosun.
    [CI and gates](/docs/ci/), [Risk and review](/docs/risk/).
 10. **Run it day to day.** One orchestrator session plans and starts child sessions in the
-    environment; the owner approves in chat and approves releases.
+    environment; the owner approves on GitHub and approves releases.
     [Playbook](/docs/playbook/), [Releases and updates](/docs/releases/).
 
 When something fails, check [Troubleshooting](/docs/troubleshooting/) first.

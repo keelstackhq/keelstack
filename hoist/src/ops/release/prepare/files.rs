@@ -11,8 +11,8 @@ use crate::release::edit::changelog_section as changelog_body;
 use crate::release::edit::fence_step;
 use crate::release::edit::{
     prepend_changelog, prepend_section, rewrite_cargo_dep, rewrite_package_json_dep,
-    set_cargo_dep_version, set_cargo_version, set_package_json_dep, set_package_json_version,
-    today,
+    rewrite_workspace_dep, set_cargo_dep_version, set_cargo_version, set_package_json_dep,
+    set_package_json_version, today,
 };
 use crate::release::launcher::check_optional_deps;
 use crate::release::planner::NextVersion;
@@ -486,11 +486,7 @@ fn rewrite_ranges(
                     Ok(text)
                 })?;
                 if inherits && workspace_dep(files, &dep) && !root.contains(&dep) {
-                    let all = ["dependencies"];
-                    files.edit(
-                        "Cargo.toml",
-                        |t| Ok(rewrite_cargo_dep(t, &dep, &all, &f)?.0),
-                    )?;
+                    files.edit("Cargo.toml", |t| rewrite_workspace_dep(t, &dep, &f))?;
                     root.push(dep);
                 }
             }

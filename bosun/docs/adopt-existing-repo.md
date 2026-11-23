@@ -94,13 +94,14 @@ A seed file that already exists is kept; init only adds the required checks (and
 | --- | --- | --- |
 | `.bosun/bosun.toml` | shared | project, stacks, review mode, `[approvals]`, optional `[slack]` |
 | `.bosun/limits.toml`, `.bosun/risk.toml`, `.bosun/session-rules.toml` | seed | caps and budget, risk rules, session rules |
+| `.bosun/pins.toml` | owned | the tool pins bosun.yml and `docs/setup-script.sh` read |
 | `.bosun/version` | owned | the bosun release your CI runs |
 | `.bosun/fold-fragments.sh` | owned | folds changelog fragments before a release |
 | `governance/owners.toml` | seed | owner GitHub logins (and Slack IDs) |
 | `.github/CODEOWNERS`, `hoist.toml` | seed | code owners; branch rules and required checks |
-| `.github/workflows/{bosun,risk,verdict,main-open,main-health}.yml` | owned | section 4 |
+| `.github/workflows/{bosun,risk,verdict,signer,main-open,main-health}.yml` | owned | section 4 (six workflows) |
 | `.github/workflows/splice.yml` | seed | weekly channel update |
-| `deny.toml`, `rust-toolchain.toml` (rust), `.npmrc` (ts-pnpm) | seed | stack config |
+| `deny.toml` (rust; not written when `.deny.toml` or `.cargo/deny.toml` exists), `rust-toolchain.toml` (rust), `.npmrc` (ts-pnpm) | seed | stack config |
 | `.claude/settings.json` | shared | bosun's hooks (skipped if another template owns the file) |
 | `docs/setup-script.sh` | owned | the cloud environment setup script |
 | `AGENTS.md`, `REVIEW.md`, `CLAUDE.md` | section | a bosun section in each (CLAUDE.md only if no template owns it) |
@@ -130,6 +131,7 @@ channel's `channel/pieces/core/files/.claude/settings.json`) there yourself.
 | `bosun.yml` | pull_request, push, merge_group | every gate (`bosun gate <name>`) in one job, check `ci-ok` (`bosun-ok` if the repo has its own `ci-ok`) |
 | `risk.yml` | pull_request_target, `/bosun approve` comments | `risk-check` status |
 | `verdict.yml` | PR comments with the verdict marker | `review-verdict` status |
+| `signer.yml` | dispatched by `bosun approve --via-signer` | the keyless CI signer (section 8, D-017) |
 | `main-open.yml` | pull_request_target | `main-open` status |
 | `main-health.yml` | CI runs on main, weekly | opens or closes the main-red issue |
 | `splice.yml` | weekly | channel update PRs |

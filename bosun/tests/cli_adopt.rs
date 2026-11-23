@@ -479,6 +479,29 @@ fn dry_run_with_a_token_that_cannot_read_the_repo_still_succeeds() {
     assert_eq!(v["data"]["registry"]["action"], "unknown");
 }
 
+/// A repo that already configures cargo-deny in `.deny.toml` or `.cargo/deny.toml` gets no second
+/// `deny.toml` (cargo-deny would not read it, or would read it instead of the owner's).
+#[test]
+fn adopt_skips_deny_toml_when_another_deny_config_exists() {
+    let fake = FakeGithub::start();
+    for existing in [".deny.toml", ".cargo/deny.toml"] {
+        let t = common::git_tempdir();
+        write(t.path(), existing, "# mine\n");
+        let (code, v) = adopt(&fake, t.path(), &["--stack", "rust"]);
+        assert_eq!(code, 0, "{existing}: {v}");
+        assert!(!t.path().join("deny.toml").exists(), "{existing}: {v}");
+        assert!(
+            !v["data"]["changes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|c| c["path"] == "deny.toml" && c["action"] == "create"),
+            "{existing}: {v}"
+        );
+        assert_eq!(read(t.path(), existing), "# mine\n");
+    }
+}
+
 #[test]
 fn adopt_writes_signer_workflow_and_deny_toml_only_for_rust() {
     let fake = FakeGithub::start();

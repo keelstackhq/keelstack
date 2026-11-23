@@ -128,7 +128,7 @@ fn a_look_alike_path_without_a_template_marker_is_still_refused() {
 }
 
 /// Base has `.bosun/` and a test under `path` but no marker; the PR adds the marker and deletes
-/// the test. The marker must be read from the merge base, so this stays a finding.
+/// the test. The marker is read at the base ref, not from the PR, so this stays a finding.
 fn marker_added_by_the_pr(path: &str, marker: &str) -> (i32, Value) {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
@@ -172,4 +172,66 @@ fn a_channel_marker_added_by_the_pr_does_not_exempt_a_channel_path() {
         "channel/splice.toml",
     );
     assert_eq!(code, 1, "{v}");
+}
+
+/// The marker is read at the base tip, the ref the PR merges into, not at the merge base: when
+/// base moved on after the branch point (here: it gained the marker, and its own commit sits
+/// between the merge base and the tip), the branch's move to `.jinja` is exempt; when base never
+/// had a marker it stays a finding, whatever the branch adds.
+#[test]
+fn the_marker_is_read_at_the_base_tip_when_it_differs_from_the_merge_base() {
+    let path = "template-rust/pieces/core/files/tests/t.rs";
+    let moved = "template-rust/pieces/core/files/tests/t.rs.jinja";
+    for (marker_on_main, expect) in [(true, 0), (false, 1)] {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        git(&root, &["init", "-q", "-b", "main"]);
+        git(&root, &["config", "user.name", "t"]);
+        git(&root, &["config", "user.email", "t@example.com"]);
+        put(&root, ".bosun/bosun.toml", "");
+        put(&root, path, TWO_TESTS);
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "base"]);
+        git(&root, &["checkout", "-q", "-b", "work"]);
+        git(&root, &["mv", path, moved]);
+        git(&root, &["commit", "-q", "-m", "move"]);
+        // Base moves on after the branch point.
+        git(&root, &["checkout", "-q", "main"]);
+        put(&root, "NOTES.md", "later\n");
+        if marker_on_main {
+            put(&root, "template-rust/splice.toml", "");
+        }
+        git(&root, &["add", "."]);
+        git(&root, &["commit", "-q", "-m", "main moves on"]);
+        git(&root, &["checkout", "-q", "work"]);
+        let mb = Command::new("git")
+            .current_dir(&root)
+            .args(["merge-base", "main", "HEAD"])
+            .output()
+            .unwrap();
+        let tip = Command::new("git")
+            .current_dir(&root)
+            .args(["rev-parse", "main"])
+            .output()
+            .unwrap();
+        assert_ne!(
+            mb.stdout, tip.stdout,
+            "merge base must differ from the base tip"
+        );
+        let out = bosun()
+            .env_remove("GITHUB_BASE_REF")
+            .env_remove("BOSUN_PR_BODY")
+            .env_remove("BOSUN_INTEGRITY_ALLOW")
+            .arg("-C")
+            .arg(&root)
+            .args(["test-integrity", "--base", "main"])
+            .output()
+            .unwrap();
+        let v = one_object(&out.stdout);
+        assert_eq!(
+            out.status.code(),
+            Some(expect),
+            "marker on main {marker_on_main}: {v}"
+        );
+    }
 }

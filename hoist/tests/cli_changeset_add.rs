@@ -281,6 +281,7 @@ fn init_broken_hoist_toml_exit_3() {
     assert!(!r.path().join(".changeset/config.json").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn add_refuses_symlinked_changeset_dir() {
     let r = repo();

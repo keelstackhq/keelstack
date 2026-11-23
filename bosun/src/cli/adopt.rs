@@ -588,6 +588,13 @@ pub fn run(dir: Option<&Path>, a: &AdoptArgs) -> CmdResult {
         Vec::new()
     };
     tpls.retain(|t| !workflows_skipped.contains(&t.path));
+    // cargo-deny finds its config by name: another one the repo has is the owner's, not ours.
+    if [".deny.toml", ".cargo/deny.toml"]
+        .iter()
+        .any(|p| root.join(p).exists())
+    {
+        tpls.retain(|t| t.path != DENY.path);
+    }
     let mut changes: Vec<Value> = Vec::new();
     let mut writes: Vec<(&Tpl, String)> = Vec::new();
     for t in &tpls {

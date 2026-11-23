@@ -403,6 +403,27 @@ fn merge_stacked_base_refused() {
     assert!(fake.labels_of(7).contains(&"bosun:state/review".into()));
 }
 
+/// The verdict is judged again after the gates ran: one withdrawn meanwhile stops the merge with
+/// the re-check's own fix ("a fresh signed verdict"), not the first check's (`bosun review-pack`).
+#[test]
+fn merge_rechecks_the_verdict_after_the_gates() {
+    let (fake, dir) = setup(true, Some(NO_CI));
+    verdict(&fake);
+    owner_approves(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    // The gates read the profile first thing: the verdict is gone by the time they have run.
+    fake.after_requests("/contents/.bosun/profiles/rust.toml", 0, |s| {
+        s.comments
+            .retain(|c| c.body.starts_with("/bosun ready") || c.body.starts_with("/bosun approve"));
+    });
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    let fix = v["error"]["fix"].as_str().unwrap();
+    assert!(fix.contains("fresh signed verdict"), "{v}");
+    assert!(!fix.contains("review-pack"), "{v}");
+    assert!(merge_puts(&fake).is_empty(), "merged without a verdict");
+}
+
 /// No CI, a ready summary, but the only verdict is the orchestrator's own: exit 5.
 #[test]
 fn merge_no_ci_verdict_only_from_merger_refused() {

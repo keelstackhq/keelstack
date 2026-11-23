@@ -35,6 +35,19 @@ fn git_out(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&out.stdout).trim().to_string()
 }
 
+/// Record `main` as origin's default branch (origin/HEAD): without a token, reusing a branch
+/// needs a default branch git knows, a local `main` is only a guess.
+fn known_default(e: &Env) {
+    git(
+        e.repo.path(),
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+}
+
 fn exec(path: &Path, body: &str) {
     std::fs::write(path, body).unwrap();
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -237,6 +250,7 @@ fn a_cloud_branch_that_may_be_the_default_is_refused_when_the_default_is_unknown
 fn without_a_token_the_pr_is_an_mcp_call_in_next() {
     let e = Env::new();
     git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    known_default(&e);
     let fake = FakeGithub::start();
     let (code, v) = e.run(&fake, false, false, &["--owner", "octocat"]);
     assert_eq!(code, 0, "{v}");
@@ -265,6 +279,7 @@ fn without_a_token_the_pr_is_an_mcp_call_in_next() {
 fn without_a_token_an_authenticated_gh_opens_the_pr_and_labels() {
     let e = Env::new();
     git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    known_default(&e);
     e.gh(true, "ghuser", "https://github.com/acme/widget/pull/7");
     // `gh auth token` fails in the fake, so there is no API token: the PR goes through gh.
     let fake = FakeGithub::start();
@@ -423,6 +438,7 @@ fn an_agent_login_passed_as_owner_is_refused() {
 fn a_failed_label_create_keeps_the_kill_switch_owner_step() {
     let e = Env::new();
     git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    known_default(&e);
     // `gh label create` fails: the labels stay in `labels_todo`, so the owner step stays too.
     exec(
         &e.tools.path().join("gh"),
@@ -549,9 +565,35 @@ fn an_explicit_branch_is_not_reused_when_the_default_is_unknown() {
 }
 
 #[test]
+fn a_guessed_main_is_not_a_known_default_branch() {
+    // The real default branch is `develop`; a local `main` exists, there is no origin/HEAD and no
+    // token: the guess `main` must not make `develop` look like a work branch to reuse.
+    let e = Env::new();
+    git(e.repo.path(), &["switch", "-q", "-c", "develop"]);
+    let fake = FakeGithub::start();
+    let (code, v) = e.run(
+        &fake,
+        false,
+        false,
+        &["--owner", "o", "--branch", "develop", "--no-pr"],
+    );
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("cannot tell whether"),
+        "{v}"
+    );
+    assert_eq!(git_out(e.repo.path(), &["log", "-1", "--format=%s"]), "x");
+    assert!(!e.origin_has("develop"));
+}
+
+#[test]
 fn an_existing_label_is_never_overwritten_with_force() {
     let e = Env::new();
     git(e.repo.path(), &["switch", "-q", "-c", "claude/work-abc"]);
+    known_default(&e);
     exec(
         &e.tools.path().join("gh"),
         &format!(

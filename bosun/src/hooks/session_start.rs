@@ -18,16 +18,19 @@ fn output(text: &str) -> String {
         .to_string()
 }
 
-/// `git` for the adopted check: never prompts, ignores local replace refs, gives up on a stalled transfer (low speed) and
+/// `git` for the adopted check: never prompts (no terminal, ssh, credential or stdin prompt), ignores local replace refs, gives up on a stalled transfer (low speed) and
 /// on one that takes over 20 seconds.
 fn git_remote(dir: &Path, args: &[&str]) -> Option<String> {
     let mut child = std::process::Command::new("git")
         .env("GIT_TERMINAL_PROMPT", "0")
+        .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
+        .args(["-c", "credential.interactive=never"])
         .args(["-c", "http.lowSpeedLimit=1000"])
         .args(["-c", "http.lowSpeedTime=15", "-C"])
         .arg(dir)
         .args(args)
+        .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()

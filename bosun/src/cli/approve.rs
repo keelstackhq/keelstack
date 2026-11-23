@@ -17,7 +17,7 @@ use crate::app::{Result, kill_switch, main_red};
 use crate::cli::pr_no_ci::provider_default;
 use crate::cli::risk_check::{
     autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
-    owner_comment, owner_logins, quorum_clean, review_models,
+    owner_comment, owner_logins, quorum_clean, quorum_policy_at, review_models,
 };
 use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
@@ -764,7 +764,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     }
     // D-022: a diff bosun cannot see may hide the trust root, as risk-check's R-unseen and the
     // bootstrap signing path (`autonomous_ok`) judge it; plain signing under quorum needs the same.
-    if quorum_at_base(gh, &pull.base_sha)? {
+    if quorum_policy_at(gh, &pull.base_sha)? {
         let views: Vec<risk::FileView> = (files.iter())
             .map(|f| risk::FileView {
                 path: f.filename.clone(),
@@ -919,17 +919,6 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     Ok(Outcome::data(json!({"approved": approved})))
 }
 
-/// Whether `[approvals] policy` at `base` is quorum; a config that does not parse may be a quorum
-/// one, so it reads as quorum (fail closed).
-fn quorum_at_base(gh: &dyn Github, base: &str) -> Result<bool> {
-    Ok(match gh.file_at(CONFIG_FILE, base)? {
-        Some(t) => {
-            Config::parse(&t, CONFIG_FILE).map_or(true, |c| c.approvals.policy() == Policy::Quorum)
-        }
-        None => false,
-    })
-}
-
 /// Refuses unless `[approvals]` and `[checks]` at `git_ref` let the CI signer sign.
 fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
     let config = match gh.file_at(CONFIG_FILE, git_ref)? {
@@ -996,6 +985,35 @@ fn default_stricter(main: Policy, base: Policy) -> bool {
     m.iter().zip(b.iter()).any(|(m, b)| m > b)
 }
 
+/// True when the default branch's `review_models`, `autonomous_allow`, `verdict_bots` or
+/// `oneoff_allow` is stricter than the PR
+/// base's: a set on the default branch that the base left unset or widened (unset `review_models`
+/// counts any model; unset `autonomous_allow` is the built-in set). Compared as exact strings, so
+/// a base entry the default branch does not list reads as looser (fail closed).
+fn lists_stricter(main: &crate::config::Approvals, base: &crate::config::Approvals) -> bool {
+    let models = main.review_models.as_ref().is_some_and(|m| {
+        (base.review_models.as_ref()).is_none_or(|b| b.iter().any(|x| !m.contains(x)))
+    });
+    let builtin = || {
+        risk::AUTONOMOUS_ALLOWED
+            .iter()
+            .map(|g| g.to_string())
+            .collect()
+    };
+    let eff = |a: &crate::config::Approvals| -> Vec<String> {
+        a.autonomous_allow.clone().unwrap_or_else(builtin)
+    };
+    let (m, b) = (eff(main), eff(base));
+    // Lists where unset allows nothing: a base entry the default branch does not list is looser.
+    let wider = |m: &Option<Vec<String>>, b: &Option<Vec<String>>| {
+        (b.iter().flatten()).any(|g| !m.iter().flatten().any(|x| x == g))
+    };
+    models
+        || b.iter().any(|g| !m.contains(g))
+        || wider(&main.verdict_bots, &base.verdict_bots)
+        || wider(&main.oneoff_allow, &base.oneoff_allow)
+}
+
 /// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
 /// and its note line, or (after it) the note line of the approval policy (D-014) and no date. The
 /// setting is read at the PR's base, exactly as risk-check and the quorum trust root read it.
@@ -1026,6 +1044,7 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
         }
     };
     let stricter = default_stricter(main.policy(), policy)
+        || lists_stricter(&main, &approvals)
         || (signs(policy) && !signs(main.policy()))
         // A window the base has open today must not be shortened or dropped; one that already
         // ended is not "open", so the default branch dropping its stale date is fine.
@@ -1315,5 +1334,73 @@ mod tests {
         assert!(!default_stricter(Orchestrator, OwnerGated));
         assert!(!default_stricter(Orchestrator, Owner));
         assert!(!default_stricter(OwnerGated, Owner));
+    }
+
+    fn lists(models: Option<&[&str]>, allow: Option<&[&str]>) -> crate::config::Approvals {
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect();
+        crate::config::Approvals {
+            review_models: models.map(v),
+            autonomous_allow: allow.map(v),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn default_stricter_compares_review_models_and_autonomous_allow() {
+        let none = lists(None, None);
+        assert!(!lists_stricter(&none, &none));
+        // Default branch enrols models; a base that counts any model, or another one, is looser.
+        let m = lists(Some(&["opus"]), None);
+        assert!(lists_stricter(&m, &none));
+        assert!(lists_stricter(&m, &lists(Some(&["opus", "haiku"]), None)));
+        assert!(!lists_stricter(&m, &m));
+        // A base that narrows further, or a default branch that sets nothing, is not looser.
+        assert!(!lists_stricter(&lists(Some(&["opus", "sonnet"]), None), &m));
+        assert!(!lists_stricter(&none, &m));
+        // autonomous_allow: base widening beyond the default branch's set is looser.
+        let narrow = lists(None, Some(&["docs/**"]));
+        assert!(lists_stricter(&narrow, &none));
+        assert!(lists_stricter(
+            &narrow,
+            &lists(None, Some(&["docs/**", "src/**"]))
+        ));
+        assert!(!lists_stricter(&narrow, &narrow));
+        assert!(!lists_stricter(&none, &narrow));
+        assert!(!lists_stricter(&narrow, &lists(None, Some(&[]))));
+    }
+
+    #[test]
+    fn default_stricter_compares_verdict_bots_and_oneoff_allow() {
+        let v = |l: &[&str]| Some(l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let bots = |l: &[&str]| crate::config::Approvals {
+            verdict_bots: v(l),
+            ..Default::default()
+        };
+        let oneoff = |l: &[&str]| crate::config::Approvals {
+            oneoff_allow: v(l),
+            ..Default::default()
+        };
+        let none = crate::config::Approvals::default();
+        // Unset allows nothing: a base that adds a bot or glob is looser than the default branch.
+        assert!(lists_stricter(&none, &bots(&["claude[bot]"])));
+        assert!(lists_stricter(
+            &bots(&["a[bot]"]),
+            &bots(&["a[bot]", "b[bot]"])
+        ));
+        assert!(lists_stricter(&bots(&["a[bot]"]), &bots(&["b[bot]"])));
+        assert!(!lists_stricter(&bots(&["a[bot]"]), &bots(&["a[bot]"])));
+        assert!(!lists_stricter(
+            &bots(&["a[bot]", "b[bot]"]),
+            &bots(&["a[bot]"])
+        ));
+        assert!(!lists_stricter(&bots(&["a[bot]"]), &none));
+        assert!(!lists_stricter(&none, &bots(&[])));
+        assert!(lists_stricter(&none, &oneoff(&["README.md"])));
+        assert!(lists_stricter(
+            &oneoff(&["a/**"]),
+            &oneoff(&["a/**", "b/**"])
+        ));
+        assert!(!lists_stricter(&oneoff(&["a/**"]), &oneoff(&["a/**"])));
+        assert!(!lists_stricter(&oneoff(&["a/**"]), &none));
     }
 }

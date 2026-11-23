@@ -468,6 +468,7 @@ fn no_merge_base_exit_3_says_how() {
     assert!(e.contains("--since HEAD^1"), "{e}");
 }
 
+#[cfg(unix)]
 #[test]
 fn symlinked_changeset_exit_3() {
     let r = repo();
@@ -486,4 +487,23 @@ fn blank_changeset_id_exit_3() {
     change(d, &[(".changeset/ .md", "---\n---\n")]);
     let e = stderr_3(&run(d, &[]));
     assert!(e.contains("blank"), "{e}");
+}
+
+/// HEAD holds `.changeset` as a symlink (git mode 120000) while the working tree has a real
+/// directory: the committed tree is what counts, and it is refused, not read as "no changesets".
+#[cfg(unix)]
+#[test]
+fn symlinked_changeset_dir_at_head_exit_3() {
+    let r = repo();
+    let d = r.path();
+    std::fs::remove_dir_all(d.join(".changeset")).unwrap();
+    std::fs::create_dir_all(d.join("elsewhere")).unwrap();
+    write(d, "elsewhere/config.json", CONFIG);
+    std::os::unix::fs::symlink("elsewhere", d.join(".changeset")).unwrap();
+    commit(d, "feat: link dir");
+    std::fs::remove_file(d.join(".changeset")).unwrap();
+    write(d, ".changeset/config.json", CONFIG);
+    let e = stderr_3(&run(d, &[]));
+    assert!(e.contains(".changeset"), "{e}");
+    assert!(e.contains("symlink"), "{e}");
 }

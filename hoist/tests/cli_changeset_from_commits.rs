@@ -352,6 +352,7 @@ fn from_commits_fixed_with_no_tags_writes_no_changeset() {
     assert!(!d.join(".changeset/hoist-migrate.md").exists());
 }
 
+#[cfg(unix)]
 #[test]
 fn init_refuses_symlinked_changeset_dir() {
     let repo = tagged_repo();
@@ -363,6 +364,7 @@ fn init_refuses_symlinked_changeset_dir() {
     assert_eq!(std::fs::read_dir(outside.path()).unwrap().count(), 0);
 }
 
+#[cfg(unix)]
 #[test]
 fn init_failure_leaves_no_partial_files() {
     let repo = tagged_repo();

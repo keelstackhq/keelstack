@@ -2,9 +2,12 @@
 //! missing paths: (a) every `.claude/**` file and `.mcp.json` at any depth; (b) every file that a
 //! privileged workflow job, a hook, a SessionStart command, a setup script or a channel template
 //! read at the base reads or executes. This test walks the repo, extracts those inputs and asserts
-//! each one is `trust_root_changed` under the code root `bosun`. It also pins that no job holding a
-//! secret or an id-token restores a cache. Every walk asserts a minimum count, so a parser that
-//! stops finding things fails instead of passing vacuously.
+//! each one is `trust_root_changed` under the code root `bosun`, and that every file a workflow
+//! restores from the base is trust root or on a documented exemption list. It also pins that no
+//! job holding a secret, an id-token or a write token restores a cache (a job privileged only by
+//! its base-context trigger is not in that rule). Every walk asserts a minimum count, and the walker
+//! is proven on a fixture chain, so a parser that stops finding things fails instead of passing
+//! vacuously.
 
 use bosun::core::risk::quorum_trust_paths;
 use regex::Regex;
@@ -13,8 +16,23 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+thread_local! {
+    /// A fixture tree that stands in for the repo root on this thread (see [`with_root`]).
+    static ROOT_OVERRIDE: std::cell::RefCell<Option<PathBuf>> = const { std::cell::RefCell::new(None) };
+}
+
 fn root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..")
+    ROOT_OVERRIDE
+        .with(|r| r.borrow().clone())
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join(".."))
+}
+
+/// Runs `f` with `dir` as the repo root on this thread.
+fn with_root<T>(dir: &Path, f: impl FnOnce() -> T) -> T {
+    ROOT_OVERRIDE.with(|r| *r.borrow_mut() = Some(dir.to_path_buf()));
+    let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    ROOT_OVERRIDE.with(|r| *r.borrow_mut() = None);
+    out.unwrap_or_else(|e| std::panic::resume_unwind(e))
 }
 
 fn read(path: impl AsRef<Path>) -> String {
@@ -424,7 +442,7 @@ fn action_inputs(
 /// `working-directory:` (else the job's `defaults.run`, else the workflow's), the other text
 /// against the repo root, and a `uses: ./X` brings in the action's files and its composite steps.
 fn job_inputs(file: &str, job: &str, origin: &str) -> BTreeMap<String, String> {
-    let top = file.split("\njobs:").next().unwrap_or("");
+    let top = workflow_top(file);
     let (outside, steps) = steps_of(job);
     let job_wd = default_wd(&outside)
         .or_else(|| default_wd(top))
@@ -475,6 +493,29 @@ fn js_imports(text: &str, dir: &str) -> Vec<String> {
 /// A shell script's own-directory variables as paths from the repo root.
 fn script_vars(text: &str, dir: &str) -> String {
     let own = format!("{ROOT_MARK}/{dir}");
+    // `root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)`: a directory from the repo root,
+    // and the variable it is assigned to names that directory in the lines below.
+    let cd_dirname = Regex::new(
+        r#"\$\(\s*cd\s+"?\$\(\s*dirname\s+"?\$\{?(?:BASH_SOURCE\[0\]|0)\}?"?\s*\)(/[^"\s)]*)?"?\s*&&\s*pwd\s*\)"#,
+    )
+    .unwrap();
+    let text = cd_dirname.replace_all(text, |c: &regex::Captures| {
+        let to = join(dir, c.get(1).map_or("", |m| m.as_str()));
+        format!("{ROOT_MARK}/{to}")
+    });
+    let assign = Regex::new(
+        r#"(?m)^\s*(?:export\s+|readonly\s+)?([A-Za-z_][A-Za-z0-9_]*)="?(@root@[^"\s]*)"?\s*$"#,
+    )
+    .unwrap();
+    let mut text = text.into_owned();
+    for c in assign.captures_iter(&text.clone()) {
+        let (name, val) = (&c[1], &c[2]);
+        let bare = Regex::new(&format!(r"\${name}\b")).unwrap();
+        text = bare
+            .replace_all(&text.replace(&format!("${{{name}}}"), val), val)
+            .into_owned();
+    }
+    let text = text.as_str();
     let dirname =
         Regex::new(r"\$\(\s*(?:cd\s+)?[^)]*dirname[^)]*\)\)?(?:\s*&&\s*pwd\s*\))?").unwrap();
     let var =
@@ -487,12 +528,14 @@ fn script_vars(text: &str, dir: &str) -> String {
     t.into_owned()
 }
 
+/// The most scripts [`close`] reads before it panics.
+const MAX_CLOSED: usize = 600;
+
 /// Every file `found` names, then every file those scripts read or run, until nothing new
 /// shows up: JS and TS relative imports, shell `source`, `.`, `bash x.sh`, `node x.mjs`, any
-/// token that is an existing file. Bounded (`MAX_CLOSED` files read) and deterministic
-/// (sorted work list).
+/// token that is an existing file. Bounded (`MAX_CLOSED` files read, then it panics) and
+/// deterministic (sorted work list); a script over 512 KiB panics too.
 fn close(found: &mut BTreeMap<String, String>) {
-    const MAX_CLOSED: usize = 600;
     let script = |p: &str| {
         let ext = p.rsplit('.').next().unwrap_or("");
         matches!(
@@ -506,17 +549,24 @@ fn close(found: &mut BTreeMap<String, String>) {
             .filter(|p| script(p) && !done.contains(*p))
             .cloned()
             .collect();
-        if todo.is_empty() || done.len() >= MAX_CLOSED {
+        if todo.is_empty() {
             return;
         }
         for p in todo {
+            // A silent stop would let files go unchecked: fail and raise the bound on purpose.
+            assert!(
+                done.len() < MAX_CLOSED,
+                "close() reached MAX_CLOSED ({MAX_CLOSED}) before reading {p}"
+            );
             done.insert(p.clone());
             let Ok(text) = fs::read_to_string(root().join(&p)) else {
                 continue;
             };
-            if text.len() > 512 * 1024 {
-                continue;
-            }
+            assert!(
+                text.len() <= 512 * 1024,
+                "{p} is {} bytes: too big to follow, so its inputs would go unchecked",
+                text.len()
+            );
             let dir = p.rsplit_once('/').map_or("", |(d, _)| d).to_string();
             let why = format!("read by {p}");
             let is_shell = p.ends_with(".sh") || p.ends_with(".bash");
@@ -546,8 +596,10 @@ fn close(found: &mut BTreeMap<String, String>) {
 fn jobs(yaml: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     let mut in_jobs = false;
-    for line in yaml.lines() {
-        if line == "jobs:" {
+    let jobs_key = Regex::new(r"^jobs:\s*(#.*)?$").unwrap();
+    // `lines()` drops a CRLF; a trailing comment on a key line is no part of the key.
+    for line in yaml.lines().map(|l| l.trim_end_matches('\r')) {
+        if jobs_key.is_match(line) {
             in_jobs = true;
             continue;
         }
@@ -557,8 +609,9 @@ fn jobs(yaml: &str) -> Vec<(String, String)> {
         if !line.starts_with(' ') && !line.is_empty() && !line.starts_with('#') {
             break;
         }
-        if line.starts_with("  ") && !line.starts_with("   ") && line.trim_end().ends_with(':') {
-            let id = line.trim().trim_end_matches(':').to_string();
+        let key_line = line.split(" #").next().unwrap_or("").trim_end();
+        if line.starts_with("  ") && !line.starts_with("   ") && key_line.ends_with(':') {
+            let id = key_line.trim().trim_end_matches(':').to_string();
             out.push((id, String::new()));
         } else if let Some((_, t)) = out.last_mut() {
             t.push_str(line);
@@ -568,25 +621,82 @@ fn jobs(yaml: &str) -> Vec<(String, String)> {
     out
 }
 
+/// [`jobs`] of one workflow file, which must hold at least one: a parser that stops seeing a
+/// file's jobs (a trailing comment, CRLF, a new layout) would otherwise skip its checks.
+fn jobs_of(file: &str, text: &str) -> Vec<(String, String)> {
+    let found = jobs(text);
+    assert!(!found.is_empty(), "{file}: no job found under `jobs:`");
+    found
+}
+
 fn code_lines(text: &str) -> Vec<&str> {
     text.lines()
         .filter(|l| !l.trim_start().starts_with('#'))
         .collect()
 }
 
+/// The part of a workflow file before `jobs:` (triggers, `env:`, `permissions:`).
+fn workflow_top(file_text: &str) -> &str {
+    let re = Regex::new(r"(?m)^jobs:\s*(#.*)?\r?$").unwrap();
+    re.find(file_text)
+        .map_or(file_text, |m| &file_text[..m.start()])
+}
+
+/// A line without a trailing ` # comment`: a `#` starts one only outside quotes and outside a
+/// `${{ }}` expression, and after whitespace.
+fn no_comment(l: &str) -> &str {
+    let (mut quote, mut expr, mut prev) = (None::<char>, false, ' ');
+    let b: Vec<(usize, char)> = l.char_indices().collect();
+    for (k, &(i, c)) in b.iter().enumerate() {
+        let next = b.get(k + 1).map(|&(_, n)| n);
+        if expr {
+            if c == '}' && next == Some('}') {
+                expr = false;
+            }
+        } else if let Some(q) = quote {
+            if c == q {
+                quote = None;
+            }
+        } else if c == '$' && next == Some('{') {
+            expr = true;
+        } else if c == '"' || c == '\'' {
+            quote = Some(c);
+        } else if c == '#' && prev.is_whitespace() {
+            return l[..i].trim_end();
+        }
+        prev = c;
+    }
+    l.trim_end()
+}
+
 /// A secret other than the workflow's own token, an id-token, or a deployment environment: a
 /// named `secrets.X`, any `secrets[...]`, a bare `secrets` or `toJSON(secrets)` expression, or
-/// `secrets: inherit`.
-fn holds_secret(job: &str) -> bool {
+/// `secrets: inherit`; in the job, or in the workflow's own `env:` (every job inherits it); and
+/// an id-token (`id-token: write`, plain, quoted, with a comment or in a flow map, in the job's
+/// `permissions:` or the workflow's when the job has none) or `permissions: write-all`.
+fn holds_secret(file_text: &str, job: &str) -> bool {
     let named = Regex::new(r"\$\{\{.*?\bsecrets\.([A-Za-z0-9_]+)").unwrap();
     let whole = Regex::new(r"\$\{\{.*?\bsecrets\b(?:\s*\[|\s*\)|\s*,|\s*\}\})").unwrap();
     let inherit = Regex::new(r"^\s*secrets:\s*inherit\b").unwrap();
-    code_lines(job).iter().any(|l| {
-        named.captures_iter(l).any(|c| &c[1] != "GITHUB_TOKEN")
-            || whole.is_match(l)
-            || inherit.is_match(l)
-            || l.trim() == "id-token: write"
-    })
+    let id_token = Regex::new(r#"\bid-token\s*:\s*['"]?write['"]?"#).unwrap();
+    let write_all = Regex::new(r#"^\s*permissions:\s*['"]?write-all['"]?\s*$"#).unwrap();
+    let secret_in = |text: &str| {
+        code_lines(text).iter().map(|l| no_comment(l)).any(|l| {
+            named.captures_iter(l).any(|c| &c[1] != "GITHUB_TOKEN")
+                || whole.is_match(l)
+                || inherit.is_match(l)
+        })
+    };
+    let perms_in = |text: &str| {
+        code_lines(text)
+            .iter()
+            .map(|l| no_comment(l))
+            .any(|l| id_token.is_match(l) || write_all.is_match(l))
+    };
+    let top = workflow_top(file_text);
+    // The workflow's `env:` reaches every job; its `permissions:` only a job with none of its own.
+    let own_perms = perm_write(job, 4).is_some();
+    secret_in(top) || secret_in(job) || perms_in(job) || (!own_perms && perms_in(top))
 }
 
 /// Whether a `permissions:` key at `indent_n` spaces in `text` grants any `write`: `None` when
@@ -613,7 +723,7 @@ fn perm_write(text: &str, indent_n: usize) -> Option<bool> {
 /// The job's `GITHUB_TOKEN` can write: its own `permissions:` (else the workflow's) grants
 /// any `write`, or none is declared anywhere (the repository default is then unknown).
 fn writes_token(file_text: &str, job: &str) -> bool {
-    let top = file_text.split("\njobs:").next().unwrap_or("");
+    let top = workflow_top(file_text);
     perm_write(job, 4).unwrap_or_else(|| perm_write(top, 0).unwrap_or(true))
 }
 
@@ -624,7 +734,7 @@ fn privileged(file_text: &str, job: &str) -> bool {
     let ctx = code_lines(file_text)
         .iter()
         .any(|l| l.contains("pull_request_target") || l.contains("workflow_run"));
-    ctx || holds_secret(job)
+    ctx || holds_secret(file_text, job)
         || writes_token(file_text, job)
         || code_lines(job)
             .iter()
@@ -825,16 +935,6 @@ fn imports_and_sourced_scripts_are_followed() {
         sh.contains("@root@/scripts/x.sh") && sh.contains("@root@/scripts/y.sh"),
         "{sh}"
     );
-    // A script that names another, and one that sources a third.
-    let mut found = BTreeMap::new();
-    found.insert("splice/scripts/smoke.sh".to_string(), "t".to_string());
-    close(&mut found);
-    let text = fs::read_to_string(root().join("splice/scripts/smoke.sh")).unwrap();
-    let names: Vec<&str> = text
-        .split(|c: char| c.is_whitespace() || "\"'()".contains(c))
-        .filter(|t| t.ends_with(".mjs") || t.ends_with(".sh"))
-        .collect();
-    assert!(!names.is_empty() || found.len() == 1, "{found:?}");
     // `.md` counts only where it is read.
     let md = |t: &str| inputs(t, "", "t").contains_key("bosun/CLAUDE.md");
     assert!(md("cat bosun/CLAUDE.md"));
@@ -947,7 +1047,8 @@ fn every_setup_script_and_what_it_reads_is_trust_root() {
     assert!(missing.is_empty(), "not trust root:\n{missing:#?}");
 }
 
-/// Files a privileged job (secret, id-token, environment, or a base-context workflow) names.
+/// Files a privileged job (secret, id-token, write token, environment, or a base-context
+/// workflow) names.
 #[test]
 fn every_privileged_workflow_input_is_trust_root() {
     let files = workflows();
@@ -956,7 +1057,7 @@ fn every_privileged_workflow_input_is_trust_root() {
     let mut missing = Vec::new();
     for f in &files {
         let text = read(f);
-        for (id, job) in jobs(&text) {
+        for (id, job) in jobs_of(f, &text) {
             jobs_seen += 1;
             if !privileged(&text, &job) {
                 continue;
@@ -1087,6 +1188,7 @@ fn the_base_read_finder_sees_every_form() {
 fn what_channel_templates_read_at_the_base_is_trust_root() {
     let files = walk(&|p| {
         p.starts_with("bosun/channel/")
+            || p == "hull/.github/workflows/bosun.yml"
             || (p.starts_with(".github/workflows/") && p.ends_with(".yml"))
     });
     let mut literal = std::collections::BTreeSet::new();
@@ -1238,14 +1340,16 @@ fn cache_hits(job: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// No job that holds a secret or an id-token, or whose `GITHUB_TOKEN` can write (its own
+/// `permissions:`, else the workflow's, else unknown), restores or saves a cache.
 #[test]
-fn jobs_holding_a_secret_or_an_id_token_restore_no_cache() {
+fn jobs_holding_a_secret_an_id_token_or_a_write_token_restore_no_cache() {
     let (mut held, mut hits) = (Vec::new(), Vec::new());
     let mut exempt_used = 0;
     for f in workflows() {
         let text = read(&f);
-        for (id, job) in jobs(&text) {
-            if !holds_secret(&job) {
+        for (id, job) in jobs_of(&f, &text) {
+            if !(holds_secret(&text, &job) || writes_token(&text, &job)) {
                 continue;
             }
             held.push(format!("{f}:{id}"));
@@ -1273,7 +1377,7 @@ fn jobs_holding_a_secret_or_an_id_token_restore_no_cache() {
     assert_eq!(exempt_used, HOARD_SELF_TEST.len(), "hoard exemption");
     assert!(
         hits.is_empty(),
-        "cache in a job holding a secret:\n{hits:#?}"
+        "cache in a job holding a secret, an id-token or a write token:\n{hits:#?}"
     );
 }
 
@@ -1395,4 +1499,295 @@ fn privileged_counts_write_tokens_and_whole_secrets() {
         "      - run: echo ${{ secrets.GITHUB_TOKEN }}\n"
     ));
     assert!(!check(read, "      # ${{ secrets.NPM_TOKEN }}\n"));
+}
+
+/// Files a restore `pat=` selects that are no quorum trust root on purpose, with the reason.
+/// Anything else a pattern selects must be trust root: CI puts the base's copy over the PR's,
+/// so no quorum may count a change to it.
+const RESTORE_EXEMPT: [(&str, &str); 1] = [(
+    ".bosun/version",
+    "the pin: `pin_change_trust_root` judges it (an upgrade to a released version stays quorum)",
+)];
+
+/// Every file the workflows' restore-from-base patterns select in this repo (`git ls-files`).
+#[test]
+fn every_tracked_file_a_workflow_restores_from_the_base_is_trust_root() {
+    let out = std::process::Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(root())
+        .output()
+        .expect("git ls-files");
+    assert!(out.status.success(), "git ls-files failed");
+    let tracked: Vec<String> = String::from_utf8_lossy(&out.stdout)
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect();
+    assert!(tracked.len() > 100, "tracked files: {}", tracked.len());
+    let mut pats = std::collections::BTreeSet::new();
+    let mut files = workflows();
+    files.extend(walk(&|p| {
+        (p.starts_with("bosun/channel/")
+            && (p.ends_with("bosun.yml.jinja") || p.ends_with("bosun-ok.yml.jinja")))
+            || p == "hull/.github/workflows/bosun.yml"
+    }));
+    for f in &files {
+        pats.extend(restore_pats(&read(f)));
+    }
+    for want in [
+        "bosun/channel/pieces/core/files/.github/workflows/bosun.yml.jinja",
+        "bosun/channel/pieces/circleci/files/.circleci/src/jobs/bosun-ok.yml.jinja",
+        "hull/.github/workflows/bosun.yml",
+    ] {
+        assert!(files.iter().any(|f| f == want), "not scanned: {want}");
+        assert!(!restore_pats(&read(want)).is_empty(), "no pat= in {want}");
+    }
+    assert!(pats.len() >= 2, "restore patterns: {pats:?}");
+    let (mut missing, mut exempt_used) = (Vec::new(), std::collections::BTreeSet::new());
+    for pat in &pats {
+        let re = Regex::new(pat).unwrap_or_else(|e| panic!("{pat}: {e}"));
+        // Tracked files plus synthetic paths (a pattern may select none tracked here).
+        let synthetic = candidates();
+        let hit: Vec<&String> = tracked
+            .iter()
+            .chain(synthetic.iter())
+            .filter(|p| re.is_match(p))
+            .collect();
+        assert!(!hit.is_empty(), "pattern {pat} selects nothing");
+        for p in hit {
+            if let Some((e, _)) = RESTORE_EXEMPT.iter().find(|(e, _)| *e == p.as_str()) {
+                exempt_used.insert(*e);
+            } else if !is_trust_root(p) {
+                missing.push(format!("{p} (pattern {pat})"));
+            }
+        }
+    }
+    // A stale exemption fails: each one is selected by a pattern and says why.
+    for (e, why) in RESTORE_EXEMPT {
+        assert!(
+            !why.is_empty() && exempt_used.contains(e),
+            "stale exemption {e}"
+        );
+        assert!(!is_trust_root(e), "{e} is trust root: drop the exemption");
+    }
+    assert!(
+        missing.is_empty(),
+        "restored from the base, not trust root:\n{missing:#?}"
+    );
+}
+
+/// A workflow runs `scripts/a.sh`, which sources `b.sh`, which reads `c.toml`.
+fn write_chain(dir: &Path) {
+    let put = |rel: &str, text: &str| {
+        let p = dir.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, text).unwrap();
+    };
+    put(
+        ".github/workflows/w.yml",
+        "name: t\non: push\njobs:\n  j:\n    runs-on: x\n    steps:\n      - run: bash scripts/a.sh\n",
+    );
+    put(
+        "scripts/a.sh",
+        "#!/bin/bash\nSCRIPT_DIR=x\nsource \"$SCRIPT_DIR/b.sh\"\n",
+    );
+    put("scripts/b.sh", "#!/bin/bash\ncat \"$SCRIPT_DIR/c.toml\"\n");
+    put("scripts/c.toml", "k = 1\n");
+}
+
+/// Runs `close_fn` on the fixture job's inputs; `Err` names the files of the chain it missed.
+fn chain_check(close_fn: &dyn Fn(&mut BTreeMap<String, String>)) -> Result<(), String> {
+    let tmp = tempfile::tempdir().unwrap();
+    write_chain(tmp.path());
+    with_root(tmp.path(), || {
+        let text = read(".github/workflows/w.yml");
+        let (_, job) = jobs_of("w.yml", &text).remove(0);
+        let mut found = job_inputs(&text, &job, "w.yml");
+        close_fn(&mut found);
+        let missed: Vec<&str> = ["scripts/a.sh", "scripts/b.sh", "scripts/c.toml"]
+            .into_iter()
+            .filter(|f| !found.contains_key(*f))
+            .collect();
+        if missed.is_empty() {
+            Ok(())
+        } else {
+            Err(format!("missed {missed:?} in {found:?}"))
+        }
+    })
+}
+
+/// The walker proves itself on a fixture: `close` finds the whole chain, and the same check
+/// fails for a `close` that does nothing, so a walker that stops walking cannot pass.
+#[test]
+fn close_finds_a_fixture_chain_and_a_no_op_close_fails_the_check() {
+    chain_check(&|f| close(f)).unwrap();
+    let err = chain_check(&|_| {}).expect_err("a no-op close must fail the check");
+    assert!(
+        err.contains("scripts/b.sh") && err.contains("scripts/c.toml"),
+        "{err}"
+    );
+}
+
+#[test]
+#[should_panic(expected = "MAX_CLOSED")]
+fn close_panics_at_the_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut a = String::from("#!/bin/bash\n");
+    for i in 0..=MAX_CLOSED {
+        fs::write(tmp.path().join(format!("s{i}.sh")), "#!/bin/bash\n").unwrap();
+        a.push_str(&format!("bash s{i}.sh\n"));
+    }
+    fs::write(tmp.path().join("a.sh"), a).unwrap();
+    with_root(tmp.path(), || {
+        let mut found = BTreeMap::from([("a.sh".to_string(), "t".to_string())]);
+        close(&mut found);
+    });
+}
+
+#[test]
+#[should_panic(expected = "too big to follow")]
+fn close_panics_on_a_script_it_would_skip() {
+    let tmp = tempfile::tempdir().unwrap();
+    fs::write(tmp.path().join("a.sh"), "#".repeat(512 * 1024 + 1)).unwrap();
+    with_root(tmp.path(), || {
+        let mut found = BTreeMap::from([("a.sh".to_string(), "t".to_string())]);
+        close(&mut found);
+    });
+}
+
+/// `jobs:` is found with a trailing comment and with CRLF line endings, and every workflow has
+/// at least one job.
+#[test]
+fn jobs_parse_with_a_comment_and_crlf() {
+    let ids = |y: &str| jobs(y).into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+    assert_eq!(
+        ids("on: push\njobs:\n  a:\n    x: 1\n  b:\n    x: 2\n"),
+        ["a", "b"]
+    );
+    assert_eq!(
+        ids("on: push\njobs: # the jobs\n  a: # first\n    x: 1\n  b:\n    x: 2\n"),
+        ["a", "b"]
+    );
+    assert_eq!(
+        ids("on: push\r\njobs:\r\n  a:\r\n    x: 1\r\n  b:\r\n    x: 2\r\n"),
+        ["a", "b"]
+    );
+    assert_eq!(ids("on: push\r\njobs: # c\r\n  a:\r\n    x: 1\r\n"), ["a"]);
+    // The part before `jobs:` is the workflow's, with either ending.
+    assert_eq!(workflow_top("a: 1\njobs: # c\n  j:\n"), "a: 1\n");
+    assert_eq!(workflow_top("a: 1\r\njobs:\r\n  j:\r\n"), "a: 1\r\n");
+    for f in workflows() {
+        assert!(!jobs_of(&f, &read(&f)).is_empty(), "{f}");
+    }
+}
+
+#[test]
+#[should_panic(expected = "no job found")]
+fn a_workflow_without_jobs_fails_the_floor() {
+    jobs_of("w.yml", "name: t\non: push\n");
+}
+
+/// What makes a job hold a secret or an id-token, one line per form.
+#[test]
+fn holds_secret_sees_every_form() {
+    let held = |top: &str, job: &str| {
+        let file = format!("name: t\non: push\n{top}jobs:\n  j:\n    runs-on: x\n{job}");
+        let (_, j) = jobs(&file).remove(0);
+        holds_secret(&file, &j)
+    };
+    let step = "    steps:\n      - run: echo hi\n";
+    // The workflow's own `env:`.
+    assert!(held("env:\n  K: ${{ secrets.NPM_TOKEN }}\n", step));
+    assert!(held("env:\n  K: ${{ toJSON(secrets) }}\n", step));
+    assert!(!held("env:\n  K: ${{ secrets.GITHUB_TOKEN }}\n", step));
+    assert!(!held("env:\n  K: 1 # ${{ secrets.NPM_TOKEN }}\n", step));
+    // A `#` inside quotes is no comment: the secret after it counts.
+    assert!(held("env:\n  K: \"x #y\" ${{ secrets.T }}\n", step));
+    assert!(held("env:\n  K: 'x #y' ${{ secrets.T }}\n", step));
+    assert!(held("env:\n  K: ${{ format('{0} #', secrets.T) }}\n", step));
+    // `id-token: write`: plain, with a comment, quoted.
+    for l in [
+        "      id-token: write",
+        "      id-token: write # oidc",
+        "      id-token: \"write\"",
+        "      id-token: 'write'  # x",
+    ] {
+        assert!(held("", &format!("    permissions:\n{l}\n{step}")), "{l}");
+    }
+    // In a flow map.
+    for l in [
+        "    permissions: { id-token: write }",
+        "    permissions: {id-token: write, contents: read}",
+        "    permissions: { contents: read, id-token: \"write\" } # c",
+    ] {
+        assert!(held("", &format!("{l}\n{step}")), "{l}");
+    }
+    // At the workflow.
+    assert!(held("permissions:\n  id-token: write # c\n", step));
+    assert!(held("permissions: { id-token: write }\n", step));
+    // `write-all`, at the job or the workflow.
+    assert!(held("", &format!("    permissions: write-all\n{step}")));
+    assert!(held(
+        "",
+        &format!("    permissions: 'write-all' # c\n{step}")
+    ));
+    assert!(held("permissions: write-all\n", step));
+    // The job's own `permissions:` replaces the workflow's.
+    assert!(!held(
+        "permissions: write-all\n",
+        &format!("    permissions:\n      contents: read\n{step}")
+    ));
+    // Not grants.
+    assert!(!held(
+        "",
+        &format!("    permissions:\n      id-token: read\n{step}")
+    ));
+    assert!(!held("", &format!("    # permissions: write-all\n{step}")));
+    assert!(!held("", &format!("    permissions: read-all\n{step}")));
+    assert!(!held(
+        "",
+        &format!("    permissions: {{ contents: write }}\n{step}")
+    ));
+}
+
+/// `root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)` (splice/scripts/smoke.sh,
+/// scripts/bump-version.sh, hoard/tests/e2e/turbo.sh) names a directory from the repo root.
+#[test]
+fn script_vars_resolves_a_root_variable() {
+    let up1 = "root=$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/..\" && pwd)\ncat \"$root/x.toml\"\nbash $root/y.sh\nbash \"${root}\"/z.sh\nbash $rooted/w.sh\n";
+    let got = script_vars(up1, "splice/scripts");
+    assert!(got.contains("@root@/splice/x.toml"), "{got}");
+    assert!(got.contains("@root@/splice/y.sh"), "{got}");
+    assert!(got.contains("@root@/splice/z.sh"), "{got}");
+    assert!(
+        got.contains("$rooted/w.sh"),
+        "a longer name is no match: {got}"
+    );
+    let up2 =
+        "root=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/../..\" && pwd)\"\nbash \"$root/p/q.sh\"\n";
+    let got = script_vars(up2, "hoard/tests/e2e");
+    assert!(got.contains("@root@/hoard/p/q.sh"), "{got}");
+    let up0 = "here=$(cd \"$(dirname \"$0\")\" && pwd)\n. \"$here/lib.sh\"\n";
+    let got = script_vars(up0, "scripts");
+    assert!(got.contains("@root@/scripts/lib.sh"), "{got}");
+    // The three real scripts leave no half-rewritten expression behind, and the root variable
+    // resolves to a known path in each.
+    for (s, known) in [
+        (
+            "splice/scripts/smoke.sh",
+            "@root@/splice/tests/fixtures/template/v1",
+        ),
+        ("scripts/bump-version.sh", "cd \"@root@"),
+        (
+            "hoard/tests/e2e/turbo.sh",
+            "@root@/hoard/tests/fixtures/turbo-repo",
+        ),
+    ] {
+        let text = read(s);
+        assert!(text.contains("BASH_SOURCE[0]"), "{s}");
+        let dir = s.rsplit_once('/').unwrap().0;
+        let got = script_vars(&text, dir);
+        assert!(!got.contains("BASH_SOURCE"), "{s}: {got}");
+        assert!(got.contains(known), "{s}: no {known}");
+    }
 }
