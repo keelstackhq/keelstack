@@ -784,9 +784,12 @@ fn the_release_environments_resolved_reviewers_win_but_the_rest_is_kept() {
 fn an_unreadable_existing_environment_is_not_rewritten_blind() {
     let (_dir, d) = desired();
     let api = env_api((403, r#"{"message":"Resource not accessible"}"#));
-    let err = execute_github(&http(&api), &d, &existing(false, Reviewers::Unresolved));
-    assert!(err.is_err());
-    assert!(api.requests().iter().all(|r| r.method == "GET"));
+    let err = execute_github(&http(&api), &d, &existing(false, Reviewers::Unresolved)).unwrap_err();
+    assert_eq!(err.exit_code(), 3, "{err}");
+    assert!(err.to_string().contains("blind"), "{err}");
+    let requests = api.requests();
+    assert_eq!(requests.len(), 1, "only the GET is sent");
+    assert!(requests.iter().all(|r| r.method == "GET"));
 }
 
 #[test]
@@ -800,4 +803,119 @@ fn a_new_environment_is_not_read_first() {
     execute_github(&http(&api), &d, &c).unwrap();
     assert!(api.requests().iter().all(|r| r.method != "GET"));
     assert!(put_body_of(&api).get("wait_timer").is_none());
+}
+
+#[test]
+fn a_pinned_check_is_written_with_its_integration_id() {
+    let (_dir, mut d) = desired();
+    d.github.ruleset.check_pins = vec![hoist::desired::CheckPin {
+        context: "ci-ok".into(),
+        app: hoist::config::CheckApp::Slug("gate".into()),
+        id: Some(777),
+    }];
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    execute_github(&http(&api), &d, &ruleset(None, false)).unwrap();
+    let b = body(&api, 0);
+    assert_eq!(
+        b["rules"][2]["parameters"]["required_status_checks"],
+        json!([{"context": "ci-ok", "integration_id": 777}])
+    );
+}
+
+#[test]
+fn check_apps_resolve_once_per_slug_and_fail_closed() {
+    let (_dir, mut d) = desired();
+    let pin = |c: &str| hoist::desired::CheckPin {
+        context: c.into(),
+        app: hoist::config::CheckApp::Slug("gate".into()),
+        id: None,
+    };
+    d.github.ruleset.check_pins = vec![pin("a"), pin("b")];
+    let api = FakeApi::start(&[("GET /apps/gate", 200, r#"{"id": 42}"#, &[])]);
+    hoist::github::resolve_check_pins(&http(&api), &mut d).unwrap();
+    assert!(d.github.ruleset.check_pins.iter().all(|p| p.id == Some(42)));
+    assert_eq!(api.requests().len(), 1);
+
+    d.github.ruleset.check_pins = vec![pin("a")];
+    let api = FakeApi::start(&[("GET /apps/gate", 404, r#"{"message":"Not Found"}"#, &[])]);
+    let err = hoist::github::resolve_check_pins(&http(&api), &mut d).unwrap_err();
+    assert_eq!(err.exit_code(), 3);
+    assert!(err.to_string().contains("`gate`"), "{err}");
+}
+
+fn pinned_ruleset_live() -> String {
+    json!({
+        "id": 11, "name": "hoist: default branch", "target": "branch", "enforcement": "active",
+        "conditions": {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}},
+        "rules": [
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": false,
+                "required_status_checks": [{"context": "ci-ok", "integration_id": 15368}]
+            }}
+        ],
+        "bypass_actors": []
+    })
+    .to_string()
+}
+
+fn put_checks(pins: Vec<hoist::desired::CheckPin>) -> Value {
+    let (_dir, mut d) = desired();
+    d.github.ruleset.check_pins = pins;
+    let api = FakeApi::start(&[
+        (
+            "GET /repos/acme/x/rulesets/11",
+            200,
+            &pinned_ruleset_live(),
+            &[],
+        ),
+        ("PUT /repos/acme/x/rulesets/11", 200, "empty.json", &[]),
+    ]);
+    execute_github(&http(&api), &d, &ruleset(Some(11), false)).unwrap();
+    let b = body(&api, 1);
+    b["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["type"] == "required_status_checks")
+        .unwrap()["parameters"]["required_status_checks"]
+        .clone()
+}
+
+#[test]
+fn put_merge_pin_overwrites_a_different_live_integration_id() {
+    let checks = put_checks(vec![hoist::desired::CheckPin {
+        context: "ci-ok".into(),
+        app: hoist::config::CheckApp::Id(777),
+        id: Some(777),
+    }]);
+    assert_eq!(checks, json!([{"context": "ci-ok", "integration_id": 777}]));
+}
+
+#[test]
+fn put_merge_plain_string_check_keeps_its_live_integration_id() {
+    let checks = put_checks(Vec::new());
+    assert_eq!(
+        checks,
+        json!([{"context": "ci-ok", "integration_id": 15368}])
+    );
+}
+
+#[test]
+fn an_unresolved_pin_is_an_error_not_a_silent_drop() {
+    let (_dir, mut d) = desired();
+    d.github.ruleset.check_pins = vec![hoist::desired::CheckPin {
+        context: "ci-ok".into(),
+        app: hoist::config::CheckApp::Slug("gate".into()),
+        id: None,
+    }];
+    let api = FakeApi::start(&[("POST /repos/acme/x/rulesets", 201, "created.json", &[])]);
+    let err = execute_github(&http(&api), &d, &ruleset(None, false)).unwrap_err();
+    assert_eq!(err.exit_code(), 3);
+    assert!(api.requests().is_empty());
+    assert_eq!(
+        hoist::diff::ensure_pins_resolved(&d)
+            .unwrap_err()
+            .exit_code(),
+        3
+    );
 }

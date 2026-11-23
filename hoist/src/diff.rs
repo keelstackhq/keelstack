@@ -100,10 +100,25 @@ pub fn ruleset_summary(d: &Desired) -> (String, String) {
             "no required checks inferred; ruleset not managed".to_string(),
             "default".to_string(),
         ),
-        Some(first) => (
-            format!("required checks {}", quoted(&wanted_checks(d))),
-            first.source.clone(),
-        ),
+        Some(first) => {
+            let pins: Vec<String> = want
+                .check_pins
+                .iter()
+                .map(|p| match &p.app {
+                    crate::config::CheckApp::Slug(s) => format!("`{}` from app `{s}`", p.context),
+                    crate::config::CheckApp::Id(i) => format!("`{}` from app id {i}", p.context),
+                })
+                .collect();
+            let pinned = if pins.is_empty() {
+                String::new()
+            } else {
+                format!("; pinned: {}", pins.join(", "))
+            };
+            (
+                format!("required checks {}{pinned}", quoted(&wanted_checks(d))),
+                first.source.clone(),
+            )
+        }
     }
 }
 
@@ -126,6 +141,18 @@ pub fn free_plan_reason(d: &Desired) -> String {
          Team for an organization) or make the repo public{queue_fix}",
         quoted(&wanted_checks(d))
     )
+}
+
+/// A pinned required check whose App id is unresolved is an error (exit 3), never skipped.
+pub fn ensure_pins_resolved(d: &Desired) -> Result<(), crate::error::HoistError> {
+    match d.github.ruleset.check_pins.iter().find(|p| p.id.is_none()) {
+        Some(p) => Err(crate::error::HoistError::Usage(format!(
+            "required check `{}` is pinned to an App that is not resolved; check the slug, or \
+             pin it with `integration_id`",
+            p.context
+        ))),
+        None => Ok(()),
+    }
 }
 
 fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
@@ -176,6 +203,23 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             quoted(&have),
             quoted(&need)
         ));
+    }
+    // A pinned check's source must match (a plain-string check keeps whatever source it has).
+    for pin in &want.check_pins {
+        let Some(id) = pin.id else {
+            // Never dropped silently: `ensure_pins_resolved` makes this an error before a write.
+            problems.push(format!("`{}`: its app is not resolved", pin.context));
+            continue;
+        };
+        let have = live.check_pins.iter().find(|(c, _)| *c == pin.context);
+        if have.map(|(_, i)| *i) != Some(id) && live.required_checks.contains(&pin.context) {
+            let was = have.map_or("any".to_string(), |(_, i)| format!("app id {i}"));
+            let slug = match &pin.app {
+                crate::config::CheckApp::Slug(s) => format!("app `{s}` (id {id})"),
+                crate::config::CheckApp::Id(_) => format!("app id {id}"),
+            };
+            problems.push(format!("`{}`: live source {was}, want {slug}", pin.context));
+        }
     }
     if live.merge_queue != want.merge_queue.value {
         problems.push(format!(
@@ -848,15 +892,28 @@ fn environment_policy(cx: &mut Ctx, d: &Desired, l: &LiveGithub, w: &Sourced<Str
     }
 }
 
+/// `s` as one shell word: unchanged when it is made only of safe characters, else single-quoted.
+fn sh_quote(s: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "_-./:@%+=,".contains(c);
+    if !s.is_empty() && s.chars().all(safe) {
+        return s.to_string();
+    }
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
 /// The `gh variable set` command(s) for a missing variable: one per environment when only
 /// jobs with an `environment:` read it, else the repository-level one.
 fn set_variable_commands(d: &Desired, name: &str, envs: &[String]) -> String {
-    let (owner, repo) = (&d.repo.owner, &d.repo.name);
+    let slug = sh_quote(&format!("{}/{}", d.repo.owner, d.repo.name));
+    let name = sh_quote(name);
     if envs.is_empty() {
-        return format!("gh variable set {name} --repo {owner}/{repo} --body '<value>'");
+        return format!("gh variable set {name} --repo {slug} --body '<value>'");
     }
     envs.iter()
-        .map(|e| format!("gh variable set {name} --env {e} --repo {owner}/{repo} --body '<value>'"))
+        .map(|e| {
+            let e = sh_quote(e);
+            format!("gh variable set {name} --env {e} --repo {slug} --body '<value>'")
+        })
         .collect::<Vec<_>>()
         .join(" ; ")
 }
@@ -1453,4 +1510,19 @@ pub fn diff_cloudflare(d: &Desired, l: &LiveCloudflare) -> (Vec<Item>, Vec<Human
     cx.items
         .sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
     (cx.items, Vec::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sh_quote;
+
+    #[test]
+    fn sh_quote_leaves_safe_words_and_quotes_the_rest() {
+        assert_eq!(sh_quote("acme/x"), "acme/x");
+        assert_eq!(sh_quote("prod env"), "'prod env'");
+        assert_eq!(sh_quote("a;rm -rf x"), "'a;rm -rf x'");
+        assert_eq!(sh_quote("it's"), "'it'\\''s'");
+        assert_eq!(sh_quote("$(x)"), "'$(x)'");
+        assert_eq!(sh_quote(""), "''");
+    }
 }

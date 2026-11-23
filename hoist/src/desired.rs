@@ -39,11 +39,23 @@ pub struct DesiredSettings {
     pub immutable_releases: Option<Sourced<bool>>,
 }
 
+/// A required check pinned to its source App (spec §6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckPin {
+    pub context: String,
+    pub app: crate::config::CheckApp,
+    /// The App's id: from `integration_id`, or from `GET /apps/{slug}` once resolved.
+    pub id: Option<u64>,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesiredRuleset {
     pub name: String,
     pub branch: String,
     pub required_checks: Vec<Sourced<String>>,
+    /// Checks pinned to the App that posts them (`[github] required_checks` tables); `id` is
+    /// filled by `github::resolve_check_pins` (a slug) or given (`integration_id`).
+    pub check_pins: Vec<CheckPin>,
     pub merge_queue: Sourced<bool>,
     /// `[github] admin_bypass`: the repository admin role may merge a PR past the rules.
     pub admin_bypass: bool,
@@ -621,7 +633,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
         Some(list) => list
             .iter()
             .map(|c| Sourced {
-                value: c.clone(),
+                value: c.context.clone(),
                 source: "hoist.toml:github.required_checks".to_string(),
             })
             .collect(),
@@ -632,6 +644,23 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             .cloned()
             .collect(),
     };
+
+    let check_pins: Vec<CheckPin> = root
+        .github
+        .required_checks
+        .iter()
+        .flatten()
+        .filter_map(|c| {
+            c.app.clone().map(|app| CheckPin {
+                context: c.context.clone(),
+                id: match &app {
+                    crate::config::CheckApp::Id(id) => Some(*id),
+                    crate::config::CheckApp::Slug(_) => None,
+                },
+                app,
+            })
+        })
+        .collect();
 
     let mut github = DesiredGithub {
         settings: DesiredSettings {
@@ -660,6 +689,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             name: RULESET_NAME.to_string(),
             branch: default_branch.clone(),
             required_checks,
+            check_pins,
             merge_queue: merge_queue(&raw, root.github.merge_queue, &workflows),
             admin_bypass: root.github.admin_bypass,
         },

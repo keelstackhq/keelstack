@@ -192,6 +192,7 @@ fn symlink(target: &str, link: &Path) {
 #[test]
 fn a_repo_with_no_secrets_config_has_nothing_to_check() {
     let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
     let (code, report) = check(dir.path(), NOW);
     assert_eq!(code, 0, "{report}");
     assert_eq!(report["ok"], true);
@@ -203,4 +204,26 @@ fn a_repo_with_no_secrets_config_has_nothing_to_check() {
     assert_eq!(items[0]["action"], "ok");
     assert_eq!(items[0]["reason"], "no secrets config; nothing to check");
     assert!(report["human_steps"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn a_dir_that_is_not_a_repo_or_does_not_exist_fails_the_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let (code, _) = check(dir.path(), NOW);
+    assert_eq!(code, 3, "an empty non-repo dir is a wrong -C");
+    let (code, _) = check(&dir.path().join("missing"), NOW);
+    assert_eq!(code, 3);
+}
+
+#[test]
+fn remote_without_secrets_toml_is_not_nothing_to_check() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    let out = hoist()
+        .args(["secrets", "check", "--remote", "-C"])
+        .arg(dir.path())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(3));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("secrets.toml"));
 }

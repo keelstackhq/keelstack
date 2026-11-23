@@ -72,11 +72,91 @@ impl Default for EnvCfg {
     }
 }
 
+/// The App that must post a required check (spec §6.1).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckApp {
+    /// `app = "<slug>"`, resolved with `GET /apps/{slug}`.
+    Slug(String),
+    /// `integration_id = <id>`.
+    Id(u64),
+}
+
+/// One `[github] required_checks` entry: a plain `"context"` or `{ context, app | integration_id }`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckCfg {
+    pub context: String,
+    pub app: Option<CheckApp>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCheck {
+    context: Option<String>,
+    app: Option<String>,
+    integration_id: Option<u64>,
+}
+
+impl<'de> Deserialize<'de> for CheckCfg {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        use serde::de::{Error, MapAccess, Visitor};
+        struct V;
+        impl<'de> Visitor<'de> for V {
+            type Value = CheckCfg;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                f.write_str("a check name or a table { context, app | integration_id }")
+            }
+            fn visit_str<E: Error>(self, v: &str) -> Result<CheckCfg, E> {
+                Ok(CheckCfg {
+                    context: v.to_string(),
+                    app: None,
+                })
+            }
+            fn visit_map<A: MapAccess<'de>>(self, m: A) -> Result<CheckCfg, A::Error> {
+                let raw = RawCheck::deserialize(serde::de::value::MapAccessDeserializer::new(m))?;
+                let Some(context) = raw.context.filter(|c| !c.is_empty()) else {
+                    return Err(A::Error::custom(
+                        "a required_checks table needs a non-empty `context`",
+                    ));
+                };
+                let app = match (raw.app, raw.integration_id) {
+                    (Some(slug), None) => {
+                        let ok = !slug.is_empty()
+                            && slug
+                                .chars()
+                                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+                        if !ok {
+                            return Err(A::Error::custom(format!(
+                                "required check `{context}`: `app` must be a slug ([a-z0-9-]+), \
+                                 got {slug:?}; use `integration_id` for a numeric id"
+                            )));
+                        }
+                        Some(CheckApp::Slug(slug))
+                    }
+                    (None, Some(0)) => {
+                        return Err(A::Error::custom(format!(
+                            "required check `{context}`: `integration_id` must be positive"
+                        )));
+                    }
+                    (None, Some(id)) => Some(CheckApp::Id(id)),
+                    (None, None) => None,
+                    (Some(_), Some(_)) => {
+                        return Err(A::Error::custom(format!(
+                            "required check `{context}`: give `app` or `integration_id`, not both"
+                        )));
+                    }
+                };
+                Ok(CheckCfg { context, app })
+            }
+        }
+        d.deserialize_any(V)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct GithubCfg {
     pub visibility: Option<String>,
-    pub required_checks: Option<Vec<String>>,
+    pub required_checks: Option<Vec<CheckCfg>>,
     /// Required checks posted as commit statuses (not jobs), beside the built-in bosun set.
     pub statuses: Vec<String>,
     /// Secrets the workflows name that may stay unset: listed apart, never a human step.
@@ -339,7 +419,29 @@ pub fn load_root(dir: &Path) -> Result<RootConfig, HoistError> {
     let cfg: RootConfig = load(dir)?;
     validate_variables(dir, &cfg.github)?;
     validate_tag_ruleset(dir, &cfg.github)?;
+    validate_checks(dir, &cfg.github)?;
     Ok(cfg)
+}
+
+/// A pinned check's context is listed once (a second entry would pin it twice).
+fn validate_checks(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
+    let list = g.required_checks.as_deref().unwrap_or_default();
+    for (i, c) in list.iter().enumerate() {
+        let twice = list
+            .iter()
+            .enumerate()
+            .any(|(j, o)| j != i && o.context == c.context && (c.app.is_some() || o.app.is_some()));
+        if twice {
+            return Err(HoistError::Config {
+                file: dir.join(FILE_NAME).display().to_string(),
+                message: format!(
+                    "required check `{}` is listed twice; list each context once",
+                    c.context
+                ),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// `[github.tag_ruleset]`: at least one pattern; the bypass is `github-actions`, or, with
@@ -469,7 +571,19 @@ where
         return match unknown_field(err.message()) {
             Some(field) if field == *key => format!("unknown key `{key}`; remove it"),
             Some(field) => {
-                let path = find_path(value, field).unwrap_or_default();
+                // Several tables may hold a key of this name: the culprit is the one whose
+                // removal clears the error.
+                let mut paths = Vec::new();
+                find_paths(value, field, &mut paths);
+                let culprit = paths.iter().find(|p| {
+                    let mut v = value.clone();
+                    remove_at(&mut v, p, field);
+                    let mut t = toml::Table::new();
+                    t.insert(key.clone(), v);
+                    retry(t).is_none_or(|e| unknown_field(e.message()) != Some(field))
+                });
+                let path = culprit.or(paths.first()).cloned().unwrap_or_default();
+                let path: String = path.iter().map(|p| format!("{p}.")).collect();
                 format!("unknown key `{key}.{path}{field}`; remove it")
             }
             None => format!("invalid `{key}`: {}", err.message()),
@@ -478,17 +592,58 @@ where
     whole.message().to_string()
 }
 
-/// The dotted table path (with a trailing dot) to the first table under `value` that holds
-/// `field`, below the top level: `environments.production.` for a nested table, empty at the top.
-fn find_path(value: &toml::Value, field: &str) -> Option<String> {
-    let toml::Value::Table(t) = value else {
-        return None;
-    };
-    if t.contains_key(field) {
-        return Some(String::new());
+/// Every table path below `value` (as segments) that holds `field`; arrays count as `name[i]`.
+fn find_paths(value: &toml::Value, field: &str, out: &mut Vec<Vec<String>>) {
+    fn walk(v: &toml::Value, field: &str, trail: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+        match v {
+            toml::Value::Table(t) => {
+                if t.contains_key(field) {
+                    out.push(trail.clone());
+                }
+                for (k, c) in t {
+                    trail.push(k.clone());
+                    walk(c, field, trail, out);
+                    trail.pop();
+                }
+            }
+            toml::Value::Array(a) => {
+                for (i, c) in a.iter().enumerate() {
+                    if let Some(last) = trail.last_mut() {
+                        let base = last.clone();
+                        *last = format!("{base}[{i}]");
+                        walk(c, field, trail, out);
+                        trail.pop();
+                        trail.push(base);
+                    }
+                }
+            }
+            _ => {}
+        }
     }
-    t.iter()
-        .find_map(|(k, v)| find_path(v, field).map(|rest| format!("{k}.{rest}")))
+    walk(value, field, &mut Vec::new(), out);
+}
+
+fn remove_at(value: &mut toml::Value, path: &[String], field: &str) {
+    let mut cur = value;
+    for seg in path {
+        let (name, idx) = match seg.split_once('[') {
+            Some((n, i)) => (n, i.trim_end_matches(']').parse::<usize>().ok()),
+            None => (seg.as_str(), None),
+        };
+        let Some(next) = cur.get_mut(name) else {
+            return;
+        };
+        cur = match idx {
+            Some(i) => match next.get_mut(i) {
+                Some(n) => n,
+                None => return,
+            },
+            None => next,
+        };
+    }
+    if let toml::Value::Table(t) = cur {
+        t.remove(field);
+    }
 }
 
 fn unknown_field(message: &str) -> Option<&str> {

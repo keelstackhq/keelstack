@@ -174,6 +174,7 @@ fn remote_drift_and_errors() {
 fn remote_is_refused_in_a_secrets_repo_and_nothing_is_not_an_error() {
     let api = FakeApi::start(&[]);
     let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
     let out = hoist()
         .args(["secrets", "check", "-C"])
         .arg(dir.path())

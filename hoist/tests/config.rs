@@ -123,3 +123,61 @@ fn variable_names_are_validated_at_load() {
     );
     assert!(ok.is_ok());
 }
+
+#[test]
+fn required_checks_take_strings_and_tables() {
+    use hoist::config::CheckApp;
+    let dir = dir_with(
+        "[github]\nrequired_checks = [\"lint\", { context = \"ci-ok\", app = \"github-actions\" }, \
+         { context = \"x\", integration_id = 5 }, { context = \"y\" }]\n",
+    );
+    let list = load_root(dir.path())
+        .unwrap()
+        .github
+        .required_checks
+        .unwrap();
+    assert_eq!(list[0].context, "lint");
+    assert_eq!(list[0].app, None);
+    assert_eq!(list[1].app, Some(CheckApp::Slug("github-actions".into())));
+    assert_eq!(list[2].app, Some(CheckApp::Id(5)));
+    assert_eq!(list[3].app, None);
+}
+
+#[test]
+fn bad_required_check_tables_are_config_errors() {
+    for (body, want) in [
+        (
+            "{ context = \"a\", app = \"b\", integration_id = 1 }",
+            "not both",
+        ),
+        ("{ context = \"a\", app = \"Bad_Slug\" }", "slug"),
+        ("{ context = \"a\", integration_id = 0 }", "positive"),
+        ("{ app = \"b\" }", "context"),
+        (
+            "{ context = \"a\", colour = \"b\" }",
+            "required_checks[0].colour",
+        ),
+    ] {
+        let dir = dir_with(&format!("[github]\nrequired_checks = [{body}]\n"));
+        let msg = load_root(dir.path()).unwrap_err().to_string();
+        assert!(
+            msg.contains("hoist.toml") && msg.contains(want),
+            "{body}: {msg}"
+        );
+    }
+    let dir =
+        dir_with("[github]\nrequired_checks = [\"a\", { context = \"a\", integration_id = 1 }]\n");
+    let msg = load_root(dir.path()).unwrap_err().to_string();
+    assert!(msg.contains("listed twice"), "{msg}");
+}
+
+#[test]
+fn an_unknown_key_names_the_table_that_holds_it_not_another_with_the_same_key() {
+    // `tags` is a known key under `github.environments.*` but unknown under `tag_ruleset`: the
+    // error must name the table that really holds the bad key.
+    let dir = dir_with(
+        "[github.environments.a]\ntags = [\"v*\"]\n[github.tag_ruleset]\npatterns = [\"v*\"]\ntags = 1\n",
+    );
+    let msg = load_root(dir.path()).unwrap_err().to_string();
+    assert!(msg.contains("github.tag_ruleset.tags"), "{msg}");
+}

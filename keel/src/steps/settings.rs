@@ -9,7 +9,7 @@ pub struct Settings;
 fn convert(res: Res) -> Check {
     match res {
         Res::Ok => Check::Done("hoist check: no drift".into()),
-        Res::Drift => Check::Todo("hoist check reports drift".into()),
+        Res::Drift | Res::NoItems => Check::Todo("hoist check reports drift".into()),
         Res::Human {
             title,
             url,

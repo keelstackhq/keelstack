@@ -60,6 +60,7 @@ pub(crate) fn hoist_check(
     match res {
         Res::Ok => Check::Done(done_msg.into()),
         Res::Drift => Check::Todo(format!("hoist reports drift in [{only}]")),
+        Res::NoItems => Check::Todo(format!("hoist reports no items for [{only}]")),
         Res::Human {
             title,
             url,
