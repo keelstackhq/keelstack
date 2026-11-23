@@ -144,6 +144,7 @@ const PROTECTED_RES = [
   /(^|\/)\.bosun(\/|$)/i,
   /(^|\/)\.claude$/i,
   /(^|\/)pins\.toml$/i, // tool versions that release workflows install with release credentials
+  /(^|\/)scripts\/release-pre\.sh$/i, // runs in the publish job, with publish rights
 ];
 const FAIL_CLOSED_RE = /\.claude\/(hooks|settings)|workflows\/release|\.bosun\/|\.splice\/lock/i;
 const isProtected = (p) => PROTECTED_RES.some((re) => re.test(p));
@@ -157,7 +158,7 @@ const stripTok = (x) =>
 const base = (prog) => String(prog).slice(String(prog).lastIndexOf("/") + 1);
 
 const REASON = {
-  publish: "Releases run in CI from a tag a human pushes (release.yml); do not publish from here.",
+  publish: "Releases run in CI (release.yml), as AGENTS.md says; do not publish from here.",
   force:
     "Push without --force or +refspec; rebase onto the remote branch, or ask the human to rewrite history.",
   tag: "a tag push publishes: push branches only and ask the human to create and push release tags.",

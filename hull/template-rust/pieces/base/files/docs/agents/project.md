@@ -10,7 +10,9 @@ freely, template updates never touch it.
 ## Blocked
 
 Release hook: `scripts/release-pre.sh` (seed) runs in the `publish` job before `hoist release publish
---assets dist`, with `dist/` downloaded and Node 24 ready (setup, builds). Agents may not edit `release.yml`.
+--assets dist`, with `dist/` downloaded and Node 24 ready (setup, builds). It runs with publish rights
+(environment `release`, `id-token: write`): treat it like `release.yml`, which agents may not edit; the
+guard hook blocks agent writes to both and a change to it needs the owner's approval.
 
 Human steps before the first release (`release.yml`, hoist):
 
