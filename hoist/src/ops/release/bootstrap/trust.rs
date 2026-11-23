@@ -118,7 +118,7 @@ pub(crate) fn trust_args(pkg: &str, t: &Trust) -> Vec<String> {
         "github",
         pkg,
         "--file",
-        t.workflow.as_str(),
+        t.workflow_for(pkg),
         "--repo",
         repo.as_str(),
         "--env",
@@ -137,7 +137,7 @@ pub(crate) fn trust_command(pkg: &str, t: &Trust) -> String {
 /// `npm trust list <pkg> --json`; a failed call or an unparsable answer is "not trusted".
 pub(crate) fn npm_trusted(dir: &Path, pkg: &str, t: &Trust) -> bool {
     run(Tool::Npm, dir, &["trust", "list", pkg, "--json"], &[])
-        .is_ok_and(|out| trusted(&out, &t.repo, &t.workflow, &t.env))
+        .is_ok_and(|out| trusted(&out, &t.repo, t.workflow_for(pkg), &t.env))
 }
 
 /// How a registration ended.
@@ -167,7 +167,7 @@ pub(crate) fn register(dir: &Path, pkg: &str, t: &Trust) -> Result<Registered, H
         return Ok(Registered::Unverified(format!(
             "`npm trust github` exited 0 but `npm trust list {pkg} --json` does not show {}; \
              check https://www.npmjs.com/package/{pkg}/access, then run bootstrap again",
-            t.describe()
+            t.describe(pkg)
         )));
     }
     Ok(Registered::Done)
@@ -249,6 +249,8 @@ mod tests {
             },
             workflow: "release.yml".to_string(),
             env: "release".to_string(),
+            workflows: Default::default(),
+            deadline: String::new(),
         };
         assert_eq!(
             trust_command("@acme/lib", &t),

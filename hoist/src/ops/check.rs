@@ -83,9 +83,19 @@ pub(crate) fn verify_state(
 
     if wants(Area::Github) {
         let workflows = read_workflows(dir)?;
+        let pins: Vec<(String, u64)> = state
+            .github
+            .as_ref()
+            .and_then(|l| l.rulesets.as_got().ok())
+            .and_then(|rs| {
+                rs.iter()
+                    .find(|r| r.name == state.desired.github.ruleset.name)
+            })
+            .map(|r| r.check_pins.clone())
+            .unwrap_or_default();
         report
             .items
-            .extend(verify_required_checks(&state.desired, &workflows));
+            .extend(verify_required_checks(&state.desired, &workflows, &pins));
     }
 
     if let Some(live) = &state.cloudflare {

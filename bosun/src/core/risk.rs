@@ -890,7 +890,7 @@ pub const APPROVAL_CODE_PATHS: [&str; 9] = [
 /// the required checks and the jobs with an environment; in bosun also every
 /// [`APPROVAL_CODE_PATHS`] entry (the code that checks it and verifies signatures). Apart from
 /// [`CRITICAL_PATHS`], so the window is never widened or reopened from inside it.
-pub const BOOTSTRAP_EXCLUDED: [&str; 19] = [
+pub const BOOTSTRAP_EXCLUDED: [&str; 20] = [
     // `.bosun/version` pins the gate release that runs the check.
     ".bosun/**",
     "governance/**",
@@ -901,6 +901,8 @@ pub const BOOTSTRAP_EXCLUDED: [&str; 19] = [
     "channel/pieces/core/files/.bosun/**",
     ".github/workflows/release.yml",
     ".github/workflows/release.yaml",
+    // The repo hook release.yml's publish job runs (environment `release`, id-token: write).
+    "scripts/release-pre.sh",
     "**/workflows/splice.yml",
     "**/workflows/splice.yaml",
     // They run the approval check (root and channel copies).
@@ -2291,6 +2293,17 @@ mod tests {
                 "{g} in a consumer repo"
             );
         }
+    }
+
+    /// The repo hook the release publish job runs (environment `release`, id-token) is owner-only
+    /// like `release.yml` itself.
+    #[test]
+    fn bootstrap_excludes_the_release_pre_hook() {
+        let f = [("scripts/release-pre.sh", None, Some("@@\n+x"))];
+        assert_eq!(
+            bootstrap_excluded(&f, &[], false),
+            ["scripts/release-pre.sh".to_string()]
+        );
     }
 
     #[test]

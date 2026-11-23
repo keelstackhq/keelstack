@@ -548,3 +548,60 @@ fn a_stray_status_fails_check_but_not_other_commands() {
         .assert()
         .code(3);
 }
+
+#[test]
+fn a_required_check_pinned_to_another_app_needs_no_workflow_job() {
+    let repo = fixture_repo("site", SITE);
+    write_toml(
+        repo.path(),
+        "[github]\nrequired_checks = [\"ci-ok\", \"acme-scan\"]\n",
+    );
+    let api = fake(&[(
+        "GET /repos/acme/x/rulesets/11",
+        200,
+        "github/ruleset_app_check.json",
+        &[],
+    )]);
+    let report = run_json(&api, &pages(200), repo.path(), 0);
+    let scan = item(&report, "required_check", "acme-scan");
+    assert_eq!(scan["verify"]["ok"], true, "{scan}");
+    assert_eq!(scan["reason"], "posted by app 987654", "{scan}");
+    // The Actions-pinned check keeps the job-name check.
+    let ci = item(&report, "required_check", "ci-ok");
+    assert_eq!(ci["verify"]["ok"], true, "{ci}");
+    assert_ne!(ci["reason"], "posted by app 15368", "{ci}");
+}
+
+#[test]
+fn an_unpinned_check_without_a_job_still_fails() {
+    let repo = fixture_repo("site", SITE);
+    write_toml(
+        repo.path(),
+        "[github]\nrequired_checks = [\"ci-ok\", \"acme-scan\"]\n",
+    );
+    let api = fake(&[]);
+    let report = run_json(&api, &pages(200), repo.path(), 1);
+    let scan = item(&report, "required_check", "acme-scan");
+    assert_eq!(scan["verify"]["ok"], false, "{scan}");
+}
+
+#[test]
+fn unreadable_secrets_are_unknown_with_the_reason() {
+    let repo = fixture_repo("site", SITE);
+    let api = fake(&[(
+        "GET /repos/acme/x/actions/secrets",
+        403,
+        "github/forbidden.json",
+        &[],
+    )]);
+    let report = run_json(&api, &pages(200), repo.path(), 0);
+    let it = item(&report, "secret", "CLOUDFLARE_API_TOKEN");
+    assert_eq!(it["action"], "unknown", "{it}");
+    assert!(
+        it["reason"]
+            .as_str()
+            .unwrap()
+            .starts_with("cannot read secrets:"),
+        "{it}"
+    );
+}

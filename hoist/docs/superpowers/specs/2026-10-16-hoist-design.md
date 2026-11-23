@@ -209,6 +209,7 @@ bypass = ["github-actions"]     # with tags_bypass = "actions": required, exactl
 
 [github.environments.production]  # optional, per GitHub environment (§6)
 # branches = ["main", "release/*"] # deployment branch policies; default: the default branch; [] = no restriction
+# tags = ["v*"]                    # tag deployment policies ({"name": pattern, "type": "tag"}), beside the branches; also for the release environment
 # manage = false                   # leave this environment alone
 
 [cloudflare]
@@ -257,7 +258,7 @@ environment = ""                  # GitHub environment holding the deploy secret
 on = "push"                       # push (main) | release
 
 [publish]
-npm = { access = "public", launcher = false }
+npm = { access = "public", launcher = false, build = "pnpm build" }
 crates = {}
 github_release = { targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"], bin = "tool" }
 ```
@@ -265,7 +266,9 @@ github_release = { targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin
 `[publish]` schema (strict):
 - `npm`: `access = "public"` (the default; `"restricted"` exits 3 at model read, R25:
   "restricted npm packages are not supported yet: anonymous registry reads cannot see them"),
-  `launcher` (bool, default `false`).
+  `launcher` (bool, default `false`), `build` (string, optional): a shell command that
+  `release publish` runs (`sh -c`, in the package's directory) before it packs and publishes that
+  package (see §9.3 step 3).
 - `crates`: an empty table; its presence means "publish to crates.io".
 - `github_release`: `targets` (list of target triples) and `bin` (binary name, default: the package name).
 
@@ -287,10 +290,10 @@ A fixed set of typed resources. Each has a natural key, a read, a diff, a write 
 |---|---|---|---|---|
 | github | repo settings | owner/repo | PATCH repo | settings read back |
 | github | branch ruleset | name `hoist: default branch` | create/update ruleset (only this one: other rulesets, such as `hoist: secrets repo`, are never touched): target `~DEFAULT_BRANCH`, enforcement `active`, rules `deletion`, `non_fast_forward`, `required_status_checks` (and `merge_queue` when on; `merge_queue = false` writes no queue rule, and a live queue rule is then `update`), `bypass_actors` = `[]`, or with `[github] admin_bypass = true` `[{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}]` (the repository admin role may merge a PR past the rules, e.g. a mainfix while `main-open` fails; it never pushes directly). An update is a read-merge-write like the tag ruleset's: `apply` `GET`s the ruleset by id and `PUT`s it with the live rules (with their parameters), conditions (includes, excludes) and bypass actors kept; hoist's parts change: enforcement `active`, target `branch`, `~DEFAULT_BRANCH` added to the includes when missing, `deletion` and `non_fast_forward` added when missing, the required checks set (a live strict policy and each kept check's pinned source stay), the merge queue rule added with hoist's settings or removed as wanted (a live one keeps its settings), and the admin role added when `admin_bypass` wants it (never under `--adopt`). hoist never removes a bypass actor; a ruleset gone (404) is created, an unreadable one (403) is a usage error and nothing is written | required check is a job name in a workflow on the default branch |
-| github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]), or with `tags_bypass = "deploy_key"` `[{actor_id: null, actor_type: "DeployKey", bypass_mode: "always"}]` (GitHub's `DeployKey` actor takes no id and stands for every write deploy key of the repo; OpenAPI `repository-ruleset-bypass-actor`: "If `actor_type` is `DeployKey`, this should be null"). In `deploy_key` mode the Actions app is hoist's own earlier actor (told apart by `actor_type` `Integration` and `actor_id` 15368): a live one is `update` ("the GitHub Actions app is still listed") and the merge drops it; every other actor is the owner's and stays. In `actions` mode an app listed twice is `update` and the merge writes it once; read from the rulesets list hoist already reads (details by id, GET-only). hoist models only these parts: enforcement not `active`, a target other than `tag`, a wanted tag include missing, any exclude (it can unprotect a release tag), a missing `creation`/`update`/`deletion` rule, or the Actions app missing or not `always` are `update`. Owner-added includes, rules and bypass actors are no drift: the `ok` reason lists them ("owner-added, kept: tags …; rules …; bypass actors …", and "only by github-actions and the bypass actors the owner added" when there are extra actors). An update is a read-merge-write: `apply` `GET`s the ruleset by id, then `PUT`s it with the live includes, rules (with their parameters) and bypass actors kept, the missing wanted ones appended, the Actions app's mode set to `always`, `exclude` emptied and enforcement `active`; a ruleset gone (404) is created with `POST`; an unreadable one (403) is a usage error and nothing is written. Under `--adopt` an update that would clear live excludes is `drift` ("…; not written: an update would drop excludes `<x>` (--adopt never loosens)"). GitHub Free's 403 is `drift` like the default-branch ruleset; no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
+| github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]), or with `tags_bypass = "deploy_key"` `[{actor_id: null, actor_type: "DeployKey", bypass_mode: "always"}]` (GitHub's `DeployKey` actor takes no id and stands for every write deploy key of the repo; OpenAPI `repository-ruleset-bypass-actor`: "If `actor_type` is `DeployKey`, this should be null"). In `deploy_key` mode the Actions app is hoist's own earlier actor (told apart by `actor_type` `Integration` and `actor_id` 15368): a live one is `update` ("the GitHub Actions app is still listed") and the merge drops it; every other actor is the owner's and stays. In `actions` mode an app listed twice is `update` and the merge writes it once; read from the rulesets list hoist already reads (details by id, GET-only). hoist models only these parts: enforcement not `active`, a target other than `tag`, a wanted tag include missing, any exclude (it can unprotect a release tag), a missing `creation`/`update`/`deletion` rule, or the Actions app missing or not `always` are `update`. Owner-added includes, rules and bypass actors are no drift: the `ok` reason lists them ("owner-added, kept: tags …; rules …; bypass actors …", and "only by github-actions and the bypass actors the owner added" when there are extra actors). An update is a read-merge-write: `apply` `GET`s the ruleset by id, then `PUT`s it with the live includes, rules (with their parameters) and bypass actors kept, the missing wanted ones appended, the Actions app's mode set to `always`, `exclude` emptied and enforcement `active`; a ruleset gone (404) is created with `POST`; an unreadable one (403) is a usage error and nothing is written. Under `--adopt` an update that would clear live excludes is `drift` ("…; not written: an update would drop excludes `<x>` (--adopt never loosens)"). GitHub Free's 403 is `pending` with the human step `plan-limit:rulesets` like the default-branch ruleset (§6); no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
 | github | tag deploy key | title `hoist: release tags` (only `tags_bypass = "deploy_key"`) | `apply` reads the `[release] environment`'s secrets public key (a 404 or 403 is a usage error, nothing written), makes an ed25519 keypair in memory (ring; OpenSSH public line `ssh-ed25519 <base64>`, unencrypted `openssh-key-v1` private key, never printed, logged or written to disk), `POST /repos/{o}/{r}/keys` `{title: "hoist: release tags", key, read_only: false}`, then seals the private key into the environment secret `RELEASE_TAG_KEY` (written before the tag ruleset); a failed seal `DELETE`s the key just added (id from the POST answer). A rejected write names GitHub's `message` plus each `errors[]` entry (resource, field, code, message; never the request body). A 422 whose message names a deploy key ("Deploy keys are disabled for this repository", an organization policy) is no failure: the human step `deploy-keys-policy` (`allow deploy keys for <o>/<r> (organization settings), then re-run keel up`, url `https://github.com/organizations/<o>/settings`) leaves the key and the `hoist: tags` ruleset write skipped and both items `pending` (exit 2), the other writes still apply; any other 422 stops the run (exit 1). Read GET-only: `GET /repos/{o}/{r}/keys` and `GET .../environments/<env>/secrets` (404: no environment, no secret). Key and secret both present: `ok` (no rotation); neither: `create`; only one of them, a read-only key or two keys of that title: `drift` naming the fix (delete the key and the secret, run `hoist apply` again), never a guess. Another write deploy key can bypass the tags too: `drift` naming it ("delete them or make them read-only"). A workflow's `secrets.RELEASE_TAG_KEY` is this item, not a user secret | key and secret listed |
 | github | Actions permissions | repo | PUT default workflow permissions | read back |
-| github | environment | name | create the environment with its deployment branch policies (default: the default branch; `[github.environments.<name>] branches`, §5; `[]` = none). An existing one is read GET-only: the list entry's `deployment_branch_policy` (absent: not judged; `null`: any branch; `protected_branches`; `custom_branch_policies`: then `GET .../environments/<name>/deployment-branch-policies`, unreadable: `unknown`). A wanted branch the environment lacks is `update` (reason names the missing and the extra live policies); `apply` POSTs the missing policies only when custom policies are already on (no PUT: reviewers stay), else, for an existing environment, first `GET`s it and PUTs it (`deployment_branch_policy` custom or `null`) with its `wait_timer`, `prevent_self_review` and `reviewers` carried back (a PUT resets what it omits; the release environment's resolved reviewers win; an unreadable existing environment is a usage error, nothing written), then POSTs; extra policies are never deleted. The `release` environment is not read for branch policies | read back |
+| github | environment | name | create the environment with its deployment branch policies (default: the default branch; `[github.environments.<name>] branches`, §5; `[]` = none). An existing one is read GET-only: the list entry's `deployment_branch_policy` (absent: not judged; `null`: any branch; `protected_branches`; `custom_branch_policies`: then `GET .../environments/<name>/deployment-branch-policies`, unreadable: `unknown`). A wanted branch the environment lacks is `update` (reason names the missing and the extra live policies); `apply` POSTs the missing policies only when custom policies are already on (no PUT: reviewers stay), else, for an existing environment, first `GET`s it and PUTs it (`deployment_branch_policy` custom or `null`) with its `wait_timer`, `prevent_self_review` and `reviewers` carried back (a PUT resets what it omits; the release environment's resolved reviewers win; an unreadable existing environment is a usage error, nothing written), then POSTs; extra policies are never deleted. `[github.environments.<name>] tags = ["v*"]` (also for the `release` environment, so a tag-triggered publish job may use it) adds one policy `{"name": pattern, "type": "tag"}` per pattern (`custom_branch_policies` true, even with `branches = []`); the read side keeps each live policy's `type` (absent: branch), so a branch policy never satisfies a wanted tag and the reason says "tag `<p>`" for a missing one. The `release` environment is read for its policies only when it has `tags`: an existing one that lacks a wanted tag is `update` in the `release` area ("present, but tag `<p>` cannot deploy; would add the tag deployment policy"; `drift` under `managed = "external"`; any branch may deploy: no gap; unreadable: `unknown`); `apply` POSTs only the missing tag policies when custom policies are on (no PUT: its reviewers stay), else (protected branches, or a reviewer change too) PUTs it as above, then POSTs | read back |
 | github | secret | name | PUT sealed secret (presence only) | listed with recent `updated_at` |
 | github | variable | upper-cased name | `[github.variables] NAME = "value"`: `POST .../actions/variables` `{name,value}` when missing (`create`), `PATCH .../actions/variables/<name>` when the repository value differs (`update`: reason `live "a", want "b"`); equal is `ok`; an organization variable of the same value is `ok`, a different one is shadowed by a new repository variable (`create`). A variable a workflow reads (`vars.NAME`) with no value in hoist.toml is `pending` with the human step `variable:<NAME>` (`gh variable set <NAME> --repo <o>/<r> --body '<value>'`, or give it in hoist.toml; url `https://github.com/<o>/<r>/settings/variables/actions`); A variable read only by jobs with an `environment:` is also present when that environment exists and holds it (`GET .../environments/<env>/variables`; reason "present (environment <env>)"; an unreadable list is `unknown`), and the human step then names `gh variable set <NAME> --env <env> --repo <o>/<r> --body '<value>'`; any reading job without an environment needs the repository variable. `[github] optional_variables` shows it as an `optional_variable` item (`ok`). Read GET-only: `GET .../actions/variables` (paginated) and `GET .../actions/organization-variables` (404: none; 403: none plus a note in the reason), only when a variable is named; an unreadable repository list is `unknown`. Values are not secret and may appear in reasons | listed |
 | github | app installation | app slug (Renovate, or `[github] apps`) | human step `app:<slug>` (Renovate: `https://github.com/apps/<slug>`; `[github] apps`: `https://github.com/apps/<slug>/installations/new`) | installation visible to the repo |
@@ -335,7 +338,7 @@ protection or merge queue for a private repo (GitHub's OpenAPI text: protected b
 available "in public repositories with GitHub Free … and in public and private repositories with
 GitHub Pro, GitHub Team, …"); a 403 whose message contains "Upgrade to GitHub Pro" or "make this
 repository public" (case-insensitive) on the ruleset read or write makes the ruleset item
-`drift`: "NOT enforced: required checks `<c>`[, merge queue]; GitHub Free: private repos get no
+`pending` with the human step `plan-limit:rulesets` (no drift hoist can fix, so `check` does not exit 1 for it, but nothing protects the branch, so it exits 2, never a silent 0; `apply` never writes it; the step says branch protection is not enforced on this plan and to upgrade or make the repo public, then apply again): "NOT enforced: required checks `<c>`[, merge queue]; GitHub Free: private repos get no
 rulesets, branch protection or merge queue; upgrade the plan (GitHub Pro for a personal repo,
 Team for an organization) or make the repo public", plus, when the merge queue is wanted, "a
 merge queue also needs an organization repo (a private one on GitHub Enterprise Cloud)".
@@ -391,6 +394,11 @@ code_owner_review = false                   # default
   name, and hoist does not see its runs: its item is `ok` with the reason "posted by App
   `<slug>` (id N); hoist does not see its runs", or "posted by App id N; …" for an entry pinned
   by `integration_id` (a slug that does not resolve already exited 3).
+- Implemented now, read side only: in `check` (§7.4) a required check whose live ruleset entry has
+  an `integration_id` other than GitHub Actions (15368) is `ok` with the reason "posted by app
+  <id>" and is not looked up as a workflow job (an app posts it, hoist does not see its runs).
+  A check with no pin or pinned to 15368 keeps the job-name rule; `[github] statuses` still
+  needs a `statuses: write` job unless the live entry is pinned to another app.
 - What a pin to GitHub Actions proves: the check came from some workflow run, not from a
   personal token or another App; any workflow run counts, `GITHUB_TOKEN` included. It does not
   say which workflow: a PR that adds or edits a workflow under `.github/workflows/` still posts as
@@ -585,8 +593,9 @@ without access to it gets an empty result, reported as "zone not visible to this
    Each write is idempotent. On a failure, hoist stops and exits 1; the report lists each change
    as `applied`, `failed: <error>` or `not attempted`, plus the plan's other items (pending,
    unknown, ok). Re-running continues where it stopped. A ruleset write refused by the plan
-   (GitHub Free, §6) does not stop the run: its item is `drift` with the §6 reason, the other
-   writes run, and apply exits 1.
+   (GitHub Free, §6) does not stop the run: its item is `pending` with the §6 reason and the
+   human step `plan-limit:rulesets` (a plan limit is not drift hoist can fix), the other writes
+   run, and the exit code is 2 unless another item fails (1).
 4. After the writes, apply re-reads the live state and runs the `check` logic (§7.4); that is the
    final report (`command: "apply"`). If that re-read or check fails after writes, the report
    lists the applied changes plus a `post_apply_check` item with the error (exit 1); exit 3
@@ -927,13 +936,25 @@ step of that package instead of skipping it. With nothing pending the report is 
    `<assets>/<bin>-<target>` (`.exe` for `*-windows-*`) per `github_release` target, `bin`
    defaulting to the package name; a package without targets gets a release without assets and
    without `SHA256SUMS`. A missing file (or no `--assets` when one is needed) is exit 3 before any
-   request;
+   request; `--dry-run` without `--assets` (release.yml `detect`, before any build) reads no
+   binary: the release item is `create` "would create a draft, upload N assets (+ SHA256SUMS; not
+   built yet, so not checked: publish needs `--assets DIR`), then publish it" and a launcher's
+   platform steps are planned without their binaries (exit 0, as any dry run);
 3. npm (packages with `[publish] npm`): `GET {npm}/<pkg>/<version>` 200 is done ("already on
    npm"). Otherwise `GET {npm}/<pkg>` 404 makes the step `pending` with the human step
    `first-publish:<name>` and no publish (trusted publishing needs an existing package); the
    run goes on with the other steps and packages. Else `npm --version` must be ≥ 11.5.1 (the
    first `MAJOR.MINOR.PATCH` in its output; unreadable counts as older; else the step fails),
-   then `npm publish --access <access>` runs in the package directory with no extra env: npm
+   then the package's `build` command, if `[publish] npm = { build = "..." }` sets one, runs with
+   `sh -c` in the package directory (stdout to stderr; the GitHub token, the `HOIST_RELEASE_*`
+   variables and the OIDC request variables `ACTIONS_ID_TOKEN_REQUEST_TOKEN`/`_URL` removed from
+   its env, so its dependencies' scripts cannot mint an id token and publish; hoist never prints
+   the env); for a launcher it runs once, in the launcher's directory, before its first
+   platform package is published. A non-zero exit fails the step like any failed write (exit 1, the
+   remaining steps "not attempted"). An already-published version is never built, and `--dry-run`
+   never runs it: the reason of the step it runs before (a launcher's first platform package, else
+   the npm step) says `after build: <cmd>`, once. Then
+   `npm publish --access <access>` runs in the package directory with no extra env: npm
    does the OIDC exchange itself and adds provenance. After a published stable version (no `-`
    in it) `npm dist-tag ls <name>` runs and, when it lists `next`, `npm dist-tag rm <name> next`:
    a prerelease's leftover tag, only when the listed `next` version is not newer than the one just published (a `2.0.0-beta.3` channel stays while 1.4.2 goes out; an unreadable one stays). Absent tag: nothing runs; `HOIST_KEEP_NEXT_TAG` set: skipped; a
@@ -1048,7 +1069,11 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
      crate is missing;
    - unless `--yes` or `--dry-run`, list the planned writes and ask for confirmation on a TTY;
      without a TTY and without `--yes`, exit 3 ("use --yes in non-interactive runs").
-2. **npm placeholders.** For each missing npm package hoist writes, in a new temp directory, a
+2. **npm placeholders.** Packages are the release model's plus every root `hoist.toml`
+   `[registry.npm."<name>"]` entry (§5); the placeholder and trusted-publisher steps are the same
+   for both, a registry entry naming its own workflow file. `[registry.crates]` entries get no
+   placeholder crate and no publish: a missing one is `pending`, an existing one gets the
+   crate trust link with the entry's workflow. For each missing npm package hoist writes, in a new temp directory, a
    `package.json` with only `name`, `version: "0.0.0"`, `description` ("placeholder for trusted
    publishing; releases come from <repo URL>"), `repository` and `license` (copied from the
    package's own manifest when present), plus a `README.md` saying the same, and runs
@@ -1063,12 +1088,17 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
    only drops registrations whose directories are already gone. No tag for that version → item `pending` "run the release first; bootstrap publishes
    the tagged version".
 4. **Trusted publishers.** The workflow file and environment are the ones `plan` reports for
-   `release/workflow` (§7.3). For each npm package, hoist runs `npm trust list <pkg> --json` and
+   `release/workflow` (§7.3); a `[registry.*]` package uses its entry's `workflow` instead. For each npm package, hoist runs `npm trust list <pkg> --json` and
    skips it when a GitHub entry for this repo, workflow file and environment exists. Otherwise,
    on a TTY it runs `npm trust github <pkg> --file <workflow> --repo <o>/<r> --env <env>
    --allow-publish` with inherited stdio (npm prompts for the 2FA code); without a TTY it adds a
    human step with that exact command. For crates the crates.io trusted-publishing settings
    link is a human step (no documented API, §13).
+   Every npm trust item (registered now, `would register`, or the human step's `pending` reason)
+   says `npm drops this trusted publisher unless a publish uses it by <now + 48 h, RFC 3339>:
+   run <trigger>` (§13), where the trigger is `the <workflow> workflow` (for the release
+   workflow: re-run the failed release publish job, or push to main / merge the release PR);
+   the stderr hint repeats it once per trigger. `HOIST_NOW` sets "now" in tests.
    Crate trust is reported `unknown` (unreadable) and never needs a confirmation or sets the
    exit code. The prompt and the `--yes` requirement cover only real writes (placeholders,
    crates, npm trust on a TTY); a run left with human steps alone skips the prompt and exits 2.
@@ -1274,8 +1304,21 @@ call `keelstackhq/hoist/release@<sha> # v<version>` (§12.4) and `actions/checko
 `apply` stays remote-only (GitHub and Cloudflare); `init` is the one command that writes a repo
 file, and it never commits or pushes (the report says so). The action SHA is the commit of hoist's
 own tag `v<version of this binary>`, read with one GET (`--sha` skips it). Triggers: push to the
-default branch and `workflow_dispatch`. Needs a `[publish]` package; a repo with an npm launcher is
-refused (exit 3): its build steps are the repo's own, so write that file by hand.
+default branch and `workflow_dispatch`. Needs a `[publish]` package. A repo with an npm launcher
+gets no generated file (hoist cannot generate the build steps): the item is `pending` and the
+human step `release-workflow-build` (exit 2) says the release workflow must build the crate's
+binaries for the `github_release` targets into one directory, then run `hoist release publish
+--assets <dir>` (or call the action with `assets`); hull's `template-rust` release.yml does exactly
+that. A release.yml without the marker is still "your own release workflow, kept" (below), launcher
+or not.
+
+In every run, workflow files other than the release workflow (`[release] workflow`, default
+release.yml) and the `[registry.npm|crates."<name>"] workflow` files (by file name; they publish
+their package outside the release model, §5) (`.github/workflows/*.yml|*.yaml`) are scanned line by line (comment lines and lines
+with `--dry-run` skipped) for `npm publish`, `pnpm publish`, `yarn npm publish` or
+`cargo publish`. Each file that matches adds a human step `release-workflow-race:<file>` (exit 2; one id per file): "remove
+<file> or stop it publishing: `hoist release publish` publishes these packages, two publishers
+race".
 
 The first line is `# hoist:managed sha256=<hash of the rest>`. Missing: `create`. Untouched
 (hash matches): rewritten when the generated text differs (`update`), else `ok`. Edited by hand
@@ -1336,7 +1379,12 @@ day; GitHub repo metadata):
   published from private repositories ("even when publishing public packages"); trusted
   publishing itself still works. So the publish job never forces provenance (no
   `--provenance`, no `NPM_CONFIG_PROVENANCE`): it appears by itself once the repo is public.
-- A new npm trusted publisher configuration must complete its first successful publish within 2
+- npm expires an unvalidated trusted publisher configuration when no publish uses it within 2
+  days (48 h): "If the configuration is not validated within 2 days, it expires and can no longer
+  be used or edited"; to fix it, revoke it, create a new one and publish within 2 days (checked
+  2026-11-23: https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire
+  and https://docs.npmjs.com/trusted-publishers). Bootstrap prints the deadline (§9.6).
+  A new npm trusted publisher configuration must complete its first successful publish within 2
   days, or it expires and must be deleted and recreated. Register trust (bootstrap) only when
   the failed `publish` job can be re-run right after.
 - The trusted publisher's workflow field is the file name only (`release.yml`), the environment
@@ -1397,8 +1445,8 @@ Read-only dogfood 2026-10-17 on hoist itself (`hoist release plan`, `release pub
 `plan --area release --area npm --area crates`; session `GITHUB_TOKEN`, sandbox proxy; registries
 read anonymously): both registries answered 404 for `keel-hoist` and every `@keelstackhq/hoist*`
 package (nothing is published yet); the `release` environment read was 403 through the proxy
-(`unknown`). `publish --dry-run` outside Actions needs `--assets DIR` with all binaries (exit 3
-naming the first missing one); with placeholder files it reports the planned tag, draft release
+(`unknown`). `publish --dry-run` with `--assets DIR` needs all binaries there (exit 3
+naming the first missing one; without `--assets` the binaries are planned unchecked, §9.3); with placeholder files it reports the planned tag, draft release
 with 6 assets and `pending` first publishes, exit 0.
 
 Verified 2026-10-16 (M1 dogfood on `keelstackhq/keelstack`, session `GITHUB_TOKEN`, through the

@@ -13,6 +13,7 @@ use crate::release::tools::{Tool, run};
 use crate::release::{Package, PkgKind, ReleaseModel, read_release_model};
 use crate::repo::git::{GithubRepo, read_repo_local};
 use crate::report::{Action, HumanStep, Item, Report};
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::Path;
 
@@ -69,20 +70,63 @@ pub(crate) struct Facts {
     pub tag: String,
     /// Crates: `tag` exists locally.
     pub tagged: bool,
+    /// A `[registry.*]` package (published by its own workflow, spec §5), not a model one.
+    pub registry: bool,
 }
 
 /// The repo, workflow file and environment trusted publishers are registered for.
 pub(crate) struct Trust {
     pub repo: GithubRepo,
+    /// The release workflow file, for the model packages.
     pub workflow: String,
     pub env: String,
+    /// `[registry.*]` package name -> the workflow file that publishes it.
+    pub workflows: BTreeMap<String, String>,
+    /// RFC 3339: now + 48 h, when npm expires an unvalidated trusted publisher (spec §13).
+    pub deadline: String,
+}
+
+/// npm expires a trusted publisher no publish has used within 2 days (spec §13).
+const EXPIRY_SECS: i64 = 48 * 3600;
+
+pub(crate) fn expiry_deadline() -> String {
+    crate::timeutil::format_rfc3339(crate::timeutil::now_secs() + EXPIRY_SECS)
 }
 
 impl Trust {
-    pub(crate) fn describe(&self) -> String {
+    /// The workflow file `pkg`'s trusted publisher names.
+    pub(crate) fn workflow_for(&self, pkg: &str) -> &str {
+        self.workflows.get(pkg).unwrap_or(&self.workflow)
+    }
+
+    pub(crate) fn describe(&self, pkg: &str) -> String {
         format!(
             "repo {}, workflow {}, environment {}",
-            self.repo, self.workflow, self.env
+            self.repo,
+            self.workflow_for(pkg),
+            self.env
+        )
+    }
+
+    /// What publishes `pkg` with its trusted publisher.
+    fn trigger(&self, pkg: &str) -> String {
+        let file = self.workflow_for(pkg);
+        if self.workflows.contains_key(pkg) {
+            format!("the {file} workflow")
+        } else {
+            format!(
+                "the {file} workflow (re-run the failed release publish job, or push to main / \
+                 merge the release PR)"
+            )
+        }
+    }
+
+    /// The fact every npm trust item carries (spec §13).
+    pub(crate) fn expiry_note(&self, pkg: &str) -> String {
+        format!(
+            "npm drops this trusted publisher unless a publish uses it by {}: run {}",
+            self.deadline,
+            self.trigger(pkg)
         )
     }
 }
@@ -142,7 +186,10 @@ pub(crate) fn plan_steps(facts: &[Facts], t: &Trust, tty: bool) -> Plan {
                 "bootstrap_trust",
                 p,
                 Action::Pending,
-                format!("no terminal for npm's 2FA prompt: run the command of human step {id}"),
+                format!(
+                    "no terminal for npm's 2FA prompt: run the command of human step {id}; {}",
+                    t.expiry_note(&p.name)
+                ),
             ));
             human.push(human_step(
                 id,
@@ -160,6 +207,24 @@ pub(crate) fn plan_steps(facts: &[Facts], t: &Trust, tty: bool) -> Plan {
                 Action::Ok,
                 "exists on crates.io; not touched".to_string(),
             ));
+        } else if f.registry {
+            items.push(item(
+                "bootstrap_crate",
+                p,
+                Action::Pending,
+                format!(
+                    "not on crates.io; bootstrap does not publish [registry] crates: publish it \
+                     with its workflow {}, then run bootstrap again",
+                    t.workflow_for(&p.name)
+                ),
+            ));
+            items.push(item(
+                "bootstrap_trust",
+                p,
+                Action::Pending,
+                format!("the trusted publisher needs {} on crates.io first", p.name),
+            ));
+            continue;
         } else if f.tagged {
             publish.push(Step::Crate {
                 pkg: p.clone(),
@@ -191,7 +256,10 @@ pub(crate) fn plan_steps(facts: &[Facts], t: &Trust, tty: bool) -> Plan {
             id,
             format!(
                 "add a trusted publisher to crate {}: repository {}, workflow {}, environment {}",
-                p.name, t.repo, t.workflow, t.env
+                p.name,
+                t.repo,
+                t.workflow_for(&p.name),
+                t.env
             ),
             format!("https://crates.io/crates/{}/settings", p.name),
         ));
@@ -226,7 +294,11 @@ fn step_item(step: &Step, t: &Trust) -> Item {
             "bootstrap_trust",
             p,
             Action::Create,
-            format!("would register the trusted publisher: {}", t.describe()),
+            format!(
+                "would register the trusted publisher: {}; {}",
+                t.describe(&p.name),
+                t.expiry_note(&p.name)
+            ),
         ),
     }
 }
@@ -282,6 +354,23 @@ fn registry_packages(r: &DesiredRelease) -> Vec<&Package> {
                 .flat_map(|l| l.platforms.iter().map(|x| &x.pkg))
                 .chain(std::iter::once(p))
         })
+        .collect()
+}
+
+/// Every package bootstrap looks at, with whether it is a `[registry.*]` one: the model's
+/// registry packages, then the `[registry.*]` entries (a name the model has wins).
+fn all_packages(r: &DesiredRelease) -> Vec<(&Package, bool)> {
+    let model = registry_packages(r);
+    let extra: Vec<&Package> = r
+        .registry
+        .iter()
+        .map(|e| &e.pkg)
+        .filter(|p| !model.iter().any(|m| m.name == p.name && m.kind == p.kind))
+        .collect();
+    model
+        .into_iter()
+        .map(|p| (p, false))
+        .chain(extra.into_iter().map(|p| (p, true)))
         .collect()
 }
 
@@ -359,15 +448,15 @@ fn require_cargo(dir: &Path) -> Result<(), HoistError> {
 fn read_facts(
     dir: &Path,
     model: &ReleaseModel,
-    pkgs: &[&Package],
+    pkgs: &[(&Package, bool)],
     t: &Trust,
     regs: &Registries,
 ) -> Result<Vec<Facts>, HoistError> {
     let mut facts = Vec::new();
-    for p in pkgs {
+    for (p, registry) in pkgs.iter().copied() {
         let exists = exists(&regs.npm, &regs.crates, p)?;
         let (tag, tagged) = match p.kind {
-            PkgKind::Crate if !exists => {
+            PkgKind::Crate if !exists && !registry => {
                 let tag = model.tag_for(p, &p.version.value);
                 let has = tagged(dir, &tag)?;
                 (tag, has)
@@ -380,6 +469,7 @@ fn read_facts(
             trusted: false,
             tag,
             tagged,
+            registry,
         });
     }
     if facts.iter().any(|f| f.pkg.kind == PkgKind::Npm) {
@@ -527,9 +617,20 @@ pub fn release_bootstrap_with(
         repo,
         workflow: release.workflow_file().to_string(),
         env: release.environment.value.clone(),
+        workflows: release
+            .registry
+            .iter()
+            .filter(|e| {
+                !registry_packages(&release)
+                    .iter()
+                    .any(|m| m.name == e.pkg.name)
+            })
+            .map(|e| (e.pkg.name.clone(), e.workflow.clone()))
+            .collect(),
+        deadline: expiry_deadline(),
     };
     let regs = registries(verbose);
-    let facts = read_facts(dir, &model, &registry_packages(&release), &t, &regs)?;
+    let facts = read_facts(dir, &model, &all_packages(&release), &t, &regs)?;
     let plan = plan_steps(&facts, &t, opts.tty);
     let other = plan.items.clone();
     let items = all_items(&plan.steps, plan.items, &t);
@@ -541,7 +642,7 @@ pub fn release_bootstrap_with(
     let tags = release_tags(&model, &release);
     let finish = |items: Vec<Item>, code: i32| {
         let mut r = report(items, human, code);
-        r.hint = Some(hint(&r.items, &tags).into());
+        r.hint = Some(hint(&r.items, &tags, &t).into());
         r
     };
     if plan.steps.is_empty() {
@@ -575,18 +676,38 @@ fn release_tags(model: &ReleaseModel, release: &DesiredRelease) -> Vec<String> {
 /// The final line: re-run the publish job when every publish item and every npm trust item
 /// is `ok` (done now or before; R7: the CI publish needs the trusted publisher), else finish
 /// the remaining steps first. Crate trust is `unknown` (unreadable, R4) and does not block.
-fn hint(items: &[Item], tags: &[String]) -> String {
+fn hint(items: &[Item], tags: &[String], t: &Trust) -> String {
     let ready = items.iter().all(|i| {
         i.action == Action::Ok || (i.kind == "bootstrap_trust" && i.action == Action::Unknown)
     });
-    if ready {
+    let mut text = if ready {
         format!(
             "next: re-run the failed \"release publish\" job at {}, or run the release workflow\n",
             tags.join(", ")
         )
     } else {
         "next: finish the steps above, then run bootstrap again\n".to_string()
+    };
+    // Every npm trust item that registered or still needs registering carries the expiry
+    // fact (H7); repeat it once per publishing workflow.
+    let mut triggers: Vec<String> = Vec::new();
+    for i in items
+        .iter()
+        .filter(|i| i.kind == "bootstrap_trust" && i.reason.contains("npm drops this"))
+    {
+        let trigger = t.trigger(&i.key);
+        if !triggers.contains(&trigger) {
+            triggers.push(trigger);
+        }
     }
+    if !triggers.is_empty() {
+        text.push_str(&format!(
+            "npm drops this trusted publisher unless a publish uses it by {}: run {}\n",
+            t.deadline,
+            triggers.join("; or ")
+        ));
+    }
+    text
 }
 
 /// How one step of a confirmed run ended.
@@ -633,9 +754,11 @@ fn execute(
                     Step::Crate { pkg, tag } => {
                         format!("published {} from tag {tag}", pkg.version.value)
                     }
-                    Step::NpmTrust(_) => {
-                        format!("registered the trusted publisher: {}", t.describe())
-                    }
+                    Step::NpmTrust(p) => format!(
+                        "registered the trusted publisher: {}; {}",
+                        t.describe(&p.name),
+                        t.expiry_note(&p.name)
+                    ),
                     Step::NpmPlaceholder(_) => {
                         "published placeholder 0.0.0 from a temp dir".to_string()
                     }
@@ -713,6 +836,7 @@ mod tests {
             exists,
             trusted,
             tagged,
+            registry: false,
         }
     }
 
@@ -741,6 +865,8 @@ mod tests {
             },
             workflow: "release.yml".to_string(),
             env: "release".to_string(),
+            workflows: Default::default(),
+            deadline: "2026-11-25T00:00:00Z".to_string(),
         }
     }
 
@@ -915,7 +1041,7 @@ mod tests {
             ),
         ];
         assert_eq!(
-            hint(&items, &tags),
+            hint(&items, &tags, &trust()),
             "next: re-run the failed \"release publish\" job at v0.1.0, or run the release workflow\n"
         );
         let finish = "next: finish the steps above, then run bootstrap again\n";
@@ -928,10 +1054,10 @@ mod tests {
                 action,
                 "trust".to_string(),
             ));
-            assert_eq!(hint(&with_npm, &tags), finish);
+            assert_eq!(hint(&with_npm, &tags, &trust()), finish);
         }
         items[0].action = Action::Pending;
-        assert_eq!(hint(&items, &tags), finish);
+        assert_eq!(hint(&items, &tags, &trust()), finish);
     }
 
     #[test]

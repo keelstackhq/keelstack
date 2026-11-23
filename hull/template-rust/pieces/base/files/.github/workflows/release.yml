@@ -1,15 +1,18 @@
 name: release
 
 # Releases through hoist (keelstackhq/hoist), the way berth and bosun do it:
-# - detect: which workspace crates have a version without a tag (or a tag on HEAD)? Is releasing
-#   switched on (repository variable HOIST_RELEASE = enabled)?
+# - detect: is releasing switched on (repository variable HOIST_RELEASE = enabled)? Only then it
+#   asks hoist (`hoist release publish --dry-run --json`, the source of truth for crates and npm
+#   packages): is any package not released yet? A pinned hoist older than 0.22.0 cannot plan
+#   before the build, so then detect reads the crate tags (release-pending.mjs detect).
 # - advisories: `node scripts/deny.mjs --locked check advisories` (pull request CI checks
 #   advisories too; advisories.yml scans main weekly).
 # - build: release binaries for 5 targets as dist/<bin>-<target>. Runs when a release is pending
 #   and enabled, or on a manual run (workflow_dispatch = dry run: builds; publish and prepare run
 #   only on a push to main).
 # - publish: tags, GitHub Releases and crates.io through trusted publishing, in environment
-#   `release`. prepare: opens, updates or closes the release PR (branch hoist/release).
+#   `release`. It runs the repo hook `scripts/release-pre.sh` (seed) just before hoist publishes.
+#   prepare: opens, updates or closes the release PR (branch hoist/release).
 # With HOIST_RELEASE unset, a push to main runs `detect` only: nothing is tagged or published.
 
 on:
@@ -35,15 +38,7 @@ jobs:
       pending: ${{ steps.detect.outputs.pending }}
       enabled: ${{ steps.gate.outputs.enabled }}
     steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - id: detect
-        shell: bash
-        run: |
-          set -o pipefail
-          node .github/scripts/release-pending.mjs detect | tee -a "$GITHUB_OUTPUT"
+      # The gate first: with releasing off, nothing below runs (no hoist install, no API read).
       - id: gate
         env:
           HOIST_RELEASE: ${{ vars.HOIST_RELEASE }}
@@ -51,6 +46,54 @@ jobs:
           if [ "$HOIST_RELEASE" = "enabled" ]; then enabled=true; else enabled=false; fi
           echo "release gate (vars.HOIST_RELEASE): $enabled"
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: pins
+        if: steps.gate.outputs.enabled == 'true'
+        run: node scripts/pins.mjs --github-output >> "$GITHUB_OUTPUT"
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.gate.outputs.enabled == 'true'
+        with:
+          node-version: "24"
+      - run: npm install -g --ignore-scripts "@keelstackhq/hoist@$HOIST_VERSION"
+        if: steps.gate.outputs.enabled == 'true'
+        env:
+          HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
+      # hoist 0.22.0 is the first that plans with `release publish --dry-run --json` before any
+      # build (no --assets) and reads npm packages; an older pin exits 3 there, so with it detect
+      # falls back to the crate tags (`release-pending.mjs detect`, crates only).
+      # Read-only dry run: exit 0 and 2 are plans (2 = a human step pending); anything else fails,
+      # 1 included (the dry run never exits 1; publish would stop on a drifted tag or release).
+      # Pending = a version not released yet: an item hoist would create or update. A human step
+      # (`pending`) or an unreadable registry (`unknown`) alone starts no release.
+      - id: detect
+        if: steps.gate.outputs.enabled == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
+        run: |
+          set -o pipefail
+          min=0.22.0
+          if [ "$(printf '%s\n%s\n' "$min" "$HOIST_VERSION" | sort -V | head -n 1)" != "$min" ]; then
+            echo "hoist $HOIST_VERSION is older than $min: detect from the crate tags"
+            node .github/scripts/release-pending.mjs detect | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          set +e
+          out=$(hoist release publish --dry-run --json)
+          rc=$?
+          set -e
+          case "$rc" in
+            0 | 2) ;;
+            *) echo "hoist release publish --dry-run failed ($rc)" >&2; exit "$rc" ;;
+          esac
+          pending=$(jq -r '[.items[] | select(.action == "create" or .action == "update")] | length > 0' <<< "$out")
+          echo "pending: $pending"
+          echo "pending=$pending" >> "$GITHUB_OUTPUT"
 
   advisories:
     needs: detect
@@ -160,6 +203,11 @@ jobs:
           client-id: ${{ vars.HOIST_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOIST_RELEASE_APP_KEY }}
           permission-contents: write
+      # Repo hook (seed): toolchain setup, builds; dist/ and Node 24 are ready. It runs with this
+      # job's publish rights (environment release, id-token: write), so it is owner-only like this
+      # file; the App token is passed to the next step only.
+      - name: scripts/release-pre.sh
+        run: if [ -f scripts/release-pre.sh ]; then bash scripts/release-pre.sh; fi
       - run: hoist release publish --assets dist
         env:
           GH_TOKEN: ${{ steps.app.outputs.token || github.token }}

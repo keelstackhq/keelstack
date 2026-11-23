@@ -1,0 +1,1 @@
+- 2026-11-23 · BOOTSTRAP_EXCLUDED adds `scripts/release-pre.sh`; spec §8 · `core::risk::tests::bootstrap_excludes_the_release_pre_hook`

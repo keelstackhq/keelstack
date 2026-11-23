@@ -32,8 +32,17 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 - `init` human steps: `ci-ok` (hand-written workflow needs the job), `ci-ok-npm-test` (npm `test`
   script is the placeholder; the gate runs cargo only), `ci-ok-duplicate` (delete hoist's ci.yml),
   `release-workflow` (repo has its own release.yml, left alone: keep it and add `environment: release`
-  to its publish job, or run `hoist init --force` to replace it).
+  to its publish job, or run `hoist init --force` to replace it), `release-workflow-build` (npm
+  launcher repo: init wrote no file; the release workflow must build the binaries, then run
+  `hoist release publish --assets <dir>`), `release-workflow-race:<file>` (another workflow publishes:
+  remove it or stop it publishing; `[registry.*]` workflows are exempt).
+- `[publish] npm = { build = "<cmd>" }`: `release publish` runs it in the package directory before
+  publishing that npm package (not on `--dry-run`, not when the version is already on npm).
 - `apply --dry-run` does not exist: use `hoist plan`.
+- `plan-limit:rulesets` (exit 2): the GitHub plan gives this private repo no rulesets, so branch
+  protection is not enforced; only the owner can fix it (upgrade the plan or make the repo public).
+- `release publish --dry-run` without `--assets` plans the release before any build (binaries
+  counted, not checked); the real publish needs `--assets DIR`.
 - Item kinds you will see besides settings and secrets: `environment` (every workflow `environment:`,
   also `with: {environment: X}` on a reusable-workflow call, plus `[github.environments.<name>]`
   in `hoist.toml`: `branches = [..]` deployment branch policies, `manage = false` to leave one alone;
@@ -47,7 +56,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
   `reviewers = []` (no reviewer, no `release-reviewer` step) and `workflow = "release.yml"`,
   `[registry.npm."<name>"]` / `[registry.crates."<name>"]` `workflow` (packages outside the release model:
   `npm-trust:`/`crates-trust:`/`first-publish:` steps), target `[deploy] environment` (deploy secrets live in
-  that environment), `[publish] crates = false`. Crate `first-publish:<name>` points at `hoist release bootstrap`.
+  that environment), `[publish] crates = false`. Crate `first-publish:<name>` points at `hoist release bootstrap`, which also covers every `[registry.npm]` entry (placeholder + trusted publisher with the entry's workflow). npm drops a trusted publisher that no publish used within 48 h: bootstrap's trust items and last line print the deadline; publish before it.
 
 ## Exit codes
 

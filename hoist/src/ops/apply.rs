@@ -403,6 +403,7 @@ mod tests {
         Change::Environment {
             name: "production".into(),
             branches: vec!["main".into()],
+            tags: Vec::new(),
             write_env: true,
             exists: false,
             release: false,

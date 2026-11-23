@@ -78,7 +78,8 @@ human step `first-publish:<name>` (exit 2); the others still publish. Finished s
 on a re-run, and every step is verified afterwards, registries by up to 10 reads over about 5
 minutes, since npm can take minutes to serve a new version (exit 1 on a failed step or
 verification; the table lists each failed check under `failed checks:`). The GitHub token needs
-Contents: write. `--dry-run` sends GET requests only and runs anywhere. npm, cargo and pnpm run without `GH_TOKEN`/`GITHUB_TOKEN`, and
+Contents: write. `--dry-run` sends GET requests only and runs anywhere; without `--assets` it plans
+the binaries without reading them (release.yml `detect` runs it before any build). npm, cargo and pnpm run without `GH_TOKEN`/`GITHUB_TOKEN`, and
 `cargo publish` output is shown with the crates.io token replaced by `***`. A launcher waits
 (`pending`) while one of its platform packages is not published yet.
 
@@ -225,12 +226,19 @@ Each environment is created with a deployment branch policy for the default bran
 ```toml
 [github.environments.production]
 branches = ["main", "release/*"]   # default: the default branch; [] = no branch restriction
+tags = ["v*"]                      # optional: tag deployment policies, so a tag-triggered job may use the environment
 
 [github.environments.splice-bot]
 manage = false                     # hoist leaves this one alone (an `ok` "not managed" item)
 
 [github.environments.canary]       # listed only here: created too
 ```
+
+`tags` also works for the `release` environment (a tag-triggered publish job cannot use a branch-only
+environment). Each pattern is a deployment policy of type `tag`; branch and tag policies are read
+and compared by type, so a branch policy named `v*` does not satisfy a wanted tag. An existing
+`release` environment that lacks a wanted tag is an `update` in the `release` area; `apply` adds
+only the missing tag policies (its reviewers stay).
 
 Unknown keys under `[github.environments.<name>]` are an error (exit 3).
 
@@ -264,10 +272,13 @@ nothing is written. The `release` environment is not read for branch policies.
    `applied`, `failed: <error>` or `not attempted`, plus the plan's other items. Run `apply` again
    to continue; changes already in place are `ok`. One exception: GitHub Free refuses rulesets
    on a private repo (a 403 "Upgrade to GitHub Pro or make this repository public"), and classic
-   branch protection and the merge queue too. Then the ruleset item is `drift` ("NOT enforced:
-   required checks `ci-ok`; GitHub Free: …; upgrade the plan … or make the repo public"),
-   the other writes still run, and apply exits 1. `plan` and `check` report the same drift when
-   the ruleset read gets that 403.
+   branch protection and the merge queue too. Then the ruleset item is `pending` ("NOT enforced:
+   required checks `ci-ok`; GitHub Free: …; upgrade the plan … or make the repo public") with the
+   human step `plan-limit:rulesets` (branch protection is not enforced on this plan), the other
+   writes still run, and a plan limit alone makes apply exit 2, not 1 and never a silent 0. `plan`
+   and `check` report the same item and step when the ruleset read gets that 403 (`check` exits 2).
+   A required check the live ruleset pins to another GitHub App (`integration_id` not 15368) is
+   verified as "posted by app <id>" without a workflow job.
 5. After the writes hoist re-reads the live state and runs the `check` logic; that is the final
    report (`command: "apply"`). A Pages project or domain created in this run is not probed
    (`ok`, "created in this run; verified by `hoist check` after the first deploy"). If the re-read
@@ -437,8 +448,15 @@ human step with the crate's settings link. Packages that exist are never touched
 continues where a failed run stopped. It refuses to run in GitHub Actions and never reads npm or
 crates.io credentials. Its last line is the next step: once every package exists and every npm
 trusted publisher is registered, re-run the failed `release publish` job at the tag.
-Do that within 2 days: npm expires a trusted publisher whose first publish has not happened by
-then (delete and recreate it). The npm publisher fields are organization `keelstackhq`,
+`[registry.npm."<name>"]` packages of the root `hoist.toml` get the same placeholder and trusted
+publisher, with their own workflow file (`--file <that entry's workflow>`); `[registry.crates]`
+entries only get the crate settings link (no placeholder crates). Do the publish within 2 days
+(48 h): npm expires a trusted publisher no publish has used by then ("If the configuration is not
+validated within 2 days, it expires and can no longer be used or edited"; revoke it, create a new
+one, publish within 2 days). Every npm trust item and the last line print the deadline: `npm drops
+this trusted publisher unless a publish uses it by <RFC 3339>: run the <workflow> workflow` (for
+the release workflow: re-run the failed publish job, or push to main / merge the release PR;
+`workflow_dispatch` does not publish in hull's file). The npm publisher fields are organization `keelstackhq`,
 repository `hoist`, workflow `release.yml` (file name only) and environment `release`. While the
 repository is private, npm publishes without provenance; it adds provenance by itself once the
 repository is public.
@@ -446,7 +464,22 @@ repository is public.
 ### The release action
 
 `hoist init` writes the three-job `release.yml` that uses it (detect, publish, prepare), pinned to the
-release commit of this binary; a file you edited is kept unless `--force`. Not for npm launchers.
+release commit of this binary; a file you edited is kept unless `--force`. For an npm launcher
+`init` writes no file and reports the human step `release-workflow-build` (build the binaries, then
+`hoist release publish --assets <dir>`; hull's `template-rust` release.yml does this). `init` also
+flags other workflows (not the `[release] workflow`, nor a `[registry.npm|crates."<name>"]`
+`workflow`, which publishes its package outside the release model) that run `npm publish`, `pnpm publish`,
+`yarn npm publish` or `cargo publish` without `--dry-run` (`release-workflow-race:<file>`): two publishers race.
+
+An npm package that needs a build first sets `[publish] npm = { build = "pnpm build" }` in its
+`hoist.toml`: `hoist release publish` runs it (`sh -c`, in the package directory, output on stderr)
+before packing, only when the version is not yet on npm; a failure fails the publish (exit 1).
+The build gets neither the GitHub token nor the OIDC request variables
+(`ACTIONS_ID_TOKEN_REQUEST_TOKEN`/`_URL`), so code it runs cannot mint an id token and publish.
+Anything that runs in the publish job outside hoist (a setup step, a repo hook) has them: install
+there with `--ignore-scripts`, or build in a job without `id-token: write` and pass the output on
+as an artifact.
+`--dry-run` never runs it.
 One step per job instead of building hoist yourself: `uses: keelstackhq/keelstack/hoist/release@<full sha> # vX.Y.Z`
 with `command: detect | prepare | publish` (`assets:` for publish; `token:` is hoist's `GH_TOKEN`;
 `detect` sets output `pending`). It installs the hoist release of that commit from its GitHub

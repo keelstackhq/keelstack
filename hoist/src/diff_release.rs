@@ -4,7 +4,7 @@
 use crate::config::Managed;
 use crate::desired::{Desired, DesiredRelease};
 use crate::error::HoistError;
-use crate::github::{Fetch, LiveGithub};
+use crate::github::{EnvBranches, Fetch, LiveGithub};
 use crate::http::Http;
 use crate::release::registry::package_exists;
 use crate::release::{Package, PkgKind};
@@ -113,6 +113,40 @@ pub fn first_publish_step(name: &str, kind: PkgKind) -> HumanStep {
     )
 }
 
+/// Whether the existing release environment must be PUT again: its required reviewers differ
+/// from what `[release] reviewers` wants. A tag policy gap alone only adds policies.
+pub fn release_reviewer_gap(d: &Desired, l: &LiveGithub) -> bool {
+    let (Some(r), Ok(have)) = (d.release.as_ref(), l.environments.as_got()) else {
+        return false;
+    };
+    let env = &r.environment.value;
+    have.contains(env)
+        && ((l.env_unreviewed.contains(env) && r.reviewers.as_ref().is_none_or(|v| !v.is_empty()))
+            || (r.reviewers.as_ref().is_some_and(Vec::is_empty)
+                && l.env_reviewers.contains_key(env)))
+}
+
+/// The `[github.environments.<release>] tags` the existing release environment lacks (`None`:
+/// none wanted, or all present; an unrestricted environment lets every tag deploy).
+pub fn release_tag_gap(d: &Desired, l: &LiveGithub) -> Result<Option<Vec<String>>, String> {
+    let Some(env) = d.release_environment() else {
+        return Ok(None);
+    };
+    let want = d.env_tags(env);
+    if want.is_empty() {
+        return Ok(None);
+    }
+    let missing = match l.env_branches.get(env) {
+        Some(Fetch::Unknown(why)) => return Err(why.to_string()),
+        None | Some(Fetch::Got(EnvBranches::Unrestricted)) => Vec::new(),
+        Some(Fetch::Got(EnvBranches::Protected)) => want,
+        Some(Fetch::Got(EnvBranches::Custom(_, have))) => {
+            want.into_iter().filter(|t| !have.contains(t)).collect()
+        }
+    };
+    Ok((!missing.is_empty()).then_some(missing))
+}
+
 /// The release environment against the live list (`None` without publishing packages).
 /// Externally managed GitHub resources are never created: that is drift.
 pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
@@ -152,7 +186,24 @@ pub fn release_env_item(d: &Desired, l: &LiveGithub) -> Option<Item> {
                 ),
             )
         }
-        Ok(have) if have.contains(&env.value) => (Action::Ok, "present".to_string()),
+        Ok(have) if have.contains(&env.value) => match release_tag_gap(d, l) {
+            Err(why) => (Action::Unknown, why),
+            Ok(Some(missing)) => (
+                match d.github.managed {
+                    Managed::External => Action::Drift,
+                    _ => Action::Update,
+                },
+                format!(
+                    "present, but tag {} cannot deploy; would add the tag deployment policy",
+                    missing
+                        .iter()
+                        .map(|t| format!("`{t}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ),
+            Ok(None) => (Action::Ok, "present".to_string()),
+        },
         Ok(_) if d.github.managed == Managed::External => (
             Action::Drift,
             "missing; would create the environment".to_string(),

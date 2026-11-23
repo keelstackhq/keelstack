@@ -215,6 +215,7 @@ fn platform_pkg(
             npm: Some(NpmPublish {
                 access,
                 launcher: false,
+                build: None,
             }),
             ..PublishCfg::default()
         },
