@@ -21,7 +21,7 @@ use crate::core::approve::{
     signed_message_bootstrap, signed_message_v2, trust_files_changed_in, verify_ed25519,
 };
 use crate::core::lease::leases_of;
-use crate::core::meta::{closing_issues_in, linked_issues_in};
+use crate::core::meta::{closing_issues_in, linked_issues_in, task_pr_lead};
 use crate::core::records::Record;
 use crate::core::risk::{
     self, Approval, ChangedFile, FileView, OWNER_TEAM_FIX, OwnerView, Rules, VERDICTS_NEEDED,
@@ -1910,7 +1910,8 @@ pub(crate) fn autonomous_inputs(
     // A bundle: every open task the PR closes is covered. A task is covered by the author's
     // lease on it; a bundled task (stays `ready`, never claimed: spec 04) also by the author's
     // lease on the PR's lead (its `bosun:task-pr` marker), but only while nobody else holds a
-    // lease record on it. The lead must be a closed task with the author's lease.
+    // lease record on it. The lead must be one of those open tasks (it is counted in the loop
+    // below only if open) with the author's lease; a closed or unleased lead covers nothing.
     let lead = task_pr_lead(&pull.body);
     let mut lead_leased = false;
     let mut rest: Vec<(u64, Vec<String>)> = Vec::new();
@@ -2360,10 +2361,4 @@ fn closing_refs_outside_body(
     out.sort_unstable();
     out.dedup();
     Ok((out, cut))
-}
-
-/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
-fn task_pr_lead(body: &str) -> Option<u64> {
-    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
-    rest[..rest.find("-->")?].trim().parse().ok()
 }

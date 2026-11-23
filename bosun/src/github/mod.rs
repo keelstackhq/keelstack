@@ -485,6 +485,9 @@ impl LiveGithub {
 
 /// Pages of 100 read for a team: one more than 1000 members need (the extra page is the cap check).
 const TEAM_PAGES: usize = 11;
+/// A bound on pages read (GitHub lists at most 250 commits of a PR, 100 per page; the caller
+/// treats 250 as a cut list). Generous so a smaller page size never trips it.
+const COMMIT_PAGES: usize = 130;
 const TEAM_MEMBERS_MAX: usize = 1000;
 
 fn team_error(org: &str, slug: &str, what: &str) -> BosunError {
@@ -891,8 +894,14 @@ impl Github for LiveGithub {
 
     fn pull_commit_messages(&self, number: u64) -> Result<Vec<String>> {
         let path = self.path(&format!("/pulls/{number}/commits?per_page=100"));
-        self.http
-            .get_all(&path)?
+        let (commits, more) = self.http.get_pages_strict(&path, COMMIT_PAGES)?;
+        if more {
+            return Err(BosunError::error(
+                format!("PR #{number} has more commits than bosun reads"),
+                "rerun; closing refs in later commits cannot be ruled out",
+            ));
+        }
+        commits
             .iter()
             .map(|c| {
                 c["commit"]["message"]
@@ -1305,5 +1314,43 @@ mod refusal_tests {
         )));
         assert!(!is_ccr_refusal(&e("GitHub GET /pulls/1: 403 Forbidden")));
         assert!(!is_ccr_refusal(&e("GitHub POST /graphql: 500 boom")));
+    }
+}
+
+#[cfg(test)]
+mod commit_list_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    fn serve(body: &'static str) -> LiveGithub {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in l.incoming().take(1) {
+                let mut c = conn.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = c.read(&mut buf);
+                let _ = write!(
+                    c,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        LiveGithub {
+            http: Http::new(&url, "", 0),
+            owner: "o".into(),
+            repo: "r".into(),
+            login: std::sync::OnceLock::new(),
+            collab_blocked: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    #[test]
+    fn a_non_list_commit_page_is_an_error_not_no_commits() {
+        let gh = serve(r#"{"message":"Server Error"}"#);
+        assert!(gh.pull_commit_messages(1).is_err());
+        let gh = serve(r#"[{"sha":"a","commit":{"message":"Closes #3"}}]"#);
+        assert_eq!(gh.pull_commit_messages(1).unwrap(), ["Closes #3"]);
     }
 }

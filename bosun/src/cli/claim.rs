@@ -17,7 +17,7 @@ use crate::core::lease::{
     Lease, TTL_SECS, conflicts, leases_of, members, orchestrator_of, race_winner,
 };
 use crate::core::lessons;
-use crate::core::meta::area_of;
+use crate::core::meta::{area_of, task_pr_lead};
 use crate::core::records::{Note, Record, parse_record, spend_total_today};
 use crate::core::state::{State, state_of};
 use crate::github::{Github, Issue, IssueState};
@@ -492,10 +492,4 @@ fn lead_holds(gh: &dyn Github, lead: u64, now: Timestamp) -> Result<bool, BosunE
     Ok(leases_of(lead, &trusted_notes(gh, lead)?)
         .iter()
         .any(|l| l.is_live(now)))
-}
-
-/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
-fn task_pr_lead(body: &str) -> Option<u64> {
-    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
-    rest[..rest.find("-->")?].trim().parse().ok()
 }

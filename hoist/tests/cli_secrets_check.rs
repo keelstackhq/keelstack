@@ -207,6 +207,23 @@ fn a_repo_with_no_secrets_config_has_nothing_to_check() {
 }
 
 #[test]
+fn a_subdirectory_of_a_repo_is_inside_the_repo() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join(".git")).unwrap();
+    let sub = dir.path().join("a/b");
+    std::fs::create_dir_all(&sub).unwrap();
+    let api = FakeApi::start(&[]);
+    let out = hoist()
+        .args(["secrets", "check", "--json", "-C", "."])
+        .current_dir(&sub)
+        .env("HOIST_NOW", NOW)
+        .env("HOIST_GITHUB_API", api.url())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+}
+
+#[test]
 fn a_dir_that_is_not_a_repo_or_does_not_exist_fails_the_check() {
     let dir = tempfile::tempdir().unwrap();
     let (code, _) = check(dir.path(), NOW);

@@ -145,6 +145,15 @@ pub fn linked_issues_in(body: &str, repo: &str) -> Vec<u64> {
     linked_in(body, Some(repo))
 }
 
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker (the first one), with the same
+/// whitespace [`linked_issues`] accepts around the marker's parts.
+pub fn task_pr_lead(body: &str) -> Option<u64> {
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"<!--\s*bosun:task-pr\s+(\d+)\s*-->").expect("static regex")
+    });
+    RE.captures(body)?[1].parse().ok()
+}
+
 fn linked_in(body: &str, repo: Option<&str>) -> Vec<u64> {
     static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
         regex::Regex::new(&format!(r"{REF}|<!--\s*bosun:task-pr\s+(\d+)\s*-->"))
@@ -305,5 +314,14 @@ x <!-- bosun:task {"kind":"real"} -->
             Some("lifecycle")
         );
         assert_eq!(area_of(&["bug"]), None);
+    }
+
+    #[test]
+    fn task_pr_lead_accepts_the_whitespace_linked_issues_accepts() {
+        assert_eq!(task_pr_lead("x\n<!-- bosun:task-pr 9 -->"), Some(9));
+        assert_eq!(task_pr_lead("<!--bosun:task-pr   3-->"), Some(3));
+        assert_eq!(task_pr_lead("<!--\n bosun:task-pr\t4 \n-->"), Some(4));
+        assert_eq!(task_pr_lead("<!-- bosun:task-pr x -->"), None);
+        assert_eq!(task_pr_lead("no marker"), None);
     }
 }

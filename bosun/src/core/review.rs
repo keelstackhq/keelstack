@@ -58,7 +58,11 @@ pub fn merge_chunk_verdicts(
         match results.iter().find(|(n, _)| *n == k).map(|(_, r)| r) {
             Some(Ok(v)) => {
                 merged.chunks_reviewed.push(k);
-                if v.verdict != "approve" {
+                let serious = v
+                    .findings
+                    .iter()
+                    .any(|f| f.severity == "blocker" || f.severity == "major");
+                if v.verdict != "approve" || serious {
                     merged.verdict = "request-changes".into();
                 }
                 merged.confidence = merged.confidence.min(v.confidence);
@@ -148,6 +152,21 @@ mod tests {
             merge_chunk_verdicts(1, "h", 2, &one_no).verdict,
             "request-changes"
         );
+    }
+
+    #[test]
+    fn merge_requests_changes_when_an_approving_chunk_has_a_blocker_or_major() {
+        for sev in ["blocker", "major"] {
+            let r = [
+                (1, Ok(ver("approve", 0.95, &[]))),
+                (2, Ok(ver("approve", 0.95, &[sev]))),
+            ];
+            assert_eq!(
+                merge_chunk_verdicts(1, "h", 2, &r).verdict,
+                "request-changes",
+                "{sev}"
+            );
+        }
     }
 
     #[test]
