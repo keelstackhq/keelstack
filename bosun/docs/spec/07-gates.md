@@ -31,11 +31,11 @@ profile has three adapters:
 
 | Gate | rust | ts-pnpm |
 | ---- | ---- | ------- |
-| fmt | cargo fmt --check | prettier --check {files} |
+| fmt | cargo-fmt --check | prettier --check {files} |
 | lint | cargo clippy --all-targets -- -D warnings | eslint --max-warnings 0 {files} |
 | types | (in lint) | tsc -b |
 | test | cargo test --locked -p {packages} | vitest run --project {packages} |
-| deps | cargo deny check | bosun deps-check |
+| deps | cargo-deny check | bosun deps-check |
 | mutants | cargo mutants --in-diff {diff} | stryker run --incremental |
 | snapshots | cargo insta test --check | vitest snapshots |
 | adapters | cargo-metadata, rust-ignore, rust | pnpm-workspace, vitest-fixme, ts-expect |
