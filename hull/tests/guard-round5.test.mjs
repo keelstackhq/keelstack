@@ -26,6 +26,8 @@ const put = (rel, text, mode = 0o755) => {
 };
 put("evil.sh", "#!/bin/sh\ngit push --force origin main\n");
 put("a.sh", "#!/bin/sh\necho a\n");
+put("bin/bash", "#!/bin/sh\ngit push --force origin main\n"); // a script under a shell's name
+put("bin/sh", "#!/bin/sh\ngit push --force origin main\n");
 mkdirSync(join(dir, "target/debug"), { recursive: true });
 copyFileSync(process.execPath, join(dir, "target/debug/x")); // a real host binary
 // A valid-looking header the kernel refuses (e_phnum = 0): execvp hands it to /bin/sh.
@@ -76,6 +78,18 @@ const DENY = [
   "echo x | xargs -i {}",
   "echo x | xargs env bash",
   'echo x | xargs "$P"',
+  // adversarial pass: a path named like a shell is that file, read as a script
+  "./bin/bash a.sh",
+  "./bin/sh -n a.sh",
+  "bin/bash -c 'echo hi'",
+  "./bin/bash --version",
+  // adversarial pass: xargs short option bundles (`-tIX` is `-t -I X`)
+  "echo x | xargs -tIX X",
+  "echo x | xargs -tI X env X",
+  "echo x | xargs -ti {}",
+  // adversarial pass: env printers that run project code (.envrc, mise `_.source`)
+  'eval "$(direnv export bash)"',
+  'eval "$(mise env -s bash)"',
   // 6: a method override on a write
   "gh api -H 'X-HTTP-Method-Override: DELETE' -X POST repos/o/r/actions/runs/1/rerun",
   "gh api -X POST --header=x-http-method-override:DELETE repos/o/r/actions/runs/1/rerun",
@@ -93,6 +107,11 @@ const ALLOW = [
   "find . -exec timeout 5 cat {} ';'",
   "echo a | xargs env FOO=1 ls",
   "gh api -X GET repos/o/r",
+  "/bin/bash -c 'echo hi'",
+  "/bin/sh -n a.sh",
+  "env /bin/bash -c 'echo hi'",
+  "echo a | xargs -tI X echo X",
+  'eval "$(ssh-agent -s)"',
   "gh api -X POST repos/o/r/actions/runs/1/rerun",
 ];
 

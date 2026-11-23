@@ -678,28 +678,36 @@ function stripCore(tokens, inCase, st) {
       t = t.slice(1);
       let rep;
       const valued =
-        "-n -L -P -s -d -E -a --arg-file --delimiter --max-args --max-lines --max-procs --max-chars --eof --process-slot-var".split(
+        "--arg-file --delimiter --max-args --max-lines --max-procs --max-chars --eof --process-slot-var".split(
           " ",
         );
-      while (t[0]?.startsWith("-")) {
+      // getopt: a short group is bools, then one option that takes the rest or the next word
+      // (`-tIX X` is `-t -I X`); `-e`, `-i`, `-l` take only an attached value.
+      while (t[0]?.startsWith("-") && t[0] !== "-") {
         const o = t[0];
-        if (o === "--") {
-          t = t.slice(1);
-          break;
-        }
-        let m;
-        if (o === "-I") {
-          rep = t[1] ?? "";
-          t = t.slice(2);
-          continue;
-        }
-        if ((m = /^-I(.+)$/s.exec(o))) rep = m[1];
-        else if ((m = /^(?:-i|--replace)(?:=?(.*))$/s.exec(o))) rep = m[1] || "{}";
-        else if (valued.includes(o)) {
-          t = t.slice(2);
-          continue;
-        }
         t = t.slice(1);
+        if (o === "--") break;
+        if (o.startsWith("--")) {
+          const eq = /^(--[\w-]+)=(.*)$/s.exec(o);
+          const name = eq ? eq[1] : o;
+          if (name === "--replace") rep = eq ? eq[2] : "{}";
+          else if (!eq && valued.includes(name)) t = t.slice(1);
+          continue;
+        }
+        for (let k = 1; k < o.length; k++) {
+          const c = o[k];
+          const rest = o.slice(k + 1);
+          if ("adEILnPs".includes(c)) {
+            const v = rest || (t[0] ?? "");
+            if (!rest) t = t.slice(1);
+            if (c === "I") rep = v;
+            break;
+          }
+          if ("eil".includes(c)) {
+            if (c === "i") rep = rest || "{}";
+            break;
+          }
+        }
       }
       if (!t.length) return done(); // xargs alone runs echo
       st.xargs = { rep };
@@ -1381,7 +1389,7 @@ function chdirs(tokens) {
 
 /** Tools whose printed shell code (`eval "$(tool ...)"`) sets up their own environment. */
 const ENV_PRINTERS = new Set(
-  "ssh-agent direnv fnm rbenv pyenv nodenv mise rtx conda brew opam starship zoxide dircolors lesspipe keychain".split(
+  "ssh-agent fnm rbenv pyenv nodenv conda brew opam starship zoxide dircolors lesspipe keychain".split(
     " ",
   ),
 );
@@ -2094,6 +2102,9 @@ function scriptRuns(t, chain) {
     const [file, ...args] = operands(t.slice(1));
     if (file) runs.push({ file, shell: true, args });
   } else if (SHELLS.has(prog)) {
+    // `./bin/bash f` runs that file: read it unless it is a real shell (shellBinary)
+    if (String(t[0]).includes("/"))
+      runs.push({ file: t[0], shell: false, args: [], wrapped: !!t.wrapped, asShell: true });
     const src = shellSource(t);
     if (src.kind === "file") runs.push({ file: src.file, shell: true, args: src.args });
     if (src.kind === "stdin" && src.stdinFile)
@@ -2271,7 +2282,10 @@ function runScript(t, projectDir, dirs, chain, seen) {
         if (!run.shell) {
           const top = head(abs);
           if (hostBinary(top)) {
-            if (shellBinary(abs)) return refuse("a shell under another name: run it by its name");
+            if (shellBinary(abs)) {
+              if (run.asShell) continue; // `/bin/bash -c ...`: the shell itself, read as one
+              return refuse("a shell under another name: run it by its name");
+            }
             // Only bash or zsh running it directly refuse a binary the kernel refuses; a wrapper
             // (execvp) or a script's sh hands it to /bin/sh. The guard does not judge loadability.
             if (run.wrapped || chain.script)
