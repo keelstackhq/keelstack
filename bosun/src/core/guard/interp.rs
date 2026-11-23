@@ -4,7 +4,8 @@
 
 use super::{
     BranchAt, MAX_DEPTH, MERGE_FIX, RUNNERS, SEP, Sinks, Target, WRAPPERS, base, check, gh_rule,
-    git_rule, heredoc_at, http_rule, literal_path, nested, shell_words, unwrap_runners,
+    git_rule, heredoc_at, http_rule, literal_path, nested, shell_words, split_heredocs,
+    strip_comments, unwrap_runners,
 };
 
 /// Interpreters and shells whose code or script the scan reads (a version suffix is dropped:
@@ -170,7 +171,11 @@ struct ScriptPath {
 /// The literal paths an interpreter or shell is given in a command (also a `./x` or `/x`
 /// command word), at every nesting level (`bash -c '..'`, `$( )`).
 fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
-    let w = shell_words(command);
+    // A heredoc body no shell or interpreter reads is data (a commit message naming x.sh);
+    // the substitutions of an unquoted body run.
+    let (code, subs) = split_heredocs(command);
+    let code = strip_comments(&code);
+    let w = shell_words(&code);
     let mut out = Vec::new();
     for i in command_words(&w) {
         let (word, name) = (&w[i], runner_name(&w[i]));
@@ -181,24 +186,62 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
                 first: true,
             }));
         }
-        if RUNS.contains(&name) {
-            let shell = SHELL_RUNS.contains(&name);
-            let args = w[i + 1..].iter().take_while(|a| *a != SEP);
+        let args = w[i + 1..].iter().take_while(|a| *a != SEP);
+        if SHELL_RUNS.contains(&name) {
+            // A shell runs only its first operand; later ones are the script's arguments.
+            out.extend(shell_script(name, args).map(|path| ScriptPath {
+                path,
+                shell: true,
+                first: true,
+            }));
+        } else if RUNS.contains(&name) {
             for (k, a) in args.filter(|a| !a.starts_with('-')).take(4).enumerate() {
                 out.extend(literal_path(a).map(|path| ScriptPath {
                     path,
-                    shell,
+                    shell: false,
                     first: k == 0,
                 }));
             }
         }
     }
     if depth < MAX_DEPTH {
-        for inner in nested(command) {
+        for inner in nested(&code).into_iter().chain(subs) {
             out.extend(script_paths(&inner, depth + 1));
         }
     }
     out
+}
+
+/// The script file a shell runs: its first operand after options (`-o`/`-O`/`+o`/`+O` and
+/// `--rcfile`/`--init-file` take a value, `--` ends them); none with `-c` (a code string,
+/// judged as a nested command) or `-s` (stdin). `source` and `.` take no options.
+fn shell_script<'a>(name: &str, mut args: impl Iterator<Item = &'a String>) -> Option<String> {
+    let source = matches!(name, "source" | ".");
+    while let Some(a) = args.next() {
+        if !source {
+            if a == "--" {
+                return args.next().and_then(|f| literal_path(f));
+            }
+            if matches!(a.as_str(), "--rcfile" | "--init-file") {
+                args.next();
+                continue;
+            }
+            if a.starts_with("--") {
+                continue;
+            }
+            if a.len() > 1 && a.starts_with(['-', '+']) {
+                if a[1..].contains(['c', 's']) {
+                    return None;
+                }
+                if a[1..].contains(['o', 'O']) {
+                    args.next();
+                }
+                continue;
+            }
+        }
+        return literal_path(a);
+    }
+    None
 }
 
 /// What the hook found at a script path.
@@ -207,6 +250,8 @@ pub enum Script {
     Text(String),
     /// A file the hook will not read in full: why (too large, not a regular file, /proc).
     Unreadable(&'static str),
+    /// A binary program (not text): run like any program on PATH, never read.
+    Binary,
 }
 
 const STDIN: &[&str] = &["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"];
@@ -309,6 +354,23 @@ pub(super) fn script_walk(
     default_branch: &str,
     sinks: Option<&Sinks>,
 ) -> Option<String> {
+    let mut seen = Vec::new();
+    walk(command, read, branch_at, default_branch, sinks, &mut seen)
+}
+
+/// How deep scripts run scripts before the guard stops reading (and refuses).
+const SCRIPT_DEPTH: usize = 4;
+
+/// One level of [`script_walk`]: the scripts `command` runs; a shell script's own scripts are
+/// read the same way (`seen` holds the chain, so a script that runs itself is read once).
+fn walk(
+    command: &str,
+    read: &dyn Fn(&str) -> Option<Script>,
+    branch_at: BranchAt,
+    default_branch: &str,
+    sinks: Option<&Sinks>,
+    seen: &mut Vec<String>,
+) -> Option<String> {
     let target = Target {
         dir: Some(&[]),
         alone: false,
@@ -316,14 +378,29 @@ pub(super) fn script_walk(
         default_branch,
         sink: sinks.map(|s| s.code),
     };
+    let writes: Vec<String> = super::bash_writes(command)
+        .iter()
+        .map(|w| w.trim_start_matches("./").to_string())
+        .collect();
     for ScriptPath { path, shell, first } in script_paths(command, 0) {
         // stdin by name, fed by a heredoc: the body is in the command text, which
         // `inline_rule` scans. A heredoc in another command does not count.
         if STDIN.contains(&path.as_str()) && heredoc_feeds(command, &path) {
             continue;
         }
+        // The hook reads the file before the command runs: one this command writes is read
+        // stale or not at all.
+        if first && writes.contains(&path.trim_start_matches("./").to_string()) {
+            return Some(format!(
+                "the script `{path}` is refused: this command writes it, so the guard cannot read \
+                 what will run; write the file first (an edit, or its own command), then run it"
+            ));
+        }
+        if seen.contains(&path) {
+            continue;
+        }
         let code = match read(&path) {
-            None => continue,
+            None | Some(Script::Binary) => continue,
             Some(Script::Text(code)) => code,
             Some(Script::Unreadable(_)) if !first => continue,
             Some(Script::Unreadable(why)) => {
@@ -344,6 +421,21 @@ pub(super) fn script_walk(
         }
         if let Some(why) = code_rule(&code, &target) {
             return Some(refuse(&format!("the script `{path}`"), why));
+        }
+        if shell {
+            if seen.len() >= SCRIPT_DEPTH {
+                return Some(format!(
+                    "the script `{path}` is refused: scripts run scripts more than \
+                     {SCRIPT_DEPTH} deep, which the guard does not read; run an inner script \
+                     directly"
+                ));
+            }
+            seen.push(path.clone());
+            let why = walk(&code, read, branch_at, default_branch, sinks, seen);
+            seen.pop();
+            if let Some(why) = why {
+                return Some(format!("in the script `{path}`: {why}"));
+            }
         }
     }
     None

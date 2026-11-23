@@ -19,6 +19,8 @@ pub use interp::{Script, script_rules};
 pub use settings::settings_rule;
 mod writes;
 pub use writes::bash_writes;
+#[cfg(test)]
+mod feedback_tests;
 
 const MERGE_FIX: &str = "agents never merge, tag or force-push (spec D13): open the PR with \
     `bosun pr <issue>` and let `bosun pr <issue> --auto-merge` hand it to GitHub after the gates \
@@ -986,18 +988,41 @@ fn check(
     depth: usize,
     sinks: Option<&Sinks>,
 ) -> Option<String> {
+    check_in(command, branch_at, default_branch, depth, sinks, true)
+}
+
+/// [`check`]; `globs`: whether this text is run by a shell that expands globs (a `( )` group
+/// inside single quotes, as in a regex, is not, unless a shell runs the string).
+fn check_in(
+    command: &str,
+    branch_at: BranchAt,
+    default_branch: &str,
+    depth: usize,
+    sinks: Option<&Sinks>,
+    globs: bool,
+) -> Option<String> {
     if depth > MAX_DEPTH {
         return Some(too_deep());
     }
     // A fetch or pull next to other shell commands reads an environment the guard cannot see.
     if let Some(why) = fetch_not_plain(command)
         .filter(|_| depth == 0)
-        .or_else(|| glob_rule(command, depth == 0))
+        .or_else(|| glob_rule(command, depth == 0).filter(|_| globs))
     {
         return Some(format!("`{}` is refused ({why})", command.trim()));
     }
+    // The groups bash runs: substitutions and `( )` outside quotes (also in unquoted heredoc
+    // bodies) and the strings of `sh -c`, `eval`, `env -S`.
+    let (code, mut runs) = split_heredocs(command);
+    runs.extend(substitutions(&strip_comments(&code), false));
+    runs.extend(word_scripts(command));
     for inner in nested(command) {
-        if let Some(why) = check(&inner, branch_at, default_branch, depth + 1, sinks) {
+        let run = globs && runs.contains(&inner);
+        // Quoted text (an awk or regex group) is judged too, but its depth refuses nothing.
+        if !run && depth + 1 > MAX_DEPTH {
+            continue;
+        }
+        if let Some(why) = check_in(&inner, branch_at, default_branch, depth + 1, sinks, run) {
             return Some(why);
         }
     }
@@ -1973,8 +1998,13 @@ fn merge_rule(words: &[&str], segment: &str, target: &Target) -> Option<&'static
     // after a wrapper or runner (whose option values the guard may misread), as the command word
     // when its first word is git, gh, a shell, a wrapper or a runner, or in a git or gh command.
     let (mut grown, mut ex, mut unread) = (false, Vec::new(), Vec::new());
-    for w in words {
-        match braces(w, 0, 0) {
+    for (w, from) in words.iter().zip(unquoted_from(words)) {
+        // A word inside a quote opened by an earlier word (`-m "note {,] here"`) is text.
+        let Some(from) = from else {
+            ex.push(w.to_string());
+            continue;
+        };
+        match braces(w, from, 0) {
             Some(Ok(more)) => {
                 ex.extend(more.into_iter().filter(|m| !m.is_empty()));
                 grown = true;
@@ -2116,6 +2146,33 @@ fn plain_braces(w: &str) -> bool {
                 _ => false,
             }
         })
+}
+
+/// For each blank-split word, the offset where no quote is open: 0, or just past the quote an
+/// earlier word opened; `None` when that quote does not close in the word.
+fn unquoted_from(words: &[&str]) -> Vec<Option<usize>> {
+    let mut open: Option<char> = None;
+    words
+        .iter()
+        .map(|w| {
+            let mut from = open.is_none().then_some(0);
+            let mut esc = false;
+            for (i, c) in w.char_indices() {
+                match (open, c) {
+                    _ if std::mem::take(&mut esc) => {}
+                    (Some(q), c) if c == q => {
+                        open = None;
+                        from.get_or_insert(i + 1);
+                    }
+                    (Some('\''), _) => {}
+                    (_, '\\') => esc = true,
+                    (None, '\'' | '"') => open = Some(c),
+                    _ => {}
+                }
+            }
+            from
+        })
+        .collect()
 }
 
 /// Commands that run another command: `find -exec`, `fd -x`, and `awk system()`.
@@ -2555,6 +2612,36 @@ fn split_heredocs(command: &str) -> (String, Vec<String>) {
     (code, subs)
 }
 
+/// The text without shell comments: a `#` that starts a word outside quotes, to the end of its
+/// line (prose such as `upstream's` would open a quote).
+fn strip_comments(text: &str) -> String {
+    let (mut out, mut quote, mut esc, mut comment) = (String::new(), None, false, false);
+    let mut prev = ' ';
+    for c in text.chars() {
+        if comment {
+            if c != '\n' {
+                continue;
+            }
+            comment = false;
+        }
+        match (quote, c) {
+            _ if esc => esc = false,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => {}
+            (_, '\\') => esc = true,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '#') if prev.is_whitespace() || ";&|()".contains(prev) => {
+                comment = true;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
+}
+
 /// The `$( )`, backtick and (outside quotes) `( )` spans of a command line, quote-aware; in a
 /// heredoc `body` quotes are text and only `$( )` and backticks run.
 fn substitutions(text: &str, body: bool) -> Vec<String> {
@@ -2771,7 +2858,15 @@ fn key_root(word: &str) -> u8 {
 /// search recurses into `.config` or an ancestor (home or above only when it enters hidden dirs).
 fn key_search(roots: &[&str], recursive: bool, hidden: bool) -> bool {
     let root = roots.iter().map(|a| key_root(a)).max().unwrap_or(0);
-    roots.iter().any(|a| sops_dir(a)) || recursive && (root == 2 || root == 1 && hidden)
+    // An unquoted glob root expands to names the guard cannot see, a link to a home among them
+    // (a search follows the links it is given): a path (`src/*`) or a bare `*`; quotes are
+    // gone here, so `*.gz` may be an option value and passes.
+    let glob = |a: &&str| {
+        a.contains(['*', '?', '['])
+            && (a.contains('/') || a.chars().all(|c| matches!(c, '*' | '?')))
+    };
+    roots.iter().any(|a| sops_dir(a))
+        || recursive && (root == 2 || root == 1 && hidden || roots.iter().any(glob))
 }
 
 /// A redirect word: `>`, `>>`, `2>`, `&>`, `<`, `2>&1`, `>file`.
@@ -3838,7 +3933,7 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
     if !text.split(cut).any(git) {
         return None;
     }
-    if text.contains("$'") || text.contains("$\"") {
+    if ansi_quote(&text) {
         return Some(FETCH_PLAIN);
     }
     // `ext::<cmd>` and `fd::` transports run a command or read a descriptor, in any git command
@@ -3894,9 +3989,13 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
                     }))
             }
             Some(&"cd") => w.len() <= 2,
-            Some(&("tail" | "head")) => {
-                w.len() == 2 && w[1].trim_start_matches('-').parse::<u32>().is_ok()
-            }
+            // Read-only commands set nothing a fetch reads (`$`, quotes-in-code, redirects and
+            // groups are refused above); `printf -v` assigns a variable.
+            Some(
+                &("ls" | "cat" | "head" | "tail" | "wc" | "grep" | "echo" | "pwd" | "true"
+                | "false" | "cut" | "tr" | "jq"),
+            ) => true,
+            Some(&"printf") => !w.iter().any(|a| a.starts_with("-v")),
             _ => false,
         }
     };
@@ -3911,6 +4010,24 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
     .then_some(FETCH_PLAIN)
 }
 
+/// Whether the text has `$'..'` or `$".."` quoting outside single quotes (`'\.rs$'` has none).
+fn ansi_quote(text: &str) -> bool {
+    let (mut quote, mut esc, mut prev) = (None, false, ' ');
+    for c in text.chars() {
+        match (quote, c) {
+            _ if esc => esc = false,
+            (None, '\'' | '"') if prev == '$' => return true,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => {}
+            (_, '\\') => esc = true,
+            (None, '\'' | '"') => quote = Some(c),
+            _ => {}
+        }
+        prev = c;
+    }
+    false
+}
+
 /// An unquoted `*`, `?` or `[` in a command word or any git word (`/usr/bin/gi[t]`, `git f?tch`);
 /// `[` and `[[` alone are the test builtin.
 fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
@@ -3918,8 +4035,18 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         (vec![Vec::new()], String::new(), false, None, false);
     // Words with whether they hold an unquoted glob and whether any part was quoted.
     let mut quoted = false;
+    // A `)` with no open `(` ends a `case` pattern (`*) ..`, `-h|*) ..`): those segments are
+    // patterns, not commands. `chain` is the first segment of the current `|` run.
+    let (mut depth, mut chain, mut patterns) = (0usize, 0usize, Vec::new());
+    // A `#` that starts a word starts a comment (prose: `upstream's` opens no quote).
+    let mut comment = false;
     for c in split_heredocs(command).0.chars().chain([' ']) {
+        if comment && c != '\n' {
+            continue;
+        }
+        comment = false;
         match (quote, c) {
+            (None, '#') if !esc && word.is_empty() && !glob && !quoted => comment = true,
             _ if esc => (esc, _) = (false, word.push(c)),
             (Some(q), c) if c == q => quote = None,
             (Some(_), c) => word.push(c),
@@ -3931,12 +4058,24 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
                     segs.last_mut()?
                         .push((w.0, w.1, std::mem::take(&mut quoted)));
                 }
+                match c {
+                    '(' => depth += 1,
+                    ')' if depth > 0 => depth -= 1,
+                    ')' => patterns.extend(chain..segs.len()),
+                    _ => {}
+                }
                 if !c.is_whitespace() || c == '\n' {
                     segs.push(Vec::new());
+                    if c != '|' {
+                        chain = segs.len() - 1;
+                    }
                 }
             }
             (None, c) => (glob, _) = (glob || matches!(c, '*' | '?' | '['), word.push(c)),
         }
+    }
+    for p in patterns {
+        segs[p].clear();
     }
     static VAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))$").expect("static regex")
@@ -3956,10 +4095,26 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         Regex::new(&format!("^{re}$")).is_ok_and(|r| r.is_match(name))
     };
     let names_git = |w: &str| names(w, "git");
+    let assign = |w: &(String, bool, bool)| w.0.contains('=') && !w.0.starts_with('-');
+    // A runner or wrapper runs a later word (`xargs g?t`, `timeout 5 g*`).
+    let runs = |w: &str| {
+        let b = w.rsplit('/').next().unwrap_or(w);
+        WRAPPERS.contains(&b) || RUNNERS.iter().any(|r| r.0 == b)
+    };
     segs.iter().find_map(|seg| {
-        let git = seg
+        // A glob runs git only as the command word, after a runner, or in a value that git or
+        // a later command may read (`export K=refs/*`); `ls *` lists files.
+        let cmd_at = seg
             .iter()
-            .any(|w| w.0.rsplit('/').next() == Some("git") || w.1 && names_git(&w.0));
+            .position(|w| !assign(w) && !WRAPPERS.contains(&&*w.0));
+        let git = seg.iter().enumerate().any(|(i, w)| {
+            w.0.rsplit('/').next() == Some("git")
+                || w.1
+                    && names_git(&w.0)
+                    && (Some(i) == cmd_at
+                        || w.0.contains('=')
+                        || seg[..i].iter().any(|p| runs(&p.0)))
+        });
         // A fetch, pull or update word in a quoted or `=` value of a git command runs a fetch
         // the guard cannot place (`rebase -x 'cd x && git fetch'`, `-c core.editor=..`); a
         // message or search value (`-m`, `--grep`, `--format`) is prose.
@@ -4048,12 +4203,20 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         {
             return Some(FETCH_PLAIN);
         }
-        let assign = |w: &&(String, bool, bool)| w.0.contains('=') && !w.0.starts_with('-');
-        let cmd = seg
-            .iter()
-            .find(|w| !assign(w) && !WRAPPERS.contains(&&*w.0));
+        let cmd = cmd_at.map(|i| &seg[i]);
         let cmd_glob = cmd.is_some_and(|(c, g, _)| *g && c != "[" && c != "[[");
-        (cmd_glob && top || git && seg.iter().any(|w| w.1)).then_some(GLOB_WORD)
+        // A pathspec glob after a literal `git <subcommand>` that writes no ref and moves no
+        // branch (`git add src/*.rs`, `git diff -- *.md`) names files.
+        const PATHSPEC: [&str; 10] = [
+            "add", "diff", "log", "show", "status", "ls-files", "grep", "blame", "rm", "restore",
+        ];
+        let paths = g < sub
+            && seg
+                .get(sub)
+                .is_some_and(|s| !s.1 && PATHSPEC.contains(&s.0.as_str()))
+            && seg[..=sub].iter().all(|w| !w.1);
+        let git_glob = seg.iter().any(|w| w.1) && !paths;
+        (cmd_glob && top || git && git_glob).then_some(GLOB_WORD)
     })
 }
 

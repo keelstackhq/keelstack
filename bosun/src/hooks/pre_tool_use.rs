@@ -640,8 +640,11 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
     }
     let mut buf = Vec::new();
     let read = opened.and_then(|f| f.take(MAX + 1).read_to_end(&mut buf));
+    // A binary (a NUL in its first 8 KiB, as git and grep judge it) is a program, not a script.
+    let binary = buf.iter().take(8192).any(|b| *b == 0);
     match read {
         Err(_) => Some(Script::Unreadable("it cannot be opened")),
+        Ok(_) if binary => Some(Script::Binary),
         Ok(n) if n as u64 > MAX => Some(Script::Unreadable("larger than 1 MiB")),
         Ok(_) => Some(Script::Text(String::from_utf8_lossy(&buf).into_owned())),
     }
