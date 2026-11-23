@@ -32,7 +32,12 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 - `init` human steps: `ci-ok` (hand-written workflow needs the job), `ci-ok-npm-test` (npm `test`
   script is the placeholder; the gate runs cargo only), `ci-ok-duplicate` (delete hoist's ci.yml),
   `release-workflow` (repo has its own release.yml, left alone: keep it and add `environment: release`
-  to its publish job, or run `hoist init --force` to replace it).
+  to its publish job, or run `hoist init --force` to replace it), `release-workflow-build` (npm
+  launcher repo: init wrote no file; the release workflow must build the binaries, then run
+  `hoist release publish --assets <dir>`), `release-workflow-race` (another workflow publishes:
+  remove it or stop it publishing).
+- `[publish] npm = { build = "<cmd>" }`: `release publish` runs it in the package directory before
+  publishing that npm package (not on `--dry-run`, not when the version is already on npm).
 - `apply --dry-run` does not exist: use `hoist plan`.
 - Item kinds you will see besides settings and secrets: `environment` (every workflow `environment:`,
   also `with: {environment: X}` on a reusable-workflow call, plus `[github.environments.<name>]`

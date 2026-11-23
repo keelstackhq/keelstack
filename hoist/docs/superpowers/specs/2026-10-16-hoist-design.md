@@ -257,7 +257,7 @@ environment = ""                  # GitHub environment holding the deploy secret
 on = "push"                       # push (main) | release
 
 [publish]
-npm = { access = "public", launcher = false }
+npm = { access = "public", launcher = false, build = "pnpm build" }
 crates = {}
 github_release = { targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin"], bin = "tool" }
 ```
@@ -265,7 +265,9 @@ github_release = { targets = ["x86_64-unknown-linux-musl", "aarch64-apple-darwin
 `[publish]` schema (strict):
 - `npm`: `access = "public"` (the default; `"restricted"` exits 3 at model read, R25:
   "restricted npm packages are not supported yet: anonymous registry reads cannot see them"),
-  `launcher` (bool, default `false`).
+  `launcher` (bool, default `false`), `build` (string, optional): a shell command that
+  `release publish` runs (`sh -c`, in the package's directory) before it packs and publishes that
+  package (see §9.3 step 3).
 - `crates`: an empty table; its presence means "publish to crates.io".
 - `github_release`: `targets` (list of target triples) and `bin` (binary name, default: the package name).
 
@@ -933,7 +935,13 @@ step of that package instead of skipping it. With nothing pending the report is 
    `first-publish:<name>` and no publish (trusted publishing needs an existing package); the
    run goes on with the other steps and packages. Else `npm --version` must be ≥ 11.5.1 (the
    first `MAJOR.MINOR.PATCH` in its output; unreadable counts as older; else the step fails),
-   then `npm publish --access <access>` runs in the package directory with no extra env: npm
+   then the package's `build` command, if `[publish] npm = { build = "..." }` sets one, runs with
+   `sh -c` in the package directory (stdout to stderr, the GitHub token removed from its env, hoist
+   never prints the env); for a launcher it runs once, in the launcher's directory, before its first
+   platform package is published. A non-zero exit fails the step like any failed write (exit 1, the
+   remaining steps "not attempted"). An already-published version is never built, and `--dry-run`
+   never runs it: the item's reason says `after build: <cmd>`. Then
+   `npm publish --access <access>` runs in the package directory with no extra env: npm
    does the OIDC exchange itself and adds provenance. After a published stable version (no `-`
    in it) `npm dist-tag ls <name>` runs and, when it lists `next`, `npm dist-tag rm <name> next`:
    a prerelease's leftover tag, only when the listed `next` version is not newer than the one just published (a `2.0.0-beta.3` channel stays while 1.4.2 goes out; an unreadable one stays). Absent tag: nothing runs; `HOIST_KEEP_NEXT_TAG` set: skipped; a
@@ -1274,8 +1282,19 @@ call `keelstackhq/hoist/release@<sha> # v<version>` (§12.4) and `actions/checko
 `apply` stays remote-only (GitHub and Cloudflare); `init` is the one command that writes a repo
 file, and it never commits or pushes (the report says so). The action SHA is the commit of hoist's
 own tag `v<version of this binary>`, read with one GET (`--sha` skips it). Triggers: push to the
-default branch and `workflow_dispatch`. Needs a `[publish]` package; a repo with an npm launcher is
-refused (exit 3): its build steps are the repo's own, so write that file by hand.
+default branch and `workflow_dispatch`. Needs a `[publish]` package. A repo with an npm launcher
+gets no generated file (hoist cannot generate the build steps): the item is `pending` and the
+human step `release-workflow-build` (exit 2) says the release workflow must build the crate's
+binaries for the `github_release` targets into one directory, then run `hoist release publish
+--assets <dir>` (or call the action with `assets`); hull's `template-rust` release.yml does exactly
+that. A release.yml without the marker is still "your own release workflow, kept" (below), launcher
+or not.
+
+In every run, workflow files other than release.yml (`.github/workflows/*.yml|*.yaml`) are scanned
+line by line (comment lines skipped) for `npm publish`, `pnpm publish`, `yarn npm publish` or
+`cargo publish`. Each file that matches adds a human step `release-workflow-race` (exit 2): "remove
+<file> or stop it publishing: `hoist release publish` publishes these packages, two publishers
+race".
 
 The first line is `# hoist:managed sha256=<hash of the rest>`. Missing: `create`. Untouched
 (hash matches): rewritten when the generated text differs (`update`), else `ok`. Edited by hand

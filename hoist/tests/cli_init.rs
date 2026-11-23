@@ -198,10 +198,65 @@ fn an_unreleased_version_still_inits_with_sha() {
 }
 
 #[test]
-fn a_launcher_repo_is_refused() {
+fn a_launcher_repo_gets_no_workflow_and_a_build_step() {
     let repo = fixture_repo("release-launcher", "https://github.com/acme/x.git");
-    let a = init(repo.path(), &["--sha", SHA]).code(3);
-    assert!(String::from_utf8_lossy(&a.get_output().stdout).contains("launcher"));
+    let d = repo.path();
+    std::fs::remove_file(file(d)).unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["items"][0]["action"], "pending");
+    assert!(!file(d).exists());
+    let step = &v["human_steps"][0];
+    assert_eq!(step["id"], "release-workflow-build");
+    let title = step["title"].as_str().unwrap();
+    assert!(title.contains("hoist release publish --assets"), "{title}");
+    assert!(title.contains("github_release"), "{title}");
+}
+
+#[test]
+fn a_launcher_repo_with_its_own_release_workflow_keeps_it() {
+    let repo = fixture_repo("release-launcher", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(file(d), "name: release\non: push\n").unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["items"][0]["reason"], "your own release workflow, kept");
+    let ids: Vec<&str> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["release-workflow"]);
+}
+
+#[test]
+fn another_publishing_workflow_is_a_race() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(
+        d.join(".github/workflows/npm.yml"),
+        "name: npm\njobs:\n  p:\n    steps:\n      - run: pnpm publish --access public\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join(".github/workflows/ok.yaml"),
+        "name: ok\n# npm publish is commented\njobs: {}\n",
+    )
+    .unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let steps = v["human_steps"].as_array().unwrap();
+    let races: Vec<&Value> = steps
+        .iter()
+        .filter(|s| s["id"] == "release-workflow-race")
+        .collect();
+    assert_eq!(races.len(), 1, "{steps:?}");
+    let title = races[0]["title"].as_str().unwrap();
+    assert!(title.contains(".github/workflows/npm.yml"), "{title}");
+    assert!(title.contains("two publishers race"), "{title}");
 }
 
 #[test]

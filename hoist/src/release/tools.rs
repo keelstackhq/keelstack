@@ -179,6 +179,41 @@ pub fn run_interactive(tool: Tool, dir: &Path, args: &[&str]) -> Result<(), Tool
     Ok(())
 }
 
+/// Run a package's `build` command with `sh -c` in `dir` (spec §5 `[publish]`). Its stdout goes
+/// to hoist's stderr, so `--json` stdout stays clean. Like npm and cargo it never sees the
+/// GitHub token; hoist prints the command, never the environment.
+pub fn run_build(dir: &Path, cmd: &str) -> Result<(), HoistError> {
+    let mut c = Command::new("sh");
+    c.args(["-c", cmd])
+        .current_dir(dir)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(std::io::stderr()))
+        .stderr(Stdio::inherit());
+    for name in [
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "HOIST_RELEASE_TOKEN",
+        "HOIST_RELEASE_APP_ID",
+        "HOIST_RELEASE_APP_KEY",
+    ] {
+        c.env_remove(name);
+    }
+    let status = c
+        .status()
+        .map_err(|e| HoistError::Usage(format!("could not run build `{cmd}`: {e}")))?;
+    if status.success() {
+        return Ok(());
+    }
+    let how = status
+        .code()
+        .map_or("was killed by a signal".to_string(), |c| {
+            format!("failed (exit {c})")
+        });
+    Err(HoistError::Usage(format!(
+        "build `{cmd}` {how}; see its output above"
+    )))
+}
+
 /// Replace every non-empty secret value in `text` with `***`. Each whitespace-separated word of
 /// 8+ chars of a value goes too, so a header value like `AUTHORIZATION: basic <b64>` is also
 /// hidden when a trace prints only its credential part.

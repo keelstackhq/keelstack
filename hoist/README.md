@@ -446,7 +446,16 @@ repository is public.
 ### The release action
 
 `hoist init` writes the three-job `release.yml` that uses it (detect, publish, prepare), pinned to the
-release commit of this binary; a file you edited is kept unless `--force`. Not for npm launchers.
+release commit of this binary; a file you edited is kept unless `--force`. For an npm launcher
+`init` writes no file and reports the human step `release-workflow-build` (build the binaries, then
+`hoist release publish --assets <dir>`; hull's `template-rust` release.yml does this). `init` also
+flags other workflows that run `npm publish`, `pnpm publish`, `yarn npm publish` or `cargo publish`
+(`release-workflow-race`): two publishers race.
+
+An npm package that needs a build first sets `[publish] npm = { build = "pnpm build" }` in its
+`hoist.toml`: `hoist release publish` runs it (`sh -c`, in the package directory, output on stderr)
+before packing, only when the version is not yet on npm; a failure fails the publish (exit 1).
+`--dry-run` never runs it.
 One step per job instead of building hoist yourself: `uses: keelstackhq/keelstack/hoist/release@<full sha> # vX.Y.Z`
 with `command: detect | prepare | publish` (`assets:` for publish; `token:` is hoist's `GH_TOKEN`;
 `detect` sets output `pending`). It installs the hoist release of that commit from its GitHub

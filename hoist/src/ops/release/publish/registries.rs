@@ -195,6 +195,18 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
     }
     let pkg_dir = dir.join(&pkg.dir);
     check_npm(&pkg_dir)?;
+    // The job's own `build` runs once, before the first of its npm publishes (a launcher's
+    // platform packages come first), in the job package's directory.
+    if let Some(cmd) = job
+        .pkg
+        .publish
+        .npm
+        .as_ref()
+        .and_then(|n| n.build.as_deref())
+        && !job.built.replace(true)
+    {
+        crate::release::tools::run_build(&dir.join(&job.pkg.dir), cmd)?;
+    }
     let copied = match step {
         Step::Platform(i) => Some(copy_bin(job, i, &pkg_dir)?),
         _ => None,
@@ -329,7 +341,20 @@ pub(super) fn dry_run(
                 None,
             ));
         }
-        Step::Npm | Step::Platform(_) => format!("npm publish --access {}", access(pkg)),
+        Step::Npm | Step::Platform(_) => {
+            let build = job
+                .pkg
+                .publish
+                .npm
+                .as_ref()
+                .and_then(|n| n.build.as_deref());
+            match build {
+                Some(b) if !matches!(step, Step::Platform(i) if i > 0) => {
+                    format!("npm publish --access {} after build: {b}", access(pkg))
+                }
+                _ => format!("npm publish --access {}", access(pkg)),
+            }
+        }
         _ => format!("cargo publish -p {} --locked", pkg.name),
     };
     Ok(match precheck(client(c, step), pkg) {

@@ -1698,3 +1698,103 @@ fn failed_dist_tag_removal_does_not_fail_the_publish() {
         "{npm:#}"
     );
 }
+
+// ---- `[publish] npm = { build = "..." }` ----
+
+/// Commit a `build` command for `@acme/lib`.
+fn with_build(env: &mut Env, cmd: &str) {
+    let d = env.repo.path();
+    let toml = format!("[publish]\nnpm = {{ build = \"{cmd}\" }}\n");
+    write(d, "packages/lib/hoist.toml", toml.as_bytes());
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: build"]);
+    env.head = out(d, &["rev-parse", "HEAD"]).trim().to_string();
+}
+
+fn lib_unpublished(env: &Env) -> FakeApi {
+    api_done(
+        &env.head,
+        &[
+            (LIB_V, 404, "", &[]),
+            (LIB_V, 200, "{}", &[]),
+            (LIB_PKG, 200, "{}", &[]),
+        ],
+    )
+}
+
+#[test]
+fn npm_build_runs_in_package_dir_before_publish() {
+    let mut env = setup();
+    let marker = env.tools.path().join("build.pwd");
+    with_build(
+        &mut env,
+        &format!("pwd > {}; echo building", marker.display()),
+    );
+    let order = env.tools.path().join("order");
+    stub(
+        env.tools.path(),
+        "npm",
+        &format!(
+            "if [ \"$1\" = --version ]; then echo 12.2.0; exit 0; fi\n\
+             if [ -f '{}' ]; then echo built-first > '{}'; fi\necho '+ ok'",
+            marker.display(),
+            order.display()
+        ),
+    );
+    let api = lib_unpublished(&env);
+    let output = in_actions(&env, &api).output().unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    let ran_in = std::fs::read_to_string(&marker).unwrap();
+    let want = env.repo.path().join("packages/lib").canonicalize().unwrap();
+    assert_eq!(Path::new(ran_in.trim()).canonicalize().unwrap(), want);
+    assert!(order.exists(), "npm ran before the build");
+    // Build output goes to stderr, never stdout (one JSON object).
+    assert!(stderr(&output).contains("building"), "{}", stderr(&output));
+}
+
+#[test]
+fn npm_build_failure_is_a_failed_write() {
+    let mut env = setup();
+    with_build(&mut env, "echo nope >&2; exit 7");
+    let api = lib_unpublished(&env);
+    let output = in_actions(&env, &api).output().unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(1), "{v:#}\n{}", stderr(&output));
+    let npm = item(&v, "npm", "@acme/lib@1.0.0");
+    assert_eq!(npm["action"], "update", "{npm:#}");
+    assert!(
+        npm["reason"].as_str().unwrap().starts_with("failed:"),
+        "{npm:#}"
+    );
+    assert!(!has_line(&tool_log(&env, "npm"), "publish"));
+    assert_eq!(item(&v, "crates", "tool@0.3.0")["reason"], "not attempted");
+}
+
+#[test]
+fn npm_build_skipped_when_version_already_published() {
+    let mut env = setup();
+    let marker = env.tools.path().join("build.ran");
+    with_build(&mut env, &format!("touch {}", marker.display()));
+    let api = api_done(&env.head, &[]);
+    let output = in_actions(&env, &api).output().unwrap();
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(!marker.exists());
+}
+
+#[test]
+fn npm_build_dry_run_never_runs_and_is_named() {
+    let mut env = setup();
+    let marker = env.tools.path().join("build.ran");
+    with_build(&mut env, &format!("touch {}", marker.display()));
+    let api = lib_unpublished(&env);
+    let output = in_actions(&env, &api).arg("--dry-run").output().unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    assert!(!marker.exists());
+    let reason = item(&v, "npm", "@acme/lib@1.0.0")["reason"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(reason.contains("build: touch"), "{reason}");
+}

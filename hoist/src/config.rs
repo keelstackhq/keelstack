@@ -257,6 +257,8 @@ pub enum NpmAccess {
 pub struct NpmPublish {
     pub access: NpmAccess,
     pub launcher: bool,
+    /// Shell command run in the package directory before it is packed and published.
+    pub build: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Default)]

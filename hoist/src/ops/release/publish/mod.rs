@@ -39,6 +39,8 @@ pub(super) struct Job<'a> {
     deploy: bool,
     /// A launcher's binaries, one per platform package (same order).
     bins: Vec<PathBuf>,
+    /// The package's `build` command already ran in this run (once per job).
+    built: std::cell::Cell<bool>,
 }
 
 impl Job<'_> {
@@ -224,6 +226,7 @@ fn launcher_jobs<'a>(
             assets: Vec::new(),
             deploy: false,
             bins,
+            built: std::cell::Cell::new(false),
         });
     }
     Ok(jobs)
@@ -322,6 +325,7 @@ pub fn release_publish(
             pkg,
             tag,
             bins: Vec::new(),
+            built: std::cell::Cell::new(false),
         });
         jobs.extend(launcher_jobs(dir, &model, pkg, assets)?);
     }

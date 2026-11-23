@@ -798,3 +798,40 @@ fn launcher_waits_for_pending_platform_packages() {
     assert_eq!(launcher["reason"], "platform packages not published yet");
     assert_clean(&p);
 }
+
+#[test]
+fn launcher_build_runs_once_before_the_platform_packages() {
+    let mut p = pub_setup();
+    let d = p.repo.path();
+    let ran = p.tools.path().join("build.log");
+    write(
+        d,
+        "npm/tool/hoist.toml",
+        format!(
+            "[publish]\nnpm = {{ launcher = true, build = \"echo $(basename $PWD) >> {}\" }}\n",
+            ran.display()
+        )
+        .as_bytes(),
+    );
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: build"]);
+    p.head = out(d, &["rev-parse", "HEAD"]).trim().to_string();
+    let api = api(
+        &p.head,
+        &[
+            (LINUX_V, 404, "", &[]),
+            (LINUX_V, 200, "{}", &[]),
+            (LINUX_PKG, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_V, 200, "{}", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_V, 200, "{}", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = publish(&p, &api);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(std::fs::read_to_string(&ran).unwrap(), "tool\n");
+    assert_eq!(published_dirs(&p).len(), 3);
+}

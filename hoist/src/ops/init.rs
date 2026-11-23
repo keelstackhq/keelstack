@@ -334,6 +334,36 @@ fn has_other_workflow(dir: &Path) -> bool {
     })
 }
 
+/// Workflow files other than release.yml with a step that publishes (sorted by name).
+fn publishing_workflows(dir: &Path) -> Vec<String> {
+    const PUBLISH: [&str; 4] = [
+        "npm publish",
+        "pnpm publish",
+        "yarn npm publish",
+        "cargo publish",
+    ];
+    let Ok(rd) = std::fs::read_dir(dir.join(".github/workflows")) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = rd
+        .flatten()
+        .filter_map(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            let yaml = n.ends_with(".yml") || n.ends_with(".yaml");
+            if !yaml || n == "release.yml" {
+                return None;
+            }
+            let text = std::fs::read_to_string(e.path()).ok()?;
+            let publishes = text
+                .lines()
+                .any(|l| !l.trim_start().starts_with('#') && PUBLISH.iter().any(|p| l.contains(p)));
+            publishes.then(|| format!(".github/workflows/{n}"))
+        })
+        .collect();
+    found.sort();
+    found
+}
+
 fn ci_text(branch: &str, cmds: &[&str]) -> String {
     let steps: String = cmds.iter().map(|c| format!("      - run: {c}\n")).collect();
     let body = format!(
@@ -370,13 +400,7 @@ pub fn init(
             "no publishable package found; nothing to write (see `hoist explain`)".into(),
         ));
     };
-    if r.packages.iter().any(|p| p.launcher.is_some()) {
-        return Err(HoistError::Usage(
-            "a launcher package needs build steps hoist cannot generate; write release.yml by \
-             hand with the release action (README \"The release action\")"
-                .into(),
-        ));
-    }
+    let has_launcher = r.packages.iter().any(|p| p.launcher.is_some());
     check_names(&d.default_branch, &r.environment.value)?;
     let item = |kind: &str, key: &str, action, reason: String, source: &str| Item {
         area: if kind == "workflow-file" {
@@ -408,6 +432,24 @@ pub fn init(
             status: "pending".into(),
         });
         (Action::Pending, "your own release workflow, kept".into())
+    } else if has_launcher {
+        // The binaries are built by the repo's own steps: hoist cannot generate them.
+        human_steps.push(HumanStep {
+            id: "release-workflow-build".into(),
+            title: format!(
+                "an npm launcher needs binaries built before publishing, so hoist wrote no \
+                 {FILE}. Write it so that it builds the crate's binaries for the \
+                 `github_release` targets into one directory, then runs `hoist release publish \
+                 --assets <dir>` (or calls the release action with `assets: <dir>`); the hull \
+                 template-rust release.yml does exactly that"
+            ),
+            url: String::new(),
+            status: "pending".into(),
+        });
+        (
+            Action::Pending,
+            "launcher: the release workflow needs build steps".into(),
+        )
     } else {
         sync_file(dir, FILE, force, dry_run, || {
             Ok(render(
@@ -506,6 +548,17 @@ pub fn init(
                 );
             }
         }
+    }
+    for file in publishing_workflows(dir) {
+        human_steps.push(HumanStep {
+            id: "release-workflow-race".into(),
+            title: format!(
+                "remove {file} or stop it publishing: `hoist release publish` publishes these \
+                 packages, two publishers race"
+            ),
+            url: String::new(),
+            status: "pending".into(),
+        });
     }
     let exit_code = if human_steps.is_empty() { 0 } else { 2 };
     Ok(Report {
