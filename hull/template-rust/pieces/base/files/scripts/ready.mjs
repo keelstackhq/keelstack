@@ -609,7 +609,7 @@ export const CLASH = {
     shared: "Cargo.toml crates/common/Cargo.toml",
     seed:
       "AGENTS.md CHANGELOG.md Cargo.lock README.md deny.local.toml docs/agents/index.md docs/agents/onboarding.toml docs/agents/project.md hoist.toml " +
-      "scripts/ci-pre.sh scripts/ci-extra.sh crates/common/src/**",
+      "scripts/ci-pre.sh scripts/ci-extra.sh scripts/release-pre.sh crates/common/src/**",
   },
 };
 const globMatch = (p, path) => (p.endsWith("/**") ? path.startsWith(p.slice(0, -2)) : p === path);

@@ -9,6 +9,9 @@ freely, template updates never touch it.
 
 ## Blocked
 
+Release hook: `scripts/release-pre.sh` (seed) runs in the `publish` job before `hoist release publish
+--assets dist`, with `dist/` downloaded and Node 24 ready (setup, builds). Agents may not edit `release.yml`.
+
 Human steps before the first release (`release.yml`, hoist):
 
 - Create the `splice-bot` and `release-pr` environments (Settings → Environments) with Deployment

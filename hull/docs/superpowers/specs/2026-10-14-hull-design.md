@@ -426,7 +426,7 @@ The root `AGENTS.md` is seed since 2026-10-18 (§14); everything else listed her
   together ≤ 80 for every combo (`lineCount`, like `wc -l`). `AGENTS.md`: what the repo is,
   commands (`pnpm install`, `check`, `run ci`, `format`, `agents:index`; `pnpm ci` is pnpm's
   built-in clean install), rules (test first, verify before claiming, small files, catalog pins,
-  never read `.env*`/`.dev.vars`, releases are tag pushes by a human, at most 2-3 parallel
+  never read `.env*`/`.dev.vars`, releases differ per template (`template`: a human pushes a `*-v*` tag; `template-rust`: `release.yml` runs hoist on push to `main` after the release PR merges), at most 2-3 parallel
   agents, a hook `ask` becomes a denial in `-p`/unattended runs), a `## Pieces` section
   (rendered only when a piece is present, via a `same-branches` chain) with one bullet per present
   piece kind pointing to `<dir>/AGENTS.md`, and `## Where to look` (plain pointers to
@@ -1208,14 +1208,17 @@ sha256-pinned downloads (a checksum belongs to one version); a hull test keeps t
 5. `Job duration` against the budget (45 s typical PR, 15 s docs-only).
 
 **Release** (`release.yml`, owned; the berth/bosun flow through hoist 0.5.0 from npm): on push
-to `main` + `workflow_dispatch`; `detect` runs `.github/scripts/release-pending.mjs` (Node
-built-ins, exported for hull's tests): a crate is a package when it has a `version` and
-`publish` is not `false`. Its tag is `[release] tag_format` from the root `hoist.toml`, or
-`{name}@{version}` in a workspace. It is pending when that tag is missing or on HEAD. The gate is
+to `main` + `workflow_dispatch`; `detect` installs the pinned hoist and runs `hoist release publish --dry-run --json`
+(exit > 2 fails): pending is any item whose `action` is not `ok`, so npm packages count, not only
+crates. `.github/scripts/release-pending.mjs` keeps `stage` (and exported crate helpers for hull's
+tests). The gate is
 `vars.HOIST_RELEASE == 'enabled'`, so nothing releases until a person turns it on. `build` is
 the bosun target matrix (`cargo build --release --locked --target <t>`; each binary is copied to
 `dist/<bin>-<t>`). `publish` (environment `release`, `contents: write`, `id-token: write`) runs
-`hoist release publish --assets dist`. `prepare` runs `hoist release prepare`. Node is set up
+`hoist release publish --assets dist`, right after the seed hook `scripts/release-pre.sh` (`bash
+scripts/release-pre.sh` if present; no-op by default; dist/ and Node 24 are ready; for toolchain setup
+and builds, since agents cannot edit the owned `release.yml`; an npm package's own build is hoist's
+`[publish] npm = { build = "..." }`). `prepare` runs `hoist release prepare`. Node is set up
 only in the release jobs that run hoist. The update bot `splice.yml` (owned) is the one splice's
 README gives. Token order for the bot and for `prepare`: a GitHub App token
 (`actions/create-github-app-token`, SHA-pinned, scoped to the repo; `vars.SPLICE_APP_CLIENT_ID` /
