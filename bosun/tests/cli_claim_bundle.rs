@@ -93,3 +93,30 @@ fn a_gated_touch_may_grow_a_bundled_task() {
     let (code, v) = run(&fake, "session_b", NOW, &["claim", "11", "--touch", gated]);
     assert_eq!(code, 0, "{v}");
 }
+
+#[test]
+fn a_task_another_tasks_open_pr_closes_is_not_claimable() {
+    // One big PR across epics: #12's epic is split (no same-epic bundle), but #30's open PR (lead
+    // #30 by its marker) closes #12, so a second session must not start it.
+    let fake = epic("split");
+    task(&fake, 12, "ready", "src/b/**", "");
+    fake.pull(
+        40,
+        "big",
+        "claude/big",
+        "Closes #30\nCloses #12\n<!-- bosun:task-pr 30 -->",
+    );
+    let (code, v) = claim(&fake, 12);
+    assert_eq!(code, 3, "{v}");
+    assert_eq!(v["error"]["message"], "#12 is bundled into #30's PR #40");
+    // A task's own PR (its marker) does not hold it.
+    let fake = epic("split");
+    task(&fake, 12, "ready", "src/b/**", "");
+    fake.pull(
+        40,
+        "own",
+        "claude/t12",
+        "Closes #12\n<!-- bosun:task-pr 12 -->",
+    );
+    assert_eq!(claim(&fake, 12).0, 0);
+}

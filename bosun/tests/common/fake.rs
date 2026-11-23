@@ -1492,7 +1492,14 @@ fn route(
                     .flat_map(|k| k.split("...").map(String::from))
                     .collect()
             });
-            let items = shas.iter().map(|x| json!({"sha": x})).collect();
+            // GitHub lists each commit's message too; the fake takes it from `git_commits`.
+            let msg = |x: &String| {
+                (s.git_commits.get(x)).and_then(|c| c["message"].as_str().map(String::from))
+            };
+            let items = shas
+                .iter()
+                .map(|x| json!({"sha": x, "commit": {"message": msg(x).unwrap_or_default()}}))
+                .collect();
             page(items, &query, base, path, raw_query)
         }
         ("GET", ["compare", range]) => match s.compares.get(*range) {

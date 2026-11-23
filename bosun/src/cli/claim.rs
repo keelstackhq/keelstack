@@ -20,7 +20,7 @@ use crate::core::lessons;
 use crate::core::meta::area_of;
 use crate::core::records::{Note, Record, parse_record, spend_total_today};
 use crate::core::state::{State, state_of};
-use crate::github::{Github, Issue};
+use crate::github::{Github, Issue, IssueState};
 use crate::output::{BosunError, CmdResult, Exit, Outcome};
 use crate::registry;
 use crate::time::Timestamp;
@@ -431,6 +431,20 @@ fn refuse_if_bundled(
     n: u64,
     meta: &Option<crate::core::meta::TaskMeta>,
 ) -> Result<(), BosunError> {
+    // One big PR (`[approvals] bundle_across_epics`): a bundle may hold tasks of other epics, so
+    // an open PR led by another task (its `bosun:task-pr` marker) that closes `n` holds it too.
+    for p in gh.list_pulls(None, IssueState::Open)? {
+        let lead = task_pr_lead(&p.body);
+        if lead.is_some_and(|l| l != n)
+            && crate::core::meta::closing_issues_in(&p.body, None).contains(&n)
+        {
+            let lead = lead.unwrap_or_default();
+            return Err(BosunError::conflict(
+                format!("#{n} is bundled into #{lead}'s PR #{}", p.number),
+                format!("work in #{lead}'s bundle: its PR closes #{n}"),
+            ));
+        }
+    }
     let Some(epic) = meta.as_ref().and_then(|m| m.epic) else {
         return Ok(());
     };
@@ -453,4 +467,10 @@ fn refuse_if_bundled(
         )),
         None => Ok(()),
     }
+}
+
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
+fn task_pr_lead(body: &str) -> Option<u64> {
+    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
+    rest[..rest.find("-->")?].trim().parse().ok()
 }

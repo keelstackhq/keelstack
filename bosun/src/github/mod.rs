@@ -138,6 +138,9 @@ pub trait Github {
     fn tree(&self, sha: &str) -> Result<Option<GitTree>>;
     /// The shas of the pull request's commits (GitHub lists at most 250).
     fn pull_commits(&self, number: u64) -> Result<Vec<String>>;
+    /// The messages of the pull request's commits, in one paged list (GitHub lists at most 250).
+    /// An entry without a message is an error: a caller that reads closing refs fails closed.
+    fn pull_commit_messages(&self, number: u64) -> Result<Vec<String>>;
     /// The first parent of commit `sha`; `None` when GitHub has no such commit or it has no parent.
     fn first_parent(&self, sha: &str) -> Result<Option<String>>;
     /// `draft` opens the pull request as a draft (REST `draft` field).
@@ -789,6 +792,25 @@ impl Github for LiveGithub {
             .iter()
             .filter_map(|c| c["sha"].as_str().map(String::from))
             .collect())
+    }
+
+    fn pull_commit_messages(&self, number: u64) -> Result<Vec<String>> {
+        let path = self.path(&format!("/pulls/{number}/commits?per_page=100"));
+        self.http
+            .get_all(&path)?
+            .iter()
+            .map(|c| {
+                c["commit"]["message"]
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| {
+                        BosunError::error(
+                            format!("GitHub listed a commit of PR #{number} without its message"),
+                            "rerun; GitHub's commit list was incomplete",
+                        )
+                    })
+            })
+            .collect()
     }
 
     fn compare(&self, base: &str, head: &str) -> Result<Compare> {

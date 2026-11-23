@@ -12,14 +12,14 @@ use super::{ApplyArg, CommentArgs, FromArg, VerdictCmd};
 use crate::app::default_branch;
 use crate::app::{App, kill_switch, set_state};
 use crate::config::{CONFIG_FILE, Config};
+use crate::core::meta::linked_issues;
 use crate::core::mode::ModeName;
 use crate::core::records::Record;
 use crate::core::risk::BOT_SESSION;
 use crate::core::state::{State, state_of, transition_allowed};
 use crate::core::verdict::{
-    COMMENT_MARKER, Verdict, bot_verdict_json, closes_issue, comment_chunks, comment_json,
-    comment_model, comment_relayed_by, comment_session, effective, relayed_comment_body,
-    valid_model,
+    COMMENT_MARKER, Verdict, bot_verdict_json, comment_chunks, comment_json, comment_model,
+    comment_relayed_by, comment_session, effective, relayed_comment_body, valid_model,
 };
 use crate::github::{Comment, Github, IssuePatch, IssueState, Pull};
 use crate::output::{BosunError, CmdResult, Outcome};
@@ -486,13 +486,31 @@ pub(crate) fn record(
         eff.approve = false;
         eff.reasons.push("escalated to the owner".into());
     }
-    let state = if eff.approve { "success" } else { "failure" };
+    // #52: the status aggregates the latest verdict of every reviewer session on this head. Green
+    // when one session approves at the threshold and no session's latest verdict blocks (a
+    // request-changes, a blocker, an escalation); a low-confidence approve with no
+    // findings neither counts nor blocks. Posting order does not matter.
+    let others = other_sessions(gh, pull, &verdict.head_sha, session)?;
+    let blocks_self = blocks(verdict);
+    let aggregate = (eff.approve || others.approve) && !blocks_self && others.blocks.is_empty();
+    let state = if aggregate { "success" } else { "failure" };
     // Only an otherwise approving escalation reads [`APPROVABLE`]: the owner can
     // clear that one (risk-check); a failing one stays red.
     let description = if verdict.escalate_risk && eff.reasons.len() == 1 {
         format!("{APPROVABLE}{}", verdict.summary())
     } else if verdict.escalate_risk {
         format!("{ESCALATED} (not approving): {}", verdict.summary())
+    } else if aggregate && !eff.approve {
+        format!(
+            "approved by another session; this one: {}",
+            verdict.summary()
+        )
+    } else if !others.blocks.is_empty() && !blocks_self {
+        format!(
+            "{} blocks; this one: {}",
+            others.blocks[0],
+            verdict.summary()
+        )
     } else {
         verdict.summary()
     };
@@ -512,25 +530,114 @@ pub(crate) fn record(
 
     let target = if verdict.escalate_risk {
         Some(State::NeedsHuman)
-    } else if !eff.approve {
+    } else if !aggregate {
         Some(State::Fixing)
     } else {
         None
     };
+    // A bundle: every linked task moves with the PR, not only the first.
     let mut task_state = None;
-    if let (Some(to), Some(issue_no)) = (target, closes_issue(&pull.body))
-        && let Some(issue) = gh.get_issue(issue_no)?
-        && state_of(&issue.labels).is_none_or(|from| transition_allowed(from, to))
-    {
-        set_state(gh, issue_no, &issue, to)?;
-        task_state = Some(to.name());
+    let mut moved = Vec::new();
+    if let Some(to) = target {
+        // The first link moves as it always did; the others when they are open bosun tasks.
+        for (k, issue_no) in linked_issues(&pull.body).into_iter().enumerate() {
+            if k > 0 && issue_no == n {
+                continue;
+            }
+            if let Some(issue) = gh.get_issue(issue_no)?
+                && (k == 0
+                    || (!issue.pull_request
+                        && issue.state == "open"
+                        && crate::core::meta::parse_task_meta(issue.body_text()).is_some()))
+                && state_of(&issue.labels).is_none_or(|from| transition_allowed(from, to))
+            {
+                set_state(gh, issue_no, &issue, to)?;
+                task_state = Some(to.name());
+                moved.push(issue_no);
+            }
+        }
     }
     let mut data = json!({
         "pr": n, "head_sha": verdict.head_sha, "approved": eff.approve,
         "reasons": eff.reasons, "status": state, "task_state": task_state,
     });
+    if moved.len() > 1 {
+        data["tasks_moved"] = json!(moved);
+    }
+    if !others.sessions.is_empty() {
+        data["sessions"] = json!(others.sessions);
+    }
     if w.checks_skipped() {
         data["checks_skipped"] = json!(true);
     }
     Ok(Outcome::data(data))
+}
+
+/// Whether a verdict blocks the aggregate status (#52): anything but an approve, a blocker, or an
+/// escalation. A major alone does not, as for a single verdict ([`effective`]); risk-check's
+/// two-verdict and quorum rules still refuse an approval with one. A low-confidence approve
+/// with no blocker neither counts nor blocks.
+fn blocks(v: &Verdict) -> bool {
+    v.verdict != "approve" || v.count("blocker") > 0 || v.escalate_risk
+}
+
+/// The other reviewer sessions' latest verdicts on `head` (#52).
+#[derive(Debug, Default)]
+struct Others {
+    /// One of them approves at the threshold without blocking.
+    approve: bool,
+    /// Why each blocking session blocks (`session X: summary`).
+    blocks: Vec<String>,
+    /// Every other session with a verdict on the head.
+    sessions: Vec<String>,
+}
+
+/// Every other session's latest verdict comment on the PR for `head`, read as `verdict apply`
+/// reads one: unedited, not refused by [`neutral_refusal`], keyed by its session (a bot's verdicts
+/// are one session). `session` is the verdict being recorded, which replaces its own earlier ones.
+fn other_sessions(
+    gh: &dyn Github,
+    pull: &Pull,
+    head: &str,
+    session: &str,
+) -> Result<Others, BosunError> {
+    let mut latest: std::collections::BTreeMap<String, (u64, Verdict)> = Default::default();
+    for c in gh.list_comments(pull.number)? {
+        if !c.unedited()
+            || (!c.body.contains(COMMENT_MARKER) && bot_verdict_json(&c.body).is_none())
+        {
+            continue;
+        }
+        let (why, text, bot_verdict, _) = neutral_refusal(gh, &c)?;
+        let (None, Some(text)) = (why, text) else {
+            continue;
+        };
+        let Ok(v) = Verdict::parse(text) else {
+            continue;
+        };
+        if v.head_sha != head || v.pr != pull.number || counted_approval(&v, text) {
+            continue;
+        }
+        let key = if bot_verdict {
+            format!("{BOT_SESSION}{}", c.user)
+        } else {
+            comment_session(&c.body).unwrap_or("unknown").to_string()
+        };
+        if key == session {
+            continue;
+        }
+        if latest.get(&key).is_none_or(|(id, _)| c.id > *id) {
+            latest.insert(key, (c.id, v));
+        }
+    }
+    let mut out = Others::default();
+    for (key, (_, v)) in latest {
+        if blocks(&v) {
+            out.blocks.push(format!("session {key}: {}", v.summary()));
+        } else if effective(&v).approve {
+            out.approve = true;
+        }
+        out.sessions.push(key);
+    }
+    Ok(out)
 }
