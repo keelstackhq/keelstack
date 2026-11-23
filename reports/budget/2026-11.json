@@ -1,0 +1,150 @@
+{
+  "month": "2026-11",
+  "rows": [
+    {
+      "issue": null,
+      "merged_at": "2026-11-21T13:40:11Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 1,
+      "sessions": null,
+      "title": "D-023: one monorepo, one release",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-21T16:15:43Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 2,
+      "sessions": null,
+      "title": "feat(site): site always current, facts from the latest release tag",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-21T16:15:55Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 3,
+      "sessions": null,
+      "title": "fix(hoist): show GitHub error details; deploy keys disabled is a human step",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-23T07:08:59Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 4,
+      "sessions": null,
+      "title": "port: open PRs from the archived repos",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-23T07:05:38Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 5,
+      "sessions": null,
+      "title": "plan: test-integrity grant for the port PR",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-23T12:44:01Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 55,
+      "sessions": null,
+      "title": "port: PR #4 review follow-ups",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": null,
+      "models": null,
+      "outcome": "open",
+      "pr": 56,
+      "sessions": null,
+      "title": "release refs: bosun gate workflow uses keelstackhq/keelstack/hoard@v0",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": null,
+      "models": null,
+      "outcome": "open",
+      "pr": 57,
+      "sessions": null,
+      "title": "fix(guard): read scripts a command runs, parse $(...) to its end, allow non-release workflow dispatch",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-23T13:53:09Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 58,
+      "sessions": null,
+      "title": "hoist + hull release template: consumer feedback (npm build, registry bootstrap, env tags, check noise, release-pre hook)",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": null,
+      "models": null,
+      "outcome": "open",
+      "pr": 59,
+      "sessions": null,
+      "title": "bosun: fail ci-minutes locally, spend without an issue, owner-overridable spawn rule",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": null,
+      "models": null,
+      "outcome": "open",
+      "pr": 60,
+      "sessions": null,
+      "title": "fix(bosun): guard parses globs, braces, scripts and fetch chains",
+      "tokens": null,
+      "usd": null
+    },
+    {
+      "issue": null,
+      "merged_at": "2026-11-23T13:53:12Z",
+      "models": null,
+      "outcome": "held",
+      "pr": 62,
+      "sessions": null,
+      "title": "chore: point .bosun/registry at #61",
+      "tokens": null,
+      "usd": null
+    }
+  ],
+  "totals": {
+    "cost_per_held_usd": null,
+    "cost_per_merged_usd": null,
+    "held": 8,
+    "held_with_spend": 0,
+    "merged": 8,
+    "merged_with_spend": 0,
+    "prs": 12,
+    "prs_with_spend": 0,
+    "reverted": 0,
+    "top_prs": [],
+    "usd": 0.0
+  }
+}
