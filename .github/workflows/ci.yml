@@ -223,7 +223,7 @@ jobs:
         run: cargo build --release --locked -p keel-bosun --bin bosun
       - id: binhash
         run: echo "sha256=$(sha256sum "$RUNNER_TEMP/base/target/release/bosun" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      # The kinds test-integrity may allow come from the PR's linked task (the plan's `allow:`).
+      # The kinds test-integrity may allow come from the PR's linked tasks (each task's `allow:`, per file it touches).
       # Only known kinds pass; any failure allows nothing.
       - if: github.event_name == 'pull_request'
         id: allow
