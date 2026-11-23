@@ -81,3 +81,4 @@ Task log moved out of docs/PROGRESS.md; one line per task, oldest first.
 - 2026-11-20 Review fix: unresolved environment items are deduped by expression; a callee's `${{ inputs.X }}` environment is skipped when every local caller passes a literal.
 - 2026-11-20 Review fix: a variable read by jobs with `environment:` is present when that existing environment holds it (`variable_uses`, `env_variables`); the human step names `--env <env>`.
 - 2026-11-20 Review fix: a PUT of an existing environment first GETs it and carries back wait_timer, prevent_self_review and reviewers (`Change::Environment.exists`, `carry_back`).
+- 2026-11-23 Consumer feedback: `[publish] npm.build`, init for launcher repos + publish-race step, bootstrap of `[registry.npm]` packages with the 48 h trusted-publisher deadline, environment `tags` policies, plan-limited rulesets and app-posted checks no longer drift.
