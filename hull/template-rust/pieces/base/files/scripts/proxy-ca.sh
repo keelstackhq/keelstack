@@ -34,11 +34,14 @@ case "${1:-}" in
       exit 0
     fi
     cp "$trust" "$dest"
-    # PROXY_CA_STORE and PROXY_CA_UPDATE are for tests; without an update command a test stops here.
-    update="${PROXY_CA_UPDATE:-}"
-    if [ -z "$update" ]; then
-      [ -z "${PROXY_CA_STORE:-}" ] || exit 0
-      if command -v update-ca-certificates >/dev/null; then update=update-ca-certificates; fi
+    # PROXY_CA_STORE and PROXY_CA_UPDATE are for tests: the update command counts only with a test
+    # store, and without one a test stops here.
+    update=""
+    if [ -n "${PROXY_CA_STORE:-}" ]; then
+      update="${PROXY_CA_STORE:+${PROXY_CA_UPDATE:-}}"
+      [ -n "$update" ] || exit 0
+    elif command -v update-ca-certificates >/dev/null; then
+      update=update-ca-certificates
     fi
     # On a failure the copy goes again, so the next run (cmp -s) retries instead of skipping.
     if [ -z "$update" ]; then

@@ -21,7 +21,11 @@ fn output(text: &str) -> String {
 /// `git` for the adopted check: never prompts (no terminal, ssh, credential or stdin prompt), ignores local replace refs, gives up on a stalled transfer (low speed) and
 /// on one that takes over 20 seconds or runs past the shared `deadline`.
 fn git_remote(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
-    let mut child = std::process::Command::new("git")
+    let mut cmd = std::process::Command::new("git");
+    // Its own process group, so a timeout also stops what git started (ssh, an alias's shell).
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd
         .env("GIT_TERMINAL_PROMPT", "0")
         .env("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
         .env("GIT_NO_REPLACE_OBJECTS", "1")
@@ -41,6 +45,11 @@ fn git_remote(dir: &Path, args: &[&str], deadline: Instant) -> Option<String> {
             break s;
         }
         if Instant::now() > end {
+            #[cfg(unix)]
+            let _ = std::process::Command::new("kill")
+                .args(["-KILL", "--", &format!("-{}", child.id())])
+                .stderr(std::process::Stdio::null())
+                .status();
             let _ = child.kill();
             let _ = child.wait();
             return None;
@@ -348,10 +357,25 @@ mod tests {
     #[test]
     fn git_remote_stops_at_the_shared_deadline() {
         let t = Instant::now();
-        let args = ["-c", "alias.slow=!sleep 10", "slow"];
+        let args = ["-c", "alias.slow=!sleep 10.4711", "slow"];
         let deadline = t + Duration::from_millis(300);
         assert!(git_remote(Path::new("."), &args, deadline).is_none());
         assert!(t.elapsed() < Duration::from_secs(5));
+        // The kill reaches the alias's shell and its `sleep` too, not only git (#55).
+        #[cfg(target_os = "linux")]
+        {
+            let alive = || {
+                std::fs::read_dir("/proc").unwrap().flatten().any(|e| {
+                    std::fs::read(e.path().join("cmdline"))
+                        .is_ok_and(|c| c.windows(13).any(|w| w == b"sleep\x0010.4711"))
+                })
+            };
+            let end = Instant::now() + Duration::from_secs(2);
+            while alive() && Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert!(!alive(), "an orphaned `sleep` outlived the deadline");
+        }
     }
 
     #[test]
