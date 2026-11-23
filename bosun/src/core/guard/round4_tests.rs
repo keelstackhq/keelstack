@@ -19,7 +19,7 @@ fn hook(cmd: &str, files: &[(&str, &str)]) -> Option<String> {
         let read = |p: &str| {
             let p = p.trim_start_matches("./");
             if p == "bin" || p == "xl" || p == "target/debug/bosun" {
-                return Some(Script::Binary);
+                return Some(Script::Binary(Some(String::new())));
             }
             files
                 .iter()
@@ -96,11 +96,12 @@ fn a_bare_pathspec_glob_can_expand_to_a_git_option() {
     for cmd in [
         "git add src/*.rs",
         "git diff -- *.md",
-        "git grep -e x -- '*.rs' *.md",
         "git ls-files docs/**/*.md",
     ] {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
+    // Denied by the legacy judge (main) and not an enumerated intended allow.
+    assert!(hook("git grep -e x -- '*.rs' *.md", &[]).is_some());
 }
 
 #[test]
@@ -120,7 +121,8 @@ fn a_shell_or_interpreter_binary_run_directly_is_refused() {
         let files = [("bash", ""), ("python3", ""), ("tools/node", "")];
         let read_bin = |p: &str| {
             let p = p.trim_start_matches("./");
-            (p == "bin" || p == "xl" || files.iter().any(|f| f.0 == p)).then_some(Script::Binary)
+            (p == "bin" || p == "xl" || files.iter().any(|f| f.0 == p))
+                .then_some(Script::Binary(Some(String::new())))
         };
         let why = tool_rules(
             "Bash",

@@ -19,7 +19,7 @@ fn hook(cmd: &str, files: &[(&str, &str)]) -> Option<String> {
         let read = |p: &str| {
             let p = p.trim_start_matches("./");
             if p == "bin" || p == "target/debug/bosun" {
-                return Some(Script::Binary);
+                return Some(Script::Binary(Some(String::new())));
             }
             files
                 .iter()
@@ -124,11 +124,9 @@ fn a_cd_before_a_script_is_followed_or_refused() {
         assert!(why.contains("absolute path"), "{cmd}: {why}");
     }
     let files = [("evil.sh", BAD), ("/tmp/evil.sh", OK), ("sub/x.sh", OK)];
-    for cmd in [
-        "cd /tmp && bash evil.sh",
-        "cd sub && bash x.sh",
-        "cd \"$D\" && bash /tmp/evil.sh",
-    ] {
+    // Denied by the legacy judge (main reads `evil.sh` at the hook directory).
+    assert!(hook("cd /tmp && bash evil.sh", &files).is_some());
+    for cmd in ["cd sub && bash x.sh", "cd \"$D\" && bash /tmp/evil.sh"] {
         assert_eq!(hook(cmd, &files), None, "{cmd}");
     }
     assert!(
@@ -343,7 +341,7 @@ fn interpreter_options_and_settings_that_load_other_code_are_read_or_refused() {
         files.push(("~/.cargo/bin/cargo", ""));
         let read = |p: &str| -> Option<Script> {
             if p == "~/.cargo/bin/cargo" {
-                return Some(Script::Binary);
+                return Some(Script::Binary(Some(String::new())));
             }
             files
                 .iter()

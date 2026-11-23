@@ -653,7 +653,10 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
         Ok(_) if binary && interpreter_binary(&real, meta.len()) => Some(Script::Unreadable(
             "a shell or interpreter program, by its name or its bytes",
         )),
-        Ok(_) if binary => Some(Script::Binary),
+        // The legacy judge reads a binary as lossy text, as main did (None: over 1 MiB).
+        Ok(n) if binary => Some(Script::Binary(
+            (n as u64 <= MAX).then(|| String::from_utf8_lossy(&buf).into_owned()),
+        )),
         Ok(n) if n as u64 > MAX => Some(Script::Unreadable("larger than 1 MiB")),
         Ok(_) => Some(Script::Text(String::from_utf8_lossy(&buf).into_owned())),
     }
@@ -962,4 +965,40 @@ mod tests {
         assert_eq!(guarded(|| Some("x".into())), Some("x".into()));
         assert!(guarded(|| panic!("again")).is_some());
     }
+
+    /// Reviewer C and D on #66 (head ee9e6bd allowed these, main denied): a copy of or symlink
+    /// to git/gh run directly, and inline interpreter code that runs an argv file. The legacy
+    /// judge (main's guard) holds them now.
+    #[test]
+    fn copied_git_and_interpreter_argv_files_are_refused_as_on_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let git = ["/usr/bin/git", "/bin/git"]
+            .into_iter()
+            .find(|p| Path::new(p).is_file());
+        std::fs::write(d.join("evil.sh"), "#!/bin/sh\ngit push --force origin main\n").unwrap();
+        let bash = |cmd: &str| {
+            let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd}});
+            judge(Some(d), &input)
+        };
+        let mut cmds = vec![
+            "python3 -c 'import subprocess,sys; subprocess.run([\"bash\",sys.argv[1]])' evil.sh",
+            "node -e 'require(\"child_process\").execFileSync(\"bash\",[process.argv[1]])' evil.sh",
+            "perl -e 'system(\"bash\", $ARGV[0])' evil.sh",
+        ];
+        if let Some(git) = git {
+            std::fs::copy(git, d.join("g")).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(git, d.join("gl")).unwrap();
+            cmds.extend(["./g push --force origin main", "./g push --tags"]);
+            #[cfg(unix)]
+            cmds.push("./gl push --force origin main");
+        }
+        assert!(!bash("ls").as_deref().is_some_and(is_deny));
+        for cmd in cmds {
+            let why = bash(cmd).unwrap_or_else(|| panic!("allowed: {cmd}"));
+            assert!(is_deny(&why) && !why.contains("cannot read git config"), "{cmd}: {why}");
+        }
+    }
+
 }

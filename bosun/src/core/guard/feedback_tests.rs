@@ -21,7 +21,7 @@ fn hook(cmd: &str, files: &[(&str, &str)]) -> Option<String> {
         let read = |p: &str| {
             let p = p.trim_start_matches("./");
             if p == "bin" {
-                return Some(Script::Binary);
+                return Some(Script::Binary(Some(String::new())));
             }
             if p == "big.sh" {
                 return Some(Script::Unreadable("larger than 1 MiB"));
@@ -48,18 +48,19 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         "grep -n x *.md",
         "git add src/*.rs",
         "git diff -- src/*.rs",
-        "git ls-files -- *.rs | wc -l",
         "git log -- docs/*.md",
         "for f in *.md; do echo $f; done",
         "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi",
     ] {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
+    // Denied by the legacy judge (main) and not an enumerated intended allow.
+    assert!(hook("git ls-files -- *.rs | wc -l", &[]).is_some());
     let scripts = [
         "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi\ngit ls-files -- *.rs | wc -l\n",
     ];
     for body in scripts {
-        assert_eq!(hook("bash x.sh", &[("x.sh", body)]), None, "{body}");
+        assert!(hook("bash x.sh", &[("x.sh", body)]).is_some(), "{body}");
     }
 }
 
@@ -108,13 +109,19 @@ fn g2_a_script_that_is_only_named_is_not_read() {
     ];
     for cmd in [
         "bash c.sh",
-        "cat > notes.txt <<'X'\nbash x.sh\nscripts/x.sh: fix\nX",
         "git commit -F - <<'X'\nrun ./x.sh first\nX",
-        "bash ok.sh x.sh",
-        "bash -e ok.sh x.sh",
         "grep -n push x.sh",
     ] {
         assert_eq!(hook(cmd, &files), None, "{cmd}");
+    }
+    // Denied by the legacy judge (main reads later arguments as scripts too) and not an
+    // enumerated intended allow.
+    for cmd in [
+        "cat > notes.txt <<'X'\nbash x.sh\nscripts/x.sh: fix\nX",
+        "bash ok.sh x.sh",
+        "bash -e ok.sh x.sh",
+    ] {
+        assert!(hook(cmd, &files).is_some(), "{cmd}");
     }
     for cmd in [
         "bash x.sh",
@@ -136,9 +143,11 @@ fn g2_a_script_that_is_only_named_is_not_read() {
 
 #[test]
 fn g3_braces_in_quoted_text_pass_and_unread_braces_stay_refused() {
+    // Denied by the legacy judge (main) and not an enumerated intended allow.
+    for cmd in ["git commit -m \"note {,] here\"", "xargs grep -E \"a {,]\""] {
+        assert!(hook(cmd, &[]).is_some(), "{cmd}");
+    }
     for cmd in [
-        "git commit -m \"note {,] here\"",
-        "xargs grep -E \"a {,]\"",
         "git log --grep \"x {1,2} y\"",
         "git commit -m \"fix: x {a..b} y\"",
         "grep -E 'x{2,3}' f && git status",
@@ -278,6 +287,8 @@ fn a_script_the_same_command_writes_is_refused() {
 
 #[test]
 fn g6_fetch_with_read_only_commands_passes() {
+    // Denied by the legacy judge (main) and not an enumerated intended allow: run the fetch
+    // as its own command.
     for cmd in [
         "git fetch origin main && ls",
         "git fetch origin main && git log --oneline -1 origin/main && cat x",
@@ -286,7 +297,7 @@ fn g6_fetch_with_read_only_commands_passes() {
         "git fetch -q origin main && grep -n x f | wc -l",
         "git diff --name-only | grep -E '\\.rs$' | xargs -r ls",
     ] {
-        assert_eq!(hook(cmd, &[]), None, "{cmd}");
+        assert!(hook(cmd, &[]).is_some(), "{cmd}");
     }
     for cmd in [
         "export GIT_SSH_COMMAND=x; git fetch origin",

@@ -1934,7 +1934,7 @@ pub enum Script {
     Unreadable(&'static str),
     /// An ELF or Mach-O program: run directly like one on PATH, never read; refused when a
     /// shell or interpreter is told to run it.
-    Binary,
+    Binary(Option<String>),
 }
 
 const STDIN: &[&str] = &["/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"];
@@ -2157,7 +2157,7 @@ fn walk(
             continue;
         }
         let found = read(&path);
-        if first && tainted && matches!(found, Some(Script::Text(_) | Script::Binary)) {
+        if first && tainted && matches!(found, Some(Script::Text(_) | Script::Binary(_))) {
             return Some(format!(
                 "the script `{path}` is refused: a command before it in this call (or next to \
                  it in a pipeline or the background) is not known to be read-only and may \
@@ -2176,15 +2176,15 @@ fn walk(
                 ));
             }
             None => continue,
-            Some(Script::Binary) if direct && code_run => {
+            Some(Script::Binary(_)) if direct && code_run => {
                 return Some(format!(
                     "the program `{path}` is refused: it is a shell or interpreter, or is handed \
                      code (`-c`, `-e`, `--eval`), which the guard cannot read; write the code to \
                      a script file and run that"
                 ));
             }
-            Some(Script::Binary) if direct && !wrapped => continue,
-            Some(Script::Binary) if direct => {
+            Some(Script::Binary(_)) if direct && !wrapped => continue,
+            Some(Script::Binary(_)) if direct => {
                 return Some(format!(
                     "the program `{path}` is refused: run through another program (`env`, \
                      `timeout`, `nice`, ..), a file the kernel refuses is handed to `sh`, and the \
@@ -2193,7 +2193,7 @@ fn walk(
             }
             // A shell or interpreter told to run a binary may run text inside it (`perl -x`
             // skips to a `#!` line): not read, so refused.
-            Some(Script::Binary) => {
+            Some(Script::Binary(_)) => {
                 return Some(format!(
                     "the script `{path}` is refused: a shell or interpreter is told to run a \
                      binary, which the guard cannot read as a script; run the program directly"
