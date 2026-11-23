@@ -985,9 +985,10 @@ fn default_stricter(main: Policy, base: Policy) -> bool {
     m.iter().zip(b.iter()).any(|(m, b)| m > b)
 }
 
-/// True when the default branch's `review_models`, `autonomous_allow`, `verdict_bots` or
-/// `oneoff_allow` is stricter than the PR
-/// base's: a set on the default branch that the base left unset or widened (unset `review_models`
+/// True when the default branch's `review_models`, `autonomous_allow`, `verdict_bots`,
+/// `oneoff_allow` or `bosun_repo` is stricter than the PR
+/// base's (`bosun_repo`: any difference, the effective repo with its default, since the pin
+/// check trusts the repo it names): a set on the default branch that the base left unset or widened (unset `review_models`
 /// counts any model; unset `autonomous_allow` is the built-in set). Compared as exact strings, so
 /// a base entry the default branch does not list reads as looser (fail closed).
 fn lists_stricter(main: &crate::config::Approvals, base: &crate::config::Approvals) -> bool {
@@ -1008,7 +1009,11 @@ fn lists_stricter(main: &crate::config::Approvals, base: &crate::config::Approva
     let wider = |m: &Option<Vec<String>>, b: &Option<Vec<String>>| {
         (b.iter().flatten()).any(|g| !m.iter().flatten().any(|x| x == g))
     };
+    let repo = |a: &crate::config::Approvals| {
+        (a.bosun_repo.clone()).unwrap_or_else(|| crate::config::DEFAULT_BOSUN_REPO.to_string())
+    };
     models
+        || repo(main) != repo(base)
         || b.iter().any(|g| !m.contains(g))
         || wider(&main.verdict_bots, &base.verdict_bots)
         || wider(&main.oneoff_allow, &base.oneoff_allow)
@@ -1367,6 +1372,23 @@ mod tests {
         assert!(!lists_stricter(&narrow, &narrow));
         assert!(!lists_stricter(&none, &narrow));
         assert!(!lists_stricter(&narrow, &lists(None, Some(&[]))));
+    }
+
+    #[test]
+    fn lists_stricter_compares_bosun_repo() {
+        let repo = |r: Option<&str>| crate::config::Approvals {
+            bosun_repo: r.map(String::from),
+            ..Default::default()
+        };
+        assert!(!lists_stricter(&repo(None), &repo(None)));
+        assert!(!lists_stricter(&repo(Some("a/b")), &repo(Some("a/b"))));
+        assert!(lists_stricter(&repo(Some("a/b")), &repo(None)));
+        assert!(lists_stricter(&repo(None), &repo(Some("a/b"))));
+        assert!(lists_stricter(&repo(Some("a/b")), &repo(Some("c/d"))));
+        assert!(!lists_stricter(
+            &repo(Some(crate::config::DEFAULT_BOSUN_REPO)),
+            &repo(None)
+        ));
     }
 
     #[test]
