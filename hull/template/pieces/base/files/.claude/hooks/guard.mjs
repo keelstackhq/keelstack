@@ -15,11 +15,12 @@
 // like the shell; joined string literals are checked for secret file names.
 // A shell script the command runs (`bash f`, `bash < f`, `source f`, `./f` with a shell, `env -S`
 // or busybox shell, or no `#!`; a bare name in a dir the command adds to PATH) is read and judged
-// like typed commands, nested scripts too: they share the chain (a file written earlier is
+// like typed commands, nested scripts, function bodies and startup files (`BASH_ENV`, `ENV`,
+// `--rcfile`) too: they share the chain (a file written earlier is
 // refused) and `$1`/`$@` stand for the literal arguments. Fail closed: a script the guard cannot
 // read in full (> 512 KiB, NUL bytes, unreadable, missing inside a script, > 32 scripts, a path
 // from a variable or `{}`, a shell fed by a pipe, stdin or an expanding here-string, `xargs bash`)
-// is refused; so are `alias x=...` and a PATH dir that is not literal.
+// is refused; so are `alias x=...` and a PATH dir that is not literal ($HOME, $PWD, $(pwd) known).
 // `gh api` with an explicit GET and graphql queries are reads; a POST whose endpoint (the first
 // positional) dispatches a literal workflow file that is not a release workflow (release, publish,
 // deploy; GUARD_RELEASE_WORKFLOWS overrides) or re-runs a run/job matches `gh workflow run` /
@@ -457,7 +458,13 @@ function split(cmd) {
   return segments;
 }
 
-function stripPrefixes(tokens) {
+function stripPrefixes(tokens, inCase = false) {
+  // A function definition runs its body when called: `f() { cmd; }`, `function f { cmd; }`.
+  if (tokens[0] === "function") tokens = tokens.slice(2);
+  else if (/^[^\s()$`'"]+\(\)[{(]?$/.test(tokens[0] ?? "")) tokens = tokens.slice(1);
+  if (tokens[0] === "()") tokens = tokens.slice(1);
+  // Inside `case`, a lone `pat)` on its own line is a pattern, not a command.
+  if (inCase && tokens.length === 1 && /^[^()]*\)$/.test(tokens[0])) return [];
   // `case w in pat) cmd` and a later `pat) cmd` branch run `cmd`.
   const afterPattern = (x) => x.slice(x.indexOf(")") + 1); // `pat)cmd` runs cmd
   if (base(tokens[0] ?? "") === "case") {
@@ -554,7 +561,7 @@ function stripPrefixes(tokens) {
 /** Simple commands in `cmd` as token lists, prefixes stripped, `bash -c '<s>'` expanded recursively.
  * Pseudo-commands `@evade` (text with a risky word is refused) and `@evade-exec` (same, for code
  * bodies) mark constructs the guard cannot read. */
-const fed = (x) => /^(\/dev\/(stdin|fd\/0)|\/proc\/self\/fd\/0|-|<\(.*)$/.test(x);
+const fed = (x) => /^(\/dev\/(stdin|fd\/\d+)|\/proc\/[^/]+\/fd\/\d+|-|<\(.*)$/.test(x);
 
 export function commands(cmd) {
   const text = String(cmd ?? "");
@@ -576,14 +583,23 @@ export function commands(cmd) {
   const segs = split(text);
   if (segs.subs.unclosed) out.push(["@evade", text]);
   for (const sub of segs.subs) for (const inner of commands(sub)) out.push(inner);
+  let caseDepth = 0;
   for (const seg of segs) {
-    const t = stripPrefixes(seg).flatMap(splitRedirect).map(unmark);
+    if (base(seg[0].replace(/^[({]+/, "")) === "case") caseDepth++;
+    const t = stripPrefixes(seg, caseDepth > 0)
+      .flatMap(splitRedirect)
+      .map(unmark);
+    if (seg.some((x) => /^esac\b/.test(x)) && caseDepth > 0) caseDepth--;
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
     // `PATH=dir:$PATH cmd`, `export PATH=...`: a bare name may now run a script in dir.
     for (const x of seg) {
       const m = /^PATH\+?=(.*)$/s.exec(unmark(x));
       if (m) out.push(["@path", m[1]]);
+      // A shell runs this file first: BASH_ENV (any later bash), ENV (sh started here or after export).
+      const env = /^(BASH_ENV|ENV)=(.+)$/s.exec(unmark(x));
+      const shellHere = SHELLS.has(base(stripPrefixes(seg)[0] ?? "")) || seg[0] === "export";
+      if (env && (env[1] === "BASH_ENV" || shellHere)) out.push(["source", env[2]]);
     }
     if (!t.length) {
       // A bare `env` (options and assignments only) prints the environment.
@@ -603,6 +619,11 @@ export function commands(cmd) {
       out.push(["@deny", "unscanned", segText]); // the script path comes from the pipe
     if (prog === "alias" && t.slice(1).some((x) => x.includes("=")))
       out.push(["@deny", "alias", segText]);
+    if (SHELLS.has(prog))
+      for (let n = 1; n < t.length; n++) {
+        const rc = /^--(?:rcfile|init-file)(?:=(.*))?$/s.exec(t[n]);
+        if (rc) out.push(["source", rc[1] ?? t[n + 1] ?? ""]);
+      }
     if (SHELLS.has(prog) && !viaXargs) {
       // The code a shell runs must be text the guard reads: a `-c` string, a script file, a
       // `<file`, a heredoc or here-string with nothing expanded. A pipe or a variable is refused.
@@ -925,6 +946,8 @@ function ghApiParse(args) {
     if (flag === "-X" || flag === "--method") method = value;
     if ((flag === "-F" || flag === "--field") && /^[^=]*=@/.test(value ?? "")) fileField = value;
     if (flag === "--input") input = value ?? "";
+    if ((flag === "-H" || flag === "--header") && /method-override/i.test(value ?? ""))
+      method = "OVERRIDE"; // the header changes the method: never a plain POST
   }
   return { method, endpoint, fileField, input };
 }
@@ -1090,6 +1113,7 @@ function bashRule(
     if (a0 === "api") {
       const api = ghApiParse(args.slice(1));
       if (api.fileField !== undefined) return "ghField";
+      if (api.method === "OVERRIDE") return "ghApi";
       if (ghApiWrites(args.slice(1))) {
         if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
         if (!workflowRun(args.slice(1))) return "ghApi";
@@ -1374,7 +1398,9 @@ function positional(t, argv) {
 function notePath(value, here, chain) {
   for (const e of String(value).split(":")) {
     if (/^\$\{?PATH\}?$/.test(e)) continue;
-    const dir = e.replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir());
+    const dir = e
+      .replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir())
+      .replace(/^(\$\{?PWD\}?|\$\(pwd\)|`pwd`)(?=\/|$)/, here);
     if (/[$`*?[{]/.test(dir)) return false;
     chain.path.push(resolve(here, dir || "."));
   }
@@ -1414,6 +1440,7 @@ function shellSource(t) {
       break;
     }
     if (SHELL_C_RE.test(ops[i])) return { kind: "c" };
+    if (/^-[a-zA-Z]*s[a-zA-Z]*$/.test(ops[i])) return { kind: "stdin", stdinFile }; // args follow
     if (/^--(version|help)$/.test(ops[i])) return { kind: "info" };
     i += SHELL_OPT_VALUE.has(ops[i]) ? 2 : 1;
   }
@@ -1447,6 +1474,13 @@ function scriptRuns(t, chain) {
     for (const d of chain.path) {
       const abs = join(d, t[0]);
       if (existsSync(abs)) runs.push({ file: abs, shell: false, args: operands(t.slice(1)) });
+    }
+  // `source name` searches PATH for a name without a slash.
+  const src = runs[0];
+  if ((prog === "source" || prog === ".") && src && !src.file.includes("/"))
+    for (const d of chain.path) {
+      const abs = join(d, src.file);
+      if (existsSync(abs)) runs.push({ ...src, file: abs });
     }
   // stdin and process substitution are refused in commands() (`@deny`).
   return runs.filter((r) => !/^(-|\/dev\/|\/proc\/|<\()/.test(r.file));

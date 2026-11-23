@@ -24,7 +24,8 @@ rule and the allowed alternative. Use the patterns below; they pass.
 | Start or re-run a workflow | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`) |
 
 A script does not hide a command: the guard reads a shell script before it runs (also `bash < f`,
-scripts it runs, with `$1`/`$@` bound to the literal arguments) and refuses it when a line in it
+scripts it runs, with `$1`/`$@` bound to the literal arguments, shell functions, and startup
+files: `BASH_ENV`, `ENV`, `--rcfile`) and refuses it when a line in it
 would be refused; it also refuses a script the same command (or a parent script) just wrote.
 Release workflows (file names with `release`, `publish` or `deploy`; the human can set the
 `GUARD_RELEASE_WORKFLOWS` regex in `.claude/settings.json` `env`) never start from here.
@@ -33,7 +34,8 @@ The guard refuses a script it cannot read in full; run a literal path to a text 
 larger than 512 KiB, NUL bytes, unreadable, missing when a script runs it, more than 32 scripts,
 a path from a variable or `{}` (`bash "$F"`, `find -exec bash {} +`, `xargs bash`), a shell fed
 by a pipe, stdin or an expanding here-string or heredoc (`cat f | bash`, `bash <<< "$(cat f)"`),
-or a PATH dir that is not literal. `alias x=...` is refused: run the command. `gh api -F x=@file`
+or a PATH dir that is not literal (`$HOME`, `$PWD`, `$(pwd)` are known; with a venv, run
+`.venv/bin/<tool>` instead of `source .venv/bin/activate`). `alias x=...` is refused: run the command. `gh api -F x=@file`
 and `--input` read a file into the request: pass values with `-f`.
 
 After `cd` into `.claude/`, `.claude/hooks/`, `.bosun/` or `.github/workflows/`, the rest of the

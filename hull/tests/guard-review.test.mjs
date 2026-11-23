@@ -40,6 +40,18 @@ put(S, "bin/evil.sh", `#!/bin/bash\n${force}`);
 put(S, "bin/fine", "#!/bin/bash\necho fine\n");
 put(S, "deep/0.sh", "echo leaf\n");
 for (let n = 1; n <= 40; n++) put(S, `deep/${n}.sh`, `bash ${S}/deep/${n - 1}.sh\n`);
+put(S, "fn.sh", "#!/bin/bash\nf() { git push --force origin main; }\nf\n");
+put(S, "pbin/evilsrc", `#!/bin/bash\n${force}`);
+put(
+  S,
+  "cargo-env",
+  '#!/bin/sh\ncase ":${PATH}:" in\n    *:"$HOME/.cargo/bin":*)\n        ;;\n    *)\n        export PATH="$HOME/.cargo/bin:$PATH"\n        ;;\nesac\n',
+);
+put(
+  S,
+  "case-evil.sh",
+  'case "$x" in\n  a) ;;\nesac\ncase y in\n  *) bash ' + S + "/force.sh ;;\nesac\n",
+);
 put(dir, "scripts/run.sh", "#!/bin/bash\nbash scripts/ok.sh\n");
 put(dir, "scripts/ok.sh", "#!/bin/bash\necho ok\n");
 
@@ -101,6 +113,26 @@ const DENY = [
   "alias p='git push --force'; p origin x",
   "alias g=git",
   "echo ls | sh",
+  // second review round: functions, -s, fds, startup files, source via PATH
+  "f() { git push --force origin main; }; f",
+  "function f { git push --force origin main; }; f",
+  "f() ( git push --force origin main ); f",
+  "x() { gh release create v1; }; x",
+  `bash ${S}/fn.sh`,
+  `bash -s x < ${S}/force.sh`,
+  `bash -x -s a b < ${S}/force.sh`,
+  `bash /dev/fd/3 3<${S}/force.sh`,
+  `bash /proc/self/fd/3 3<${S}/force.sh`,
+  `BASH_ENV=${S}/force.sh bash -c true`,
+  `env BASH_ENV=${S}/force.sh bash ${S}/ok.sh`,
+  `export ENV=${S}/force.sh; sh -c true`,
+  `bash --rcfile ${S}/force.sh -i -c true`,
+  `bash --init-file=${S}/force.sh -i`,
+  `PATH=${S}/pbin:$PATH; source evilsrc`,
+  `bash ${S}/case-evil.sh`,
+  "PATH=$VIRTUAL_ENV/bin:$PATH pytest",
+  "gh api -X POST repos/o/r/actions/runs/1/rerun -H 'X-HTTP-Method-Override: DELETE'",
+  "gh api -X GET repos/o/r/issues/1 -H 'X-HTTP-Method-Override: DELETE'",
   // release workflows: release, publish, deploy by default
   "gh api -X POST repos/o/r/actions/workflows/publish.yml/dispatches -f ref=main",
   "gh api -X POST repos/o/r/actions/workflows/deploy.yml/dispatches -f ref=main",
@@ -129,6 +161,13 @@ const ALLOW = [
   `find ${S} -name '*.sh' -exec ls -l {} +`,
   `find ${S} -name '*.sh' -exec sh -c 'echo "$1"' _ {} ';'`,
   "bash <<'EOF'\necho $HOME\nEOF",
+  `. ${S}/cargo-env && cargo --version`,
+  'export PATH="$PWD/node_modules/.bin:$PATH"; vp --version',
+  'export PATH="$(pwd)/bin:$PATH"; ls',
+  "g() { git status; }; g",
+  "ENV=production node -e 1",
+  "BASH_ENV= bash -c true",
+  `bash -s < ${S}/ok.sh`,
 ];
 
 for (const c of DENY)
