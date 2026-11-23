@@ -371,6 +371,30 @@ const MAIN_DENIES: &[&str] = &[
     "case \"$1\" in -h) echo help ;; *.md) echo y ;; esac",
 ];
 
+/// Commands this guard must deny though `origin/main`'s guard allows them: a `case` or
+/// function after the reserved-word prefixes `time [-p] [--]`, `coproc [NAME]` and `!`.
+const HEAD_DENIES: &[&str] = &[
+    "time -p case x in x) gh pr merge 1;; esac",
+    "time -- case x in x) gh pr merge 1;; esac",
+    "time -p -- case x in x) gh pr merge 1;; esac",
+    "coproc case x in x) git push --force origin feat;; esac",
+    "coproc NAME case x in x) gh pr merge 1;; esac",
+    "time -p function f { gh pr merge 1; }; f",
+    "time -p case x in x) gh api -X PUT repos/o/r/pulls/1/merge;; esac",
+    "coproc NAME { gh pr merge 1; }",
+    "coproc { gh pr merge 1; }",
+    "time -p { gh pr merge 1; }",
+    "! case x in x) gh pr merge 1;; esac",
+    "time ! case x in x) gh pr merge 1;; esac",
+];
+
+#[test]
+fn reserved_word_prefixes_keep_the_command_position() {
+    for cmd in HEAD_DENIES {
+        assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
+    }
+}
+
 #[test]
 fn rewritten_text_never_allows_what_main_denies() {
     for cmd in MAIN_DENIES {
@@ -423,5 +447,32 @@ fn open_bodies_reads_keywords_only_where_a_command_starts() {
     assert_eq!(
         open_bodies("if true; then function f { gh pr merge 1; }; fi"),
         "if true; then function f ;{ gh pr merge 1; }; fi"
+    );
+}
+
+#[test]
+fn open_bodies_keeps_the_command_position_after_time_and_coproc() {
+    use super::open_bodies;
+    for (text, opened) in [
+        (
+            "time -p case x in x) a;; esac",
+            "time -p case x in x); a;; esac",
+        ),
+        (
+            "coproc case x in x) a;; esac",
+            "coproc case x in x); a;; esac",
+        ),
+        (
+            "coproc N case x in x) a;; esac",
+            "coproc N case x in x); a;; esac",
+        ),
+        ("time -- function f { a; }", "time -- function f ;{ a; }"),
+    ] {
+        assert_eq!(open_bodies(text), opened, "{text}");
+    }
+    // An argument of the command after the prefix is no keyword.
+    assert_eq!(
+        open_bodies("time -p echo function; a"),
+        "time -p echo function; a"
     );
 }

@@ -2147,12 +2147,22 @@ fn merge_rule(words: &[&str], segment: &str, target: &Target) -> Option<&'static
     }
     let (mut words, mut xargs, mut moved) = (words, false, false);
     loop {
-        let skip = words
-            .iter()
-            .take_while(|w| {
-                (w.contains('=') && !w.starts_with('-')) || (WRAPPERS.contains(w) && !runner(w))
-            })
-            .count();
+        let mut skip = 0;
+        while let Some(w) = words.get(skip) {
+            if (w.contains('=') && !w.starts_with('-')) || (WRAPPERS.contains(w) && !runner(w)) {
+                skip += 1;
+                // `coproc NAME { ..; }`: NAME names the coprocess of the compound command.
+                if *w == "coproc"
+                    && words
+                        .get(skip + 1)
+                        .is_some_and(|n| *n == "{" || n.starts_with('('))
+                {
+                    skip += 1;
+                }
+            } else {
+                break;
+            }
+        }
         let (cmd, dirs, _) = unwrap_runners(&words[skip..]);
         let ran = &words[skip..words.len() - cmd.len()];
         xargs |= ran.iter().any(|w| w.rsplit('/').next() == Some("xargs"));
@@ -4166,6 +4176,8 @@ pub(super) fn open_bodies(text: &str) -> String {
     // 5 after `function`.
     let (mut i, mut quote, mut state, mut depth) = (0, None::<char>, 0u8, 0usize);
     let (mut word, mut cmd_pos, mut parens) = (String::new(), true, 0usize);
+    // 1 after `time` (its options keep the command position), 2 after `coproc` (so does NAME).
+    let mut prefix = 0u8;
     let delim = |ch: char| ch.is_whitespace() || ";&|()<>".contains(ch);
     let close = |out: &mut String, next: Option<&char>| {
         if next != Some(&';') {
@@ -4269,11 +4281,34 @@ pub(super) fn open_bodies(text: &str) -> String {
             }
             // A reserved word is one only in command position, and only these leave the next
             // word there too; after an assignment (`x=1 function`) or an argument it is a word.
-            cmd_pos = cmd_pos
-                && matches!(
+            // `time` and its options (`-p`, `--`) and `coproc` with an optional NAME are
+            // prefixes: the command after them is in command position too.
+            let was = cmd_pos;
+            cmd_pos =
+                was && matches!(
                     w.as_str(),
-                    "then" | "do" | "else" | "elif" | "if" | "while" | "until" | "!" | "{" | "time"
-                );
+                    "then"
+                        | "do"
+                        | "else"
+                        | "elif"
+                        | "if"
+                        | "while"
+                        | "until"
+                        | "!"
+                        | "{"
+                        | "time"
+                        | "coproc"
+                ) || prefix == 1 && w.starts_with('-')
+                    || prefix == 2;
+            prefix = match w.as_str() {
+                "time" if was => 1,
+                _ if prefix == 1 && w.starts_with('-') => 1,
+                "coproc" if was => 2,
+                _ => 0,
+            };
+        }
+        if matches!(ch, ';' | '&' | '|' | '\n' | '(' | ')') {
+            prefix = 0;
         }
         // `function` must name its function on the same command, and `case WORD` finds its
         // `in` before any `;`, `&` or `|`: a separator first means no keyword was read.
