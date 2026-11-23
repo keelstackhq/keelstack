@@ -1,1 +1,0 @@
-- 2026-11-23 · port follow-ups: PR #4 review minors (settings lock, bosun_repo, .yaml workflows, base pins, replace objects, SessionStart bound, hex4, spec/site/decisions text) · this PR

@@ -1,1 +1,0 @@
-- Guard feedback from a consumer repo: scripts a command runs are read, `$(...)` parse fixed, workflow dispatch/re-run via `gh api` (claude/guard-feedback).

@@ -1,1 +1,0 @@
-- 2026-11-23 · bosun feedback · ci-minutes ready gate, `budget record --branch`, worker spawn rule overridable · this PR

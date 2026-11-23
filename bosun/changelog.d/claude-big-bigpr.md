@@ -1,1 +1,0 @@
-- One big PR: plan header `pr: one` makes every item single and prints `data.big_pr`; `--bundle` across epics needs `[approvals] bundle_across_epics`; test-integrity, risk-check, review-verdict, review-pack and review-ci handle every closing task; an unresolvable wildcard touch is a plan warning (fail closed).

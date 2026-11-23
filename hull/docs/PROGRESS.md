@@ -122,6 +122,8 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 - 2026-11-23 · feedback · `feat(hull): release-pre hook, hoist-driven detect, no forced provenance` · template-rust release wording
 - 2026-11-23 · review fixes · template-rust release.yml: gate before the dry run, pending = unreleased versions only, e2e detect test (hoist/tests/release_workflow_detect.rs); release-pre.sh owner-only (guard path, bosun bootstrap exclusion, docs); guard publish reason fits both templates
 - 2026-11-23 · review round 2 · template-rust detect: pinned hoist < 0.22.0 falls back to `release-pending.mjs detect` (version compare; pin moves by PR once released, not bump-version), exit 1 fails, release-pre.sh `--ignore-scripts`
+- 2026-11-23 · WG/T1+T3 (#64, #46): guard allows PR creation via `gh api`, data words in PR bodies, quoted redirects as data, `find -delete` on guarded dirs refused; proxy-ca test-only update gated by the test store.
+- 2026-11-23 · Guard feedback from a consumer repo: scripts a command runs are read, `$(...)` parse fixed, workflow dispatch/re-run via `gh api` (claude/guard-feedback).
 
 ## Measurements
 

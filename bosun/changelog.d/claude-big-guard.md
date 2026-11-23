@@ -1,1 +1,0 @@
-- `pr --one-off`: a refusal names the glob, `[approvals] oneoff_allow` and `.bosun/bosun.toml`; with no `[approvals] autonomous_allow`, the base's `apps/**`, `crates/**` and `packages/**` join the default allow set (their manifests and agent rules excepted); the SessionStart remote check kills git's whole process group on a timeout (#64, #55).

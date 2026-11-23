@@ -1,1 +1,0 @@
-- 2026-11-23 · guard feedback G1-G3, G5, G6 · the Bash guard parses globs, braces, scripts and fetch chains; the bump-version repro passes · this PR

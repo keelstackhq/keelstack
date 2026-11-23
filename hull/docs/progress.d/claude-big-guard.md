@@ -1,1 +1,0 @@
-- WG/T1+T3 (#64, #46): guard allows PR creation via `gh api`, data words in PR bodies, quoted redirects as data, `find -delete` on guarded dirs refused; proxy-ca test-only update gated by the test store.

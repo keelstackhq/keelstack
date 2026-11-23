@@ -1,1 +1,0 @@
-- 2026-11-23 · WC channel: #51 restore loops check `realpath -m` (channel bosun.yml, CircleCI bosun-ok, ci.yml), ci-minutes doc (cancelled-run minute, mixed-stack fmt); #53 rust profile calls `cargo-fmt` / `cargo-deny`; #59 block-list `on:` fix text; #11 root cause (RUSTSEC on an unchanged lockfile, found by the root job `ci-repo`) with a main-open test · this PR

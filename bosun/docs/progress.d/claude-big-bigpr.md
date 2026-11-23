@@ -1,1 +1,0 @@
-- 2026-11-23 · WB bigpr · one big PR end to end: cross-epic bundles (owner opt-in), per-task test-integrity grants, risk-check over every task, per-session review-verdict (#52), R-plan commit list fail closed (#49), wildcard touch warning (#50), chunked review · this PR

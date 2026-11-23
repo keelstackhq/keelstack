@@ -1,1 +1,0 @@
-- 2026-11-23 · big guard (WG) · one-off fix names `[approvals] oneoff_allow` in .bosun/bosun.toml, workspace dirs in the default one-off set, owner switch "agents open PRs" documented, SessionStart git timeout kills its process group (#64, #55) · this PR
