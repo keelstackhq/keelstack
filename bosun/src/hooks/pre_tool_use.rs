@@ -603,7 +603,11 @@ fn stale_verdict(p: &Pushed) -> Result<Option<String>, String> {
 fn read_script(dir: &Path, path: &str) -> Option<Script> {
     use std::io::Read;
     const MAX: u64 = 1 << 20;
-    let file = dir.join(path);
+    // `~/x` (also `$HOME/x` in the command): the home of the user the hook runs as.
+    let file = match path.strip_prefix("~/") {
+        Some(rest) => Path::new(&std::env::var_os("HOME")?).join(rest),
+        None => dir.join(path),
+    };
     let meta = std::fs::metadata(&file).ok()?;
     if meta.is_dir() {
         return None;
@@ -640,17 +644,10 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
     }
     let mut buf = Vec::new();
     let read = opened.and_then(|f| f.take(MAX + 1).read_to_end(&mut buf));
-    // A binary is an ELF or Mach-O program; any other file, NUL bytes or not, is read as text
-    // (a shell runs a script with a NUL past its first line).
-    const MAGIC: [&[u8]; 6] = [
-        b"\x7fELF",
-        b"\xfe\xed\xfa\xce",
-        b"\xfe\xed\xfa\xcf",
-        b"\xce\xfa\xed\xfe",
-        b"\xcf\xfa\xed\xfe",
-        b"\xca\xfe\xba\xbe",
-    ];
-    let binary = MAGIC.iter().any(|m| buf.starts_with(m));
+    // A binary is a program this host's kernel runs (a valid ELF or Mach-O header and a NUL
+    // in the first line); any other file is read as text: a kernel that refuses it leaves it
+    // to `sh`, and a shell runs a script with a NUL past its first line.
+    let binary = crate::core::guard::host_binary(&buf);
     match read {
         Err(_) => Some(Script::Unreadable("it cannot be opened")),
         Ok(_) if binary => Some(Script::Binary),
