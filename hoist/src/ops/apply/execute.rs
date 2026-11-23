@@ -113,23 +113,23 @@ pub(super) fn write_all(
     })
 }
 
-/// The ruleset write the plan refused: its item is `drift` naming what is not enforced, never
-/// `applied` or a re-read's `create`.
+/// The ruleset write the plan refused: its item is `unknown` naming what is not enforced (a
+/// plan limit is no drift hoist can fix), never `applied` or a re-read's `create`.
 pub(super) fn mark_plan_limited(report: &mut Report, d: &Desired) {
     for item in report.items.iter_mut().filter(|i| i.kind == "ruleset") {
-        item.action = Action::Drift;
+        item.action = Action::Unknown;
         item.reason = crate::diff::free_plan_reason(d);
         item.verify = None;
     }
     if let Some(t) = &d.github.tag_ruleset {
         for item in report.items.iter_mut().filter(|i| i.kind == "tag_ruleset") {
-            item.action = Action::Drift;
+            item.action = Action::Unknown;
             item.reason = crate::diff::free_plan_tag_reason(&t.refs());
             item.verify = None;
         }
     }
-    // Drift exits 1, before a pending human step (2).
-    report.exit_code = 1;
+    // The refused item no longer counts; the other items decide the exit code.
+    report.exit_code = crate::ops::check::exit_code(&report.items);
 }
 
 /// The release environment written without a reviewer: `drift` naming the missing reviewer.

@@ -269,10 +269,12 @@ nothing is written. The `release` environment is not read for branch policies.
    `applied`, `failed: <error>` or `not attempted`, plus the plan's other items. Run `apply` again
    to continue; changes already in place are `ok`. One exception: GitHub Free refuses rulesets
    on a private repo (a 403 "Upgrade to GitHub Pro or make this repository public"), and classic
-   branch protection and the merge queue too. Then the ruleset item is `drift` ("NOT enforced:
+   branch protection and the merge queue too. Then the ruleset item is `unknown` ("NOT enforced:
    required checks `ci-ok`; GitHub Free: …; upgrade the plan … or make the repo public"),
-   the other writes still run, and apply exits 1. `plan` and `check` report the same drift when
-   the ruleset read gets that 403.
+   the other writes still run, and a plan limit alone does not make apply exit 1. `plan` and `check`
+   report the same `unknown` item when the ruleset read gets that 403 (exit 0 for it).
+   A required check the live ruleset pins to another GitHub App (`integration_id` not 15368) is
+   verified as "posted by app <id>" without a workflow job.
 5. After the writes hoist re-reads the live state and runs the `check` logic; that is the final
    report (`command: "apply"`). A Pages project or domain created in this run is not probed
    (`ok`, "created in this run; verified by `hoist check` after the first deploy"). If the re-read

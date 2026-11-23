@@ -13,13 +13,20 @@ const PAGES_BASE_ENV: &str = "HOIST_PAGES_BASE";
 /// Commit statuses bosun workflows post; a required check of one of these names is not a job.
 const BOSUN_STATUSES: [&str; 3] = ["main-open", "review-verdict", "risk-check"];
 
+/// The id of the GitHub Actions App, the source of every workflow job's check.
+const GITHUB_ACTIONS_APP: u64 = 15368;
+
 /// One `github/required_check` item per required check: it must be a job id or job `name` in a
 /// workflow under `.github/workflows/`.
 ///
 /// Known limit: a commit status verifies when any one job has `statuses: write`; hoist does not
 /// know which job posts which status, so one such job lets every listed status verify, even when
 /// that job posts only some of them.
-pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
+///
+/// A check the live ruleset pins to an App other than GitHub Actions (`integration_id` not
+/// 15368) is posted by that App, not by a workflow job: it is satisfied without one (spec §6.1).
+/// `pins` are the live `(context, integration_id)` pairs of the default-branch ruleset.
+pub fn verify_required_checks(d: &Desired, w: &Workflows, pins: &[(String, u64)]) -> Vec<Item> {
     d.github
         .ruleset
         .required_checks
@@ -34,7 +41,13 @@ pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
                 writers.extend(w.default_permission_jobs.iter().cloned());
             }
             let kept = check.source == crate::adopt::SOURCE;
-            let (reason, ok) = if kept {
+            let app = pins
+                .iter()
+                .find(|(c, id)| *c == check.value && *id != GITHUB_ACTIONS_APP)
+                .map(|(_, id)| *id);
+            let (reason, ok) = if let Some(id) = app {
+                (format!("posted by app {id}"), true)
+            } else if kept {
                 (
                     "kept from the live ruleset (--adopt); not a check hoist names".to_string(),
                     true,

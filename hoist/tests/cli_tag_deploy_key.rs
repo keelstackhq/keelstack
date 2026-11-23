@@ -619,7 +619,7 @@ fn disabled_deploy_keys_still_apply_repo_settings_and_actions_permissions() {
 const POLICY_422: &str = r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","message":"Deploy keys are disabled for this repository"}],"status":"422"}"#;
 
 #[test]
-fn a_drifted_tag_ruleset_stays_drift_when_deploy_keys_are_disabled() {
+fn a_plan_limited_tag_ruleset_stays_unknown_when_deploy_keys_are_disabled() {
     let (_sk, key) = keypair();
     let api = Routes::fresh(&key)
         .set(
@@ -630,10 +630,10 @@ fn a_drifted_tag_ruleset_stays_drift_when_deploy_keys_are_disabled() {
         .set(POST_KEY, 422, POLICY_422)
         .start();
     let dir = repo(TOML);
-    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 2);
     assert_eq!(
         item(&out.report, "tag_ruleset", "hoist: tags")["action"],
-        "drift"
+        "unknown"
     );
     assert_eq!(
         item(&out.report, "tag_deploy_key", "hoist: release tags")["action"],

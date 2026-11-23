@@ -139,7 +139,13 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     let rulesets = match l.rulesets.as_got() {
         Ok(r) => r,
         Err(why) if crate::github::plan_limited(why) => {
-            return cx.push("ruleset", name, Action::Drift, free_plan_reason(d), &source);
+            return cx.push(
+                "ruleset",
+                name,
+                Action::Unknown,
+                free_plan_reason(d),
+                &source,
+            );
         }
         Err(why) => return cx.unknown("ruleset", name, why, &source),
     };
@@ -268,7 +274,7 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             return cx.push(
                 "tag_ruleset",
                 name,
-                Action::Drift,
+                Action::Unknown,
                 free_plan_tag_reason(&refs),
                 source,
             );
