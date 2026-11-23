@@ -56,7 +56,9 @@ a `#!` interpreter it does not know, or a PATH dir that is not literal (`$HOME`,
 `$(npm bin)` are known; with a venv, run `.venv/bin/<tool>` instead of `source
 .venv/bin/activate`). `alias x=...` is refused: run the command. `source ~/.bashrc` is refused
 when the file holds code the guard cannot read: the Bash tool already starts from your shell, so
-drop it. `gh api -F x=@file` and `--input` read a file into the request: pass values with `-f`.
+drop it. `gh api -F x=@file`, `gh workflow run -F x=@file` and `--input` read a file into the
+request: pass values with `-f`; a token-like variable (`$*TOKEN*`, `$*SECRET*`, `$*KEY*`) as a value
+is refused. A wildcard refspec that can match the default branch (`refs/heads/*`) is refused.
 `gh api` flags are read like gh (`-iX PUT` is `-i -X PUT`); a flag gh api does not have is refused.
 A method-override header (`-H 'X-HTTP-Method-Override: ...'`) is refused, whatever `-X` says.
 
@@ -87,7 +89,7 @@ A rail, not a sandbox. These stay open:
   targets, `cargo` build scripts, git hooks of a cloned repo, `.envrc`, editors.
 - `$VAR` or `"$@"` in command position: only checked for risky words (its `-c` code and the shell
   scripts it is given are read). `eval "$(tool)"` passes only for env-setup tools (`ssh-agent`,
-  `direnv`, `fnm`, `mise`, ...); other `eval`, `bash -c "$X"` and `$(...)` as the program are refused.
+  `fnm`, `rbenv`, ...); other `eval`, `bash -c "$X"` and `$(...)` as the program are refused.
 - Hook files a hooks manager already points git at (`.husky/`, lefthook config): `git commit` runs them.
 - Wrappers the guard does not know, given a command as separate words (`foo git push ...` is
   refused only when its text names push, publish or release next to git, gh, npm, ...).

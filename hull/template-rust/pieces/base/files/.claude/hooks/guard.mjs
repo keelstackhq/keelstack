@@ -211,7 +211,7 @@ const REASON = {
   ghApi:
     "gh api writes are blocked: use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else ask the human (a PR merges by its owner).",
   ghField:
-    "gh api -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
+    "gh api / gh workflow run -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
   unscanned:
     "The guard must read a script before a shell runs it, and cannot read this one (too large, binary bytes, missing, unreadable, nested too deep, fed on stdin or a pipe, or named by a variable, glob or {}): run it as `bash <path>` with a literal path to a readable text script, or run the command directly.",
   ghFlag:
@@ -300,7 +300,10 @@ function ansiC(s) {
   return [ANSI[s[0]] ?? s[0], 1];
 }
 
-/** End index of the substitution opened at `i` (`$(`, `<(`, `>(` or a backtick), or the text's end. */
+/** End index of the substitution opened at `i` (`$(`, `<(`, `>(` or a backtick), or the text's end.
+ * A backtick body ends at the next unescaped backtick (bash's rule); a `(` body is read by the same
+ * lexer as split() (`lex`), so escapes, quotes, line continuations, comments and heredocs are
+ * read one way for both. */
 function subEnd(cmd, i) {
   if (cmd[i] === "`") {
     for (let j = i + 1; j < cmd.length; j++) {
@@ -309,62 +312,7 @@ function subEnd(cmd, i) {
     }
     return cmd.length;
   }
-  let depth = 1; // `i` is the opening `(`
-  let cases = 0; // inside `case ... esac`, a pattern's `)` does not close the substitution
-  let q = "";
-  // A keyword in command position: after `(`, `;`, `&`, `|` or a newline (spaces between).
-  const word = (j, w) =>
-    cmd.startsWith(w, j) &&
-    /[(;&|\n]$/.test(cmd.slice(i, j).replace(/[ \t]+$/, "")) &&
-    /^[\s;&|)]?$/.test(cmd[j + w.length] ?? "");
-  // Comments and heredoc bodies inside the substitution are read the way split() reads them: a
-  // `)` there does not close it (`$(echo # )` or `$(cat <<X` + `)` line continues past the `)`).
-  const arith = cmd[i + 1] === "("; // `$((1<<2))`: a shift, not a heredoc
-  let pending = [];
-  for (let j = i + 1; j < cmd.length; j++) {
-    const c = cmd[j];
-    if (q) {
-      if (c === q) q = "";
-      else if (c === "\\" && q === '"') j++;
-    } else if (c === "'" || c === '"') q = c;
-    else if (c === "\\") j++;
-    else if (c === "#" && !arith && (j === i + 1 || /[\s;&|()<>]/.test(cmd[j - 1]))) {
-      const nl = cmd.indexOf("\n", j);
-      if (nl < 0) return cmd.length;
-      j = nl - 1; // the newline itself is read next (it may start heredoc bodies)
-    } else if (c === "<" && !arith && cmd[j + 1] === "<" && cmd[j + 2] !== "<") {
-      const before = cmd.slice(i + 1, j);
-      const inArith = before.split("((").length > before.split("))").length; // `((y=1<<2))`
-      const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>()'"\\])+)/.exec(cmd.slice(j));
-      if (inArith) {
-        j++;
-        continue;
-      }
-      if (!m || /^\d+$/.test(m[2])) return cmd.length; // fail closed: a heredoc the guard cannot read
-      const delim = m[2].replace(/\$?'([^']*)'|\$?"([^"]*)"|\\(.)/g, "$1$2$3");
-      pending.push({ strip: m[1] === "-", delim });
-      j += m[0].length - 1;
-    } else if (c === "\n" && pending.length) {
-      let at = j + 1;
-      for (const { strip, delim } of pending) {
-        for (;;) {
-          if (at >= cmd.length) return cmd.length;
-          let end = cmd.indexOf("\n", at);
-          if (end < 0) end = cmd.length;
-          const line = cmd.slice(at, end);
-          at = end + 1;
-          if ((strip ? line.replace(/^\t+/, "") : line) === delim) break;
-        }
-      }
-      pending = [];
-      j = at - 1;
-    } else if (word(j, "case")) cases++;
-    else if (word(j, "esac")) cases = Math.max(0, cases - 1);
-    else if (cases && (c === "(" || c === ")")) continue;
-    else if (c === "(") depth++;
-    else if (c === ")" && --depth === 0) return j;
-  }
-  return cmd.length;
+  return lex(cmd, i + 1, true).end;
 }
 
 /** Bodies of `$(...)`, `<(...)`, `>(...)` and backticks in heredoc text (quotes there are literal). */
@@ -390,6 +338,15 @@ const mark = (c) => MARKS[c] ?? c;
 const unmark = (x) => x.replaceAll("\uE001", ">").replaceAll("\uE002", "<");
 
 function split(cmd) {
+  return lex(cmd, 0, false).segments;
+}
+
+/** The one shell lexer. At the top (`nested` false) it splits `cmd` into simple commands. Nested,
+ * it reads the body of a `$(`/`<(`/`>(` from `from` (just after the `(`) and stops at the `)` that
+ * closes it: `end` is that index, or the text's end when none does (`$((...))` is arithmetic: no
+ * comments, no heredocs). Inside `case ... esac` a pattern's `)` does not close it. */
+const KEYWORD_PREFIX = new Set("then do else elif { ! time if while until".split(" "));
+function lex(cmd, from, nested) {
   const segments = [];
   const subs = [];
   let tokens = [];
@@ -400,13 +357,27 @@ function split(cmd) {
   let docs = [];
   let expand = false; // a heredoc with an unquoted delimiter holds `$` or a backtick
   const comments = [];
-  const endToken = () => {
-    if (has) tokens.push(cur);
+  const arith = nested && cmd[from] === "(";
+  let depth = 1; // nested: the open `(`s, the substitution's own included
+  let cases = 0; // nested: `case ... esac` depth
+  let cmdPos = true; // nested: the next word is in command position (`case`/`esac` keywords)
+  let tokStart = from;
+  const endToken = (at) => {
+    if (has) {
+      tokens.push(cur);
+      if (nested) {
+        const raw = cmd.slice(tokStart, at);
+        if (cmdPos && raw === "case") cases++;
+        else if (cmdPos && raw === "esac") cases = Math.max(0, cases - 1);
+        cmdPos = KEYWORD_PREFIX.has(raw) && cmdPos;
+      }
+    }
     cur = "";
     has = false;
   };
-  const endSegment = () => {
-    endToken();
+  const endSegment = (at) => {
+    endToken(at);
+    cmdPos = true;
     if (tokens.length) {
       if (docs.length) tokens.docs = docs;
       if (expand) tokens.docExpand = true;
@@ -416,8 +387,9 @@ function split(cmd) {
     docs = [];
     expand = false;
   };
-  for (let i = 0; i < cmd.length; i++) {
+  for (let i = from; i < cmd.length; i++) {
     const c = cmd[i];
+    if (!has) tokStart = i;
     const open =
       quote !== "'" &&
       quote !== "$'" &&
@@ -436,12 +408,20 @@ function split(cmd) {
       quote = "$'";
       has = true;
       i++;
-    } else if (!quote && c === "#" && !has) {
+    } else if (c === "\\" && cmd[i + 1] === "\n" && quote !== "'") {
+      i++; // a line continuation is removed before words are read (`a\<newline>#` is `a#`)
+    } else if (!quote && c === "#" && !has && !arith) {
       // A comment runs nothing: skip to the end of the line.
       const nl = cmd.indexOf("\n", i);
       comments.push([i, nl < 0 ? cmd.length : nl]);
       if (nl < 0) break;
       i = nl - 1;
+    } else if (nested && !quote && (c === "(" || c === ")")) {
+      endToken(i);
+      if (c === "(") cmdPos = true;
+      if (cases) continue; // a case pattern's parens
+      if (c === "(") depth++;
+      else if (--depth === 0) return { segments, end: i };
     } else if (open) {
       const at = c === "`" ? i : i + 1;
       const e = subEnd(cmd, at);
@@ -465,11 +445,14 @@ function split(cmd) {
       cur = "<<<";
       has = true;
       i += 2;
-    } else if (c === "<" && cmd[i + 1] === "<" && cmd[i + 2] !== "<") {
+    } else if (c === "<" && cmd[i + 1] === "<" && cmd[i + 2] !== "<" && !arith) {
       const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>()'"\\])+)/.exec(cmd.slice(i));
       // `((y=1<<2))` shifts; a numeric delimiter is read as commands (fail closed either way)
-      const sofar = `${tokens.join(" ")} ${cur}`;
-      if (m && !/^\d+$/.test(m[2]) && sofar.split("((").length <= sofar.split("))").length) {
+      const sofar = nested ? cmd.slice(from, i) : `${tokens.join(" ")} ${cur}`;
+      const shift = sofar.split("((").length > sofar.split("))").length;
+      // nested: a heredoc the guard cannot read runs to the end (unclosed: fail closed)
+      if (nested && !shift && (!m || /^\d+$/.test(m[2]))) return { segments, end: cmd.length };
+      if (m && !/^\d+$/.test(m[2]) && !shift) {
         endToken();
         // The delimiter is the whole word minus its quotes (`"E"OF`, `E"OF"`, `\EOF` are EOF);
         // any quote or backslash in it makes the body data.
@@ -485,38 +468,43 @@ function split(cmd) {
       let at = i + 1;
       for (const { strip, word, data } of pending) {
         let body = "";
+        let closed = false;
         while (at < cmd.length) {
           let end = cmd.indexOf("\n", at);
           if (end < 0) end = cmd.length;
           const line = cmd.slice(at, end);
           at = end + 1;
-          if ((strip ? line.replace(/^\t+/, "") : line) === word) break;
+          if ((strip ? line.replace(/^\t+/, "") : line) === word) {
+            closed = true;
+            break;
+          }
           body += `${line}\n`;
         }
+        if (nested && !closed) return { segments, end: cmd.length }; // unclosed: fail closed
         docs.push(body);
         if (!data) subs.push(...docSubs(body)); // an unquoted delimiter runs $(...) and backticks
         if (!data && /[$`]/.test(body)) expand = true;
       }
       pending = [];
       i = at - 1;
-      endSegment();
+      endSegment(i);
     } else if (c === "|" && cur.endsWith(">")) {
       cur += c; // `>|` forces a redirect
     } else if (c === ";" || c === "|" || c === "\n") {
-      endSegment();
+      endSegment(i);
     } else if (c === "&" && !cur.endsWith(">") && !cur.endsWith("<")) {
-      endSegment();
+      endSegment(i);
     } else if (c === " " || c === "\t") {
-      endToken();
+      endToken(i);
     } else {
       cur += c;
       has = true;
     }
   }
-  endSegment();
+  endSegment(cmd.length);
   segments.subs = subs;
   segments.comments = comments;
-  return segments;
+  return { segments, end: cmd.length };
 }
 
 /** Marks a token list as run through a wrapper (not enumerable: lists still compare as words). */
@@ -1179,6 +1167,22 @@ function isDefault(name, projectDir) {
   return false;
 }
 
+/** True when the wildcard ref `dst` matches a default branch (main, master, origin/HEAD's). */
+function wildcardHitsDefault(dst, projectDir) {
+  const names = ["main", "master"];
+  for (const dir of gitDirs(projectDir)) {
+    try {
+      const head = readFileSync(resolve(dir, "refs/remotes/origin/HEAD"), "utf8");
+      const m = /^ref:\s*refs\/remotes\/[^/\s]+\/(.+)$/m.exec(head);
+      if (m) names.push(m[1].trim());
+    } catch {
+      // no origin/HEAD
+    }
+  }
+  const re = new RegExp(`^${dst.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*")}$`);
+  return names.some((n) => re.test(n) || re.test(`refs/heads/${n}`));
+}
+
 /** Branch HEAD points at, or undefined (detached, not a checkout). */
 function currentBranch(projectDir) {
   const dir = gitDirs(projectDir)[0];
@@ -1227,6 +1231,8 @@ function pushRule(args, projectDir) {
     const spec = r.replace(/^\+/, "");
     if (spec.startsWith(":")) continue;
     let dst = spec.slice(spec.lastIndexOf(":") + 1);
+    // A wildcard refspec (`refs/heads/*:refs/heads/*`) reaches every branch it matches.
+    if (dst.includes("*") && wildcardHitsDefault(dst, projectDir)) return "pushDefault";
     if (dst === "HEAD" || dst === "@") dst = currentBranch(projectDir) ?? dst;
     if (isDefault(dst, projectDir)) return "pushDefault";
   }
@@ -1336,6 +1342,23 @@ function ghApiParse(args) {
   }
   if (override) method = "OVERRIDE"; // whatever `-X` says, before or after it
   return { method, endpoint, fileField, input, unknown, fields };
+}
+
+/** `gh workflow run` inputs: `-F`/`--field` `@file` reads a local file into an input (`ghField`);
+ * a token-like variable (`-f x="$GITHUB_TOKEN"`) sends a secret (`secret`). */
+function workflowInputs(args) {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const m = /^(-F|--field|-f|--raw-field)(?:=?(.*))?$/s.exec(a);
+    if (!m) {
+      if (/[$`]/.test(a) && SECRET_VAR_RE.test(a)) return "secret";
+      continue;
+    }
+    const value = m[2] ? m[2] : (args[++i] ?? "");
+    if (SECRET_VAR_RE.test(value)) return "secret";
+    if ((m[1] === "-F" || m[1] === "--field") && /^[^=]*=@/.test(value)) return "ghField";
+  }
+  return null;
 }
 
 /** Workflow file names the guard treats as release workflows (never started from here):
@@ -1536,6 +1559,7 @@ function bashRule(
       if (api.unknown !== undefined) return "ghFlag";
       if (api.fileField !== undefined) return "ghField";
       if (api.method === "OVERRIDE") return "ghApi";
+      if (api.fields.some((f) => SECRET_VAR_RE.test(f))) return "secret"; // a token sent as input
       if (ghApiWrites(args.slice(1))) {
         if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
         if (!workflowRun(args.slice(1))) return "ghApi";
@@ -1547,8 +1571,11 @@ function bashRule(
     }
     if (a0 === "release" && ["create", "upload"].includes(a1)) return "publish";
     if (a0 === "release" && !["list", "view", "download", undefined].includes(a1)) return "ghAdmin";
-    if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1))
-      return args.slice(2).some(releaseWorkflow) ? "publish" : null;
+    if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1)) {
+      if (args.slice(2).some(releaseWorkflow)) return "publish";
+      if (a1 === "run") return workflowInputs(args.slice(2));
+      return null;
+    }
     if (a0 === "secret") return "ghAdmin";
     if (a0 === "alias" && a1 !== undefined && !["list", "delete"].includes(a1)) return "alias";
     if (a0 === "repo" && ["edit", "delete", "archive", "rename", "transfer"].includes(a1))
@@ -2458,6 +2485,13 @@ function opaqueWriter(t) {
       /^-[a-zA-Z]*[oOJK]|^--(output|remote-name|output-dir|config|create-dirs)/.test(x),
     );
   if (prog === "find") return t.some((x) => /^-(fprint|fprintf|fls|delete)/.test(x));
+  // An output file the guard does not track: `sort -o F`, `--output[=]F` (or a prefix: `--out`),
+  // `tree -o F`, `less -o/-O F`, `--log-file`, `file -C` (writes magic.mgc), uniq's 2nd operand.
+  const args = operands(t.slice(1));
+  if (["sort", "tree"].includes(prog)) return args.some((x) => /^-[a-zA-Z]*o|^--o/.test(x));
+  if (prog === "less") return args.some((x) => /^-[a-zA-Z]*[oO]|^--(log|LOG)/.test(x));
+  if (prog === "file") return args.some((x) => /^-[a-zA-Z]*C|^--comp/.test(x));
+  if (prog === "uniq") return args.filter((x) => x === "-" || !x.startsWith("-")).length > 1;
   return !TRANSPARENT.has(prog);
 }
 
