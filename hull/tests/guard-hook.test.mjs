@@ -1111,6 +1111,8 @@ for (const c of [
   "git push origin v1.2.3",
   "git push origin cli-v0.4.0",
   "echo 1 > pins.toml",
+  // runs in the release publish job (id-token: write)
+  "echo x > scripts/release-pre.sh",
   // review round 3: `<>` opens the file read-write
   "cd .claude/hooks && echo x <>guard.mjs >&0",
   "cd .claude/hooks && echo x <> guard.mjs 1>&0",

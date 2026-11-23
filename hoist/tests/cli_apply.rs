@@ -1533,7 +1533,20 @@ const FREE_PLAN: &str = "github/plan_upgrade.json";
 
 fn assert_free_plan(report: &Value) {
     let rs = item(report, "ruleset", "hoist: default branch");
-    assert_eq!(rs["action"], "drift", "{rs}");
+    // A plan limit is no drift hoist can fix, but nothing protects the branch: a human step.
+    assert_eq!(rs["action"], "pending", "{rs}");
+    let step = report["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "plan-limit:rulesets")
+        .unwrap_or_else(|| panic!("no plan-limit step in {report}"));
+    let title = step["title"].as_str().unwrap();
+    assert!(
+        title.contains("branch protection is not enforced")
+            && title.contains("make the repo public"),
+        "{title}"
+    );
     let reason = rs["reason"].as_str().unwrap();
     // It names exactly what is not enforced, and the fix.
     assert!(
@@ -1548,7 +1561,7 @@ fn assert_free_plan(report: &Value) {
 }
 
 #[test]
-fn a_free_plan_ruleset_write_is_drift_and_the_other_writes_still_apply() {
+fn a_free_plan_ruleset_write_is_a_human_step_and_the_other_writes_still_apply() {
     let dir = repo();
     let api = Routes::synced()
         .set(ENVS, 200, "github/environments_empty.json")
@@ -1558,7 +1571,7 @@ fn a_free_plan_ruleset_write_is_drift_and_the_other_writes_still_apply() {
         .then(REPO, 200, "github/repo_admin.json")
         .set("POST /repos/acme/x/rulesets", 403, FREE_PLAN)
         .start();
-    let report = apply(&api, dir.path(), 1);
+    let report = apply(&api, dir.path(), 2);
     assert_free_plan(&report);
     let w = writes(&api);
     let post = w.iter().position(|w| w == "POST /repos/acme/x/rulesets");
@@ -1572,16 +1585,17 @@ fn a_free_plan_ruleset_write_is_drift_and_the_other_writes_still_apply() {
 }
 
 #[test]
-fn a_free_plan_ruleset_read_is_drift_and_nothing_tries_to_write_it() {
+fn a_free_plan_ruleset_read_is_a_human_step_and_nothing_tries_to_write_it() {
     let dir = repo();
     let api = Routes::synced().set(RULESETS, 403, FREE_PLAN).start();
     for cmd in ["plan", "check"] {
-        let code = if cmd == "plan" { 0 } else { 1 };
+        // A plan limit is no drift (not 1), but no silent 0 either: check exits 2.
+        let code = if cmd == "plan" { 0 } else { 2 };
         let r = run(&api, dir.path(), &[cmd, "--json"], code);
         assert_free_plan(&r.report.unwrap());
     }
     api.assert_only_get();
-    let report = apply(&api, dir.path(), 1);
+    let report = apply(&api, dir.path(), 2);
     assert_free_plan(&report);
     assert!(writes(&api).is_empty(), "{:?}", writes(&api));
 }
@@ -1618,7 +1632,7 @@ fn a_free_plan_ruleset_update_names_the_merge_queue_it_cannot_have() {
         )
         .set("PUT /repos/acme/x/rulesets/11", 403, FREE_PLAN)
         .start();
-    let report = apply(&api, dir.path(), 1);
+    let report = apply(&api, dir.path(), 2);
     assert_eq!(writes(&api), ["PUT /repos/acme/x/rulesets/11"]);
     assert_free_plan(&report);
     let reason = item(&report, "ruleset", "hoist: default branch")["reason"].to_string();
@@ -1627,7 +1641,7 @@ fn a_free_plan_ruleset_update_names_the_merge_queue_it_cannot_have() {
         reason.contains("needs an organization repo (a private one on GitHub Enterprise Cloud)"),
         "{reason}"
     );
-    assert_eq!(report["ok"], false);
+    assert_eq!(report["exit_code"], 2);
 }
 
 #[test]

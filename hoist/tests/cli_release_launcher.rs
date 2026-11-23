@@ -798,3 +798,124 @@ fn launcher_waits_for_pending_platform_packages() {
     assert_eq!(launcher["reason"], "platform packages not published yet");
     assert_clean(&p);
 }
+
+#[test]
+fn launcher_build_runs_once_before_the_platform_packages() {
+    let mut p = pub_setup();
+    let d = p.repo.path();
+    let ran = p.tools.path().join("build.log");
+    write(
+        d,
+        "npm/tool/hoist.toml",
+        format!(
+            "[publish]\nnpm = {{ launcher = true, build = \"echo $(basename $PWD) >> {}\" }}\n",
+            ran.display()
+        )
+        .as_bytes(),
+    );
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: build"]);
+    p.head = out(d, &["rev-parse", "HEAD"]).trim().to_string();
+    let api = api(
+        &p.head,
+        &[
+            (LINUX_V, 404, "", &[]),
+            (LINUX_V, 200, "{}", &[]),
+            (LINUX_PKG, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_V, 200, "{}", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_V, 200, "{}", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = publish(&p, &api);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(std::fs::read_to_string(&ran).unwrap(), "tool\n");
+    assert_eq!(published_dirs(&p).len(), 3);
+}
+
+/// `detect` in release.yml: a launcher's crate is pending, nothing is built yet (no `--assets`).
+#[test]
+fn launcher_dry_run_without_assets_is_a_plan() {
+    let p = pub_setup();
+    let api = api(
+        &p.head,
+        &[
+            (LINUX_V, 404, "", &[]),
+            (LINUX_PKG, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = hoist()
+        .arg("-C")
+        .arg(p.repo.path())
+        .args(["release", "publish", "--dry-run", "--json"])
+        .env("HOIST_GITHUB_API", api.url())
+        .env("HOIST_NPM_REGISTRY", api.url())
+        .env("HOIST_CRATES_API", api.url())
+        .env("GITHUB_TOKEN", "test-token")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    assert_eq!(
+        item(&v, "npm", "@acme/tool-linux-x64@0.3.0")["action"],
+        "create"
+    );
+    assert!(api.requests().iter().all(|r| r.method == "GET"));
+}
+
+/// A launcher's `build` runs once, before its first platform package: the dry run names it on
+/// that step only, not again on the launcher's own npm step.
+#[test]
+fn launcher_dry_run_names_the_build_once() {
+    let mut p = pub_setup();
+    let d = p.repo.path();
+    write(
+        d,
+        "npm/tool/hoist.toml",
+        b"[publish]\nnpm = { launcher = true, build = \"make npm\" }\n",
+    );
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: build"]);
+    p.head = out(d, &["rev-parse", "HEAD"]).trim().to_string();
+    let api = api(
+        &p.head,
+        &[
+            (LINUX_V, 404, "", &[]),
+            (LINUX_PKG, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = hoist()
+        .arg("-C")
+        .arg(p.repo.path())
+        .args(["release", "publish", "--dry-run", "--json", "--assets"])
+        .arg(p.assets.path())
+        .env("HOIST_GITHUB_API", api.url())
+        .env("HOIST_NPM_REGISTRY", api.url())
+        .env("HOIST_CRATES_API", api.url())
+        .env("GITHUB_TOKEN", "test-token")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    let builds: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["reason"].as_str().unwrap_or("").contains("after build"))
+        .map(|i| i["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(builds, ["@acme/tool-linux-x64@0.3.0"], "{v:#}");
+}

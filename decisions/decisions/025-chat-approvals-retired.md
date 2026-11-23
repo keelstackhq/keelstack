@@ -38,11 +38,23 @@ everywhere. The owner also decided how hoist changesets (hoist#63-#71) fit D-023
   bosun#642, #644, #673, #680.
 - hoist: the changeset commands are ported behind an opt-in; the keelstack release workflow does
   not read `.changeset/`.
-- The trust root grows by this decision's own file: `decisions/decisions/025-chat-approvals-retired.md`
-  joins D-022's file and the decisions index as a trust file (`TRUST_FILES` in bosun), because the
-  approval channels are part of the trust root; a PR that changes it needs the owner's own GitHub
-  review or `/bosun approve <sha>` comment, never a signature. bosun's quorum trust root also now
-  covers `AGENTS.md`, `CLAUDE.md`, `.github/scripts/**` and, under bosun's code root, `channel/**`
-  and `profiles/**`. Who may approve is unchanged: only the owner edits `.bosun/approvers.toml` and
-  `[approvals]`.
+- The trust root is a property (everything that builds or decides the judge), not a short list; the
+  code is the list, and it is wider than D-022's summary. A PR that changes any trust-root path needs
+  the owner's own GitHub review or `/bosun approve <sha>` comment, never a signature:
+  - `TRUST_ROOT` in bosun's `src/core/risk.rs`: every file of `.bosun/` (`.bosun/**`, matched
+    case-insensitively) except exactly the root `.bosun/version`, whose bumps follow
+    `pin_change_trust_root` (a downgrade, an unreleased version, a deletion or a rename go to the
+    owner); every `.github/workflows/**` and `.github/actions/**` file, `.github/scripts/**`,
+    `scripts/**`, `**/docs/setup-script.sh`, `.claude-plugin/**`, `**/.claude/**`, `**/.mcp.json`,
+    `**/AGENTS.md`, `**/CLAUDE.md`, `CLAUDE.local.md`, `REVIEW.md`, `docs/lessons.toml`; the
+    manifests, build scripts, cargo and pnpm config and lockfile inputs that CI restores from the
+    base or release jobs run (`**/Cargo.toml`, `**/build.rs`, `**/.cargo/**`, `**/package.json`,
+    `**/deny.toml`, `**/.npmrc`, ...).
+  - `TRUST_FILES` in `src/core/approve.rs`: `.bosun/approvers.toml`, `.bosun/bosun.toml`,
+    `governance/owners.toml`, every `CODEOWNERS`, `decisions/DECISIONS.md`, and D-022's and this
+    decision's own files (`decisions/decisions/022-hands-off-approvals.md`,
+    `decisions/decisions/025-chat-approvals-retired.md`), the gate workflows and `.bosun/pins.toml`.
+  - `QUORUM_CODE_FILES` in `src/core/approve.rs`, under bosun's code root (`bosun/` here):
+    `src/**`, `profiles/**`, `channel/**`, `Cargo.toml`, `build.rs`, `npm/**`.
+  Who may approve is unchanged: only the owner edits `.bosun/approvers.toml` and `[approvals]`.
 - The D-012 bootstrap window still ends 2026-11-30 (current behaviour kept); the owner may end it sooner.

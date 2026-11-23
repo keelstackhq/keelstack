@@ -2,9 +2,12 @@
 //   node .github/scripts/release-pending.mjs detect          → pending=true|false, packages=[…]
 //   node .github/scripts/release-pending.mjs stage <target>  → copies each workspace binary to
 //                                                              dist/<bin>-<target>[.exe]
-// `detect` uses hoist's rules: a crate is a package unless `publish` is false or empty or it has
-// no `version`; tags are `[release] tag_format` from hoist.toml, else `{name}@{version}` (a
-// virtual workspace); a package is pending when its tag is missing or points at HEAD.
+// release.yml `detect` asks `hoist release publish --dry-run --json` (hoist knows npm packages
+// too) when the pinned hoist is 0.22.0 or newer; with an older pin (which exits 3 on that dry
+// run without --assets) it runs `detect` here. `detect` uses hoist's crate rules: a crate is a
+// package unless `publish` is false or empty or it has no `version`; tags are `[release]
+// tag_format` from hoist.toml, else `{name}@{version}` (a virtual workspace); a package is
+// pending when its tag is missing or points at HEAD.
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,

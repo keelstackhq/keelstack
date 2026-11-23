@@ -271,6 +271,7 @@ fn environment() -> Change {
     Change::Environment {
         name: "pro duction".into(),
         branches: vec!["main".into()],
+        tags: Vec::new(),
         write_env: true,
         exists: false,
         release: false,
@@ -307,10 +308,45 @@ fn environment_put_then_branch_policy() {
     assert_eq!(body(&api, 1), json!({"name": "main", "type": "branch"}));
 }
 
+#[test]
+fn environment_tag_policy_is_posted_with_type_tag() {
+    let (_dir, d) = desired();
+    let api = FakeApi::start(&[
+        (
+            "PUT /repos/acme/x/environments/release",
+            200,
+            "empty.json",
+            &[],
+        ),
+        (
+            "POST /repos/acme/x/environments/release/deployment-branch-policies",
+            200,
+            "created.json",
+            &[],
+        ),
+    ]);
+    let change = Change::Environment {
+        name: "release".into(),
+        branches: Vec::new(),
+        tags: vec!["v*".into()],
+        write_env: true,
+        exists: false,
+        release: false,
+        reviewers: Reviewers::Unresolved,
+    };
+    execute_github(&http(&api), &d, &change).unwrap();
+    assert_eq!(
+        body(&api, 0),
+        json!({"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}})
+    );
+    assert_eq!(body(&api, 1), json!({"name": "v*", "type": "tag"}));
+}
+
 fn release_environment() -> Change {
     Change::Environment {
         name: "release".into(),
         branches: vec!["main".into()],
+        tags: Vec::new(),
         write_env: true,
         exists: false,
         release: true,
@@ -618,6 +654,7 @@ fn environment_without_branches_has_no_branch_restriction() {
     let open = Change::Environment {
         name: "pro duction".into(),
         branches: Vec::new(),
+        tags: Vec::new(),
         write_env: true,
         exists: false,
         release: false,
@@ -648,6 +685,7 @@ fn environment_posts_one_policy_per_branch() {
     let two = Change::Environment {
         name: "pro duction".into(),
         branches: vec!["main".into(), "release/*".into()],
+        tags: Vec::new(),
         write_env: true,
         exists: false,
         release: false,
@@ -668,6 +706,7 @@ fn existing(release: bool, reviewers: Reviewers) -> Change {
     Change::Environment {
         name: "pro duction".into(),
         branches: vec!["main".into()],
+        tags: Vec::new(),
         write_env: true,
         exists: true,
         release,

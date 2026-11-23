@@ -115,10 +115,10 @@ they refuse merge, tag and force-push commands; branch protection stays the real
 
 ## Who does what
 
-| Person (the owner)                                                                           | Agents                                                                 |
-| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
-| Creates the repo, installs the Claude GitHub App, applies repo settings                      | Write all code through bosun tasks                                     |
-| Fills `governance/owners.toml`                                                               | Claim, test, open pull requests, review with a fresh reviewer subagent |
-| Approves high-risk pull requests on their head SHA, on GitHub or by chat (a signed approval) | Ask the owner with `bosun ask` when a decision is needed               |
-| Approves the `release` environment for each release                                          | Child sessions never merge, tag or force-push                          |
-| Can stop all work with a `bosun:halt` issue                                                  | Stop when bosun reports halted (exit 4)                                |
+| Person (the owner)                                                                                   | Agents                                                                 |
+| ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| Creates the repo, installs the Claude GitHub App, applies repo settings                              | Write all code through bosun tasks                                     |
+| Fills `governance/owners.toml`                                                                       | Claim, test, open pull requests, review with a fresh reviewer subagent |
+| Approves high-risk pull requests on their head SHA, on GitHub (own review or `/bosun approve <sha>`) | Ask the owner with `bosun ask` when a decision is needed               |
+| Approves the `release` environment for each release                                                  | Child sessions never merge, tag or force-push                          |
+| Can stop all work with a `bosun:halt` issue                                                          | Stop when bosun reports halted (exit 4)                                |

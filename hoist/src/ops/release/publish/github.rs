@@ -57,6 +57,14 @@ pub(super) fn dry_run(
                 count(fixes.len())
             ),
         ),
+        ReleaseState::Absent if job.unbuilt > 0 => (
+            Action::Create,
+            format!(
+                "would create a draft, upload {} (+ SHA256SUMS; not built yet, so not checked: \
+                 publish needs `--assets DIR`), then publish it",
+                count(job.unbuilt)
+            ),
+        ),
         ReleaseState::Absent => (
             Action::Create,
             format!(

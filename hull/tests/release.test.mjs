@@ -214,7 +214,7 @@ test("jobs plan/binaries/github-release/npm; id-token: write only on github-rele
   }
 });
 
-test("npm job: environment release; every npm publish has --provenance --access public and a 'npm view' skip", () => {
+test("npm job: environment release; every npm publish has --access public (no --provenance) and a 'npm view' skip", () => {
   const npm = WF.jobs.npm;
   assert.equal(npm.environment, "release");
   const node = steps("npm").find((s) => s.uses?.startsWith("actions/setup-node@"));
@@ -225,10 +225,7 @@ test("npm job: environment release; every npm publish has --provenance --access 
   for (const r of publishing) {
     const lines = r.split("\n").filter((l) => /\bnpm publish\b/.test(l));
     assert.equal(lines.length, 1);
-    assert.match(
-      lines[0],
-      /npm publish "\$[a-z]+" --provenance --access public --tag "\$dist_tag"$/,
-    );
+    assert.match(lines[0], /npm publish "\$[a-z]+" --access public --tag "\$dist_tag"$/);
     assert.match(r, /dist_tag=latest\n\s*case "\$VERSION" in \*-\*\) dist_tag=next ;; esac\n/);
     assert.match(r, /if npm view "\$name@\$ver" version >\/dev\/null 2>&1; then/);
   }

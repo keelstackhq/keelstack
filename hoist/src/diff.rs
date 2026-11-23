@@ -139,7 +139,13 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     let rulesets = match l.rulesets.as_got() {
         Ok(r) => r,
         Err(why) if crate::github::plan_limited(why) => {
-            return cx.push("ruleset", name, Action::Drift, free_plan_reason(d), &source);
+            return cx.push(
+                "ruleset",
+                name,
+                Action::Pending,
+                free_plan_reason(d),
+                &source,
+            );
         }
         Err(why) => return cx.unknown("ruleset", name, why, &source),
     };
@@ -268,7 +274,7 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             return cx.push(
                 "tag_ruleset",
                 name,
-                Action::Drift,
+                Action::Pending,
                 free_plan_tag_reason(&refs),
                 source,
             );
@@ -499,6 +505,32 @@ fn tag_deploy_key(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
 }
 
 /// The tag ruleset item's reason when the GitHub plan refuses rulesets (Free, private repo).
+/// The human step of a plan-limited ruleset (`plan-limit:rulesets`): the plan, not hoist, keeps
+/// branch protection off, so `check` and `apply` exit 2 instead of a silent 0.
+pub fn plan_limit_step(d: &Desired) -> HumanStep {
+    HumanStep {
+        id: "plan-limit:rulesets".to_string(),
+        title: "branch protection is not enforced: this GitHub plan gives a private repo no \
+                rulesets (required checks, tag rules); upgrade the plan (GitHub Pro for a \
+                personal repo, Team for an organization) or make the repo public, then run \
+                `hoist apply`"
+            .to_string(),
+        url: format!(
+            "https://github.com/{}/{}/settings/rules",
+            d.repo.owner, d.repo.name
+        ),
+        status: "pending".to_string(),
+    }
+}
+
+/// Add [`plan_limit_step`] once.
+pub fn add_plan_limit_step(steps: &mut Vec<HumanStep>, d: &Desired) {
+    let step = plan_limit_step(d);
+    if !steps.iter().any(|s| s.id == step.id) {
+        steps.push(step);
+    }
+}
+
 pub fn free_plan_tag_reason(refs: &[String]) -> String {
     format!(
         "NOT enforced: tags {}; GitHub Free: private repos get no rulesets; upgrade the plan \
@@ -690,11 +722,26 @@ fn branch_list(list: &[String]) -> String {
     }
 }
 
-/// What an existing environment lacks of the wanted deployment branch policies: `None` when
-/// it has them (or the read did not show them). Extra live policies are named, never removed.
-fn branch_gap(want: &[String], have: &EnvBranches) -> Option<String> {
-    let all = || branch_list(want);
-    match (have, want.is_empty()) {
+/// What an existing environment lacks of the wanted deployment branch and tag policies:
+/// `None` when it has them (or the read did not show them). Extra live policies are named,
+/// never removed.
+fn branch_gap(want: &[String], want_tags: &[String], have: &EnvBranches) -> Option<String> {
+    let all = || {
+        let mut parts = Vec::new();
+        if !want.is_empty() {
+            parts.push(branch_list(want));
+        }
+        if !want_tags.is_empty() {
+            parts.push(format!("tag {}", quoted(want_tags)));
+        }
+        if parts.is_empty() {
+            branch_list(want)
+        } else {
+            parts.join(" and ")
+        }
+    };
+    let none_wanted = want.is_empty() && want_tags.is_empty();
+    match (have, none_wanted) {
         (EnvBranches::Unrestricted, true) => None,
         (EnvBranches::Unrestricted, false) => Some(format!(
             "present, but any branch can deploy (no deployment branch policy); would restrict it \
@@ -706,24 +753,55 @@ fn branch_gap(want: &[String], have: &EnvBranches) -> Option<String> {
              policy to {}",
             all()
         )),
-        (EnvBranches::Custom(live), true) => Some(format!(
-            "present, but deployments are limited to {}; hoist.toml wants no branch restriction",
-            branch_list(live)
-        )),
-        (EnvBranches::Custom(live), false) => {
+        (EnvBranches::Custom(live, live_tags), true) => {
+            let mut what = branch_list(live);
+            if !live_tags.is_empty() {
+                what = format!("{what} and tag {}", quoted(live_tags));
+            }
+            Some(format!(
+                "present, but deployments are limited to {what}; hoist.toml wants no branch \
+                 restriction"
+            ))
+        }
+        (EnvBranches::Custom(live, live_tags), false) => {
             let missing: Vec<String> = want.iter().filter(|b| !live.contains(b)).cloned().collect();
-            if missing.is_empty() {
+            let missing_tags: Vec<String> = want_tags
+                .iter()
+                .filter(|t| !live_tags.contains(t))
+                .cloned()
+                .collect();
+            if missing.is_empty() && missing_tags.is_empty() {
                 return None;
             }
-            let extra: Vec<String> = live.iter().filter(|b| !want.contains(b)).cloned().collect();
-            let kept = if extra.is_empty() {
+            let mut extra: Vec<String> =
+                live.iter().filter(|b| !want.contains(b)).cloned().collect();
+            let extra_tags: Vec<String> = live_tags
+                .iter()
+                .filter(|t| !want_tags.contains(t))
+                .cloned()
+                .collect();
+            let mut lacks = Vec::new();
+            if !missing.is_empty() {
+                lacks.push(branch_list(&missing));
+            }
+            if !missing_tags.is_empty() {
+                lacks.push(format!("tag {}", quoted(&missing_tags)));
+            }
+            let mut kept_parts = Vec::new();
+            if !extra.is_empty() {
+                kept_parts.push(branch_list(&std::mem::take(&mut extra)));
+            }
+            if !extra_tags.is_empty() {
+                kept_parts.push(format!("tag {}", quoted(&extra_tags)));
+            }
+            let kept = if kept_parts.is_empty() {
                 String::new()
             } else {
-                format!("; also allowed (kept): {}", branch_list(&extra))
+                format!("; also allowed (kept): {}", kept_parts.join(" and "))
             };
             Some(format!(
                 "present, but the deployment branch policy lacks {}{kept}",
-                branch_list(&missing)
+                lacks.join(" and ")
             ))
         }
     }
@@ -738,24 +816,28 @@ fn environment_policy(cx: &mut Ctx, d: &Desired, l: &LiveGithub, w: &Sourced<Str
     };
     match l.env_branches.get(name) {
         Some(Fetch::Unknown(why)) => cx.unknown("environment", name, why, source),
-        Some(Fetch::Got(have)) => match branch_gap(&d.env_branches(name), have) {
-            // --adopt never rewrites an existing environment.
-            Some(reason) if d.adopt => cx.push(
-                "environment",
-                name,
-                Action::Drift,
-                format!("{reason}; not written (--adopt never rewrites an existing environment)"),
-                source,
-            ),
-            Some(reason) => cx.push("environment", name, Action::Update, reason, source),
-            None => cx.push(
-                "environment",
-                name,
-                Action::Ok,
-                "present".to_string(),
-                source,
-            ),
-        },
+        Some(Fetch::Got(have)) => {
+            match branch_gap(&d.env_branches(name), &d.env_tags(name), have) {
+                // --adopt never rewrites an existing environment.
+                Some(reason) if d.adopt => cx.push(
+                    "environment",
+                    name,
+                    Action::Drift,
+                    format!(
+                        "{reason}; not written (--adopt never rewrites an existing environment)"
+                    ),
+                    source,
+                ),
+                Some(reason) => cx.push("environment", name, Action::Update, reason, source),
+                None => cx.push(
+                    "environment",
+                    name,
+                    Action::Ok,
+                    "present".to_string(),
+                    source,
+                ),
+            }
+        }
         None => cx.push(
             "environment",
             name,
@@ -1248,6 +1330,11 @@ pub fn diff_github(
         }
     }
 
+    if cx.items.iter().any(|i| {
+        matches!(i.kind.as_str(), "ruleset" | "tag_ruleset") && i.action == Action::Pending
+    }) {
+        add_plan_limit_step(&mut steps, d);
+    }
     cx.items
         .sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
     (cx.items, steps)

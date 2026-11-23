@@ -1,0 +1,1 @@
+- risk: `scripts/release-pre.sh` (run by the template's release publish job) is bootstrap-excluded like `release.yml`.

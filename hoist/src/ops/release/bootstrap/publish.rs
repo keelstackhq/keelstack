@@ -48,6 +48,10 @@ pub(crate) fn placeholder_files(
 
 /// `license` of the package's own package.json (`<dir>/<pkg.dir>/package.json`), if any.
 fn own_license(pkg: &Package, dir: &Path) -> Option<String> {
+    // A `[registry.npm]` package has no manifest in the checkout (empty version).
+    if pkg.version.value.is_empty() {
+        return None;
+    }
     let text = std::fs::read_to_string(dir.join(&pkg.dir).join("package.json")).ok()?;
     let v: Value = serde_json::from_str(&text).ok()?;
     v.get("license")?.as_str().map(str::to_string)
