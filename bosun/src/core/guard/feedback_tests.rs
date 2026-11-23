@@ -81,6 +81,9 @@ fn g1_globs_that_can_widen_a_protected_command_are_refused() {
         "(g* push origin HEAD:main)",
         "echo $(g?t push origin HEAD:main)",
         "bash -c 'g* push origin HEAD:main'",
+        "bash -c -- '(/usr/bin/g?t push -f origin HEAD:main)'",
+        "sh -c -- '/usr/bin/g?t push -f origin HEAD:main'",
+        "bash -ec -o pipefail 'git push --force origin main'",
         "export GIT_CONFIG_VALUE_0=+refs/heads/*:refs/remotes/origin/*; git status",
         // A recursive search follows the links a glob root expands to (a home, the key).
         "grep -r x *",
@@ -181,6 +184,9 @@ fn g5_one_rule_for_scripts_run_directly_or_by_a_script() {
         "bash bin",
         "source bin",
         "bash ci-shbin.sh",
+        // `perl -x` and `ruby -x` skip to a `#!` line inside any file.
+        "perl -x bin",
+        "ruby -x ./bin",
     ] {
         assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
     }

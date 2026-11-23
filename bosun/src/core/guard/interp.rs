@@ -170,6 +170,8 @@ struct ScriptPath {
     /// and whether only the typed command is refused for it (a variable path in a script is a
     /// known miss).
     unseen: Option<(&'static str, bool)>,
+    /// The command word itself (`./tool`): the kernel runs it, so a binary is a program.
+    direct: bool,
 }
 
 impl ScriptPath {
@@ -179,6 +181,7 @@ impl ScriptPath {
             shell,
             first,
             unseen: None,
+            direct: false,
         }
     }
 }
@@ -195,7 +198,10 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
     for i in command_words(&w) {
         let (word, name) = (&w[i], runner_name(&w[i]));
         if word.contains('/') && !RUNS.contains(&name) {
-            out.extend(literal_path(word).map(|path| ScriptPath::file(path, false, true)));
+            out.extend(literal_path(word).map(|path| ScriptPath {
+                direct: true,
+                ..ScriptPath::file(path, false, true)
+            }));
         }
         let args = w[i + 1..].iter().take_while(|a| *a != SEP);
         if SHELL_RUNS.contains(&name) {
@@ -212,6 +218,7 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
                 shell: true,
                 first: true,
                 unseen: Some((BUILT_CODE, false)),
+                direct: false,
             });
         }
     }
@@ -300,6 +307,7 @@ fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
         shell: true,
         first: true,
         unseen: Some((why, top_only)),
+        direct: false,
     };
     if expect_code {
         return code.filter(|c| built(c)).map(|_| unseen(BUILT_CODE, false));
@@ -334,7 +342,7 @@ pub enum Script {
     /// A file the hook will not read in full: why (too large, not a regular file, /proc).
     Unreadable(&'static str),
     /// An ELF or Mach-O program: run directly like one on PATH, never read; refused when a
-    /// shell is told to run it.
+    /// shell or interpreter is told to run it.
     Binary,
 }
 
@@ -480,6 +488,7 @@ fn walk(
         shell,
         first,
         unseen,
+        direct,
     } in script_paths(command, 0)
     {
         if let Some((why, top_only)) = unseen {
@@ -509,11 +518,13 @@ fn walk(
         }
         let code = match read(&path) {
             None => continue,
-            Some(Script::Binary) if !shell => continue,
+            Some(Script::Binary) if direct => continue,
+            // A shell or interpreter told to run a binary may run text inside it (`perl -x`
+            // skips to a `#!` line): not read, so refused.
             Some(Script::Binary) => {
                 return Some(format!(
-                    "the script `{path}` is refused: a shell is told to run a binary, which the \
-                     guard cannot read as a script; run the program directly"
+                    "the script `{path}` is refused: a shell or interpreter is told to run a \
+                     binary, which the guard cannot read as a script; run the program directly"
                 ));
             }
             Some(Script::Text(code)) => code,

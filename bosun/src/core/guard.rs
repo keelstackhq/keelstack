@@ -1692,14 +1692,26 @@ fn word_scripts(command: &str) -> Vec<String> {
                 .collect();
             out.push(rest.join(" "));
         } else if matches!(name, "sh" | "bash" | "zsh" | "dash" | "ksh") {
-            let flag = words[i + 1..]
-                .iter()
-                .take_while(|w| **w != SEP)
-                .position(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c'));
-            if let Some(f) = flag
-                && let Some(script) = words.get(i + 2 + f)
-            {
-                out.push(script.clone());
+            // `-c` anywhere among the options; the code is the first operand after them all
+            // (`bash -c -- 'x'`, `bash -ec 'x'`, `bash -c -o pipefail 'x'`).
+            let args: Vec<&String> = words[i + 1..].iter().take_while(|w| **w != SEP).collect();
+            let (mut k, mut c, mut opts) = (0, false, true);
+            while let Some(a) = args.get(k) {
+                k += 1;
+                if opts && *a == "--" {
+                    opts = false;
+                } else if opts && matches!(a.as_str(), "--rcfile" | "--init-file") {
+                    k += 1;
+                } else if opts && a.starts_with("--") {
+                } else if opts && a.len() > 1 && a.starts_with(['-', '+']) {
+                    c |= a.starts_with('-') && a.contains('c');
+                    k += usize::from(a[1..].contains(['o', 'O']));
+                } else {
+                    if c {
+                        out.push((*a).clone());
+                    }
+                    break;
+                }
             }
         }
     }
