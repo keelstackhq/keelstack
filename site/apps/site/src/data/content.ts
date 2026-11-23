@@ -2,7 +2,7 @@
 import { buildCommand } from "../lib/command";
 import { pickerData } from "../lib/picker-data";
 import { facts } from "./facts";
-import { bare, links, versions } from "./versions";
+import { bare, links, released, versions } from "./versions";
 import { scenarios } from "./scenarios";
 import { org, roles, tools } from "./tools";
 
@@ -23,7 +23,7 @@ export const hero = {
     agent: { lead: "Your agent’s first commit is ", highlight: "product, not plumbing." },
   } satisfies Record<"seconds" | "skip" | "agent", HeroVariant>,
   active: "seconds" as "seconds" | "skip" | "agent",
-  body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app. One repo, one version for every tool.",
+  body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
 };
 
 // The hero shows the default `splice new` command and what it renders. Both are generated: the
@@ -223,7 +223,9 @@ export const sections: Record<
   tools: {
     label: `02 · ${NUMBER_WORDS[tools.length] ?? String(tools.length)} tools`,
     heading: tools.map((t) => `${roles[t.name]!.verb}.`).join(" "),
-    body: `One repo, one version: every tool ships together from ${facts.repoSlug}. Actions are ${facts.repoSlug}/<tool>@vX. The old per-tool repos are archived.`,
+    body: released
+      ? `One repo, one version: every tool ships together from ${facts.repoSlug}. Actions are ${facts.repoSlug}/<tool>@vX. The old per-tool repos are archived.`
+      : `One repo for every tool: ${facts.repoSlug}. The old per-tool repos are archived.`,
   },
   agents: {
     label: "03 · Built for agents",
@@ -294,7 +296,7 @@ export const quickstart = {
   steps: [
     {
       cmd: `npm i -g ${bosunNpm}`,
-      text: `Install bosun (or cargo install ${bosunCrate}). To set up every tool in one go, run npx ${keel.npm} up (crate ${keel.crate}, binary keel).`,
+      text: `Install bosun (or cargo install ${bosunCrate}). ${released ? `To set up every tool in one go, run npx ${keel.npm} up (crate ${keel.crate}).` : ""}`.trim(),
     },
     { cmd: "export GITHUB_TOKEN=$(gh auth token)", text: "A token with repo and workflow scopes." },
     {
