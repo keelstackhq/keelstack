@@ -66,6 +66,12 @@ test("agent rows and current cards", () => {
   expect(current.map((c) => !!c.accent)).toEqual([false, false, true]);
 });
 
+test("hoist row: the org control plane is available, not coming", () => {
+  const row = agentRows.find((r) => r.key === "hoist");
+  expect(row?.text).toContain("`hoist org plan|check|apply`");
+  expect(row?.text).not.toMatch(/coming/);
+});
+
 test("CLAUDE.md row: hull ships the subagents, no rigging step since hull v0.11.0", () => {
   const row = agentRows.find((r) => r.key === "CLAUDE.md");
   expect(row?.text).toContain("hull ships the subagents");
