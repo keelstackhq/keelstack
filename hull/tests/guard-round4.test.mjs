@@ -96,6 +96,8 @@ const DENY = [
   "./fake-macho",
   "./fake-elf2 --help",
   "cargo build && ./fake-elf",
+  // round 5: an unread binary through a wrapper is refused (it was allowed in round 4)
+  "timeout 5 ./target/debug/x",
   // a tree writer can swap the binary for a script
   "git checkout x && ./target/debug/x",
   "tar xf a.tar && ./target/debug/x",
@@ -139,7 +141,6 @@ const ALLOW = [
   "x=$(cat <<EOF\nhi )\nEOF\n); echo $x",
   "cargo build -p x && ./target/debug/x args",
   "./target/debug/x --help",
-  "timeout 5 ./target/debug/x",
   "git rebase -s ort -X ours HEAD~1",
   "npm exec --yes -- vp --version",
   'git bisect run sh -c "cargo test"',

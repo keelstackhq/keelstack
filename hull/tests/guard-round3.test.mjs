@@ -44,6 +44,8 @@ if (existsSync("/bin/dash")) copyFileSync("/bin/dash", join(dir, "bin/mysh"));
 chmodSync(join(dir, "bin"), 0o755);
 
 const DENY = [
+  // round 5: `-n` is exempt only before one literal file (it was allowed in round 3)
+  'for f in scripts/*.sh; do bash -n "$f"; done',
   // MAJOR grouped short flags (pflag)
   "gh api -iF body=@.env repos/o/r/issues/1/comments",
   "gh api -iX PUT repos/o/r/pulls/1/merge",
@@ -170,7 +172,6 @@ const ALLOW = [
   "gh api -X POST repos/o/r/actions/runs/1/rerun -i",
   "bash scripts/ok.sh",
   "< scripts/ok.sh bash",
-  'for f in scripts/*.sh; do bash -n "$f"; done',
   "sh -n scripts/evil.sh",
   "bash -n missing.sh",
   "PATH=$(npm bin):$PATH tsc",

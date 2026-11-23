@@ -518,7 +518,32 @@ function split(cmd) {
   return segments;
 }
 
+/** Marks a token list as run through a wrapper (not enumerable: lists still compare as words). */
+const wrap = (t, on) =>
+  Object.defineProperty(t, "wrapped", { value: !!on, writable: true, configurable: true });
+
+/** Prefixes stripped (`stripCore`). The result's `wrapped` is true when a program (not the shell
+ * itself) runs the command with execvp, which hands a file the kernel refuses to /bin/sh: `env`,
+ * `timeout`, `nice`, `nohup`, `sudo`, `xargs`, ... Through `xargs` the program must stay literal:
+ * none left after its wrappers (`xargs env`), `{}`, the replace string or a variable is refused. */
 function stripPrefixes(tokens, inCase = false) {
+  const st = { wrapped: false, xargs: null };
+  const t = stripCore(tokens, inCase, st);
+  if (st.xargs) {
+    const p = st.n === 0 ? undefined : t[0];
+    const { rep } = st.xargs;
+    if (
+      p === undefined ||
+      /[$`{}]/.test(p) ||
+      (rep !== undefined && p.includes(rep)) ||
+      SHELLS.has(base(p))
+    )
+      return ["@deny", "unscanned", tokens.join(" ")];
+  }
+  return wrap(t, st.wrapped);
+}
+
+function stripCore(tokens, inCase, st) {
   // A function definition runs its body when called: `f() { cmd; }`, `function f { cmd; }`.
   if (tokens[0] === "function") tokens = tokens.slice(2);
   else if (/^[^\s()$`'"]+\(\)[{(]?$/.test(tokens[0] ?? "")) tokens = tokens.slice(1);
@@ -557,8 +582,10 @@ function stripPrefixes(tokens, inCase = false) {
   // A redirect before the command name (`< f bash`, `2>/dev/null cmd`) moves after it.
   const tail = [];
   let shellIfEmpty = false; // `sudo -s`, `unshare`, `chroot d` with no command start a shell
-  const done = () =>
-    !t.length && shellIfEmpty ? ["sh", ...tail] : tail.length ? [...t, ...tail] : t;
+  const done = () => {
+    st.n = t.length; // words of the command itself (redirects in `tail` are not)
+    return !t.length && shellIfEmpty ? ["sh", ...tail] : tail.length ? [...t, ...tail] : t;
+  };
   // `-c <code>` of a wrapper that runs a shell (`su -c`, `script -c`, `flock -c`).
   const shellC = (from) => {
     for (let n = from; n < t.length; n++) {
@@ -597,6 +624,7 @@ function stripPrefixes(tokens, inCase = false) {
         "setsid",
       ].includes(a)
     ) {
+      if (a === "nohup" || a === "setsid") st.wrapped = true;
       t = t.slice(1);
       skipOptions();
     } else if (a === "exec") {
@@ -608,45 +636,80 @@ function stripPrefixes(tokens, inCase = false) {
       if (/^[A-Za-z_]\w*$/.test(t[0] ?? "") && /^[({]/.test(t[1] ?? "")) t = t.slice(1);
       if (/^[({]+./.test(t[0] ?? "")) t = [t[0].replace(/^[({]+/, ""), ...t.slice(1)];
     } else if (a === "env") {
+      st.wrapped = true;
       t = t.slice(1);
       skipEnvOptions();
     } else if (a === "npx") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions();
     } else if (a === "sudo") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--chdir", "--user"]);
       shellIfEmpty = true;
     } else if (a === "nice") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-n", "--adjustment"]);
     } else if (a === "ionice") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid"]);
     } else if (a === "stdbuf") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-i", "-o", "-e", "--input", "--output", "--error"]);
     } else if (a === "doas") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-u", "-C"]);
     } else if (a === "busybox" || a === "toybox") {
+      st.wrapped = true;
       t = t.slice(1);
     } else if (a === "watch") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-n", "--interval"]);
       if (t.length === 1 && /\s/.test(t[0])) t = split(t[0]).flat();
     } else if (a === "xargs") {
+      // the replace string (`-I R`, `-IR`, `-i[R]`, `--replace[=R]`) stands for stdin text
+      st.wrapped = true;
       t = t.slice(1);
-      skipOptions(
-        "-n -I -L -P -s -d -E -a --arg-file --delimiter --max-args --max-lines --max-procs --max-chars --replace --eof --process-slot-var".split(
+      let rep;
+      const valued =
+        "-n -L -P -s -d -E -a --arg-file --delimiter --max-args --max-lines --max-procs --max-chars --eof --process-slot-var".split(
           " ",
-        ),
-      );
+        );
+      while (t[0]?.startsWith("-")) {
+        const o = t[0];
+        if (o === "--") {
+          t = t.slice(1);
+          break;
+        }
+        let m;
+        if (o === "-I") {
+          rep = t[1] ?? "";
+          t = t.slice(2);
+          continue;
+        }
+        if ((m = /^-I(.+)$/s.exec(o))) rep = m[1];
+        else if ((m = /^(?:-i|--replace)(?:=?(.*))$/s.exec(o))) rep = m[1] || "{}";
+        else if (valued.includes(o)) {
+          t = t.slice(2);
+          continue;
+        }
+        t = t.slice(1);
+      }
+      if (!t.length) return done(); // xargs alone runs echo
+      st.xargs = { rep };
     } else if (a === "timeout") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(["-s", "-k", "--signal", "--kill-after"]);
       t = t.slice(1);
     } else if (a === "flock") {
+      st.wrapped = true;
       // `flock [opts] file cmd...` or `flock [opts] file -c cmd`
       const c = shellC(1);
       if (c) return [...c, ...tail];
@@ -654,16 +717,19 @@ function stripPrefixes(tokens, inCase = false) {
       skipOptions(["-w", "--wait", "--timeout", "-E", "--conflict-exit-code"]);
       t = t.slice(1);
     } else if (a === "taskset") {
+      st.wrapped = true;
       t = t.slice(1);
       if (t.some((x) => /^-[a-zA-Z]*p[a-zA-Z]*$|^--pid$/.test(x))) return done(); // changes a pid
       skipOptions();
       t = t.slice(1); // the mask or cpu list
     } else if (a === "chrt") {
+      st.wrapped = true;
       t = t.slice(1);
       if (t.some((x) => /^-[a-zA-Z]*p[a-zA-Z]*$|^--pid$/.test(x))) return done();
       skipOptions(["-T", "-P", "-D", "--sched-runtime", "--sched-period", "--sched-deadline"]);
       if (/^\d+$/.test(t[0] ?? "")) t = t.slice(1);
     } else if (a === "unshare" || a === "chroot") {
+      st.wrapped = true;
       t = t.slice(1);
       skipOptions(
         "-S -G -R -w --setuid --setgid --root --wd --propagation --map-user --map-group --map-users --map-groups --userspec --groups".split(
@@ -678,9 +744,11 @@ function stripPrefixes(tokens, inCase = false) {
       const c = shellC(1);
       return c ? [...c, ...tail] : ["sh", ...tail];
     } else if (a === "pnpm" && (b === "exec" || b === "dlx")) {
+      st.wrapped = true;
       t = t.slice(2);
       skipOptions();
     } else if (a === "npm" && (b === "exec" || b === "x")) {
+      st.wrapped = true;
       // `npm exec [opts] [--] cmd`, `npm exec -c 'cmd'` (a shell runs it)
       t = t.slice(2);
       const dd = t.indexOf("--");
@@ -710,6 +778,7 @@ function stripPrefixes(tokens, inCase = false) {
       }
       return ["sh", ...tail];
     } else if (a === "nix" && (b === "develop" || b === "shell")) {
+      st.wrapped = true;
       // `nix develop [opts] -c cmd args`: argv after `-c`/`--command`; without it, a shell
       const k = t.findIndex((x) => x === "-c" || x === "--command");
       if (k < 0) return ["sh", ...tail];
@@ -741,6 +810,10 @@ function stripPrefixes(tokens, inCase = false) {
  * bodies) mark constructs the guard cannot read. */
 const fed = (x) => /^(\/dev\/(stdin|fd\/\d+)|\/proc\/[^/]+\/fd\/\d+|-|<\(.*)$/.test(x);
 
+/** Commands another shell runs (`sh -c`, a heredoc, a runner's text): /bin/sh may be dash, which
+ * runs a file the kernel refuses as a script, so they count as run through a wrapper. */
+const viaSh = (list) => list.map((x) => wrap(x, true));
+
 export function commands(cmd) {
   const text = String(cmd ?? "");
   const out = [];
@@ -764,9 +837,9 @@ export function commands(cmd) {
   let caseDepth = 0;
   for (const seg of segs) {
     if (base(seg[0].replace(/^[({]+/, "")) === "case") caseDepth++;
-    const t = stripPrefixes(seg, caseDepth > 0)
-      .flatMap(splitRedirect)
-      .map(unmark);
+    const stripped = stripPrefixes(seg, caseDepth > 0);
+    const t = stripped.flatMap(splitRedirect).map(unmark);
+    wrap(t, stripped.wrapped);
     if (seg.some((x) => /^esac\b/.test(x)) && caseDepth > 0) caseDepth--;
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
@@ -832,11 +905,14 @@ export function commands(cmd) {
         (SHELLS.has(prog) || INTERPRETERS.test(prog)))
     )
       out.push(["@evade", text]);
-    if (prog === "find") {
-      const e = t.findIndex((x) => /^-(exec|execdir|ok|okdir)$/.test(x));
-      if (e >= 0) {
+    if (prog === "find")
+      for (let e = 0; e < t.length; e++) {
+        if (!/^-(exec|execdir|ok|okdir)$/.test(t[e])) continue;
         const end = t.findIndex((x, n) => n > e && (x === ";" || x === "+"));
         const inner = stripPrefixes(t.slice(e + 1, end < 0 ? undefined : end));
+        wrap(inner, true); // find runs it with execvp
+        // `-exec {} ;`, `-exec env {} ;`, `-exec "$P" ;`: the program is not a literal
+        if (!inner.length || /[$`{}]/.test(inner[0])) out.push(["@deny", "unscanned", segText]);
         if (inner.length) out.push(inner);
         // -execdir runs in each match's dir: a relative script there is unknown here
         const ip = base(inner[0] ?? "");
@@ -847,9 +923,9 @@ export function commands(cmd) {
           out.push(["@deny", "unscanned", segText]);
         const ci = inner.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
         if (SHELLS.has(base(inner[0] ?? "")) && ci > 0 && inner[ci + 1] !== undefined)
-          for (const x of commands(inner[ci + 1])) out.push(x);
+          for (const x of viaSh(commands(inner[ci + 1]))) out.push(x);
+        if (end > e) e = end;
       }
-    }
     // `/proc/self/exe`, `/dev/fd/3` as the program: the guard cannot know what runs
     if (/^\/(proc|dev)\//.test(t[0])) out.push(["@deny", "unscanned", segText]);
     // The program comes from a command's output (`$(cat f) ...`, `` `x` ``): code the guard cannot read.
@@ -921,7 +997,7 @@ export function commands(cmd) {
             )
             .join(" "),
         );
-      for (const body of run) for (const x of commands(body)) out.push(x);
+      for (const body of run) for (const x of viaSh(commands(body))) out.push(x);
     }
     // `expect -c 'spawn git push ...'`: Tcl `spawn`/`exec`/`system` run programs; read them as
     // commands (other Tcl is not parsed; a risky word in it is refused as `@evade-exec`).
@@ -933,7 +1009,7 @@ export function commands(cmd) {
           const sh = body
             .replace(/[{}[\]"]/g, "\n")
             .replace(/(^|[\n;])\s*(spawn|exec|system)\s+/g, "$1\n");
-          for (const x of commands(sh)) out.push(x);
+          for (const x of viaSh(commands(sh))) out.push(x);
         }
     if (prog === "trap") {
       // `trap '<code>' SIG`: the code runs later, read like typed commands
@@ -963,7 +1039,7 @@ export function commands(cmd) {
     const hs = t.findIndex((x) => x.startsWith("<<<"));
     if (hs >= 0 && (SHELLS.has(prog) || INTERPRETERS.test(prog))) {
       const body = t[hs].length > 3 ? t[hs].slice(3) : (t[hs + 1] ?? "");
-      if (SHELLS.has(prog)) for (const inner of commands(body)) out.push(inner);
+      if (SHELLS.has(prog)) for (const inner of viaSh(commands(body))) out.push(inner);
       if (SHELLS.has(prog) || runs(body)) out.push(["@evade", body], ["@evade-exec", body]);
     }
     if (INTERPRETERS.test(prog)) {
@@ -985,13 +1061,13 @@ export function commands(cmd) {
     }
     if (SHELLS.has(prog)) {
       for (const body of seg.docs ?? []) {
-        for (const inner of commands(body)) out.push(inner);
+        for (const inner of viaSh(commands(body))) out.push(inner);
       }
       const i = t.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
       if (i > 0 && t[i + 1] !== undefined) {
         // `bash -c "$X"`, `bash -c "$(cat f)"`: the code is a value the guard cannot read
         if (/^\s*[$`]/.test(t[i + 1])) out.push(["@deny", "dynamic", segText]);
-        for (const inner of commands(t[i + 1])) out.push(inner);
+        for (const inner of viaSh(commands(t[i + 1]))) out.push(inner);
       } else if (noArgs) out.push(["@evade", text]); // script fed on stdin
     }
   }
@@ -1215,13 +1291,14 @@ function ghApiParse(args) {
   let fileField;
   let input;
   let unknown;
+  let override = false; // a method-override header: the server may run another method
   const fields = [];
   const take = (flag, value) => {
     if (flag === "--method") method = value;
     if (flag === "--field" || flag === "--raw-field") fields.push(value ?? "");
     if (flag === "--field" && /^[^=]*=@/.test(value ?? "")) fileField = value;
     if (flag === "--input") input = value ?? "";
-    if (flag === "--header" && /method-override/i.test(value ?? "")) method = "OVERRIDE";
+    if (flag === "--header" && /method-override/i.test(value ?? "")) override = true;
   };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1248,6 +1325,7 @@ function ghApiParse(args) {
       }
     } else if (endpoint === undefined) endpoint = a;
   }
+  if (override) method = "OVERRIDE"; // whatever `-X` says, before or after it
   return { method, endpoint, fileField, input, unknown, fields };
 }
 
@@ -1786,7 +1864,7 @@ function positional(t, argv) {
     return [x];
   });
   if (t.docs) out.docs = t.docs;
-  return out;
+  return wrap(out, t.wrapped);
 }
 
 const UNSET = "\uE003"; // a variable with no value (`${X:-w}` and `${X-w}` give `w`)
@@ -1974,18 +2052,23 @@ function shellSource(t) {
     ops.push(a);
   }
   if (t.docs?.length) return { kind: "doc" };
+  // Parse only, exactly `bash|sh -n <one literal file>`: any other option may undo noexec
+  // (`+n`, `+o noexec`) or start an interactive shell that ignores it.
+  if (
+    /^(bash|sh)$/.test(base(t[0])) &&
+    ops.length === 2 &&
+    ops[0] === "-n" &&
+    stdinFile === undefined &&
+    /^[^-+$`{}*?[~\\]/.test(ops[1]) &&
+    !/[$`{}*?[\\]/.test(ops[1])
+  )
+    return { kind: "parse" };
   let i = 0;
   while (i < ops.length && /^[-+]./.test(ops[i])) {
     if (ops[i] === "--") {
       i++;
       break;
     }
-    // noexec only parses; an interactive shell (`-i`) ignores it
-    if (
-      /^-[a-zA-Z]*n[a-zA-Z]*$/.test(ops[i]) &&
-      !ops.some((o) => /^-[a-zA-Z]*i|^--interactive$/.test(o))
-    )
-      return { kind: "parse" };
     if (SHELL_C_RE.test(ops[i])) return { kind: "c" };
     if (/^-[a-zA-Z]*s[a-zA-Z]*$/.test(ops[i])) return { kind: "stdin", stdinFile }; // args follow
     if (/^--(version|help)$/.test(ops[i])) return { kind: "info" };
@@ -2016,11 +2099,12 @@ function scriptRuns(t, chain) {
     if (src.kind === "stdin" && src.stdinFile)
       runs.push({ file: src.stdinFile, shell: true, args: [] });
   } else if (String(t[0]).includes("/") && !t[0].startsWith("@") && !INTERPRETERS.test(prog))
-    runs.push({ file: t[0], shell: false, args: operands(t.slice(1)) });
+    runs.push({ file: t[0], shell: false, args: operands(t.slice(1)), wrapped: !!t.wrapped });
   if (!String(t[0]).includes("/") && !t[0].startsWith("@"))
     for (const d of chain.path) {
       const abs = join(d, t[0]);
-      if (existsSync(abs)) runs.push({ file: abs, shell: false, args: operands(t.slice(1)) });
+      if (existsSync(abs))
+        runs.push({ file: abs, shell: false, args: operands(t.slice(1)), wrapped: !!t.wrapped });
     }
   // A `$VAR` program or an unknown runner (`parallel`, `docker run`, ...) may run a shell script
   // it is given: such operands are read when they are shell scripts.
@@ -2173,7 +2257,9 @@ function runScript(t, projectDir, dirs, chain, seen) {
       // An existing ELF/Mach-O binary run directly (`cargo build && ./target/debug/x`) is not read
       // anyway; a script stays refused, even a tracked one: the writer (build scripts, install
       // hooks, `git pull`/`checkout` and their hooks) may change it before it runs (guard.md).
-      if (opaque && !(st?.isFile() && !run.shell && BUILD_RE.test(opaque) && nativeBinary(abs)))
+      // Through a wrapper or in a script a binary is refused anyway (below).
+      const direct = !run.shell && !run.wrapped && !chain.script;
+      if (opaque && !(st?.isFile() && direct && BUILD_RE.test(opaque) && nativeBinary(abs)))
         return { rule: "scriptLater", shown: `${name} with ${opaque}` };
       if (!st) continue;
       found = true;
@@ -2186,7 +2272,11 @@ function runScript(t, projectDir, dirs, chain, seen) {
           const top = head(abs);
           if (hostBinary(top)) {
             if (shellBinary(abs)) return refuse("a shell under another name: run it by its name");
-            continue; // a binary the kernel runs
+            // Only bash or zsh running it directly refuse a binary the kernel refuses; a wrapper
+            // (execvp) or a script's sh hands it to /bin/sh. The guard does not judge loadability.
+            if (run.wrapped || chain.script)
+              return refuse("a binary through a wrapper, runner or script: run it directly");
+            continue; // run directly: bash refuses it if the kernel does
           }
           const interp = shebang(top);
           if (interp !== null && !SHELLS.has(interp)) {

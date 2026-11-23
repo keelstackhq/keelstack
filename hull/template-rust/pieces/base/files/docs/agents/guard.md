@@ -38,7 +38,13 @@ script run after an earlier command in the same call that may write files the gu
 (downloads, archives, decoders, patches, builds, package managers, interpreters); an existing
 host binary (a valid ELF header on Linux, Mach-O on macOS) run directly after a build tool
 (`cargo build && ./target/debug/x`) passes. A file with a fake magic number is a shell script
-(the kernel refuses it and sh runs it) and is read like one.
+(the kernel refuses it and sh runs it) and is read like one. A binary is not read, so it passes
+only when run directly from the typed command (bash refuses a binary the kernel refuses): through
+a wrapper or runner (`env`, `timeout`, `nice`, `nohup`, `sudo`, `xargs`, `find -exec`, `sh -c`,
+`git bisect run`, ...) or from a script, /bin/sh may run it as a script, so it is refused.
+`bash -n <file>` and `sh -n <file>` (one literal file, no other option) only parse and pass; any
+other `-n` form reads the script. `find -exec {}`, `xargs env` and `xargs -I{} {}` (no literal
+program) are refused.
 Release workflows (file names with `release`, `publish` or `deploy`; the human can set the
 `GUARD_RELEASE_WORKFLOWS` regex in `.claude/settings.json` `env`) never start from here.
 
@@ -52,6 +58,7 @@ a `#!` interpreter it does not know, or a PATH dir that is not literal (`$HOME`,
 when the file holds code the guard cannot read: the Bash tool already starts from your shell, so
 drop it. `gh api -F x=@file` and `--input` read a file into the request: pass values with `-f`.
 `gh api` flags are read like gh (`-iX PUT` is `-i -X PUT`); a flag gh api does not have is refused.
+A method-override header (`-H 'X-HTTP-Method-Override: ...'`) is refused, whatever `-X` says.
 
 After `cd` into `.claude/`, `.claude/hooks/`, `.bosun/` or `.github/workflows/`, the rest of the
 command may only read (`ls`, `cat`, `grep`, `head`, `git log`, ..., redirects to `/dev/null`
@@ -86,8 +93,9 @@ A rail, not a sandbox. These stay open:
   refused only when its text names push, publish or release next to git, gh, npm, ...).
 - A `cd` to a variable inside a script, and a dir from a variable in a flag value (`tar -C "$D"`).
 - Edits of guarded files from an interpreter (`python -c "open('.claude/...','w')"`).
-- A file written in an earlier Bash call is read as it is when the next call runs: the guard
-  judges each call alone.
+- A file written in an earlier Bash call is read when a later call runs it, as it is at that
+  moment: the guard judges each call alone and reads every script that call runs. A binary
+  written earlier is not read; it passes only when run directly, never through a wrapper.
 - A default branch that `origin/HEAD` does not name (besides `main` and `master`).
 - A script after a writer the guard cannot name in the same call (`pnpm install && bash
   scripts/gen.sh`, `git pull && bash s.sh`, `git checkout main && bash s.sh`) stays refused, even
