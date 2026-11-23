@@ -145,6 +145,8 @@ Hardening (v0.11, from the v0.10.0 audit; each deny's reason names the allowed a
 | default branch | `git push` whose dst is `main`, `master` or origin/HEAD (`origin main`, `HEAD:main`, `refs/heads/x:refs/heads/main`), a bare push while HEAD is on it, `--prune`; `git branch -D\|-d\|-f\|-m <default>`, `checkout -B`/`switch -C <default>`, `update-ref refs/heads/<default>`, `reset --hard` while on it | deny: "push a feature branch, PR, `gh pr merge --auto`" |
 | indirection | `eval`, `sh`/interpreter without args (stdin), interpreter `-c`/`-e`/`-p` body, `$VAR`/`$(…)`/backtick as the command or git subcommand, heredoc code with an exec form | deny only when that text mentions push, publish, release, gh or secret; `git -c alias.x=` is resolved; `setsid`, `ionice`, `stdbuf`, `watch`, `busybox`, `doas`, `builtin` are stripped like `nice` |
 | secrets | adds basenames `*.env` (not `process.env`), `.envrc`, `*.pem`, `id_*` (not `.pub`), `keys.txt`, dirs `.age`, `.aws`, `.ssh`, `.config/gh`, `/proc/*/environ`; bare `env`/`printenv`, `export -p`, `declare -x`, `set`, `echo\|printf $…KEY\|TOKEN\|SECRET\|PASSWORD…`, `sops -d`, `age -d`, `hoist secrets exec -- env\|printenv\|sh\|bash` | deny: `.env.example`, or `hoist secrets exec -- <command>` |
+| scripts run | `bash\|sh f`, `source f`, `. f`, `./f` (shell or no `#!`), nested; ≤ 512 KiB text | judged like typed commands, the deny names the script; a script written by the same command: deny (evasion). A push remote or refspec with `$`/backtick: deny (evasion) |
+| workflow runs | `gh api` POST to `actions/workflows/<literal non-release .yml>/dispatches`, `actions/runs/<id>/rerun[-failed-jobs]`, `actions/jobs/<id>/rerun` | allow, like `gh workflow run` / `gh run rerun`; other `gh api` writes deny and name both |
 | protected | Edit/Write/MultiEdit/NotebookEdit and Bash write verbs (`>`, `tee`, `rm`, `mv`, `cp` dst, `sed -i`, `chmod`, `git rm`) on `.claude/hooks/*`, `.claude/settings*.json`, `.github/workflows/release*.yml`, `.bosun/*`; `git config core.hooksPath\|alias.*`, `git -c core.hooksPath=` | deny regardless of the lock: "ask the human; local rules in docs/agents/project.md" |
 
 The guard stays a rail: the real fix for a push to `main` is a server-side branch ruleset (one
@@ -160,8 +162,9 @@ Bash parsing is a tokenizer, not a shell: split on `;`, `&&`, `||`, `|`, newline
 `sudo`, `command`, `time`, `pnpm exec`, `npx`, a leading `(`/`{` and trailing `)`/`}`; programs
 match by basename (`/usr/bin/npm`, `./node_modules/.bin/pnpm`); recurse once into `bash|sh -c '<s>'`;
 `git` global options (`-C <d>`, `-c k=v`, `--git-dir=…`) are skipped before the subcommand (the
-settings deny rules miss `git -C . push -f`). Known gaps, documented in the hook header: scripts that
-publish, editing guarded files from an interpreter, and a default branch that origin/HEAD does not
+settings deny rules miss `git -C . push -f`). Known gaps, documented in the hook header: scripts in
+other languages, binaries and script paths built from a variable (shell scripts the command runs
+are read), editing guarded files from an interpreter, and a default branch that origin/HEAD does not
 name. The hook is a guard rail, not a sandbox.
 
 ### 3.5 Docs index `scripts/agents-index.mjs`

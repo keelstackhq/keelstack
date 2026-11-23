@@ -15,6 +15,18 @@ rule and the allowed alternative. Use the patterns below; they pass.
 | Globs                     | `ls -d .*`, `cat .bosun/*.toml`, `grep -n push .github/workflows/*.yml`                 |
 | Variable names of secrets | `cat .env.example`; run with values: `hoist secrets exec -- <cmd>`                      |
 
+## Runs that pass
+
+| Need                       | Use                                                                                                    |
+| -------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Tests, globs, regex        | `[ -f x ] && ...`, `grep -E 'a[bc]{2,}' f`, `ls *.md`, `"$(git rev-parse HEAD)"`                       |
+| A script                   | `bash scripts/x.sh` or `./scripts/x.sh`: the guard reads it like typed commands                        |
+| Start or re-run a workflow | `gh workflow run deploy.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST) |
+
+A script does not hide a command: the guard reads a shell script before it runs and refuses it when
+a line in it would be refused; it also refuses a script the same command just wrote. Release
+workflows never start from here.
+
 After `cd` into `.claude/`, `.claude/hooks/`, `.bosun/` or `.github/workflows/`, the rest of the
 command may only read (`ls`, `cat`, `grep`, `head`, `git log`, ..., redirects to `/dev/null`
 only; `x>file` counts as a write, and so do `GIT_*=`/`PAGER=` prefixes). Write from the repo root

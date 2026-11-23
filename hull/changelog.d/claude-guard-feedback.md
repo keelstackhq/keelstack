@@ -1,0 +1,1 @@
+- guard: reads the shell scripts a command runs (`bash f`, `source f`, `./f`) and judges them like typed commands; a closed `$(...)` no longer swallows the rest of the line; `gh api` dispatch of a non-release workflow and run/job re-runs pass like their `gh` verbs; a push to a `$VAR` refspec is refused.

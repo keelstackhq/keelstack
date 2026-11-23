@@ -12,9 +12,14 @@
 // any other code is scanned (fail closed). Code from stdin (`source /dev/stdin`, `bash <(...)`, `xargs`) is scanned
 // as text. Comments, `case` patterns, quoted heredoc words (`E"OF"`) and `$'...'` escapes are read
 // like the shell; joined string literals are checked for secret file names.
-// `gh api` with an explicit GET and graphql queries are reads. `cd` into a guarded dir is allowed when
+// A shell script the command runs (`bash f`, `source f`, `./f` with a shell or no `#!`) is read and
+// judged like typed commands, nested scripts too; running a script the same command wrote is refused.
+// `gh api` with an explicit GET and graphql queries are reads; a POST that dispatches a literal
+// non-release workflow file or re-runs a run/job matches `gh workflow run` / `gh run rerun`. `cd`
+// into a guarded dir is allowed when
 // the rest of the chain only reads (docs/agents/guard.md lists the safe patterns). A deny names its rule and the match.
-// Known gaps: scripts that publish, editing guarded files from an interpreter, a dir reached through
+// Known gaps: scripts in other languages, binaries, a script path built from a variable, a `cd` to a
+// variable inside a script, editing guarded files from an interpreter, a dir reached through
 // a variable or substitution in a flag value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch
 // piped in (refused) or made by a producer other than `git diff|show|format-patch -- <paths>`
 // (refused), and a default branch that origin/HEAD does not name. Node built-ins only.
@@ -22,6 +27,7 @@
 // else allows and prints one stderr line. Settings deny rules only cover force pushes and publish
 // commands: the guard is the one layer for default-branch pushes and secrets.
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { homedir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -170,7 +176,7 @@ const REASON = {
   secret:
     "Secret files and values are off limits: read .env.example for the variable names, run what needs values as `hoist secrets exec -- <your command>` (never env, printenv or a shell), or ask the human.",
   ghApi:
-    "gh api writes are blocked: use plain GET reads, or ask the human for the change (a PR merges by its owner).",
+    "gh api writes are blocked: use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release workflows excepted); for anything else ask the human (a PR merges by its owner).",
   ghMerge:
     "gh pr merge only with --auto (merges once required checks pass); never --admin or an immediate merge: ask the human.",
   ghAdmin:
@@ -252,7 +258,7 @@ function subEnd(cmd, i) {
     }
     return cmd.length;
   }
-  let depth = 0;
+  let depth = 1; // `i` is the opening `(`
   let cases = 0; // inside `case ... esac`, a pattern's `)` does not close the substitution
   let q = "";
   // A keyword in command position: after `(`, `;`, `&`, `|` or a newline (spaces between).
@@ -576,9 +582,14 @@ export function commands(cmd) {
       }
     }
     if (/^[$`]|\$\(/.test(t[0])) out.push(["@evade", segText]);
-    // `git $SUB ...` hides the subcommand.
-    if (prog === "git" && t.slice(1, 4).some((x) => /^[$`]|\$\(/.test(x)))
-      out.push(["@evade", text]);
+    // `git $SUB ...` hides the subcommand; `git -C "$D" push` hides where it runs. A variable after
+    // the subcommand is an argument.
+    if (prog === "git") {
+      const { sub, args } = gitSub(t);
+      const hidden = (x) => /^[$`]|\$\(/.test(x ?? "");
+      if (hidden(sub)) out.push(["@evade", text]);
+      else if (t.slice(1, t.length - args.length - 1).some(hidden)) out.push(["@evade", segText]);
+    }
     if (prog === "eval") {
       const body = t.slice(1).join(" ");
       out.push(["@evade", body]);
@@ -747,6 +758,9 @@ function pushRule(args, projectDir) {
     if (a === "--tags" || a === "--follow-tags") tag = true;
     if (a === "tag" && refs.length === 1) tag = true; // `git push <remote> tag <name>`
     if (a === "--delete" || /^-[A-Za-z]*d[A-Za-z]*$/.test(a)) del = true;
+    // A remote or refspec the guard cannot read (`"$B"`, `"$(git branch --show-current)"`) may
+    // name the default branch or a tag.
+    if (!a.startsWith("-") && /[$`]/.test(a)) return "evasion";
     if (!a.startsWith("-")) {
       refs.push(a);
       const dst = a.slice(a.lastIndexOf(":") + 1);
@@ -825,6 +839,22 @@ function ghApiWrites(args) {
   return body;
 }
 
+/** `gh api` that does what `gh workflow run` and `gh run rerun` do: a POST to one endpoint that
+ * dispatches a workflow named by a literal non-release file, or re-runs a run or job. */
+const WORKFLOW_RUN_RE =
+  /^\/?repos\/[^/\s]+\/[^/\s]+\/actions\/(workflows\/([\w.-]+\.ya?ml)\/dispatches|runs\/\d+\/(rerun|rerun-failed-jobs)|jobs\/\d+\/rerun)\/?$/;
+function workflowRun(args) {
+  let method = "POST";
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "-X" || args[i] === "--method") method = String(args[i + 1]);
+    else if (args[i].startsWith("--method=")) method = args[i].slice(9);
+    else if (/^-X./.test(args[i])) method = args[i].slice(2);
+  }
+  const ends = args.filter((a) => /^\/?(repos|graphql)\b|^graphql$/.test(a));
+  const m = ends.length === 1 ? WORKFLOW_RUN_RE.exec(ends[0]) : null;
+  return method.toUpperCase() === "POST" && !!m && !/release/i.test(m[2] ?? "");
+}
+
 const ADMIN_API_RE =
   /\/(branches\/[^/\s]+\/protection|rulesets?|environments|actions\/(secrets|variables|permissions)|hooks|keys|collaborators|transfer|rename)\b/;
 
@@ -901,7 +931,9 @@ function bashRule(
   if (["cd", "pushd"].includes(prog)) {
     const dirs = args.filter((a) => !a.startsWith("-"));
     // `cd "$(echo .claude)"`, `cd $X`: the target is unknown, so it is refused.
-    if (dirs.some((d) => d && /[$`]/.test(d))) return "protected";
+    // In a script the guard reads, `cd "$(dirname "$0")"` is common: a known gap, as before
+    // scripts were read.
+    if (!chain.script && dirs.some((d) => d && /[$`]/.test(d))) return "protected";
     // Into a guarded dir: allowed, but the rest of the chain must only read (relative names
     // there would hide a protected write).
     if (dirs.some((d) => d && guardedDir(d, projectDir, cwd))) chain.guarded = true;
@@ -949,7 +981,7 @@ function bashRule(
   if (prog === "changeset" && args.includes("publish")) return "publish";
   if (prog === "gh") {
     const [a0, a1] = args;
-    if (a0 === "api" && ghApiWrites(args.slice(1)))
+    if (a0 === "api" && ghApiWrites(args.slice(1)) && !workflowRun(args.slice(1)))
       return args.slice(1).some((a) => ADMIN_API_RE.test(a)) ? "ghAdmin" : "ghApi";
     if (a0 === "pr" && a1 === "merge") {
       if (args.includes("--admin")) return "ghMerge";
@@ -1171,6 +1203,94 @@ function matched(t) {
   return t.join(" ");
 }
 
+/** Check shell text: each simple command, then each script it runs. `seen` stops cycles. */
+function checkShell(text, projectDir, cwd, guarded, seen, script = false) {
+  const chain = { made: new Set(), tainted: new Set(), guarded, script };
+  const cmds = commands(text);
+  // A `cd` into a guarded dir anywhere in the command makes all of it read-only: substitutions
+  // are listed before the command that holds them.
+  chain.guarded ||= cmds.some(
+    (t) =>
+      ["cd", "pushd"].includes(base(t[0])) &&
+      t.slice(1).some((d) => !d.startsWith("-") && guardedDir(d, projectDir, cwd)),
+  );
+  let here = cwd; // where a later script path resolves after a literal `cd`
+  for (const t of cmds) {
+    const rule = bashRule(t, projectDir, cwd, chain);
+    if (rule) return { rule, shown: matched(t) };
+    const hit = runScript(t, projectDir, [...new Set([cwd, here])], chain, seen);
+    if (hit) return hit;
+    noteWrites(t, cwd, chain);
+    const to = ["cd", "pushd"].includes(base(t[0])) && t.slice(1).find((d) => !d.startsWith("-"));
+    if (to && !/[$`*?[{~]/.test(to)) here = dirOf(here, to);
+  }
+  return null;
+}
+
+const MAX_SCRIPT = 512 * 1024;
+const SHELL_OPT_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
+
+/** The script file a command runs, and whether a shell reads it whatever its `#!`: `bash f`,
+ * `sh -e f`, `source f`, `. f`; or a path run directly (`./f`, `scripts/f`, `/tmp/f`). */
+function scriptRun(t) {
+  if (/^\d*[<>&]/.test(t[0])) return null; // a bare redirect (`2>/dev/null`) runs nothing
+  const prog = base(t[0]);
+  let file = null;
+  let shell = true;
+  // Redirects (`2>/dev/null`, `> f`) are not operands.
+  const args = t
+    .slice(1)
+    .filter((a, n, all) => !/^\d*[<>&]/.test(a) && !/^\d*[<>]+[&|]?$/.test(all[n - 1] ?? ""));
+  if (prog === "source" || prog === ".") file = args[0];
+  else if (SHELLS.has(prog)) {
+    if (t.docs?.length || args.some((a) => /^-[a-z]*c$/.test(a))) return null;
+    let i = 0;
+    while (i < args.length && /^[-+]/.test(args[i])) i += SHELL_OPT_VALUE.has(args[i]) ? 2 : 1;
+    file = args[i];
+  } else if (String(t[0]).includes("/") && !t[0].startsWith("@") && !INTERPRETERS.test(prog)) {
+    file = t[0];
+    shell = false;
+  }
+  // stdin and process substitution are refused elsewhere (`@evade`).
+  if (!file || /^(-|\/dev\/|\/proc\/|<\()/.test(file)) return null;
+  return { file, shell };
+}
+
+/** A script the command runs is checked like typed commands: the guard reads it (text up to
+ * MAX_SCRIPT; binaries and non-shell `#!` scripts are not read). A script written earlier in the
+ * same command cannot be read before it runs, so running it is refused. */
+function runScript(t, projectDir, dirs, chain, seen) {
+  const run = scriptRun(t);
+  if (!run) return null;
+  const name = stripTok(run.file).replace(/^(~|\$\{?HOME\}?)(?=\/)/, homedir());
+  if (/[$`*?[{]/.test(name)) return null; // a path the guard cannot read: a known gap
+  for (const d of dirs) {
+    const abs = resolve(d, name);
+    if (chain.tainted.has(abs))
+      return { rule: "evasion", shown: `${name}: written by this command` };
+    if (seen.has(abs) || seen.size > 32) continue;
+    let text;
+    try {
+      const st = statSync(abs);
+      if (!st.isFile() || st.size > MAX_SCRIPT) continue;
+      text = readFileSync(abs, "utf8");
+    } catch {
+      continue;
+    }
+    if (text.includes("\0")) continue; // a binary
+    const bang = /^#!\s*(\S+)(?:[ \t]+(\S+))?/.exec(text);
+    const interp = bang ? (base(bang[1]) === "env" ? (bang[2] ?? "") : base(bang[1])) : "sh";
+    if (!run.shell && !SHELLS.has(base(interp))) continue;
+    seen.add(abs);
+    // Comment lines are prose: text checks (`@evade`) must not see their words. A line that holds
+    // `$(` stays (inside a multi-line string it would run).
+    const code = text.replace(/^[ \t]*#(?![^\n]*\$\()[^\n]*$/gm, "");
+    const hit = checkShell(code, projectDir, d, chain.guarded, seen, true);
+    if (hit) return { rule: hit.rule, shown: `${name}: ${hit.shown}` };
+  }
+  return null;
+}
+
 /**
  * @param {{ tool_name: string, tool_input: Record<string, unknown> }} input
  * @param {{ lockText?: string, projectDir: string }} ctx
@@ -1190,21 +1310,8 @@ export function decide(input, ctx) {
   if (name === "Bash") {
     // A cwd persisted inside a guarded dir (an earlier `cd .bosun`) starts the chain read-only.
     const guarded = cwd !== ctx.projectDir && guardedDir(cwd, ctx.projectDir, ctx.projectDir);
-    const chain = { made: new Set(), tainted: new Set(), guarded };
-    const cmds = commands(ti.command);
-    // A `cd` into a guarded dir anywhere in the command makes all of it read-only: substitutions
-    // are listed before the command that holds them.
-    chain.guarded ||= cmds.some(
-      (t) =>
-        ["cd", "pushd"].includes(base(t[0])) &&
-        t.slice(1).some((d) => !d.startsWith("-") && guardedDir(d, ctx.projectDir, cwd)),
-    );
-    for (const t of cmds) {
-      const rule = bashRule(t, ctx.projectDir, cwd, chain);
-      if (rule) return deny(rule, matched(t));
-      noteWrites(t, cwd, chain);
-    }
-    return null;
+    const hit = checkShell(String(ti.command ?? ""), ctx.projectDir, cwd, guarded, new Set());
+    return hit ? deny(hit.rule, hit.shown) : null;
   }
   if (!FILE_TOOLS.has(name)) return null;
   const candidates = [targetPath(ti), ti.glob];
