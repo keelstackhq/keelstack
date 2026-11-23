@@ -286,6 +286,8 @@ struct Trigger {
     paths: bool,
     /// Written in the list or scalar form of `on:`, which takes no `types:`.
     short: bool,
+    /// The short form written as a block list (`on:` then `- name` lines).
+    block: bool,
 }
 
 fn triggers(lines: &[Line]) -> Vec<Trigger> {
@@ -314,6 +316,7 @@ fn triggers(lines: &[Line]) -> Vec<Trigger> {
             out.push(Trigger {
                 name: item.to_string(),
                 short: true,
+                block: true,
                 ..Trigger::default()
             });
             continue;
@@ -667,7 +670,11 @@ pub fn check(file: &str, text: &str) -> Vec<Finding> {
                     });
                 list.push("ready_for_review".into());
                 if t.short {
-                    add(None, "ready_for_review", short_fix(file, &trig, &list));
+                    add(
+                        None,
+                        "ready_for_review",
+                        short_fix(file, &trig, &list, t.block),
+                    );
                     // One mapping covers every trigger of the short form.
                     break;
                 }
@@ -714,11 +721,19 @@ pub fn check(file: &str, text: &str) -> Vec<Finding> {
 
 /// The `ready_for_review` fix for an `on:` in the list or scalar form: the exact mapping to
 /// replace it with (`types` on each pull_request trigger, the other events kept bare).
-fn short_fix(file: &str, trig: &[Trigger], types: &[String]) -> String {
+fn short_fix(file: &str, trig: &[Trigger], types: &[String], block: bool) -> String {
     let names: Vec<&str> = trig.iter().map(|t| t.name.as_str()).collect();
     let was = match names.as_slice() {
-        [one] => format!("on: {one}"),
-        _ => format!("on: [{}]", names.join(", ")),
+        _ if block => format!(
+            "the `on:` list ({})",
+            names
+                .iter()
+                .map(|n| format!("`- {n}`"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        [one] => format!("`on: {one}`"),
+        _ => format!("`on: [{}]`", names.join(", ")),
     };
     let mut mapping = String::from("on:");
     for n in &names {
@@ -728,7 +743,7 @@ fn short_fix(file: &str, trig: &[Trigger], types: &[String]) -> String {
         }
     }
     format!(
-        "in {file}, replace `{was}` with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
+        "in {file}, replace {was} with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
     )
 }
 
@@ -924,7 +939,7 @@ jobs:
         assert_eq!(
             block,
             format!(
-                "in w.yml, replace `on: [push, pull_request]` with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
+                "in w.yml, replace the `on:` list (`- push`, `- pull_request`) with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
             )
         );
         let scalar = fix("on: pull_request\n");

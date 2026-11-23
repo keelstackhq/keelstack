@@ -55,6 +55,12 @@ These are public today, so they cost nothing. The orchestrator has run data only
   1 min billed (more for a mixed stack, whose toolchain and `cargo deny` run without a cache).
   The required check's job runs install, fmt, lint and test only after it passed. This costs
   about 1 more billed minute per run, also for an edit (a draft starts no job).
+  In a mixed (rust + ts-pnpm) stack, rust `fmt` runs in that job after the PR's install scripts,
+  so PR code can fake its result there: it is not a trusted gate (in a rust-only stack fmt runs
+  before lint and test and runs no PR code).
+  The required check's job runs `if: always()` so it is never skipped (a skipped required
+  check counts as passed). It therefore also starts, and fails, when a newer push cancels the
+  run: about 1 more billed minute per cancelled run.
 - **Edits run test-integrity only.** A PR body or title edit changes no file. The edit run
   waits for the running run. If the head passed, it keeps the file gates and runs only
   test-integrity, which reads the body, with no toolchain setup (~1 min). Otherwise it runs

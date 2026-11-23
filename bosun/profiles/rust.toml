@@ -10,7 +10,7 @@ pending = "rust-ignore"
 assertions = "rust"
 
 [gates.fmt]
-cmd = ["cargo", "fmt", "--check"]
+cmd = ["cargo-fmt", "--check"]
 
 [gates.lint]
 cmd = ["cargo", "clippy", "--all-targets", "--locked", "--", "-D", "warnings"]
@@ -22,11 +22,13 @@ all = ["--workspace"]
 when_no_package = "skip"
 
 [gates.deps]
+# Called as the `cargo-deny` and `cargo-fmt` binaries (PATH lookup), not `cargo deny` / `cargo fmt`:
+# cargo expands aliases of a .cargo/config.toml first (#53).
 # cargo-deny falls back to its defaults without deny.toml (rejects even MIT), so the PR that adds
 # deny.toml is judged by the base, which has none: neutral. Any of cargo-deny's config names, in the
 # stack directory or a parent up to the repo root, counts.
 base_requires = ["deny.toml", ".deny.toml", ".cargo/deny.toml"]
-cmd = ["cargo", "deny", "check"]
+cmd = ["cargo-deny", "check"]
 
 [gates.mutants]
 cmd = ["cargo", "mutants", "--in-diff", "{diff}"]

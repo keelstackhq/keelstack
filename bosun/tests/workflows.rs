@@ -851,6 +851,27 @@ fn the_gates_use_the_bases_config() {
         ),
         "the channel's step differs from ci.yml's"
     );
+    // A PR that makes a parent directory a symlink must not get base copies written outside the
+    // checkout: every restore loop checks `realpath -m` (#51).
+    assert!(
+        script.contains("realpath -m -- \"$(dirname -- \"$p\")\""),
+        "ci.yml"
+    );
+    let circle = fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/channel/pieces/circleci/files/.circleci/src/jobs/bosun-ok.yml.jinja"
+    ))
+    .unwrap();
+    let restore = &circle[circle.find("the base's config for the gates").unwrap()..];
+    let restore = &restore[..restore.find("done\n").unwrap()
+        + restore[restore.find("done\n").unwrap() + 5..]
+            .find("done\n")
+            .unwrap()
+        + 10];
+    assert!(
+        restore.contains("realpath -m -- \"$(dirname -- \"$p\")\""),
+        "circleci"
+    );
     let at = |y: &str, n: &str| y.find(n).unwrap_or_else(|| panic!("no {n:?}"));
     for later in [
         "name: rust toolchain",

@@ -245,7 +245,12 @@ jobs:
           git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
             rm -rf -- "$p"
           done
+          top="$(pwd -P)"
           git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            case "$(realpath -m -- "$(dirname -- "$p")")" in
+              "$top"|"$top"/*) ;;
+              *) echo "::error::$p: its directory links outside the checkout"; exit 1 ;;
+            esac
             mkdir -p -- "$(dirname -- "$p")"
             git show "$BASE:$p" > "$p"
           done
@@ -638,7 +643,12 @@ jobs:
           git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
             rm -rf -- "$p"
           done
+          top="$(pwd -P)"
           git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            case "$(realpath -m -- "$(dirname -- "$p")")" in
+              "$top"|"$top"/*) ;;
+              *) echo "::error::$p: its directory links outside the checkout"; exit 1 ;;
+            esac
             mkdir -p -- "$(dirname -- "$p")"
             git show "$BASE:$p" > "$p"
           done
