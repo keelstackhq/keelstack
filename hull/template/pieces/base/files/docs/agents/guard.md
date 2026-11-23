@@ -17,26 +17,36 @@ rule and the allowed alternative. Use the patterns below; they pass.
 
 ## Runs that pass
 
-| Need                       | Use                                                                                                                  |
-| -------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Tests, globs, regex        | `[ -f x ] && ...`, `grep -E 'a[bc]{2,}' f`, `ls *.md`, `"$(git rev-parse HEAD)"`                                     |
-| A script                   | `bash scripts/x.sh` or `./scripts/x.sh`: the guard reads it like typed commands                                      |
-| Start or re-run a workflow | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`) |
+| Need                        | Use                                                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| Tests, globs, regex         | `[ -f x ] && ...`, `grep -E 'a[bc]{2,}' f`, `ls *.md`, `"$(git rev-parse HEAD)"`                                     |
+| A script                    | `bash scripts/x.sh` or `./scripts/x.sh`: the guard reads it like typed commands                                      |
+| Check script syntax         | `bash -n scripts/x.sh`, `for f in scripts/*.sh; do bash -n "$f"; done` (`-n` only parses)                            |
+| A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                  |
+| Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                        |
+| Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`) |
 
-A script does not hide a command: the guard reads a shell script before it runs (also `bash < f`,
-scripts it runs, with `$1`/`$@` bound to the literal arguments, shell functions, and startup
-files: `BASH_ENV`, `ENV`, `--rcfile`) and refuses it when a line in it
-would be refused; it also refuses a script the same command (or a parent script) just wrote.
+A script does not hide a command: the guard reads a shell script before it runs (any shell by
+name: `bash`, `sh`, `rbash`, `mksh`, `busybox sh`, ...; also `bash < f`, `< f bash`, scripts it
+runs, with `$1`/`$@` bound to the literal arguments, shell functions, `trap` and `coproc` bodies,
+wrappers such as `sudo`, `timeout`, `flock`, `nice`, `su -c`, `script -c`, and startup files:
+`BASH_ENV`, `ENV`, `--rcfile`) and refuses it when a line in it would be refused. A script that
+does not exist when the guard runs is refused (a shell would fail on it anyway), and so is any
+script run after an earlier command in the same call that may write files the guard cannot name
+(downloads, archives, decoders, patches, builds, package managers, interpreters).
 Release workflows (file names with `release`, `publish` or `deploy`; the human can set the
 `GUARD_RELEASE_WORKFLOWS` regex in `.claude/settings.json` `env`) never start from here.
 
 The guard refuses a script it cannot read in full; run a literal path to a text script instead:
-larger than 512 KiB, NUL bytes, unreadable, missing when a script runs it, more than 32 scripts,
+larger than 512 KiB, NUL bytes, unreadable, more than 32 scripts,
 a path from a variable or `{}` (`bash "$F"`, `find -exec bash {} +`, `xargs bash`), a shell fed
 by a pipe, stdin or an expanding here-string or heredoc (`cat f | bash`, `bash <<< "$(cat f)"`),
-or a PATH dir that is not literal (`$HOME`, `$PWD`, `$(pwd)` are known; with a venv, run
-`.venv/bin/<tool>` instead of `source .venv/bin/activate`). `alias x=...` is refused: run the command. `gh api -F x=@file`
-and `--input` read a file into the request: pass values with `-f`.
+a `#!` interpreter it does not know, or a PATH dir that is not literal (`$HOME`, `$PWD`, `$(pwd)`,
+`$(npm bin)` are known; with a venv, run `.venv/bin/<tool>` instead of `source
+.venv/bin/activate`). `alias x=...` is refused: run the command. `source ~/.bashrc` is refused
+when the file holds code the guard cannot read: the Bash tool already starts from your shell, so
+drop it. `gh api -F x=@file` and `--input` read a file into the request: pass values with `-f`.
+`gh api` flags are read like gh (`-iX PUT` is `-i -X PUT`); a flag gh api does not have is refused.
 
 After `cd` into `.claude/`, `.claude/hooks/`, `.bosun/` or `.github/workflows/`, the rest of the
 command may only read (`ls`, `cat`, `grep`, `head`, `git log`, ..., redirects to `/dev/null`
@@ -49,6 +59,7 @@ with the full path instead, so the guard sees the target.
   `gh release`, no `gh pr merge` without `--auto`: open a PR and run `gh pr merge --auto`.
 - No reads of secret files (`.env*`, keys, `~/.ssh`, `~/.config/gh`) or whole-environment dumps.
 - No edits of `.claude/hooks/`, `.claude/settings*.json`, release workflows, `.bosun/`,
+  `.git/hooks/`, `.git/config`,
   `pins.toml` (release workflows install its versions), `.splice/lock.toml`; template-owned files ask first (change them with `splice update`).
 - No `gh api` writes to repo settings (rulesets, environments, secrets): those are owner steps.
 - A target the guard cannot read (`cd "$D"`, `eval`) is refused when it could hide one of the
@@ -56,9 +67,23 @@ with the full path instead, so the guard sees the target.
 
 ## Gaps that stay open
 
-A rail, not a sandbox. Not read: scripts in other languages and binaries; `$VAR` or `"$@"` in
-command position (only checked for risky words); a glob script path that matches nothing at hook
-time but a file made later; a `cd` to a variable inside a script; edits of guarded files from an
-interpreter. A re-run by id (`gh run rerun <id>`, `actions/runs/<id>/rerun`, `jobs/<id>/rerun`)
-cannot tell a release run from another: release workflows must stay environment-gated with a
-required human reviewer, so a re-run waits for that approval.
+A rail, not a sandbox. These stay open:
+
+- Code in other languages (Python, Node, Ruby, Perl, PHP, awk, make files, `#!` scripts in those
+  languages) and binaries: only checked for secret names and exec text, not run like a shell.
+- Programs that run other programs from their own config: `npm run`/`pnpm` scripts, `make`
+  targets, `cargo` build scripts, git hooks of a cloned repo, `.envrc`, editors.
+- `$VAR` or `"$@"` in command position: only checked for risky words (its `-c` code and the shell
+  scripts it is given are read). `eval "$(tool)"` passes only for env-setup tools (`ssh-agent`,
+  `direnv`, `fnm`, `mise`, ...); other `eval`, `bash -c "$X"` and `$(...)` as the program are refused.
+- Hook files a hooks manager already points git at (`.husky/`, lefthook config): `git commit` runs them.
+- Wrappers the guard does not know, given a command as separate words (`foo git push ...` is
+  refused only when its text names push, publish or release next to git, gh, npm, ...).
+- A `cd` to a variable inside a script, and a dir from a variable in a flag value (`tar -C "$D"`).
+- Edits of guarded files from an interpreter (`python -c "open('.claude/...','w')"`).
+- A file written in an earlier Bash call is read as it is when the next call runs: the guard
+  judges each call alone.
+- A default branch that `origin/HEAD` does not name (besides `main` and `master`).
+- A re-run by id (`gh run rerun <id>`, `actions/runs/<id>/rerun`, `jobs/<id>/rerun`) cannot tell a
+  release run from another: release workflows must stay environment-gated with a required human
+  reviewer, so a re-run waits for that approval.

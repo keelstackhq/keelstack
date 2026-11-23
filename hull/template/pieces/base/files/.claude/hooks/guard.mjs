@@ -13,12 +13,13 @@
 // fed from stdin, a pipe or `<(...)` is refused (below).
 // Comments, `case` patterns, quoted heredoc words (`E"OF"`) and `$'...'` escapes are read
 // like the shell; joined string literals are checked for secret file names.
-// A shell script the command runs (`bash f`, `bash < f`, `source f`, `./f` with a shell, `env -S`
-// or busybox shell, or no `#!`; a bare name in a dir the command adds to PATH) is read and judged
+// A shell script the command runs (any shell by basename: `bash f`, `< f rbash`, `source f`, `./f`
+// with a shell, `env -S` or busybox shell, or no `#!`; a bare name in a dir the command adds to
+// PATH; through wrappers: sudo, timeout, flock, nice, su -c, ...; trap and coproc bodies) is read and judged
 // like typed commands, nested scripts, function bodies and startup files (`BASH_ENV`, `ENV`,
 // `--rcfile`) too: they share the chain (a file written earlier is
 // refused) and `$1`/`$@` stand for the literal arguments. Fail closed: a script the guard cannot
-// read in full (> 512 KiB, NUL bytes, unreadable, missing inside a script, > 32 scripts, a path
+// read in full (> 512 KiB, NUL bytes, unreadable, > 32 scripts, a path
 // from a variable or `{}`, a shell fed by a pipe, stdin or an expanding here-string, `xargs bash`)
 // is refused; so are `alias x=...` and a PATH dir that is not literal ($HOME, $PWD, $(pwd) known).
 // `gh api` with an explicit GET and graphql queries are reads; a POST whose endpoint (the first
@@ -27,8 +28,12 @@
 // `gh run rerun`. `-F x=@file` and `--input` read a file into the request: refused (use `-f`).
 // `cd` into a guarded dir is allowed when the rest of the chain only reads (docs/agents/guard.md
 // lists the safe patterns). A deny names its rule and the match.
+// A script missing at hook time, or run after an earlier command that may write files the guard
+// cannot name (`opaqueWriter`: downloads, archives, decoders, builds, interpreters), is refused, as
+// is a `#!` naming an interpreter the guard does not know. `gh api` flags are parsed like pflag
+// (`-iXPUT`); an unknown flag is refused.
 // Known gaps: scripts in other languages, binaries, a `$VAR`/`"$@"` in command position (only
-// text-checked), a glob script path that matches nothing at hook time, a re-run by run/job id of a
+// text-checked), programs that run their own config (npm scripts, make), a re-run by run/job id of a
 // release run (the id does not name its workflow), a `cd` to a variable inside a script, editing
 // guarded files from an interpreter, a dir reached through a variable or substitution in a flag
 // value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch piped in (refused) or made by a
@@ -53,7 +58,11 @@ import { fileURLToPath } from "node:url";
 
 const SECRET_SAFE = new Set([".env.example", ".env.sample", ".env.template", ".dev.vars.example"]);
 const MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "fish"]);
+/** Any shell, by basename (`rbash`, `mksh`, `bash5.2`, `busybox` is unwrapped first): its code is
+ * read like typed commands. */
+const SHELL_RE =
+  /^(?:r?bash|sh|zsh|dash|ksh|ksh93|mksh|lksh|pdksh|oksh|ash|yash|posh|hush|fish|csh|tcsh|elvish|nu|xonsh|osh|ysh|rc|es)(?:[-.]?\d[\w.-]*)?$/;
+const SHELLS = { has: (p) => SHELL_RE.test(String(p)) };
 const INTERPRETERS = /^(python[\d.]*|node|nodejs|bun|deno|ruby|perl|php)$/;
 const LOCK_RE = /(^|\/)\.splice\/lock\.toml$/i;
 const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
@@ -170,6 +179,7 @@ const PROTECTED_RES = [
   /(^|\/)\.bosun(\/|$)/i,
   /(^|\/)\.claude$/i,
   /(^|\/)pins\.toml$/i, // tool versions that release workflows install with release credentials
+  /(^|\/)\.git\/(hooks(\/|$)|config$)/i, // git runs hooks and config programs
 ];
 const FAIL_CLOSED_RE = /\.claude\/(hooks|settings)|workflows\/release|\.bosun\/|\.splice\/lock/i;
 const isProtected = (p) => PROTECTED_RES.some((re) => re.test(p));
@@ -201,6 +211,18 @@ const REASON = {
     "gh api -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
   unscanned:
     "The guard must read a script before a shell runs it, and cannot read this one (too large, binary bytes, missing, unreadable, nested too deep, fed on stdin or a pipe, or named by a variable, glob or {}): run it as `bash <path>` with a literal path to a readable text script, or run the command directly.",
+  ghFlag:
+    "gh api with a flag the guard does not know cannot be read: use only -X/--method, -f/--raw-field, -F/--field, -H, -q/--jq, -t, -p, --input, --paginate, -i/--include, --silent, --verbose, --slurp, --hostname, --cache, each as its own word (`gh api -X GET repos/<o>/<r>/pulls -i`).",
+  pushVar:
+    "The guard cannot read a remote or branch from a variable or $(...): write the branch name literally (git push -u origin my-feature), or from a feature branch run `git push -u origin HEAD`.",
+  scriptLater:
+    "The guard reads a script before the command runs, and this one is missing now or may be written earlier in this same command (a download, archive, decoder, patch, build or interpreter): run that command first, then run the script in a separate Bash call so the guard reads what is there.",
+  rcfile:
+    "Your shell startup file holds code the guard cannot read, and the Bash tool already starts from your shell's environment: drop `source ~/.bashrc` (or ~/.profile, ~/.zshrc) and run the command; to set up one tool, export its variables or run it by its path (`.venv/bin/<tool>`, `node_modules/.bin/<tool>`).",
+  dynamic:
+    'The code here comes from a variable or a command\'s output (`eval "$(...)"`, `bash -c "$X"`, `$(cat f) ...`), which the guard cannot read: spell out the command, or run a script file with `bash <path>`.',
+  gitProgram:
+    "This makes git (or a pager or editor) run a program the guard cannot see (core.sshCommand, core.pager, core.editor, core.fsmonitor, diff.external, *.textconv, filter.*, credential.*, include.*, GIT_SSH_COMMAND, GIT_CONFIG_*): run git without it (`git -c core.pager=cat` and `GIT_PAGER=cat` pass), or ask the human.",
   alias:
     "Aliases hide the command they run from the guard: run the command directly (git push -u origin <feature-branch>).",
   ghMerge:
@@ -211,7 +233,7 @@ const REASON = {
     "Hidden or indirect push, publish or release is blocked: run the command directly (git push -u origin <feature-branch>) so the guard can see it.",
   lock: "only splice writes the lock (.splice/lock.toml): run `splice update` or `splice add` instead.",
   protected:
-    "Guard rails (.claude/hooks, .claude/settings*.json, release workflows, .bosun/, pins.toml, git hooksPath and aliases) belong to the human: ask the human; put local rules in docs/agents/project.md. Use paths from the repo root (no cd, -C, --chdir or --work-tree into guarded dirs) and apply patches from a file in the repo.",
+    "Guard rails (.claude/hooks, .claude/settings*.json, release workflows, .bosun/, pins.toml, .git/hooks, .git/config, git hooksPath and aliases) belong to the human: ask the human; put local rules in docs/agents/project.md. Use paths from the repo root (no cd, -C, --chdir or --work-tree into guarded dirs) and apply patches from a file in the repo.",
   failClosed:
     "The guard hit an internal error on a push, publish, release or secret call: retry the call; if it keeps failing, ask the human.",
 };
@@ -494,20 +516,42 @@ function stripPrefixes(tokens, inCase = false) {
       t = t.slice(["-u", "--unset", "-C", "--chdir"].includes(o) ? 2 : 1);
     }
   };
+  // A redirect before the command name (`< f bash`, `2>/dev/null cmd`) moves after it.
+  const tail = [];
+  let shellIfEmpty = false; // `sudo -s`, `unshare`, `chroot d` with no command start a shell
+  const done = () =>
+    !t.length && shellIfEmpty ? ["sh", ...tail] : tail.length ? [...t, ...tail] : t;
+  // `-c <code>` of a wrapper that runs a shell (`su -c`, `script -c`, `flock -c`).
+  const shellC = (from) => {
+    for (let n = from; n < t.length; n++) {
+      const x = t[n];
+      const eq = /^--command=(.*)$/s.exec(x);
+      if (eq) return ["sh", "-c", eq[1]];
+      if (x === "--command" || /^-[a-zA-Z]*c$/.test(x)) return ["sh", "-c", t[n + 1] ?? ""];
+    }
+    return null;
+  };
   for (;;) {
     const raw = t[0];
-    if (raw === undefined) return t;
+    if (raw === undefined) return done();
     const a = base(raw);
     const b = t[1];
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) t = t.slice(1);
+    if (/^(\d*|&)?(<<<|<>|>>|>\||>&|<&|&>>|&>|<(?!\()|>(?!\())/.test(raw)) {
+      const bare = /^(\d*|&)?(<<<|<>|>>|>\||>&|<&|&>>|&>|<|>)$/.test(raw);
+      tail.push(...t.slice(0, bare ? 2 : 1));
+      t = t.slice(bare ? 2 : 1);
+    } else if (/^[({]+$/.test(raw)) t = t.slice(1);
+    else if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(raw)) t = t.slice(1);
     else if (
       [
+        "if",
+        "while",
+        "until",
         "then",
         "do",
         "else",
         "elif",
         "!",
-        "exec",
         "command",
         "builtin",
         "time",
@@ -517,6 +561,14 @@ function stripPrefixes(tokens, inCase = false) {
     ) {
       t = t.slice(1);
       skipOptions();
+    } else if (a === "exec") {
+      t = t.slice(1);
+      skipOptions(["-a"]);
+    } else if (a === "coproc") {
+      // `coproc NAME { cmd; }` or `coproc cmd`
+      t = t.slice(1);
+      if (/^[A-Za-z_]\w*$/.test(t[0] ?? "") && /^[({]/.test(t[1] ?? "")) t = t.slice(1);
+      if (/^[({]+./.test(t[0] ?? "")) t = [t[0].replace(/^[({]+/, ""), ...t.slice(1)];
     } else if (a === "env") {
       t = t.slice(1);
       skipEnvOptions();
@@ -525,7 +577,8 @@ function stripPrefixes(tokens, inCase = false) {
       skipOptions();
     } else if (a === "sudo") {
       t = t.slice(1);
-      skipOptions(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U"]);
+      skipOptions(["-u", "-g", "-h", "-p", "-C", "-D", "-R", "-T", "-U", "--chdir", "--user"]);
+      shellIfEmpty = true;
     } else if (a === "nice") {
       t = t.slice(1);
       skipOptions(["-n", "--adjustment"]);
@@ -538,7 +591,7 @@ function stripPrefixes(tokens, inCase = false) {
     } else if (a === "doas") {
       t = t.slice(1);
       skipOptions(["-u", "-C"]);
-    } else if (a === "busybox") {
+    } else if (a === "busybox" || a === "toybox") {
       t = t.slice(1);
     } else if (a === "watch") {
       t = t.slice(1);
@@ -546,15 +599,50 @@ function stripPrefixes(tokens, inCase = false) {
       if (t.length === 1 && /\s/.test(t[0])) t = split(t[0]).flat();
     } else if (a === "xargs") {
       t = t.slice(1);
-      skipOptions(["-n", "-I", "-L", "-P", "-s", "-d", "-E"]);
+      skipOptions(
+        "-n -I -L -P -s -d -E -a --arg-file --delimiter --max-args --max-lines --max-procs --max-chars --replace --eof --process-slot-var".split(
+          " ",
+        ),
+      );
     } else if (a === "timeout") {
       t = t.slice(1);
-      skipOptions(["-s", "-k"]);
+      skipOptions(["-s", "-k", "--signal", "--kill-after"]);
       t = t.slice(1);
+    } else if (a === "flock") {
+      // `flock [opts] file cmd...` or `flock [opts] file -c cmd`
+      const c = shellC(1);
+      if (c) return [...c, ...tail];
+      t = t.slice(1);
+      skipOptions(["-w", "--wait", "--timeout", "-E", "--conflict-exit-code"]);
+      t = t.slice(1);
+    } else if (a === "taskset") {
+      t = t.slice(1);
+      if (t.some((x) => /^-[a-zA-Z]*p[a-zA-Z]*$|^--pid$/.test(x))) return done(); // changes a pid
+      skipOptions();
+      t = t.slice(1); // the mask or cpu list
+    } else if (a === "chrt") {
+      t = t.slice(1);
+      if (t.some((x) => /^-[a-zA-Z]*p[a-zA-Z]*$|^--pid$/.test(x))) return done();
+      skipOptions(["-T", "-P", "-D", "--sched-runtime", "--sched-period", "--sched-deadline"]);
+      if (/^\d+$/.test(t[0] ?? "")) t = t.slice(1);
+    } else if (a === "unshare" || a === "chroot") {
+      t = t.slice(1);
+      skipOptions(
+        "-S -G -R -w --setuid --setgid --root --wd --propagation --map-user --map-group --map-users --map-groups --userspec --groups".split(
+          " ",
+        ),
+      );
+      if (a === "chroot") t = t.slice(1);
+      shellIfEmpty = true;
+    } else if (a === "script" || a === "su" || a === "runuser") {
+      // only `-c` runs a command the guard can read; without it they start an interactive shell
+      // without `-c` they start a shell that reads stdin
+      const c = shellC(1);
+      return c ? [...c, ...tail] : ["sh", ...tail];
     } else if (a === "pnpm" && (b === "exec" || b === "dlx")) {
       t = t.slice(2);
       skipOptions();
-    } else return t;
+    } else return done();
   }
 }
 
@@ -592,6 +680,9 @@ export function commands(cmd) {
     if (seg.some((x) => /^esac\b/.test(x)) && caseDepth > 0) caseDepth--;
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
+    // `GIT_SSH_COMMAND='bash f' git fetch`, `GIT_CONFIG_KEY_0=alias.x`: a program the guard cannot see
+    const envHit = seg.find((x) => envRunsProgram(unmark(x)));
+    if (envHit) out.push(["@deny", "gitProgram", envHit]);
     // `PATH=dir:$PATH cmd`, `export PATH=...`: a bare name may now run a script in dir.
     for (const x of seg) {
       const m = /^PATH\+?=(.*)$/s.exec(unmark(x));
@@ -652,29 +743,80 @@ export function commands(cmd) {
     )
       out.push(["@evade", text]);
     if (prog === "find") {
-      const e = t.findIndex((x) => x === "-exec" || x === "-execdir" || x === "-ok");
+      const e = t.findIndex((x) => /^-(exec|execdir|ok|okdir)$/.test(x));
       if (e >= 0) {
         const end = t.findIndex((x, n) => n > e && (x === ";" || x === "+"));
         const inner = stripPrefixes(t.slice(e + 1, end < 0 ? undefined : end));
         if (inner.length) out.push(inner);
+        // -execdir runs in each match's dir: a relative script there is unknown here
+        const ip = base(inner[0] ?? "");
+        if (
+          /^-(execdir|okdir)$/.test(t[e]) &&
+          (SHELLS.has(ip) || ip === "source" || String(inner[0]).includes("/"))
+        )
+          out.push(["@deny", "unscanned", segText]);
         const ci = inner.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
         if (SHELLS.has(base(inner[0] ?? "")) && ci > 0 && inner[ci + 1] !== undefined)
           for (const x of commands(inner[ci + 1])) out.push(x);
       }
     }
-    if (/^[$`]|\$\(/.test(t[0])) out.push(["@evade", segText]);
+    // `/proc/self/exe`, `/dev/fd/3` as the program: the guard cannot know what runs
+    if (/^\/(proc|dev)\//.test(t[0])) out.push(["@deny", "unscanned", segText]);
+    // The program comes from a command's output (`$(cat f) ...`, `` `x` ``): code the guard cannot read.
+    if (/^`|^\$\(/.test(t[0])) out.push(["@deny", "dynamic", segText]);
+    if (/^[$`]|\$\(/.test(t[0])) {
+      out.push(["@evade", segText]);
+      // `$SHELL -c '...'`: the program may be a shell, so its code is read like one
+      const ci = t.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
+      if (ci > 0 && t[ci + 1] !== undefined) for (const x of commands(t[ci + 1])) out.push(x);
+    }
+    // A wrapper that changes dir (`env -C d`, `sudo -D d`, `unshare -w d`) before a script run:
+    // the script path resolves where the guard cannot follow.
+    const pre = seg.slice(0, Math.max(0, seg.indexOf(t[0])));
+    if (
+      pre.some((x) => /^(-C|--chdir|-D|-w|--wd)(=|$)|^-C./.test(x)) &&
+      (SHELLS.has(prog) || prog === "source" || prog === "." || t[0].includes("/"))
+    )
+      out.push(["@deny", "unscanned", segText]);
+    // An unknown program given a command line as text runs it (`parallel 'git push ...'`).
+    if (
+      !ARGS_ARE_DATA.has(prog) &&
+      !SHELLS.has(prog) &&
+      !INTERPRETERS.test(prog) &&
+      !t[0].startsWith("@")
+    )
+      if (EXEC_RE.test(t.slice(1).join(" "))) out.push(["@evade-exec", t.slice(1).join(" ")]);
     // `git $SUB ...` hides the subcommand; `git -C "$D" push` hides where it runs. A variable after
     // the subcommand is an argument.
     if (prog === "git") {
       const { sub, args } = gitSub(t);
       const hidden = (x) => /^[$`]|\$\(/.test(x ?? "");
       if (hidden(sub)) out.push(["@evade", text]);
+      // `git -c alias.x='!cmd' x`: the alias runs cmd like a shell
+      const al = gitSub(t)
+        .cfg.map((c) => /^alias\.([^=]+)=!(.*)$/is.exec(c))
+        .find((m) => m && m[1].toLowerCase() === String(sub).toLowerCase());
+      if (al) for (const x of commands(`${al[2]} ${gitSub(t).args.join(" ")}`)) out.push(x);
       else if (t.slice(1, t.length - args.length - 1).some(hidden)) out.push(["@evade", segText]);
+    }
+    if (prog === "trap") {
+      // `trap '<code>' SIG`: the code runs later, read like typed commands
+      const body = t.slice(1).find((x) => !/^-[-pl]?$/.test(x));
+      if (body !== undefined) {
+        out.push(["@evade", body]);
+        for (const inner of commands(body)) out.push(inner);
+      }
     }
     if (prog === "eval") {
       const body = t.slice(1).join(" ");
       out.push(["@evade", body]);
-      for (const inner of commands(body)) out.push(inner);
+      // code from a value or output; the output of a known env-setup tool is that tool's own work
+      const tool = /^"?\$\(\s*([\w./-]+)[^$`()]*\)?"?$/.exec(body.trim())?.[1]; // `)` may be cut
+      // (the tool itself is read as a substitution of this command)
+      if (!ENV_PRINTERS.has(base(tool ?? ""))) {
+        if (/[$`]/.test(body)) out.push(["@deny", "dynamic", segText]);
+        for (const inner of commands(body)) out.push(inner);
+      }
     }
     const noArgs = t.slice(1).every((x) => x === "-" || x === "-s") && !seg.docs?.length;
     // stripPrefixes drops a token's trailing `)`: give it back before the inert test.
@@ -711,6 +853,8 @@ export function commands(cmd) {
       }
       const i = t.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
       if (i > 0 && t[i + 1] !== undefined) {
+        // `bash -c "$X"`, `bash -c "$(cat f)"`: the code is a value the guard cannot read
+        if (/^\s*[$`]/.test(t[i + 1])) out.push(["@deny", "dynamic", segText]);
         for (const inner of commands(t[i + 1])) out.push(inner);
       } else if (noArgs) out.push(["@evade", text]); // script fed on stdin
     }
@@ -841,7 +985,7 @@ function pushRule(args, projectDir) {
     if (a === "--delete" || /^-[A-Za-z]*d[A-Za-z]*$/.test(a)) del = true;
     // A remote or refspec the guard cannot read (`"$B"`, `"$(git branch --show-current)"`) may
     // name the default branch or a tag.
-    if (!a.startsWith("-") && /[$`]/.test(a)) return "evasion";
+    if (!a.startsWith("-") && /[$`]/.test(a)) return "pushVar";
     if (!a.startsWith("-")) {
       refs.push(a);
       const dst = a.slice(a.lastIndexOf(":") + 1);
@@ -903,53 +1047,72 @@ function writesTarget(t, i) {
 /** `gh api` that writes: a non-GET method, or with no method a body/field flag (these imply POST);
  * graphql writes on a mutation or a query the guard cannot read (a file, stdin or a variable). */
 function ghApiWrites(args) {
-  let method;
-  let body = false;
-  for (let i = 0; i < args.length; i++) {
-    const a = args[i];
-    if (a === "-X" || a === "--method") method = args[i + 1];
-    else if (a.startsWith("--method=")) method = a.slice(9);
-    else if (/^-X./.test(a)) method = a.slice(2);
-    if (/^(-[fF]|--field|--raw-field|--input)(=|$)/.test(a) || /^-[fF][^-]/.test(a)) body = true;
-  }
-  if (args.includes("graphql"))
-    return args.some(
-      (a) => /\bmutation\b/i.test(a) || /^--input(=|$)/.test(a) || /query=[@$]/.test(a),
+  const { method, endpoint, fields, input } = ghApiParse(args);
+  if (endpoint === "graphql")
+    return (
+      input !== undefined || fields.some((f) => /\bmutation\b/i.test(f) || /^query=[@$]/.test(f))
     );
   if (method !== undefined) return String(method).toUpperCase() !== "GET";
-  return body;
+  return fields.length > 0 || input !== undefined;
 }
 
-/** `gh api` flags that take a value (the next argument unless written `--flag=value`). */
-const GH_API_VALUE = new Set(
-  "-X --method -f --raw-field -F --field -H --header -q --jq -t --template --input --hostname --cache -p --preview".split(
+/** `gh api` flags (pflag): short bools, short flags that take a value, long bools, long values. */
+const GH_API_SHORT_BOOL = new Set(["i", "h"]);
+const GH_API_SHORT_VALUE = new Set(["X", "f", "F", "H", "q", "t", "p"]);
+const GH_API_LONG_BOOL = new Set(
+  "--include --paginate --silent --verbose --slurp --help".split(" "),
+);
+const GH_API_LONG_VALUE = new Set(
+  "--method --raw-field --field --header --jq --template --input --hostname --cache --preview".split(
     " ",
   ),
 );
+const GH_API_SHORT_LONG = { X: "--method", f: "--raw-field", F: "--field", H: "--header" };
 
-/** `gh api` arguments read like gh: the endpoint is the first positional (flag values skipped);
- * `fileField` is a `-F`/`--field` value read from a file (`@path`) and `input` a `--input` body. */
+/** `gh api` arguments read like gh (pflag): a short group is bools, then at most one value flag
+ * that takes the rest of the word or the next argument (`-iXPUT`, `-iF k=v`); the endpoint is the
+ * first positional. `fileField` is a `-F`/`--field` value read from a file (`@path`), `input` a
+ * `--input` body, `unknown` a flag gh api does not have (or a group the guard cannot read). */
 function ghApiParse(args) {
   let method;
   let endpoint;
   let fileField;
   let input;
+  let unknown;
+  const fields = [];
+  const take = (flag, value) => {
+    if (flag === "--method") method = value;
+    if (flag === "--field" || flag === "--raw-field") fields.push(value ?? "");
+    if (flag === "--field" && /^[^=]*=@/.test(value ?? "")) fileField = value;
+    if (flag === "--input") input = value ?? "";
+    if (flag === "--header" && /method-override/i.test(value ?? "")) method = "OVERRIDE";
+  };
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
-    let flag = a;
-    let value;
-    const eq = /^(--[\w-]+)=(.*)$/s.exec(a);
-    if (eq) [flag, value] = [eq[1], eq[2]];
-    else if (/^-[XfFHqtp]./.test(a)) [flag, value] = [a.slice(0, 2), a.slice(2)];
-    else if (GH_API_VALUE.has(a)) value = args[++i];
-    else if (!a.startsWith("-") && endpoint === undefined) endpoint = a;
-    if (flag === "-X" || flag === "--method") method = value;
-    if ((flag === "-F" || flag === "--field") && /^[^=]*=@/.test(value ?? "")) fileField = value;
-    if (flag === "--input") input = value ?? "";
-    if ((flag === "-H" || flag === "--header") && /method-override/i.test(value ?? ""))
-      method = "OVERRIDE"; // the header changes the method: never a plain POST
+    if (a === "--") {
+      if (endpoint === undefined) endpoint = args[i + 1];
+      break;
+    }
+    if (a.startsWith("--")) {
+      const eq = /^(--[\w-]+)=(.*)$/s.exec(a);
+      const flag = eq ? eq[1] : a;
+      if (GH_API_LONG_VALUE.has(flag)) take(flag, eq ? eq[2] : args[++i]);
+      else if (!GH_API_LONG_BOOL.has(flag)) unknown ??= a;
+    } else if (a.startsWith("-") && a.length > 1) {
+      for (let k = 1; k < a.length; k++) {
+        const c = a[k];
+        if (GH_API_SHORT_BOOL.has(c)) continue;
+        if (!GH_API_SHORT_VALUE.has(c)) {
+          unknown ??= a;
+          break;
+        }
+        const value = k + 1 < a.length ? a.slice(k + 1).replace(/^=/, "") : args[++i];
+        take(GH_API_SHORT_LONG[c] ?? `-${c}`, value);
+        break;
+      }
+    } else if (endpoint === undefined) endpoint = a;
   }
-  return { method, endpoint, fileField, input };
+  return { method, endpoint, fileField, input, unknown, fields };
 }
 
 /** Workflow file names the guard treats as release workflows (never started from here):
@@ -1002,12 +1165,47 @@ function chdirs(tokens) {
   return out;
 }
 
+/** Tools whose printed shell code (`eval "$(tool ...)"`) sets up their own environment. */
+const ENV_PRINTERS = new Set(
+  "ssh-agent direnv fnm rbenv pyenv nodenv mise rtx conda brew opam starship zoxide dircolors lesspipe keychain".split(
+    " ",
+  ),
+);
+
+/** Variables whose value is a program git, a pager or an editor runs. */
+const PROGRAM_ENV_RE =
+  /^(GIT_(SSH|SSH_COMMAND|PAGER|EDITOR|SEQUENCE_EDITOR|EXTERNAL_DIFF|ASKPASS|PROXY_COMMAND|EXEC_PATH|TEMPLATE_DIR)|PAGER|MANPAGER|LESSOPEN|LESSCLOSE|EDITOR|VISUAL|SSH_ASKPASS|PROMPT_COMMAND)=(.*)$/s;
+/** Programs that are safe as a pager, editor or ssh command: they run nothing the guard misses. */
+const SAFE_PROGRAM_RE =
+  /^(cat|less|more|true|false|:|ssh|vi|vim|nvim|nano|emacs|code|head|tail|diff)?$/;
+/** Config keys whose value git runs as a program or that pull in more config. */
+const PROGRAM_KEY_RE =
+  /^(core\.(sshcommand|pager|editor|fsmonitor|askpass|gitproxy|alternaterefscommand)|sequence\.editor|diff\.(external|[^.=]+\.(textconv|command))|merge\.[^.=]+\.driver|filter\.|credential\.|gpg\.([^.=]+\.)?program|pager\.|uploadpack\.packobjectshook|ssh\.variant|remote\.[^.=]+\.(uploadpack|receivepack|proxy)|protocol\.|include\.|includeif\.)/i;
+const safeProgram = (v) => SAFE_PROGRAM_RE.test(base(String(v).trim().split(/\s+/)[0] ?? ""));
+
+/** True when an assignment makes git or a pager run a program the guard cannot read. */
+function envRunsProgram(x) {
+  const m = PROGRAM_ENV_RE.exec(x);
+  const value = x.slice(x.indexOf("=") + 1);
+  if (m) return /PATH|DIR$/.test(m[1]) ? value !== "" : !safeProgram(value);
+  const c = /^GIT_CONFIG(_PARAMETERS|_COUNT|_KEY_\d+|_VALUE_\d+|_GLOBAL|_SYSTEM)?=(.*)$/s.exec(x);
+  return !!c && !(/_GLOBAL|_SYSTEM/.test(c[1] ?? "") && c[2] === "/dev/null");
+}
+
+/** `git -c key=value` or `git config key value` that runs a program. */
+function programKey(key, value) {
+  if (!PROGRAM_KEY_RE.test(key)) return false;
+  return /^(credential|filter|include|includeif|protocol)/i.test(key)
+    ? value !== ""
+    : !safeProgram(value);
+}
+
 const RUNS_ENV_RE =
   /^(GIT_[A-Z0-9_]+|PAGER|LESSOPEN|LESSCLOSE|LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|EDITOR|VISUAL|NODE_OPTIONS|PERL5OPT|PYTHONSTARTUP)=/;
 
 /** `x>file` is `x` plus a redirect `>file`; a bare fd prefix (`2>/dev/null`) stays one token. */
 function splitRedirect(tok) {
-  const m = /^(.+?)((?:\d*|&)>.*)$/s.exec(tok);
+  const m = /^(.+?)((?:\d*|&)[<>].*)$/s.exec(tok);
   if (!m || /^(\d+|&)$/.test(m[1]) || /^[<>&]/.test(tok)) return [tok];
   return [m[1], m[2]];
 }
@@ -1112,6 +1310,7 @@ function bashRule(
     const [a0, a1] = args;
     if (a0 === "api") {
       const api = ghApiParse(args.slice(1));
+      if (api.unknown !== undefined) return "ghFlag";
       if (api.fileField !== undefined) return "ghField";
       if (api.method === "OVERRIDE") return "ghApi";
       if (ghApiWrites(args.slice(1))) {
@@ -1128,6 +1327,7 @@ function bashRule(
     if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1))
       return args.slice(2).some(releaseWorkflow) ? "publish" : null;
     if (a0 === "secret") return "ghAdmin";
+    if (a0 === "alias" && a1 !== undefined && !["list", "delete"].includes(a1)) return "alias";
     if (a0 === "repo" && ["edit", "delete", "archive", "rename", "transfer"].includes(a1))
       return "ghAdmin";
     if (a0 === "auth" && a1 === "token") return "secret";
@@ -1135,6 +1335,11 @@ function bashRule(
   if (prog === "git") {
     const { sub, args: rest, cfg } = gitSub(t);
     if (cfg.some((c) => /^core\.hookspath=/i.test(c))) return "protected";
+    for (const c of cfg) {
+      const eq = c.indexOf("=");
+      if (programKey(eq < 0 ? c : c.slice(0, eq), eq < 0 ? "x" : c.slice(eq + 1)))
+        return "gitProgram";
+    }
     if (sub === "push" && cfg.some((c) => /^(remote\.[^=]*\.push|push\.default)=/i.test(c)))
       return "pushDefault";
     const alias = cfg
@@ -1153,6 +1358,18 @@ function bashRule(
     if (sub === "push") return pushRule(rest, projectDir);
     if (sub === "config" && rest.some((a) => /^(core\.hookspath|alias\.)/i.test(a)))
       return "protected";
+    if (
+      sub === "config" &&
+      !rest.some((a) => /^(--get|--get-all|--get-regexp|-l|--list|--show-origin)$/.test(a))
+    ) {
+      const ops = rest.filter((a) => !a.startsWith("-"));
+      if (
+        ops.length &&
+        PROGRAM_KEY_RE.test(ops[0]) &&
+        (ops.length > 1 || rest.some((a) => /^--(add|replace-all)$/.test(a)))
+      )
+        if (programKey(ops[0], ops.slice(1).join(" "))) return "gitProgram";
+    }
     if (sub === "update-ref") {
       if (rest.some((a) => a === "--stdin" || a.startsWith("refs/tags/"))) return "tag";
       if (rest.some((a) => a.startsWith("refs/heads/") && isDefault(a, projectDir)))
@@ -1216,7 +1433,7 @@ function bashRule(
       "ksh",
     ];
     if (
-      inner.slice(0, 4).some((x) => SHELLISH.includes(base(x))) ||
+      inner.slice(0, 4).some((x) => SHELLISH.includes(base(x)) || SHELLS.has(base(x))) ||
       (INTERPRETERS.test(base(it[0] ?? "")) && it.some((a, n) => n > 0 && INLINE_RE.test(a))) ||
       /ENVIRON|environ|process\.env/.test(inner.join(" "))
     )
@@ -1240,7 +1457,8 @@ function bashRule(
   return null;
 }
 
-const GUARDED_DIR_RE = /^(\.claude(\/hooks)?|\.bosun(\/.*)?|\.github\/workflows)\/?$/i;
+const GUARDED_DIR_RE =
+  /^(\.claude(\/hooks)?|\.bosun(\/.*)?|\.github\/workflows|\.git(\/hooks)?)\/?$/i;
 
 /** `cd`/`git -C` into a guarded dir would turn later relative writes into unguarded names. */
 function guardedDir(d, projectDir, cwd) {
@@ -1251,7 +1469,14 @@ function guardedDir(d, projectDir, cwd) {
   );
 }
 
-const GUARDED_DIRS = [".claude", ".claude/hooks", ".bosun", ".github/workflows"];
+const GUARDED_DIRS = [
+  ".claude",
+  ".claude/hooks",
+  ".bosun",
+  ".github/workflows",
+  ".git",
+  ".git/hooks",
+];
 
 /** True when a glob (`.cla*`, `.?laude`, `.claud{e,x}`) could expand to a guarded dir. */
 function globHitsGuarded(glob, projectDir, cwd) {
@@ -1350,10 +1575,26 @@ function checkShell(text, projectDir, cwd, opts) {
     made: parent?.made ?? new Set(),
     tainted: parent?.tainted ?? new Set(),
     path: parent?.path ?? [],
+    state: parent?.state ?? { opaque: null }, // the first earlier command that may write any file
     guarded: opts.guarded,
     script,
+    lost: opts.lost ?? false, // a `cd` the guard cannot follow: relative script paths are unknown
   };
   const cmds = commands(text);
+  // Writes anywhere in this text (a later command can run first: `(sleep 1; bash f) & cp x f`).
+  const later = {
+    names: new Set(parent?.later?.names ?? []),
+    opaque: parent?.later?.opaque ?? null,
+  };
+  const async = /(^|[^&|>])&(?![&>])|(^|[^|>])\|(?!\|)|\bcoproc\b/.test(text);
+  const all = { made: new Set(), tainted: new Set() };
+  for (const t of cmds) {
+    if (String(t[0]).startsWith("@")) continue;
+    noteWrites(t, cwd, all);
+    if (async && !later.opaque && opaqueWriter(t)) later.opaque = t.join(" ");
+  }
+  for (const x of [...all.made, ...all.tainted]) later.names.add(x);
+  chain.later = later;
   // A `cd` into a guarded dir anywhere in the command makes all of it read-only: substitutions
   // are listed before the command that holds them.
   chain.guarded ||= cmds.some(
@@ -1376,8 +1617,25 @@ function checkShell(text, projectDir, cwd, opts) {
     const hit = runScript(t, projectDir, dirs, chain, seen);
     if (hit) return hit;
     noteWrites(t, cwd, chain);
-    const to = ["cd", "pushd"].includes(base(t[0])) && t.slice(1).find((d) => !d.startsWith("-"));
-    if (to && !/[$`*?[{~]/.test(to)) here = dirOf(here, to);
+    if (!chain.state.opaque && opaqueWriter(t)) chain.state.opaque = t.join(" ");
+    if (["cd", "pushd", "popd", "chdir"].includes(base(t[0]))) {
+      const ops = t.slice(1).filter((d) => !/^-[LPe@]+$/.test(d) && !/^\d*[<>&]/.test(d));
+      let to = ops[0];
+      if (base(t[0]) === "popd" || to === "-" || ops.length > 1) to = undefined;
+      else if (ops.length === 0) to = homedir();
+      else
+        to = to
+          .replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir())
+          .replace(
+            /^\$\(\s*dirname\s+"?\$\{?(0|BASH_SOURCE(\[0\])?)\}?"?\s*\)(?=\/|$)/,
+            scriptDir ?? "$",
+          );
+      if (to === undefined || /[$`*?[{~]/.test(to)) chain.lost = true;
+      else {
+        if (to.startsWith("/")) chain.lost = false;
+        here = dirOf(here, to);
+      }
+    }
   }
   return null;
 }
@@ -1399,6 +1657,10 @@ function notePath(value, here, chain) {
   for (const e of String(value).split(":")) {
     if (/^\$\{?PATH\}?$/.test(e)) continue;
     const dir = e
+      .replace(
+        /^(?:\$\((?:npm|pnpm|yarn) bin\)|`(?:npm|pnpm|yarn) bin`)(?=\/|$)/,
+        `${here}/node_modules/.bin`,
+      )
       .replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir())
       .replace(/^(\$\{?PWD\}?|\$\(pwd\)|`pwd`)(?=\/|$)/, here);
     if (/[$`*?[{]/.test(dir)) return false;
@@ -1407,7 +1669,56 @@ function notePath(value, here, chain) {
   return true;
 }
 
+/** True when a file is a shell script: a shell `.sh`-style name or a shell `#!`. */
+function looksShell(abs) {
+  if (/\.(sh|bash|zsh|ksh|mksh|dash|ash)$/.test(abs)) return true;
+  try {
+    const i = shebang(head(abs));
+    return i !== null && SHELLS.has(i);
+  } catch {
+    return false;
+  }
+}
+
+let shellBins;
+/** True when a binary is a shell (or busybox/toybox) by real name, or a copy of one in /etc/shells. */
+function shellBinary(abs) {
+  try {
+    const real = base(realpathSync(abs));
+    if (SHELLS.has(real) || /^(busybox|toybox)/.test(real)) return true;
+    if (!shellBins) {
+      shellBins = [];
+      let list = [];
+      try {
+        list = readFileSync("/etc/shells", "utf8").split("\n");
+      } catch {
+        // no /etc/shells
+      }
+      for (const p of [...list, "/bin/busybox", "/usr/bin/busybox", "/bin/sh", "/bin/bash"]) {
+        try {
+          if (p.startsWith("/")) shellBins.push(realpathSync(p.trim()));
+        } catch {
+          // not installed
+        }
+      }
+    }
+    const st = statSync(abs);
+    for (const sh of new Set(shellBins)) {
+      const ss = statSync(sh);
+      if (ss.size !== st.size) continue;
+      if (ss.ino === st.ino && ss.dev === st.dev) return true;
+      if (readFileSync(sh).equals(readFileSync(abs))) return true;
+    }
+  } catch {
+    // unreadable: not known as a shell
+  }
+  return false;
+}
+
 const MAX_SCRIPT = 512 * 1024;
+/** Shell startup files in the home dir (relative to it). */
+const RC_RE =
+  /^(\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin|kshrc|mkshrc|cshrc|tcshrc)|\.config\/fish\/config\.fish)$/;
 const MAX_SCRIPTS = 32;
 const SHELL_OPT_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
 const SHELL_C_RE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
@@ -1439,6 +1750,12 @@ function shellSource(t) {
       i++;
       break;
     }
+    // noexec only parses; an interactive shell (`-i`) ignores it
+    if (
+      /^-[a-zA-Z]*n[a-zA-Z]*$/.test(ops[i]) &&
+      !ops.some((o) => /^-[a-zA-Z]*i|^--interactive$/.test(o))
+    )
+      return { kind: "parse" };
     if (SHELL_C_RE.test(ops[i])) return { kind: "c" };
     if (/^-[a-zA-Z]*s[a-zA-Z]*$/.test(ops[i])) return { kind: "stdin", stdinFile }; // args follow
     if (/^--(version|help)$/.test(ops[i])) return { kind: "info" };
@@ -1475,6 +1792,12 @@ function scriptRuns(t, chain) {
       const abs = join(d, t[0]);
       if (existsSync(abs)) runs.push({ file: abs, shell: false, args: operands(t.slice(1)) });
     }
+  // A `$VAR` program or an unknown runner (`parallel`, `docker run`, ...) may run a shell script
+  // it is given: such operands are read when they are shell scripts.
+  if (!t[0].startsWith("@") && !SHELLS.has(prog) && !ARGS_ARE_DATA.has(prog))
+    for (const f of operands(t.slice(1)))
+      if (!f.startsWith("-") && !/[$`]/.test(f))
+        runs.push({ file: f.replace(/^[^=]*=/, ""), shell: true, args: [], optional: true });
   // `source name` searches PATH for a name without a slash.
   const src = runs[0];
   if ((prog === "source" || prog === ".") && src && !src.file.includes("/"))
@@ -1511,6 +1834,10 @@ function shebang(text) {
   return prog;
 }
 
+/** `#!` interpreters of languages the guard knows are not a shell (their code is a known gap). */
+const KNOWN_LANG_RE =
+  /^(?:python[\d.]*|node|nodejs|bun|deno|ruby|perl|php|awk|gawk|mawk|nawk|sed|make|gmake|tsx|ts-node)$/;
+
 /** Magic numbers of executables the kernel runs itself (ELF, Mach-O, PE, wasm). */
 const BINARY_RE =
   /^(\x7fELF|\xfe\xed\xfa[\xce\xcf]|[\xce\xcf]\xfa\xed\xfe|\xca\xfe\xba\xbe|MZ|\0asm)/;
@@ -1539,35 +1866,52 @@ function stripComments(text) {
 
 /** A script the command runs is checked like typed commands. The guard reads all of it or refuses
  * (fail closed): too large, NUL bytes, unreadable, nested more than MAX_SCRIPTS deep, a path from
- * a variable or glob, or (inside a script) missing at hook time. Binaries and non-shell `#!`
+ * a variable or glob, or missing at hook time (`scriptLater`). Binaries and known-language `#!`
  * scripts run directly are not read. A script written earlier in the same command is refused. */
 function runScript(t, projectDir, dirs, chain, seen) {
   for (const run of scriptRuns(t, chain)) {
     // `$HOME`, `$PWD` and `$CLAUDE_PROJECT_DIR` at the start are known; other variables are not.
     const name = stripTok(run.file)
+      .replace(/^~\+(?=\/|$)/, dirs[0])
       .replace(/^(~|\$\{?HOME\}?)(?=\/)/, homedir())
       .replace(/^\$\{?PWD\}?(?=\/)/, dirs[0])
       .replace(/^\$\{?CLAUDE_PROJECT_DIR\}?(?=\/)/, projectDir);
     const refuse = (why) => ({ rule: "unscanned", shown: `${name}: ${why}` });
-    // A glob runs what it matches now (a case pattern matches nothing); `$`, backticks and braces
+    // A glob runs what it matches now (none: refused as missing); `$`, backticks and braces
     // (`find -exec bash {}`) name a file the guard cannot know.
     const glob = /[*?[]/.test(name);
-    if (/[$`{]/.test(name) || (glob && typeof nodeFs.globSync !== "function"))
+    if (/^~|[$`{]/.test(name) || (glob && typeof nodeFs.globSync !== "function")) {
+      if (run.optional) continue;
       return refuse("a path the guard cannot read");
+    }
+    if (chain.lost && !name.startsWith("/")) {
+      if (run.optional) continue;
+      return refuse("relative, after a cd the guard cannot follow: use an absolute path");
+    }
     const paths = dirs.flatMap((d) =>
       glob ? nodeFs.globSync(name, { cwd: d }).map((m) => resolve(d, m)) : [resolve(d, name)],
     );
-    let found = glob;
+    let found = false;
+    const under = (set) => [...set].some((w) => abs0 === w || abs0.startsWith(`${w}/`));
+    let abs0;
     for (const abs of paths) {
-      if (chain.tainted.has(abs))
-        return { rule: "evasion", shown: `${name}: written by this command` };
+      abs0 = abs;
       let st;
       try {
         st = statSync(abs);
       } catch (e) {
-        if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
-        return refuse("unreadable");
+        if (e?.code !== "ENOENT" && e?.code !== "ENOTDIR") return refuse("unreadable");
       }
+      // An operand of an unknown runner or `$VAR` counts only when it is a shell script.
+      if (run.optional && !(st?.isFile() && looksShell(abs))) continue;
+      if (under(chain.tainted) || under(chain.made))
+        return { rule: "evasion", shown: `${name}: written by this command` };
+      if (under(chain.later.names))
+        return { rule: "scriptLater", shown: `${name}: written in this same command` };
+      // Whatever an earlier (or concurrent) command wrote is read only at run time: refuse.
+      const opaque = chain.state.opaque ?? chain.later.opaque;
+      if (opaque) return { rule: "scriptLater", shown: `${name} with ${opaque}` };
+      if (!st) continue;
       found = true;
       if (!st.isFile()) continue; // a directory: the shell fails
       const key = `${abs}\0${run.args.join("\0")}`;
@@ -1576,9 +1920,15 @@ function runScript(t, projectDir, dirs, chain, seen) {
       try {
         if (!run.shell) {
           const top = head(abs);
-          if (BINARY_RE.test(top)) continue; // a binary the kernel runs
+          if (BINARY_RE.test(top)) {
+            if (shellBinary(abs)) return refuse("a shell under another name: run it by its name");
+            continue; // a binary the kernel runs
+          }
           const interp = shebang(top);
-          if (interp !== null && !SHELLS.has(interp)) continue; // another language: a known gap
+          if (interp !== null && !SHELLS.has(interp)) {
+            if (KNOWN_LANG_RE.test(interp)) continue; // another language: a known gap
+            return refuse(`#! names ${interp || "nothing"}, an interpreter the guard cannot read`);
+          }
         }
         if (st.size > MAX_SCRIPT) return refuse(`larger than ${MAX_SCRIPT} bytes`);
         text = readFileSync(abs, "utf8");
@@ -1592,14 +1942,19 @@ function runScript(t, projectDir, dirs, chain, seen) {
         seen,
         parent: chain,
         guarded: chain.guarded,
+        lost: chain.lost,
         script: true,
         scriptDir: dirname(abs),
         argv: run.args,
       });
+      // A home startup file the guard cannot pass: it already ran for this shell; say so.
+      if (hit && RC_RE.test(posix.relative(homedir(), abs)))
+        return { rule: "rcfile", shown: `${name}: ${hit.shown}` };
       if (hit) return { rule: hit.rule, shown: `${name}: ${hit.shown}` };
     }
-    // A script that runs a file missing now could run whatever is written there later.
-    if (!found && chain.script) return refuse("missing when the guard ran");
+    // A script missing now could run whatever is written there later (a shell fails on it anyway).
+    if (!found && !run.optional && (run.shell || chain.script || chain.state.opaque))
+      return { rule: "scriptLater", shown: `${name}: missing when the guard ran` };
   }
   return null;
 }
@@ -1676,6 +2031,65 @@ function isRepoPatch(t) {
   const dd = t.indexOf("--");
   const specs = dd < 0 ? [] : t.slice(dd + 1).filter((x) => !/^(\d*>|--output)/.test(x));
   return specs.length > 0 && !specs.some((x) => riskyPathspec(x) || /^\d*>/.test(x));
+}
+
+/** Programs whose arguments are data, never a command or script they run. */
+const ARGS_ARE_DATA = new Set(
+  (
+    "ls cat head tail wc grep egrep fgrep rg ag stat du diff cmp jq pwd echo printf true false test [ " +
+    "cd pushd popd basename dirname realpath readlink sha256sum md5sum mkdir cp mv ln install tee touch " +
+    "rm rmdir unlink chmod chown truncate export local declare readonly typeset unset set shift sleep " +
+    "date sort uniq cut tr nl tac rev comm join paste fold fmt column od hexdump file which type hash " +
+    "id whoami hostname uname seq git gh npm pnpm yarn bun cargo rustc rustup hoist sops age splice " +
+    "bosun keel berth hoard tsc vp turbo node nodejs deno python python3 ruby perl php alias trap " +
+    "source . eval for while until if case select function return exit kill wait printenv curl wget find"
+  ).split(" "),
+);
+
+/** Commands whose file writes the guard can name (targets tracked by noteWrites) or that write none. */
+const TRANSPARENT = new Set(
+  (
+    "mkdir cp mv ln install tee touch rm rmdir unlink chmod chown truncate dd export set shift unset " +
+    "local declare readonly typeset sleep date test [[ : for while until if fi done esac case " +
+    "return exit break continue wait trap sort uniq cut tr nl tac rev comm join paste fold fmt " +
+    "column od hexdump file which type hash umask id whoami hostname uname env printenv seq " +
+    "yes tree less more source ."
+  ).split(" "),
+);
+/** git subcommands that write no work-tree file and run no hook (commit runs hooks). */
+const GIT_SAFE = new Set(
+  "status log diff show ls-files blame rev-parse fetch push branch tag remote ls-remote describe shortlog cat-file rev-list merge-base symbolic-ref for-each-ref add grep reflog name-rev var version help config".split(
+    " ",
+  ),
+);
+
+/** True when `t` may write files whose names or content the guard cannot know before it runs: a
+ * download, archive, decoder, patch, build tool, package manager or interpreter. */
+function opaqueWriter(t) {
+  const prog = base(t[0] ?? "");
+  if (!prog || prog.startsWith("@") || /^\d*[<>&]/.test(t[0])) return false;
+  if (READ_ONLY_PROGS.has(prog) || SHELLS.has(prog)) return false;
+  if (prog === "git")
+    return !GIT_SAFE.has(gitSub(t).sub) || t.some((x) => /^(-o|--output)/.test(x));
+  // `-t dir` writes names the guard does not track
+  if (
+    ["cp", "mv", "ln", "install"].includes(prog) &&
+    t.some((x) => /^(-[a-zA-Z]*t|--target-directory)/.test(x))
+  )
+    return true;
+  if (
+    MANAGERS.has(prog) &&
+    /^(bin|root|view|info|ls|list|why|-v|--version|config)$/.test(t[1] ?? "")
+  )
+    return false;
+  if (prog === "gh")
+    return t.some((x) => ["download", "clone", "checkout", "extension"].includes(x));
+  if (prog === "curl")
+    return t.some((x) =>
+      /^-[a-zA-Z]*[oOJK]|^--(output|remote-name|output-dir|config|create-dirs)/.test(x),
+    );
+  if (prog === "find") return t.some((x) => /^-(fprint|fprintf|fls|delete)/.test(x));
+  return !TRANSPARENT.has(prog);
 }
 
 /** Track files written earlier in a chain: a repo patch (`git diff -- src > f`) is the repo's own

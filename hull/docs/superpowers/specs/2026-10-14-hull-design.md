@@ -498,7 +498,7 @@ settings pin no main-session model (the session's own choice stands).
   `publish`, `deploy`, or `GUARD_RELEASE_WORKFLOWS`) or re-runs a run or job is allowed like
   `gh workflow run` / `gh run rerun`; `-F x=@file` and `--input` are refused (use `-f`). A shell
   script the command runs (`bash f`, `bash < f`, `source f`, `./f`) is read and judged like typed
-  commands; one the guard cannot read in full (too large, NUL bytes, missing inside a script,
+  commands; one the guard cannot read in full (too large, NUL bytes, missing at hook time or after an earlier writer,
   stdin, a variable path, nested more than 32 deep) is refused. Indirection (`eval`,
   `sh` or an interpreter fed from a pipe, `$VAR`/`$(...)` as the command, `git -c alias.x=`) denies
   when the text mentions push, publish or release; interpreter code (`-c`/`-e`, heredoc) is data
