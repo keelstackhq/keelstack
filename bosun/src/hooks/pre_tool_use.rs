@@ -640,8 +640,17 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
     }
     let mut buf = Vec::new();
     let read = opened.and_then(|f| f.take(MAX + 1).read_to_end(&mut buf));
-    // A binary (a NUL in its first 8 KiB, as git and grep judge it) is a program, not a script.
-    let binary = buf.iter().take(8192).any(|b| *b == 0);
+    // A binary is an ELF or Mach-O program; any other file, NUL bytes or not, is read as text
+    // (a shell runs a script with a NUL past its first line).
+    const MAGIC: [&[u8]; 6] = [
+        b"\x7fELF",
+        b"\xfe\xed\xfa\xce",
+        b"\xfe\xed\xfa\xcf",
+        b"\xce\xfa\xed\xfe",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+    ];
+    let binary = MAGIC.iter().any(|m| buf.starts_with(m));
     match read {
         Err(_) => Some(Script::Unreadable("it cannot be opened")),
         Ok(_) if binary => Some(Script::Binary),

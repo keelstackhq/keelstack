@@ -166,6 +166,21 @@ struct ScriptPath {
     path: String,
     shell: bool,
     first: bool,
+    /// Code the guard cannot see (a variable path, `bash -c "$(..)"`, `bash <<< "$X"`): why,
+    /// and whether only the typed command is refused for it (a variable path in a script is a
+    /// known miss).
+    unseen: Option<(&'static str, bool)>,
+}
+
+impl ScriptPath {
+    fn file(path: String, shell: bool, first: bool) -> Self {
+        ScriptPath {
+            path,
+            shell,
+            first,
+            unseen: None,
+        }
+    }
 }
 
 /// The literal paths an interpreter or shell is given in a command (also a `./x` or `/x`
@@ -180,28 +195,24 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
     for i in command_words(&w) {
         let (word, name) = (&w[i], runner_name(&w[i]));
         if word.contains('/') && !RUNS.contains(&name) {
-            out.extend(literal_path(word).map(|path| ScriptPath {
-                path,
-                shell: false,
-                first: true,
-            }));
+            out.extend(literal_path(word).map(|path| ScriptPath::file(path, false, true)));
         }
         let args = w[i + 1..].iter().take_while(|a| *a != SEP);
         if SHELL_RUNS.contains(&name) {
             // A shell runs only its first operand; later ones are the script's arguments.
-            out.extend(shell_script(name, args).map(|path| ScriptPath {
-                path,
-                shell: true,
-                first: true,
-            }));
+            let all: Vec<String> = args.cloned().collect();
+            out.extend(shell_run(name, &all));
         } else if RUNS.contains(&name) {
             for (k, a) in args.filter(|a| !a.starts_with('-')).take(4).enumerate() {
-                out.extend(literal_path(a).map(|path| ScriptPath {
-                    path,
-                    shell: false,
-                    first: k == 0,
-                }));
+                out.extend(literal_path(a).map(|path| ScriptPath::file(path, false, k == 0)));
             }
+        } else if word == "eval" && args.clone().any(|a| built(a)) {
+            out.push(ScriptPath {
+                path: "eval".into(),
+                shell: true,
+                first: true,
+                unseen: Some((BUILT_CODE, false)),
+            });
         }
     }
     if depth < MAX_DEPTH {
@@ -212,36 +223,108 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
     out
 }
 
-/// The script file a shell runs: its first operand after options (`-o`/`-O`/`+o`/`+O` and
-/// `--rcfile`/`--init-file` take a value, `--` ends them); none with `-c` (a code string,
-/// judged as a nested command) or `-s` (stdin). `source` and `.` take no options.
-fn shell_script<'a>(name: &str, mut args: impl Iterator<Item = &'a String>) -> Option<String> {
-    let source = matches!(name, "source" | ".");
-    while let Some(a) = args.next() {
-        if !source {
-            if a == "--" {
-                return args.next().and_then(|f| literal_path(f));
+const BUILT_CODE: &str = "its code is built when the command runs (`$(..)`, a backtick or a \
+    variable), which the guard cannot read";
+
+/// Whether a code word is built at run time: a substitution, or one variable (`"$X"`).
+fn built(word: &str) -> bool {
+    let w = word.trim_matches(|c| c == '"' || c == '\'');
+    let var = w.strip_prefix('$').is_some_and(|v| {
+        let v = v.trim_start_matches('{').trim_end_matches('}');
+        !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    });
+    !word.starts_with('\'') && (w.contains("$(") || w.contains('`') || var)
+}
+
+/// What a shell runs: the file of its first operand after options (`-o`/`-O`/`+o`/`+O` and
+/// `--rcfile`/`--init-file` take a value, `--` ends them; `source` and `.` take no options);
+/// with `-c`, its code string (judged as a nested command, refused when built); with no
+/// operand or `-s`, its stdin: a `< f` file is read as the script, a here-string with `$` or a
+/// substitution is refused. A pipe into a shell is refused elsewhere.
+fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
+    let (mut opts, mut i) = (!matches!(name, "source" | "."), 0);
+    let (mut file, mut code, mut expect_code, mut stdin_mode) = (None, None, false, false);
+    let (mut stdin, mut here) = (None::<&str>, None::<&str>);
+    while i < args.len() {
+        let a = args[i].as_str();
+        i += 1;
+        let r = a.trim_start_matches(|c: char| c.is_ascii_digit());
+        let fd0 = a.len() == r.len() || a.starts_with('0');
+        if r.starts_with(['<', '>']) || r.starts_with("&>") {
+            let op = r.chars().take_while(|c| "<>&|".contains(*c)).count();
+            let target = if r.len() > op {
+                &r[op..]
+            } else {
+                i += 1;
+                args.get(i - 1).map_or("", String::as_str)
+            };
+            match &r[..op] {
+                "<<<" if fd0 => here = Some(target),
+                "<" if fd0 => stdin = Some(target),
+                _ => {}
             }
-            if matches!(a.as_str(), "--rcfile" | "--init-file") {
-                args.next();
+            continue;
+        }
+        if file.is_some() || code.is_some() || stdin_mode {
+            continue;
+        }
+        if expect_code {
+            code = Some(a);
+            continue;
+        }
+        if opts {
+            if a == "--" {
+                opts = false;
+                continue;
+            }
+            if matches!(a, "--rcfile" | "--init-file") {
+                i += 1;
                 continue;
             }
             if a.starts_with("--") {
                 continue;
             }
             if a.len() > 1 && a.starts_with(['-', '+']) {
-                if a[1..].contains(['c', 's']) {
-                    return None;
-                }
+                expect_code |= a[1..].contains('c');
+                stdin_mode |= a[1..].contains('s');
                 if a[1..].contains(['o', 'O']) {
-                    args.next();
+                    i += 1;
                 }
                 continue;
             }
         }
-        return literal_path(a);
+        file = Some(a);
     }
-    None
+    let unseen = |why, top_only| ScriptPath {
+        path: name.to_string(),
+        shell: true,
+        first: true,
+        unseen: Some((why, top_only)),
+    };
+    if expect_code {
+        return code.filter(|c| built(c)).map(|_| unseen(BUILT_CODE, false));
+    }
+    if let Some(f) = file.filter(|_| !stdin_mode) {
+        return match literal_path(f) {
+            Some(path) => Some(ScriptPath::file(path, true, true)),
+            None => Some(unseen(
+                "its script path is built when the command runs (a variable, a glob), which \
+                 the guard cannot read",
+                true,
+            )),
+        };
+    }
+    if let Some(h) = here {
+        return (built(h) || h.contains('$')).then(|| unseen(BUILT_CODE, false));
+    }
+    let f = stdin?;
+    Some(match literal_path(f) {
+        Some(path) => ScriptPath::file(path, true, true),
+        None => unseen(
+            "it reads its script from a file the guard cannot name",
+            false,
+        ),
+    })
 }
 
 /// What the hook found at a script path.
@@ -250,7 +333,8 @@ pub enum Script {
     Text(String),
     /// A file the hook will not read in full: why (too large, not a regular file, /proc).
     Unreadable(&'static str),
-    /// A binary program (not text): run like any program on PATH, never read.
+    /// An ELF or Mach-O program: run directly like one on PATH, never read; refused when a
+    /// shell is told to run it.
     Binary,
 }
 
@@ -378,11 +462,35 @@ fn walk(
         default_branch,
         sink: sinks.map(|s| s.code),
     };
+    // A non-interactive shell expands aliases only after `shopt -s expand_aliases`; an alias
+    // hides the command it runs.
+    if command.contains("expand_aliases") {
+        return Some(
+            "`shopt -s expand_aliases` is refused: an alias hides the command it runs; run \
+             the command itself"
+                .into(),
+        );
+    }
     let writes: Vec<String> = super::bash_writes(command)
         .iter()
         .map(|w| w.trim_start_matches("./").to_string())
         .collect();
-    for ScriptPath { path, shell, first } in script_paths(command, 0) {
+    for ScriptPath {
+        path,
+        shell,
+        first,
+        unseen,
+    } in script_paths(command, 0)
+    {
+        if let Some((why, top_only)) = unseen {
+            if !top_only || seen.is_empty() {
+                return Some(format!(
+                    "`{path}` is refused: {why}; write the script to a file, read it, then run \
+                     the file"
+                ));
+            }
+            continue;
+        }
         // stdin by name, fed by a heredoc: the body is in the command text, which
         // `inline_rule` scans. A heredoc in another command does not count.
         if STDIN.contains(&path.as_str()) && heredoc_feeds(command, &path) {
@@ -400,7 +508,14 @@ fn walk(
             continue;
         }
         let code = match read(&path) {
-            None | Some(Script::Binary) => continue,
+            None => continue,
+            Some(Script::Binary) if !shell => continue,
+            Some(Script::Binary) => {
+                return Some(format!(
+                    "the script `{path}` is refused: a shell is told to run a binary, which the \
+                     guard cannot read as a script; run the program directly"
+                ));
+            }
             Some(Script::Text(code)) => code,
             Some(Script::Unreadable(_)) if !first => continue,
             Some(Script::Unreadable(why)) => {

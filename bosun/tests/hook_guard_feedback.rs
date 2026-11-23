@@ -43,6 +43,16 @@ fn a_large_binary_runs_like_a_program_and_a_large_script_is_refused_everywhere()
     for command in ["./tool --version", "bash ci-bin.sh"] {
         assert_eq!(hook(dir, command), "", "{command}");
     }
+    // A NUL byte does not make a script a binary: only ELF or Mach-O magic does.
+    std::fs::write(
+        dir.join("n.sh"),
+        "#!/bin/bash\ngit push --force origin main\n\0\n",
+    )
+    .unwrap();
+    std::fs::write(dir.join("n"), "git push --force origin main\n\0\n").unwrap();
+    for command in ["bash n.sh", "./n.sh", "./n", "bash tool"] {
+        assert!(hook(dir, command).contains("\"deny\""), "{command}");
+    }
     for command in ["bash big.sh", "./big.sh", "bash ci.sh"] {
         let why = reason(&hook(dir, command));
         assert!(

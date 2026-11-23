@@ -160,18 +160,14 @@ fn g5_one_rule_for_scripts_run_directly_or_by_a_script() {
     let files = [
         ("x.sh", BAD),
         ("ci.sh", "#!/bin/bash\nset -e\n./x.sh\n"),
-        ("ci-bin.sh", "#!/bin/bash\n./bin --test\nbash ./bin\n"),
+        ("ci-bin.sh", "#!/bin/bash\n./bin --test\n"),
+        ("ci-shbin.sh", "#!/bin/bash\nbash ./bin\n"),
         ("ci-big.sh", "#!/bin/bash\nbash big.sh\n"),
         ("ci-ok.sh", "#!/bin/bash\nbash ok.sh\n"),
         ("ok.sh", "echo ok\n"),
     ];
-    // A binary is a program, like one on PATH: run directly, by a shell or by a script.
-    for cmd in [
-        "./bin --version",
-        "bash bin",
-        "bash ci-bin.sh",
-        "bash ci-ok.sh",
-    ] {
+    // A binary (ELF, Mach-O) is a program, like one on PATH, when it runs directly.
+    for cmd in ["./bin --version", "bash ci-bin.sh", "bash ci-ok.sh"] {
         assert_eq!(hook(cmd, &files), None, "{cmd}");
     }
     // A script that merges, or one too big to read, is refused the same at every level.
@@ -181,9 +177,49 @@ fn g5_one_rule_for_scripts_run_directly_or_by_a_script() {
         "./ci.sh",
         "bash big.sh",
         "bash ci-big.sh",
+        // A shell told to run a binary: the guard cannot read it as a script.
+        "bash bin",
+        "source bin",
+        "bash ci-shbin.sh",
     ] {
         assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
     }
+}
+
+#[test]
+fn a_shell_reading_code_the_guard_cannot_see_is_refused() {
+    let files = [("x.sh", BAD), ("ok.sh", "echo ok\n")];
+    for cmd in [
+        "bash < x.sh",
+        "sh -s < x.sh",
+        "bash 0<x.sh",
+        "bash <<< \"$(cat ok.sh)\"",
+        "bash -c \"$(cat ok.sh)\"",
+        "sh -c \"$X\"",
+        "eval \"$(cat ok.sh)\"",
+        "F=ok.sh; bash $F",
+        "bash \"$F\" --x",
+        "cat ok.sh | bash",
+        "echo ok.sh | xargs bash",
+        // A non-interactive shell expands aliases only after this.
+        "shopt -s expand_aliases\nalias p='git push --force origin main'\np",
+    ] {
+        assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
+    }
+    for cmd in [
+        "bash < ok.sh",
+        "bash <<< 'echo hi'",
+        "bash -c 'echo hi'",
+        "bash -c \"cd $D && ls\"",
+    ] {
+        assert_eq!(hook(cmd, &files), None, "{cmd}");
+    }
+    // Inside a script a variable script path is a known miss (repo test scripts run
+    // `bash "$here/x.sh"`); stdin and built code are refused there too.
+    let runs = |body: &str| hook("bash t.sh", &[("t.sh", body), ("x.sh", BAD)]);
+    assert_eq!(runs("bash \"$here/ok.sh\"\n"), None);
+    assert!(runs("bash < x.sh\n").is_some());
+    assert!(runs("bash -c \"$(cat x.sh)\"\n").is_some());
 }
 
 #[test]
