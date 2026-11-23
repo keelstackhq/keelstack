@@ -5,28 +5,47 @@
 // sandbox: the real fix is a server-side branch ruleset and environment-gated release.
 // Judges the commands that run: the executable and its arguments, `$(...)`, backticks and `<(...)`
 // outside single quotes (also in heredocs with an unquoted delimiter), and shell heredocs. Quoted
-// heredoc bodies and quoted prose are data. `eval`, `sh`/interpreter fed from a pipe, `$VAR` or
+// heredoc bodies and quoted prose are data. `eval`, an interpreter fed from a pipe, `$VAR` or
 // `$(...)` in command position and git `-c alias.x=` deny when the text mentions push, publish or
 // release; interpreter code (`-c`/`-e`, heredoc) is data only when every statement is inert
 // (`inert()`: print/echo of literals or names; Python: read or json/yaml-safe-load a literal path);
-// any other code is scanned (fail closed). Code from stdin (`source /dev/stdin`, `bash <(...)`, `xargs`) is scanned
-// as text. Comments, `case` patterns, quoted heredoc words (`E"OF"`) and `$'...'` escapes are read
+// any other code is scanned (fail closed). Interpreter code from stdin is scanned as text; a shell
+// fed from stdin, a pipe or `<(...)` is refused (below).
+// Comments, `case` patterns, quoted heredoc words (`E"OF"`) and `$'...'` escapes are read
 // like the shell; joined string literals are checked for secret file names.
-// A shell script the command runs (`bash f`, `source f`, `./f` with a shell or no `#!`) is read and
-// judged like typed commands, nested scripts too; running a script the same command wrote is refused.
-// `gh api` with an explicit GET and graphql queries are reads; a POST that dispatches a literal
-// non-release workflow file or re-runs a run/job matches `gh workflow run` / `gh run rerun`. `cd`
-// into a guarded dir is allowed when
-// the rest of the chain only reads (docs/agents/guard.md lists the safe patterns). A deny names its rule and the match.
-// Known gaps: scripts in other languages, binaries, a script path built from a variable, a `cd` to a
-// variable inside a script, editing guarded files from an interpreter, a dir reached through
-// a variable or substitution in a flag value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch
-// piped in (refused) or made by a producer other than `git diff|show|format-patch -- <paths>`
-// (refused), and a default branch that origin/HEAD does not name. Node built-ins only.
+// A shell script the command runs (`bash f`, `bash < f`, `source f`, `./f` with a shell, `env -S`
+// or busybox shell, or no `#!`; a bare name in a dir the command adds to PATH) is read and judged
+// like typed commands, nested scripts too: they share the chain (a file written earlier is
+// refused) and `$1`/`$@` stand for the literal arguments. Fail closed: a script the guard cannot
+// read in full (> 512 KiB, NUL bytes, unreadable, missing inside a script, > 32 scripts, a path
+// from a variable or `{}`, a shell fed by a pipe, stdin or an expanding here-string, `xargs bash`)
+// is refused; so are `alias x=...` and a PATH dir that is not literal.
+// `gh api` with an explicit GET and graphql queries are reads; a POST whose endpoint (the first
+// positional) dispatches a literal workflow file that is not a release workflow (release, publish,
+// deploy; GUARD_RELEASE_WORKFLOWS overrides) or re-runs a run/job matches `gh workflow run` /
+// `gh run rerun`. `-F x=@file` and `--input` read a file into the request: refused (use `-f`).
+// `cd` into a guarded dir is allowed when the rest of the chain only reads (docs/agents/guard.md
+// lists the safe patterns). A deny names its rule and the match.
+// Known gaps: scripts in other languages, binaries, a `$VAR`/`"$@"` in command position (only
+// text-checked), a glob script path that matches nothing at hook time, a re-run by run/job id of a
+// release run (the id does not name its workflow), a `cd` to a variable inside a script, editing
+// guarded files from an interpreter, a dir reached through a variable or substitution in a flag
+// value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch piped in (refused) or made by a
+// producer other than `git diff|show|format-patch -- <paths>` (refused), and a default branch
+// that origin/HEAD does not name. Node built-ins only.
 // An internal error denies when the call mentions push, publish, release, gh, secret or sops (retry),
 // else allows and prints one stderr line. Settings deny rules only cover force pushes and publish
 // commands: the guard is the one layer for default-branch pushes and secrets.
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  openSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+} from "node:fs";
+import nodeFs from "node:fs"; // `globSync` (Node 22+), looked up at run time
 import { homedir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -176,7 +195,13 @@ const REASON = {
   secret:
     "Secret files and values are off limits: read .env.example for the variable names, run what needs values as `hoist secrets exec -- <your command>` (never env, printenv or a shell), or ask the human.",
   ghApi:
-    "gh api writes are blocked: use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release workflows excepted); for anything else ask the human (a PR merges by its owner).",
+    "gh api writes are blocked: use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else ask the human (a PR merges by its owner).",
+  ghField:
+    "gh api -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
+  unscanned:
+    "The guard must read a script before a shell runs it, and cannot read this one (too large, binary bytes, missing, unreadable, nested too deep, fed on stdin or a pipe, or named by a variable, glob or {}): run it as `bash <path>` with a literal path to a readable text script, or run the command directly.",
+  alias:
+    "Aliases hide the command they run from the guard: run the command directly (git push -u origin <feature-branch>).",
   ghMerge:
     "gh pr merge only with --auto (merges once required checks pass); never --admin or an immediate merge: ask the human.",
   ghAdmin:
@@ -313,6 +338,8 @@ function split(cmd) {
   let quote = "";
   let pending = [];
   let docs = [];
+  let expand = false; // a heredoc with an unquoted delimiter holds `$` or a backtick
+  const comments = [];
   const endToken = () => {
     if (has) tokens.push(cur);
     cur = "";
@@ -322,10 +349,12 @@ function split(cmd) {
     endToken();
     if (tokens.length) {
       if (docs.length) tokens.docs = docs;
+      if (expand) tokens.docExpand = true;
       segments.push(tokens);
     }
     tokens = [];
     docs = [];
+    expand = false;
   };
   for (let i = 0; i < cmd.length; i++) {
     const c = cmd[i];
@@ -350,6 +379,7 @@ function split(cmd) {
     } else if (!quote && c === "#" && !has) {
       // A comment runs nothing: skip to the end of the line.
       const nl = cmd.indexOf("\n", i);
+      comments.push([i, nl < 0 ? cmd.length : nl]);
       if (nl < 0) break;
       i = nl - 1;
     } else if (open) {
@@ -403,6 +433,7 @@ function split(cmd) {
         }
         docs.push(body);
         if (!data) subs.push(...docSubs(body)); // an unquoted delimiter runs $(...) and backticks
+        if (!data && /[$`]/.test(body)) expand = true;
       }
       pending = [];
       i = at - 1;
@@ -422,6 +453,7 @@ function split(cmd) {
   }
   endSegment();
   segments.subs = subs;
+  segments.comments = comments;
   return segments;
 }
 
@@ -522,6 +554,8 @@ function stripPrefixes(tokens) {
 /** Simple commands in `cmd` as token lists, prefixes stripped, `bash -c '<s>'` expanded recursively.
  * Pseudo-commands `@evade` (text with a risky word is refused) and `@evade-exec` (same, for code
  * bodies) mark constructs the guard cannot read. */
+const fed = (x) => /^(\/dev\/(stdin|fd\/0)|\/proc\/self\/fd\/0|-|<\(.*)$/.test(x);
+
 export function commands(cmd) {
   const text = String(cmd ?? "");
   const out = [];
@@ -546,6 +580,11 @@ export function commands(cmd) {
     const t = stripPrefixes(seg).flatMap(splitRedirect).map(unmark);
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
+    // `PATH=dir:$PATH cmd`, `export PATH=...`: a bare name may now run a script in dir.
+    for (const x of seg) {
+      const m = /^PATH\+?=(.*)$/s.exec(unmark(x));
+      if (m) out.push(["@path", m[1]]);
+    }
     if (!t.length) {
       // A bare `env` (options and assignments only) prints the environment.
       if (base(seg[0].replace(/^[({]+/, "")) === "env") out.push(["printenv"]);
@@ -558,9 +597,30 @@ export function commands(cmd) {
     const prog = base(t[0]);
     const segText = seg.join(" ");
     // `xargs git ...` takes its last arguments from stdin; `find -exec cmd ... ;` runs cmd.
-    if (base(seg[0].replace(/^[({]+/, "")) === "xargs") out.push(["@evade", text]); // args come from the pipe
+    const viaXargs = base(seg[0].replace(/^[({]+/, "")) === "xargs";
+    if (viaXargs) out.push(["@evade", text]); // args come from the pipe
+    if (viaXargs && (SHELLS.has(prog) || prog === "source" || prog === "."))
+      out.push(["@deny", "unscanned", segText]); // the script path comes from the pipe
+    if (prog === "alias" && t.slice(1).some((x) => x.includes("=")))
+      out.push(["@deny", "alias", segText]);
+    if (SHELLS.has(prog) && !viaXargs) {
+      // The code a shell runs must be text the guard reads: a `-c` string, a script file, a
+      // `<file`, a heredoc or here-string with nothing expanded. A pipe or a variable is refused.
+      const src = shellSource(t);
+      const herestring = t.find((x) => x.startsWith("<<<"));
+      const hsBody =
+        herestring && (herestring.length > 3 ? herestring : t[t.indexOf(herestring) + 1]);
+      if (
+        (src.kind === "stdin" && !src.stdinFile) ||
+        (src.kind === "file" && fed(src.file)) ||
+        (src.kind === "herestring" && /[$`]/.test(hsBody ?? "")) ||
+        (src.kind === "doc" && seg.docExpand)
+      )
+        out.push(["@deny", "unscanned", segText]);
+    }
+    if ((prog === "source" || prog === ".") && (t.length === 1 || fed(t[1])))
+      out.push(["@deny", "unscanned", segText]);
     // `source /dev/stdin`, `bash <(...)`, `xargs sh -c`: the code comes from elsewhere.
-    const fed = (x) => /^(\/dev\/(stdin|fd\/0)|\/proc\/self\/fd\/0|-|<\(.*)$/.test(x);
     if (
       ((prog === "source" || prog === ".") && (t.length === 1 || fed(t[1]))) ||
       ((SHELLS.has(prog) || INTERPRETERS.test(prog)) &&
@@ -576,7 +636,7 @@ export function commands(cmd) {
         const end = t.findIndex((x, n) => n > e && (x === ";" || x === "+"));
         const inner = stripPrefixes(t.slice(e + 1, end < 0 ? undefined : end));
         if (inner.length) out.push(inner);
-        const ci = inner.findIndex((x, n) => n > 0 && /^-[a-z]*c$/.test(x));
+        const ci = inner.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
         if (SHELLS.has(base(inner[0] ?? "")) && ci > 0 && inner[ci + 1] !== undefined)
           for (const x of commands(inner[ci + 1])) out.push(x);
       }
@@ -628,7 +688,7 @@ export function commands(cmd) {
       for (const body of seg.docs ?? []) {
         for (const inner of commands(body)) out.push(inner);
       }
-      const i = t.findIndex((x, n) => n > 0 && /^-[a-z]*c$/.test(x));
+      const i = t.findIndex((x, n) => n > 0 && SHELL_C_RE.test(x));
       if (i > 0 && t[i + 1] !== undefined) {
         for (const inner of commands(t[i + 1])) out.push(inner);
       } else if (noArgs) out.push(["@evade", text]); // script fed on stdin
@@ -839,20 +899,65 @@ function ghApiWrites(args) {
   return body;
 }
 
-/** `gh api` that does what `gh workflow run` and `gh run rerun` do: a POST to one endpoint that
- * dispatches a workflow named by a literal non-release file, or re-runs a run or job. */
+/** `gh api` flags that take a value (the next argument unless written `--flag=value`). */
+const GH_API_VALUE = new Set(
+  "-X --method -f --raw-field -F --field -H --header -q --jq -t --template --input --hostname --cache -p --preview".split(
+    " ",
+  ),
+);
+
+/** `gh api` arguments read like gh: the endpoint is the first positional (flag values skipped);
+ * `fileField` is a `-F`/`--field` value read from a file (`@path`) and `input` a `--input` body. */
+function ghApiParse(args) {
+  let method;
+  let endpoint;
+  let fileField;
+  let input;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    let flag = a;
+    let value;
+    const eq = /^(--[\w-]+)=(.*)$/s.exec(a);
+    if (eq) [flag, value] = [eq[1], eq[2]];
+    else if (/^-[XfFHqtp]./.test(a)) [flag, value] = [a.slice(0, 2), a.slice(2)];
+    else if (GH_API_VALUE.has(a)) value = args[++i];
+    else if (!a.startsWith("-") && endpoint === undefined) endpoint = a;
+    if (flag === "-X" || flag === "--method") method = value;
+    if ((flag === "-F" || flag === "--field") && /^[^=]*=@/.test(value ?? "")) fileField = value;
+    if (flag === "--input") input = value ?? "";
+  }
+  return { method, endpoint, fileField, input };
+}
+
+/** Workflow file names the guard treats as release workflows (never started from here):
+ * `GUARD_RELEASE_WORKFLOWS` (a case-insensitive regex, set in .claude/settings.json `env`), else
+ * release, publish or deploy. */
+function releaseWorkflow(name) {
+  let re = /release|publish|deploy/i;
+  try {
+    if (process.env.GUARD_RELEASE_WORKFLOWS)
+      re = new RegExp(process.env.GUARD_RELEASE_WORKFLOWS, "i");
+  } catch {
+    // a bad pattern keeps the default
+  }
+  return re.test(String(name));
+}
+
+/** `gh api` that does what `gh workflow run` and `gh run rerun` do: a POST to the endpoint (the
+ * first positional) that dispatches a literal non-release workflow file or re-runs a run or job,
+ * with no file read into the body. */
 const WORKFLOW_RUN_RE =
   /^\/?repos\/[^/\s]+\/[^/\s]+\/actions\/(workflows\/([\w.-]+\.ya?ml)\/dispatches|runs\/\d+\/(rerun|rerun-failed-jobs)|jobs\/\d+\/rerun)\/?$/;
 function workflowRun(args) {
-  let method = "POST";
-  for (let i = 0; i < args.length; i++) {
-    if (args[i] === "-X" || args[i] === "--method") method = String(args[i + 1]);
-    else if (args[i].startsWith("--method=")) method = args[i].slice(9);
-    else if (/^-X./.test(args[i])) method = args[i].slice(2);
-  }
-  const ends = args.filter((a) => /^\/?(repos|graphql)\b|^graphql$/.test(a));
-  const m = ends.length === 1 ? WORKFLOW_RUN_RE.exec(ends[0]) : null;
-  return method.toUpperCase() === "POST" && !!m && !/release/i.test(m[2] ?? "");
+  const { method = "POST", endpoint, fileField, input } = ghApiParse(args);
+  const m = WORKFLOW_RUN_RE.exec(endpoint ?? "");
+  return (
+    String(method).toUpperCase() === "POST" &&
+    !!m &&
+    fileField === undefined &&
+    input === undefined &&
+    !(m[2] && releaseWorkflow(m[2]))
+  );
 }
 
 const ADMIN_API_RE =
@@ -924,6 +1029,7 @@ function bashRule(
 ) {
   const prog = base(t[0]);
   const args = t.slice(1);
+  if (prog === "@deny") return t[1];
   if (prog === "@evade") return RISKY_RE.test(t[1]) ? "evasion" : null;
   if (prog === "@evade-exec") return EXEC_RE.test(t[1]) ? "evasion" : null;
   if (prog === "@runs-env") return chain.guarded ? "protected" : null;
@@ -981,8 +1087,14 @@ function bashRule(
   if (prog === "changeset" && args.includes("publish")) return "publish";
   if (prog === "gh") {
     const [a0, a1] = args;
-    if (a0 === "api" && ghApiWrites(args.slice(1)) && !workflowRun(args.slice(1)))
-      return args.slice(1).some((a) => ADMIN_API_RE.test(a)) ? "ghAdmin" : "ghApi";
+    if (a0 === "api") {
+      const api = ghApiParse(args.slice(1));
+      if (api.fileField !== undefined) return "ghField";
+      if (ghApiWrites(args.slice(1))) {
+        if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
+        if (!workflowRun(args.slice(1))) return "ghApi";
+      } else if (api.input !== undefined) return "ghField";
+    }
     if (a0 === "pr" && a1 === "merge") {
       if (args.includes("--admin")) return "ghMerge";
       if (!args.includes("--auto") && !args.includes("--disable-auto")) return "ghMerge";
@@ -990,7 +1102,7 @@ function bashRule(
     if (a0 === "release" && ["create", "upload"].includes(a1)) return "publish";
     if (a0 === "release" && !["list", "view", "download", undefined].includes(a1)) return "ghAdmin";
     if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1))
-      return args.slice(2).some((a) => /release/i.test(a)) ? "publish" : null;
+      return args.slice(2).some(releaseWorkflow) ? "publish" : null;
     if (a0 === "secret") return "ghAdmin";
     if (a0 === "repo" && ["edit", "delete", "archive", "rename", "transfer"].includes(a1))
       return "ghAdmin";
@@ -1200,12 +1312,23 @@ function matched(t) {
   if (t[0] === "@evade") return RISKY_RE.exec(t[1])?.[0] ?? t[1];
   if (t[0] === "@evade-exec") return EXEC_RE.exec(t[1])?.[0] ?? t[1];
   if (t[0] === "@chdir") return t[1];
+  if (t[0] === "@deny") return t[2];
   return t.join(" ");
 }
 
-/** Check shell text: each simple command, then each script it runs. `seen` stops cycles. */
-function checkShell(text, projectDir, cwd, guarded, seen, script = false) {
-  const chain = { made: new Set(), tainted: new Set(), guarded, script };
+/** Check shell text: each simple command, then each script it runs. `opts.seen` stops cycles;
+ * a nested script shares its parent's chain (files written earlier stay unreadable) and binds its
+ * literal arguments to `$1`, `$@` (a trampoline `bash "$1"` runs the file it is given). */
+function checkShell(text, projectDir, cwd, opts) {
+  const { seen, parent, script = false, scriptDir } = opts;
+  let argv = opts.argv;
+  const chain = {
+    made: parent?.made ?? new Set(),
+    tainted: parent?.tainted ?? new Set(),
+    path: parent?.path ?? [],
+    guarded: opts.guarded,
+    script,
+  };
   const cmds = commands(text);
   // A `cd` into a guarded dir anywhere in the command makes all of it read-only: substitutions
   // are listed before the command that holds them.
@@ -1215,10 +1338,18 @@ function checkShell(text, projectDir, cwd, guarded, seen, script = false) {
       t.slice(1).some((d) => !d.startsWith("-") && guardedDir(d, projectDir, cwd)),
   );
   let here = cwd; // where a later script path resolves after a literal `cd`
-  for (const t of cmds) {
+  for (const raw of cmds) {
+    const t = argv ? positional(raw, argv) : raw;
+    if (argv && base(t[0]) === "shift") argv = argv.slice(Number(t[1] ?? 1) || 1);
+    if (argv && base(t[0]) === "set" && t[1] === "--") argv = t.slice(2);
+    if (t[0] === "@path") {
+      if (!notePath(t[1], here, chain)) return { rule: "unscanned", shown: `PATH=${t[1]}` };
+      continue;
+    }
     const rule = bashRule(t, projectDir, cwd, chain);
     if (rule) return { rule, shown: matched(t) };
-    const hit = runScript(t, projectDir, [...new Set([cwd, here])], chain, seen);
+    const dirs = [...new Set([here, cwd, scriptDir].filter(Boolean))];
+    const hit = runScript(t, projectDir, dirs, chain, seen);
     if (hit) return hit;
     noteWrites(t, cwd, chain);
     const to = ["cd", "pushd"].includes(base(t[0])) && t.slice(1).find((d) => !d.startsWith("-"));
@@ -1227,66 +1358,214 @@ function checkShell(text, projectDir, cwd, guarded, seen, script = false) {
   return null;
 }
 
-const MAX_SCRIPT = 512 * 1024;
-const SHELL_OPT_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
-
-/** The script file a command runs, and whether a shell reads it whatever its `#!`: `bash f`,
- * `sh -e f`, `source f`, `. f`; or a path run directly (`./f`, `scripts/f`, `/tmp/f`). */
-function scriptRun(t) {
-  if (/^\d*[<>&]/.test(t[0])) return null; // a bare redirect (`2>/dev/null`) runs nothing
-  const prog = base(t[0]);
-  let file = null;
-  let shell = true;
-  // Redirects (`2>/dev/null`, `> f`) are not operands.
-  const args = t
-    .slice(1)
-    .filter((a, n, all) => !/^\d*[<>&]/.test(a) && !/^\d*[<>]+[&|]?$/.test(all[n - 1] ?? ""));
-  if (prog === "source" || prog === ".") file = args[0];
-  else if (SHELLS.has(prog)) {
-    if (t.docs?.length || args.some((a) => /^-[a-z]*c$/.test(a))) return null;
-    let i = 0;
-    while (i < args.length && /^[-+]/.test(args[i])) i += SHELL_OPT_VALUE.has(args[i]) ? 2 : 1;
-    file = args[i];
-  } else if (String(t[0]).includes("/") && !t[0].startsWith("@") && !INTERPRETERS.test(prog)) {
-    file = t[0];
-    shell = false;
-  }
-  // stdin and process substitution are refused elsewhere (`@evade`).
-  if (!file || /^(-|\/dev\/|\/proc\/|<\()/.test(file)) return null;
-  return { file, shell };
+/** A script's `$1`..`$9`, `$@`, `$*` as whole words replaced by the literal arguments it got. */
+function positional(t, argv) {
+  const out = t.flatMap((x) => {
+    const n = /^\$\{?([1-9])\}?$/.exec(x);
+    if (n) return argv[n[1] - 1] !== undefined ? [argv[n[1] - 1]] : [x];
+    if (/^\$\{?[@*]\}?$/.test(x)) return argv.length ? argv : [x];
+    return [x];
+  });
+  if (t.docs) out.docs = t.docs;
+  return out;
 }
 
-/** A script the command runs is checked like typed commands: the guard reads it (text up to
- * MAX_SCRIPT; binaries and non-shell `#!` scripts are not read). A script written earlier in the
- * same command cannot be read before it runs, so running it is refused. */
-function runScript(t, projectDir, dirs, chain, seen) {
-  const run = scriptRun(t);
-  if (!run) return null;
-  const name = stripTok(run.file).replace(/^(~|\$\{?HOME\}?)(?=\/)/, homedir());
-  if (/[$`*?[{]/.test(name)) return null; // a path the guard cannot read: a known gap
-  for (const d of dirs) {
-    const abs = resolve(d, name);
-    if (chain.tainted.has(abs))
-      return { rule: "evasion", shown: `${name}: written by this command` };
-    if (seen.has(abs) || seen.size > 32) continue;
-    let text;
-    try {
-      const st = statSync(abs);
-      if (!st.isFile() || st.size > MAX_SCRIPT) continue;
-      text = readFileSync(abs, "utf8");
-    } catch {
+/** Add the literal dirs of a PATH value to the chain; false when a dir is not literal. */
+function notePath(value, here, chain) {
+  for (const e of String(value).split(":")) {
+    if (/^\$\{?PATH\}?$/.test(e)) continue;
+    const dir = e.replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir());
+    if (/[$`*?[{]/.test(dir)) return false;
+    chain.path.push(resolve(here, dir || "."));
+  }
+  return true;
+}
+
+const MAX_SCRIPT = 512 * 1024;
+const MAX_SCRIPTS = 32;
+const SHELL_OPT_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
+const SHELL_C_RE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+
+/** Where a shell command's code comes from: `{kind: "c"}` (a `-c` string), `"doc"`, `"herestring"`,
+ * `"file"` (a script operand, its arguments), `"info"` (`--version`, `--help`) or `"stdin"` (with
+ * the file of a `<file` redirect, if any). */
+function shellSource(t) {
+  const ops = [];
+  let stdinFile;
+  for (let n = 1; n < t.length; n++) {
+    const a = t[n];
+    if (a.startsWith("<<<")) return { kind: "herestring" };
+    const r = /^0?<(?![<(&])(.*)$/s.exec(a);
+    if (r) {
+      stdinFile = r[1] || t[++n];
       continue;
     }
-    if (text.includes("\0")) continue; // a binary
-    const bang = /^#!\s*(\S+)(?:[ \t]+(\S+))?/.exec(text);
-    const interp = bang ? (base(bang[1]) === "env" ? (bang[2] ?? "") : base(bang[1])) : "sh";
-    if (!run.shell && !SHELLS.has(base(interp))) continue;
-    seen.add(abs);
-    // Comment lines are prose: text checks (`@evade`) must not see their words. A line that holds
-    // `$(` stays (inside a multi-line string it would run).
-    const code = text.replace(/^[ \t]*#(?![^\n]*\$\()[^\n]*$/gm, "");
-    const hit = checkShell(code, projectDir, d, chain.guarded, seen, true);
-    if (hit) return { rule: hit.rule, shown: `${name}: ${hit.shown}` };
+    if (/^\d*[<>&]/.test(a)) {
+      if (/^(\d*|&)[<>]+[&|]?$/.test(a)) n++; // `2> f`, `> f`: the next word is the target
+      continue;
+    }
+    ops.push(a);
+  }
+  if (t.docs?.length) return { kind: "doc" };
+  let i = 0;
+  while (i < ops.length && /^[-+]./.test(ops[i])) {
+    if (ops[i] === "--") {
+      i++;
+      break;
+    }
+    if (SHELL_C_RE.test(ops[i])) return { kind: "c" };
+    if (/^--(version|help)$/.test(ops[i])) return { kind: "info" };
+    i += SHELL_OPT_VALUE.has(ops[i]) ? 2 : 1;
+  }
+  if (i < ops.length && ops[i] !== "-")
+    return { kind: "file", file: ops[i], args: ops.slice(i + 1) };
+  return { kind: "stdin", stdinFile };
+}
+
+/** Command arguments without redirects (`2>/dev/null`, `> f`). */
+const operands = (args) =>
+  args.filter((a, n, all) => !/^\d*[<>&]/.test(a) && !/^(\d*|&)[<>]+[&|]?$/.test(all[n - 1] ?? ""));
+
+/** The script files a command runs: `{file, shell, args}`, `shell` when a shell reads it whatever
+ * its `#!` (`bash f`, `bash < f`, `source f`, `. f`), else a path run directly (`./f`,
+ * `scripts/f`, `/tmp/f`, or a bare name found in a dir the chain added to PATH). */
+function scriptRuns(t, chain) {
+  if (/^\d*[<>&]/.test(t[0])) return []; // a bare redirect (`2>/dev/null`) runs nothing
+  const prog = base(t[0]);
+  const runs = [];
+  if (prog === "source" || prog === ".") {
+    const [file, ...args] = operands(t.slice(1));
+    if (file) runs.push({ file, shell: true, args });
+  } else if (SHELLS.has(prog)) {
+    const src = shellSource(t);
+    if (src.kind === "file") runs.push({ file: src.file, shell: true, args: src.args });
+    if (src.kind === "stdin" && src.stdinFile)
+      runs.push({ file: src.stdinFile, shell: true, args: [] });
+  } else if (String(t[0]).includes("/") && !t[0].startsWith("@") && !INTERPRETERS.test(prog))
+    runs.push({ file: t[0], shell: false, args: operands(t.slice(1)) });
+  if (!String(t[0]).includes("/") && !t[0].startsWith("@"))
+    for (const d of chain.path) {
+      const abs = join(d, t[0]);
+      if (existsSync(abs)) runs.push({ file: abs, shell: false, args: operands(t.slice(1)) });
+    }
+  // stdin and process substitution are refused in commands() (`@deny`).
+  return runs.filter((r) => !/^(-|\/dev\/|\/proc\/|<\()/.test(r.file));
+}
+
+/** The program a `#!` line names, through `env [-S] [opts] [VAR=x]` and `busybox`. */
+function shebang(text) {
+  const m = /^#!\s*(\S+)([^\n]*)/.exec(text);
+  if (!m) return null;
+  let prog = base(m[1]);
+  const rest = m[2].trim().split(/\s+/).filter(Boolean);
+  if (prog === "env") {
+    prog = "";
+    while (rest.length) {
+      const o = rest.shift();
+      if (/^-S./.test(o)) {
+        prog = base(o.slice(2));
+        break;
+      }
+      if (["-u", "--unset", "-C", "--chdir"].includes(o)) rest.shift();
+      else if (!o.startsWith("-") && !/^[A-Za-z_]\w*=/.test(o)) {
+        prog = base(o);
+        break;
+      }
+    }
+  }
+  if (prog === "busybox") prog = base(rest.shift() ?? "");
+  return prog;
+}
+
+/** Magic numbers of executables the kernel runs itself (ELF, Mach-O, PE, wasm). */
+const BINARY_RE =
+  /^(\x7fELF|\xfe\xed\xfa[\xce\xcf]|[\xce\xcf]\xfa\xed\xfe|\xca\xfe\xba\xbe|MZ|\0asm)/;
+
+/** First bytes of a file as latin1 text (for `#!` and magic numbers). */
+function head(abs) {
+  const fd = openSync(abs, "r");
+  try {
+    const buf = Buffer.alloc(512);
+    return buf.toString("latin1", 0, readSync(fd, buf, 0, 512, 0));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** Comments the tokenizer finds (not `#` inside quotes, heredocs or substitutions) blanked. */
+function stripComments(text) {
+  let out = "";
+  let at = 0;
+  for (const [a, b] of split(text).comments) {
+    out += text.slice(at, a);
+    at = b;
+  }
+  return out + text.slice(at);
+}
+
+/** A script the command runs is checked like typed commands. The guard reads all of it or refuses
+ * (fail closed): too large, NUL bytes, unreadable, nested more than MAX_SCRIPTS deep, a path from
+ * a variable or glob, or (inside a script) missing at hook time. Binaries and non-shell `#!`
+ * scripts run directly are not read. A script written earlier in the same command is refused. */
+function runScript(t, projectDir, dirs, chain, seen) {
+  for (const run of scriptRuns(t, chain)) {
+    // `$HOME`, `$PWD` and `$CLAUDE_PROJECT_DIR` at the start are known; other variables are not.
+    const name = stripTok(run.file)
+      .replace(/^(~|\$\{?HOME\}?)(?=\/)/, homedir())
+      .replace(/^\$\{?PWD\}?(?=\/)/, dirs[0])
+      .replace(/^\$\{?CLAUDE_PROJECT_DIR\}?(?=\/)/, projectDir);
+    const refuse = (why) => ({ rule: "unscanned", shown: `${name}: ${why}` });
+    // A glob runs what it matches now (a case pattern matches nothing); `$`, backticks and braces
+    // (`find -exec bash {}`) name a file the guard cannot know.
+    const glob = /[*?[]/.test(name);
+    if (/[$`{]/.test(name) || (glob && typeof nodeFs.globSync !== "function"))
+      return refuse("a path the guard cannot read");
+    const paths = dirs.flatMap((d) =>
+      glob ? nodeFs.globSync(name, { cwd: d }).map((m) => resolve(d, m)) : [resolve(d, name)],
+    );
+    let found = glob;
+    for (const abs of paths) {
+      if (chain.tainted.has(abs))
+        return { rule: "evasion", shown: `${name}: written by this command` };
+      let st;
+      try {
+        st = statSync(abs);
+      } catch (e) {
+        if (e?.code === "ENOENT" || e?.code === "ENOTDIR") continue;
+        return refuse("unreadable");
+      }
+      found = true;
+      if (!st.isFile()) continue; // a directory: the shell fails
+      const key = `${abs}\0${run.args.join("\0")}`;
+      if (seen.has(key)) continue;
+      let text;
+      try {
+        if (!run.shell) {
+          const top = head(abs);
+          if (BINARY_RE.test(top)) continue; // a binary the kernel runs
+          const interp = shebang(top);
+          if (interp !== null && !SHELLS.has(interp)) continue; // another language: a known gap
+        }
+        if (st.size > MAX_SCRIPT) return refuse(`larger than ${MAX_SCRIPT} bytes`);
+        text = readFileSync(abs, "utf8");
+      } catch {
+        return refuse("unreadable");
+      }
+      if (text.includes("\0")) return refuse("holds NUL bytes");
+      if (seen.size >= MAX_SCRIPTS) return refuse(`more than ${MAX_SCRIPTS} scripts`);
+      seen.add(key);
+      const hit = checkShell(stripComments(text), projectDir, dirs[0], {
+        seen,
+        parent: chain,
+        guarded: chain.guarded,
+        script: true,
+        scriptDir: dirname(abs),
+        argv: run.args,
+      });
+      if (hit) return { rule: hit.rule, shown: `${name}: ${hit.shown}` };
+    }
+    // A script that runs a file missing now could run whatever is written there later.
+    if (!found && chain.script) return refuse("missing when the guard ran");
   }
   return null;
 }
@@ -1310,7 +1589,10 @@ export function decide(input, ctx) {
   if (name === "Bash") {
     // A cwd persisted inside a guarded dir (an earlier `cd .bosun`) starts the chain read-only.
     const guarded = cwd !== ctx.projectDir && guardedDir(cwd, ctx.projectDir, ctx.projectDir);
-    const hit = checkShell(String(ti.command ?? ""), ctx.projectDir, cwd, guarded, new Set());
+    const hit = checkShell(String(ti.command ?? ""), ctx.projectDir, cwd, {
+      guarded,
+      seen: new Set(),
+    });
     return hit ? deny(hit.rule, hit.shown) : null;
   }
   if (!FILE_TOOLS.has(name)) return null;

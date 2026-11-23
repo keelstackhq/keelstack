@@ -510,7 +510,6 @@ test("evasion constructs without a risky word are allowed", () => {
   for (const cmd of [
     'eval "$(ssh-agent -s)"',
     "X=1; $X",
-    "echo ls | sh",
     "python3 -c 'print(open(\"README.md\").read())'",
   ])
     assert.equal(decide(bash(cmd), ctx), null, cmd);
