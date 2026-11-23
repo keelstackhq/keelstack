@@ -551,12 +551,17 @@ describe("the built docs show only commands that resolve", () => {
 
   test("no build file keeps an unrendered token (ks.NAME, {{ or a split { {)", () => {
     // Inline CSS and JS of the HTML pages are not docs text (their braces are code).
+    // hull's start checklist (a verbatim copy) holds one shell line whose JSON ends in `}}`:
+    // a closing brace pair in code, not a token. Only that exact JSON is skipped.
+    const HULL_JSON = '"custom_branch_policies":true}}\'';
     const bad = builtUnits().flatMap(([f, , text]) =>
       [
         ...text
           .replace(/<(script|style)\b[\s\S]*?<\/\1>/g, "")
           .matchAll(/.{0,30}(?:\{\s*\{|\}\s*\}|(?<![\w.-])ks\.[A-Za-z]).{0,30}/g),
-      ].map((m) => `${f}: ${m[0]}`),
+      ]
+        .filter((m) => !m[0].includes(HULL_JSON))
+        .map((m) => `${f}: ${m[0]}`),
     );
     expect(bad).toEqual([]);
   });

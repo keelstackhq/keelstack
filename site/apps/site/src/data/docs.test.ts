@@ -3,10 +3,14 @@ import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
-import { facts, findRoot } from "./facts";
+import { facts, findRoot, releasedVersionInput } from "./facts";
 import { bare, versions } from "./versions";
 
 const bosunVersion = versions.bosun;
+const num = (v: string): [number, number, number] => {
+  const [a = 0, b = 0, c = 0] = v.split(".").map(Number);
+  return [a, b, c];
+};
 
 const dir = new URL("../pages/docs/", import.meta.url);
 const repos = ["hull", "splice", "bosun", "hoist", "hoard", "berth", "decisions", "rust-canary"];
@@ -146,7 +150,18 @@ describe("cloud environment page", () => {
   });
 
   it("pins the bosun release the site shows", () => {
-    expect(/^BOSUN_VERSION=(\S+)$/m.exec(copy)?.[1]).toBe(bosunVersion);
+    const pin = /^BOSUN_VERSION=(\S+)$/m.exec(copy)?.[1];
+    // The script pins a published release by sha512. Without RELEASED_VERSION (a PR's CI) the
+    // site shows the workspace version, which a version-bump PR raises before it is published:
+    // there the pin may lag it, never pass it. The deploy (RELEASED_VERSION set) needs them equal.
+    if (releasedVersionInput !== undefined) {
+      expect(pin).toBe(bosunVersion);
+      return;
+    }
+    const [a, b] = [num(pin ?? ""), num(bosunVersion)];
+    const cmp = a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+    expect(pin).toMatch(/^\d+\.\d+\.\d+$/);
+    expect(cmp, `setup script pins ${pin}, site shows ${bosunVersion}`).toBeLessThanOrEqual(0);
   });
 });
 

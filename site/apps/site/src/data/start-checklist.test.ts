@@ -19,8 +19,8 @@ const page = read("../pages/docs/start-project.md");
 
 describe("Start a project page", () => {
   it("pins hull's checklist by commit and checksum", () => {
-    expect(source.repo).toBe("keelstackhq/hull");
-    expect(source.path).toBe("docs/start-checklist.md");
+    expect(source.repo).toBe("keelstackhq/keelstack");
+    expect(source.path).toBe("hull/docs/start-checklist.md");
     expect(source.ref).toMatch(/^[0-9a-f]{40}$/);
     expect(createHash("sha256").update(copy).digest("hex")).toBe(source.sha256);
   });

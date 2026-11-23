@@ -11,7 +11,8 @@ import { createHash } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 
 // Node 24 strips the types of these two dependency-free files.
-const { tagCommits, versions } = await import("../src/data/versions.ts");
+const { released, tagCommits, versions } = await import("../src/data/versions.ts");
+const { facts } = await import("../src/data/facts.ts");
 const { ADOPT_BOSUN_OWNER, ADOPT_HULL_NOTE, adoptHullBlock } =
   await import("../src/data/scenarios.ts");
 
@@ -20,24 +21,32 @@ if (!ref || !/^v\d+\.\d+\.\d+$/.test(tag ?? "")) {
   throw new Error("usage: node scripts/adopt.mjs <hull tag or commit> <vX.Y.Z> [--releasing]");
 }
 const releasing = flag === "--releasing";
-const repo = "keelstackhq/hull";
-const docPath = "docs/adopt.md";
-const assessPath = "template/pieces/base/files/scripts/ready.mjs";
+// Once the monorepo has a release, hull's files are read from this checkout (hull/ at HEAD, no
+// network); before that they come from the archived keelstackhq/hull repo at <ref>.
+const local = released && tag === versions.hull;
+const repo = local ? facts.repoSlug : "keelstackhq/hull";
+const dir = local ? "hull/" : "";
+const docPath = `${dir}docs/adopt.md`;
+const assessPath = `${dir}template/pieces/base/files/scripts/ready.mjs`;
 
 const isCommit = /^[0-9a-f]{40}$/.test(ref);
-const commit = isCommit
-  ? ref
-  : execFileSync("git", ["ls-remote", `https://github.com/${repo}`, ref, `${ref}^{}`], {
-      encoding: "utf8",
-    })
-      .trim()
-      .split("\n")
-      .filter(Boolean)
-      .pop()
-      ?.split("\t")[0];
+const root = new URL("../../../../", import.meta.url);
+const commit = local
+  ? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim()
+  : isCommit
+    ? ref
+    : execFileSync("git", ["ls-remote", `https://github.com/${repo}`, ref, `${ref}^{}`], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .pop()
+        ?.split("\t")[0];
 if (!commit) throw new Error(`no hull ref ${ref}`);
 
 async function fetchText(path) {
+  if (local) return readFileSync(new URL(path, root), "utf8");
   const res = await fetch(`https://raw.githubusercontent.com/${repo}/${commit}/${path}`);
   if (!res.ok) throw new Error(`fetch ${path}@${commit}: ${res.status}`);
   return res.text();
@@ -70,11 +79,13 @@ writeFileSync(new URL(`assess/${tag}.mjs.txt`, data), assess);
 
 // Pins of the current hull release are tokens ({{ks.*}}), so a bump re-renders them; a ref that is
 // not the current release (a commit before its tag, say) stays literal.
-const isCurrent = tag === versions.hull && commit === tagCommits.hull;
+const isCurrent = tag === versions.hull && (released || commit === tagCommits.hull);
 const hullTok = isCurrent ? "{{ks.hull}}" : tag;
 // The current release links its commit in the monorepo (hull/legacy-tags.txt); any other ref its source.
 const docUrl = (p) =>
-  isCurrent ? `{{ks.link.hull}}/${p}` : `https://github.com/${repo}/blob/${commit}/${p}`;
+  isCurrent
+    ? `{{ks.link.hull}}/${p.replace(/^hull\//, "")}`
+    : `https://github.com/${repo}/blob/${commit}/${p}`;
 const shortTok = isCurrent ? "{{ks.link.hullShort}}" : commit.slice(0, 7);
 const refTok = isCommit ? commit : hullTok;
 

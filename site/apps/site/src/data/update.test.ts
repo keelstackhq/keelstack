@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { update } from "./content";
-import { links } from "./versions";
+import { bare, links, versions } from "./versions";
 import { buildLlmsTxt } from "../lib/llms";
 import { startScenarioMd } from "../lib/start-md";
 
@@ -21,7 +21,7 @@ test("the hull update path is on the page", () => {
   ]);
   expect(update.hull.notes).toEqual([
     "Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.",
-    "Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.6.0` in place of `splice`.",
+    `Needs splice 0.3.0 or later. Without a global install write \`pnpm dlx @keelstackhq/splice@${bare(versions.splice)}\` in place of \`splice\`.`,
     "Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.",
     "Merge only when `ci-ok` is green.",
   ]);
@@ -60,6 +60,6 @@ test("the home page shows only a short line, linking the full page", () => {
 test("llms.txt links the update page; scenario D holds both one-line commands", () => {
   expect(llms).toContain("https://keelstack.dev/docs/update.md");
   const d = startScenarioMd("d");
-  expect(d).toContain("splice@0.6.0 update --all");
+  expect(d).toContain(`splice@${bare(versions.splice)} update --all`);
   expect(d).toContain("bosun pin --latest --pr");
 });

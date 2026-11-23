@@ -77,19 +77,19 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev{{ks.assess.url}} -o /tmp/assess.mjs
-echo "189a681d40ad3cdd243e4183bda9d9774ebada31a2563f0968211827d9acb16e  /tmp/assess.mjs" | sha256sum -c
+curl -fsSL https://keelstack.dev/assess/v0.22.0.mjs -o /tmp/assess.mjs
+echo "4f8ee979812a43beb607b824eae0253c6a6fed7b27fcc75f8d5fe24f9b2a4007  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull {{ks.hull}}'s `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull v0.22.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 
 | Signal       | Looks for                                           | Gives            |
 | ------------ | --------------------------------------------------- | ---------------- |
-| `pnpm`       | pnpm-workspace.yaml or a package.json               | `template/`      |
-| `cargo-only` | Cargo.toml and no package.json                      | `template-rust/` |
+| `pnpm`       | pnpm-workspace.yaml or a package.json with deps     | `template/`      |
+| `cargo-only` | Cargo.toml and no package.json with deps            | `template-rust/` |
 | `preact`     | a package.json depending on preact                  | `preact-app`     |
 | `astro`      | a package.json depending on astro                   | `astro-site`     |
 | `hono`       | hono dependency next to a wrangler config           | `hono-worker`    |
@@ -98,8 +98,10 @@ reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 | `rust-lib`   | a Cargo crate with src/lib.rs and no binary         | `rust-tool`      |
 | `layout`     | apps/, packages/ and crates/ dirs (where pieces go) | where pieces go  |
 
-A Tauri app replaces its preact hit; a workspace root's package.json is not an app. In
-template-rust, library crates stay with the base (no piece). Each piece has a move: apps, sites,
+A `.splice/lock.toml` source names the template outright; signals then only pick pieces. A
+root package.json with no dependencies (helper scripts only) is no signal. A Tauri app replaces its
+preact hit; a workspace root's package.json is not an app. In template-rust, library crates
+stay with the base (no piece). Each piece has a move: apps, sites,
 workers and Tauri apps go to `apps/<name>`, crates to `crates/<name>`, with the name taken from
 the directory (or package.json / Cargo.toml for the repo root). Code already in place does not
 move; code elsewhere is moved by hand on the branch, before `splice adopt`.
@@ -139,14 +141,14 @@ on any breaking change (a removed, renamed or retyped field); otherwise fields a
 - **owned**: refused when it exists and differs from the template's (dry-run action `conflict`,
   message "refuse: `<path>`"; an identical file is `skip`); `--force` would replace it (`update`,
   "replace: `<path>`").
-  - `template/`: `.claude/agents/ci-fixer.md`, `.claude/agents/explore.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`, `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/docs-lookup/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.github/scripts/affected.mjs`, `.github/scripts/preview.mjs`, `.github/scripts/release-plan.mjs`, `.github/scripts/rust-affected.mjs`, `.github/workflows/ci.yml`, `.github/workflows/desktop.yml`, `.github/workflows/preview-deploy.yml`, `.github/workflows/preview.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `.node-version`, `CLAUDE.md`, `Cargo.toml`, `renovate.json`, `rust-toolchain.toml`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/licenses.mjs`, `scripts/ready.mjs`, `tsconfig.base.json`, `vite.config.ts`, `packages/shared/tsconfig.json`, `packages/shared/vite.config.ts`
-  - `template-rust/`: `.claude/agents/ci-fixer.md`, `.claude/agents/explore.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`, `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.config/nextest.toml`, `.github/scripts/docs-only.mjs`, `.github/scripts/release-pending.mjs`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `CLAUDE.md`, `deny.toml`, `renovate.json`, `rust-toolchain.toml`, `rustfmt.toml`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/licenses.mjs`, `scripts/ready.mjs`
+  - `template/`: `.claude/agents/ci-fixer.md`, `.claude/agents/explore.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`, `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/docs-lookup/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.github/scripts/affected.mjs`, `.github/scripts/preview.mjs`, `.github/scripts/release-plan.mjs`, `.github/scripts/rust-affected.mjs`, `.github/scripts/workflows.mjs`, `.github/workflows/ci.yml`, `.github/workflows/desktop.yml`, `.github/workflows/preview-deploy.yml`, `.github/workflows/preview.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `.node-version`, `CLAUDE.md`, `Cargo.toml`, `renovate.json`, `rust-toolchain.toml`, `docs/agents/guard.md`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/licenses.mjs`, `scripts/ready.mjs`, `tsconfig.base.json`, `vite.config.ts`, `packages/shared/tsconfig.json`, `packages/shared/vite.config.ts`
+  - `template-rust/`: `.claude/agents/ci-fixer.md`, `.claude/agents/explore.md`, `.claude/agents/implementer.md`, `.claude/agents/reviewer.md`, `.claude/hooks/guard.mjs`, `.claude/hooks/session-start.sh`, `.claude/hooks/stop-checks.sh`, `.claude/loop.md`, `.claude/settings.json`, `.claude/skills/add-piece/SKILL.md`, `.claude/skills/ready/SKILL.md`, `.claude/skills/verify/SKILL.md`, `.claude/statusline.sh`, `.config/nextest.toml`, `.github/scripts/advisory-issue.mjs`, `.github/scripts/docs-only.mjs`, `.github/scripts/release-pending.mjs`, `.github/scripts/workflows.mjs`, `.github/workflows/advisories.yml`, `.github/workflows/ci.yml`, `.github/workflows/release.yml`, `.github/workflows/splice.yml`, `.gitattributes`, `.gitignore`, `CLAUDE.md`, `deny.toml`, `docs/agents/guard.md`, `pins.toml`, `renovate.json`, `rust-toolchain.toml`, `rustfmt.toml`, `scripts/agents-index.mjs`, `scripts/deny.mjs`, `scripts/licenses.mjs`, `scripts/pins.mjs`, `scripts/proxy-ca.sh`, `scripts/ready.mjs`
 - **shared**: merged (dry-run action `merge`, or `conflict` when both sides changed).
   - `template/`: `package.json`, `pnpm-workspace.yaml`, `turbo.json`, `packages/shared/package.json`
   - `template-rust/`: `Cargo.toml`, `crates/common/Cargo.toml`
 - **seed**: kept as they are (dry-run action `skip`).
-  - `template/`: `AGENTS.md`, `README.md`, `docs/agents/index.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `packages/shared/src/**`
-  - `template-rust/`: `AGENTS.md`, `README.md`, `deny.local.toml`, `docs/agents/index.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `hoist.toml`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `crates/common/src/**`
+  - `template/`: `AGENTS.md`, `CHANGELOG.md`, `README.md`, `docs/agents/index.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `packages/shared/src/**`
+  - `template-rust/`: `AGENTS.md`, `CHANGELOG.md`, `Cargo.lock`, `README.md`, `deny.local.toml`, `docs/agents/index.md`, `docs/agents/onboarding.toml`, `docs/agents/project.md`, `hoist.toml`, `scripts/ci-pre.sh`, `scripts/ci-extra.sh`, `scripts/release-pre.sh`, `crates/common/src/**`
 - **targets**: a piece's target directory that already exists and is not the piece's source.
 
 Every other file the template writes is new (`create`). Pieces add more files under their target.
@@ -161,7 +163,7 @@ Every other file the template writes is new (`create`). Pieces add more files un
    tree unless `--allow-dirty`); the default branch stays untouched until the PR merges.
 4. **dry-run**: move code into place as confirmed, then run the `next` command from `--assess`,
    which needs splice >= 0.4.0:
-   `splice adopt gh:keelstackhq/hull//<template> --piece <id>:<name> ... --dry-run --json`
+   `splice adopt gh:keelstackhq/keelstack//hull/<template> --piece <id>:<name> ... --dry-run --json`
    (syntax: `adopt <src> [--ref R] [--piece ID[:N]]... [--data K=V]... [--dry-run] [--force]
    [--allow-dirty] [--no-post] [--json]`; a repo that already has a lock is refused, exit 2).
 5. **review**: the owner reviews the change list: every `conflict` (refused owned files, merge
@@ -174,7 +176,7 @@ Every other file the template writes is new (`create`). Pieces add more files un
 8. **ready**: run the `ready` skill: the onboarding questions, then every check, as for a new repo.
 9. **pr**: open the PR with the change list and the owner's choices; it merges like any gated PR.
 10. **channels**: after the merge, add the org decisions channel
-    (`splice channel add gh:keelstackhq/decisions//channel --track main --piece import-project`,
+    (`splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project`,
     D-004) and, if wanted, bosun (`bosun init --stack rust|ts-pnpm`, start checklist item 8;
     other stacks take the decisions channel only).
 11. **hoist**: `hoist apply` sets the `ci-ok` ruleset, the environments with branch policies and

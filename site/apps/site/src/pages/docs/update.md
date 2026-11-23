@@ -21,10 +21,10 @@ Work on a branch, so the update is one reviewable change:
 8. `git add -A && git commit -m "chore: splice update to hull vX.Y.Z"`
 
 - Normally you do not run this: the weekly splice workflow (`splice update --all`) opens the PR on `splice/update`.
-- Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.6.0` in place of `splice`.
+- Needs splice 0.3.0 or later. Without a global install write `pnpm dlx @keelstackhq/splice@0.22.0` in place of `splice`.
 - Do bosun first, then hull: each is its own PR, each is R-gov, and the owner approves each head.
 - Merge only when `ci-ok` is green.
-- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/keelstack/blob/cbf937f8c9fe7f9a0aa30a1cc0bc7ac2f7f6d503/hull/docs/updating.md) at tag `v0.13.0` (`cbf937f`).
+- Full guide: [hull's `docs/updating.md`](https://github.com/keelstackhq/keelstack/blob/v0.22.0/hull/docs/updating.md) at tag `v0.22.0` (`v0.22.0`).
 
 ## Update bosun
 

@@ -116,7 +116,7 @@ environment's bootstrap runs the checkout's own `docs/setup-script.sh`, which in
 ## Template and channel updates
 
 The splice update bot is a workflow (`.github/workflows/splice.yml`, which the bosun channel
-seeds) using `keelstackhq/splice/action@feea8496215afce057f98eaea0e303aced93346c # v0.6.0`, weekly and on demand. It runs `splice update --all`
+seeds) using `keelstackhq/keelstack/splice/action@v0.22.0 # v0.22.0`, weekly and on demand. It runs `splice update --all`
 when the repo has channels and opens or refreshes one pull request on branch `splice/update`:
 
 | Result      | The bot                                                    |
@@ -146,7 +146,7 @@ hoist 0.3.0 adds `hoist secrets`:
 values encrypted with sops and age in a private secrets repo, mapped into each consumer repo by a
 `secrets.toml` that holds no values. hull v0.4.0's opt-in `secrets` piece seeds that file and a
 `deploy.yml` that runs on push to `main` in the environment `prod` and decrypts through the
-`keelstackhq/hoist/secrets` action.
+`keelstackhq/keelstack/hoist/secrets` action.
 
 | Command                                    | Who and where                                                                   |
 | ------------------------------------------ | ------------------------------------------------------------------------------- |
@@ -172,7 +172,7 @@ values encrypted with sops and age in a private secrets repo, mapped into each c
 
 Org decisions are a short table (`DECISIONS.md`, at most 60 lines) with one file of reasoning per
 decision. Each repo gets a copy as `docs/agents/org-decisions.md` through the channel
-`gh:keelstackhq/decisions//channel`, added with `--track main`, so the update bot brings every
+`gh:keelstackhq/keelstack//decisions/channel`, added with `--track main`, so the update bot brings every
 merged change. Commit such an update alone, as `chore: sync org decisions`.
 
 To change a decision, open a pull request in the decisions repo that adds

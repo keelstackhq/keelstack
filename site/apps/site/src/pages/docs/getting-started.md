@@ -27,13 +27,13 @@ hoard's `@v0` tag follows its 0.x releases. hull v0.4.0 and later need splice 0.
 Skip to step 2 if your repo already has code and you do not want hull.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template my-repo \
+pnpm dlx @keelstackhq/splice@0.22.0 new gh:keelstackhq/keelstack//hull/template my-repo \
   --data scope=my-scope --piece preact-app:web --piece hono-worker:api
 cd my-repo
 git add -A && git commit -m "chore: initial commit from hull"
 ```
 
-- `gh:keelstackhq/hull//template` means repository `keelstackhq/hull`, directory `template`.
+- `gh:keelstackhq/keelstack//hull/template` means repository `keelstackhq/keelstack`, directory `hull/template`.
   Without `--ref`, splice takes the latest stable tag. This is the way to start a repo; you do not
   need a checkout of hull.
 - `--data` keys are bare variable names (`--data scope=my-scope`); a dotted key exits 2
@@ -51,7 +51,7 @@ git add -A && git commit -m "chore: initial commit from hull"
 hull v0.4.0 adds opt-in pieces: `circleci` (a CircleCI `ci-ok` next to the GitHub `ci.yml`),
 `circleci-only` (no `ci.yml`; see [CI and gates](/docs/ci/#circleci)) and `secrets` (a
 `secrets.toml` and a `deploy.yml` behind the `prod` environment; it decrypts through hoist's
-`keelstackhq/hoist/secrets` action; see
+`keelstackhq/keelstack/hoist/secrets` action; see
 [Releases and updates](/docs/releases/#secrets)). An existing repo switches to CircleCI only with
 `splice add circleci`, then `splice add circleci-only`.
 
@@ -59,7 +59,7 @@ For a Rust-only repo use `template-rust` (a Cargo workspace, with no Node toolch
 released since hull v0.3.0:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.6.0 new gh:keelstackhq/hull//template-rust my-repo \
+pnpm dlx @keelstackhq/splice@0.22.0 new gh:keelstackhq/keelstack//hull/template-rust my-repo \
   --piece rust-cli:cli
 ```
 
@@ -87,7 +87,7 @@ For a new repo that bosun runs from the first task (files, plan, step order, fir
 Run these in the repo root, on a clean tree:
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.6.0 channel add gh:keelstackhq/decisions//channel \
+pnpm dlx @keelstackhq/splice@0.22.0 channel add gh:keelstackhq/keelstack//decisions/channel \
   --track main --piece import-project
 node scripts/agents-index.mjs     # hull repos: refresh the agents index
 git add -A && git commit -m "chore: add decisions channel"
@@ -97,7 +97,7 @@ git add -A && git commit -m "chore: add decisions channel"
   subagents (`.claude/agents/`). A repo rendered from hull v0.2.0 to v0.10.x that added
   `rigging --piece claude` runs `splice update --channel rigging` first, then `splice update` for
   the template. A repo not rendered from hull adds
-  `splice channel add gh:keelstackhq/hull//rigging --piece claude --piece core` (`core` is the
+  `splice channel add gh:keelstackhq/keelstack//hull/rigging --piece claude --piece core` (`core` is the
   harness-neutral working rules as a section in `AGENTS.md`; a hull repo never adds it, since its
   `AGENTS.md` already carries them).
 - **decisions** adds `docs/agents/org-decisions.md` and a section that imports it. Use
@@ -107,7 +107,7 @@ git add -A && git commit -m "chore: add decisions channel"
   how to save CI minutes. Most of them name keelstackhq's own repos and process.
 - **A repo in another org** adds `--piece portable` as well. It takes only the decisions scoped
   `all orgs` (currently D-007, D-010 and D-011):
-  `splice channel add gh:keelstackhq/decisions//channel --track main --piece portable --piece import-claude`.
+  `splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece portable --piece import-claude`.
 - **Your org's own decisions** can live in a repo of the same shape, for example
   `<org>/decisions`. Copy `DECISIONS.md`, `decisions/000-template.md`, `channel/` and `scripts/`,
   rename the channel and its snapshot file as the
@@ -126,13 +126,13 @@ Who: you or an agent session, with splice and bosun on `PATH` and a `GITHUB_TOKE
 and open pull requests.
 
 ```bash
-npm install -g @keelstackhq/splice@0.6.0 @keelstackhq/bosun@0.21.0
+npm install -g @keelstackhq/splice@0.22.0 @keelstackhq/bosun@0.22.0
 bosun init --stack rust --owner <your-github-login>
 ```
 
 - `--stack` is `rust` or `ts-pnpm`, once per stack; a mixed repo gets one entry per stack
   directory. `--plan FILE` copies a plan into the repo.
-- `bosun init` runs `splice channel add gh:keelstackhq/bosun//channel` on branch `bosun/init`
+- `bosun init` runs `splice channel add gh:keelstackhq/keelstack//bosun/channel` on branch `bosun/init`
   (`claude/bosun-init` in a Claude cloud session, which can push only to `claude/…` branches;
   `--branch` sets another), commits, pushes and opens one setup pull request whose body lists the
   owner steps. `--no-pr` stops after the commit and returns the pull request title and body.
@@ -154,7 +154,7 @@ Who: the owner, on their own machine, with a token that has admin on the repo, i
 the default branch after the setup pull request merged.
 
 ```bash
-npm install -g @keelstackhq/hoist@0.5.1
+npm install -g @keelstackhq/hoist@0.22.0
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 gh label create bosun:halt --color B60205
@@ -207,7 +207,7 @@ hull's `template` already caches Turborepo through hoard, and bosun's gate workf
 
 ```yaml
 - run: pnpm install --frozen-lockfile
-- uses: keelstackhq/hoard@v0 # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
+- uses: keelstackhq/keelstack/hoard@v0 # exports TURBO_API, TURBO_TOKEN, TURBO_TEAM
 - run: pnpm turbo run build test lint
 ```
 
@@ -225,7 +225,7 @@ CircleCI caches are not branch-scoped, so a PR could save a cache that `main` re
 berth gives each agent or task its own worktree, ports, env files and database.
 
 ```bash
-npm i -g @keelstackhq/berth@0.2.1
+npm i -g @keelstackhq/berth@0.22.0
 berth up fix-login          # worktree ../<repo>.berth/fix-login on branch berth/fix-login
 eval "$(berth env fix-login)"   # PORT, <NAME>_PORT, DATABASE_URL, …
 berth down fix-login        # after the work merged; or `berth gc` for all merged tasks
