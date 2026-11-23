@@ -1519,3 +1519,188 @@ configs, `hoist import`, `release bootstrap`), one reviewable PR per repo.
 ## 15. Secrets repos
 
 Moved to [2026-10-16-hoist-secrets-repos.md](2026-10-16-hoist-secrets-repos.md) (same §15.x numbers).
+
+## 16. Org scope (`hoist org`)
+
+Issue #65, decision D-026. hoist's scope is "a repo's **and its org's** GitHub, Cloudflare,
+registry and Search Console setup". The org half is `hoist org plan|check|apply`, driven by
+`org.toml` (separate from `hoist.toml`; it can live in a private owner repo). It reuses the
+engine: `Item`/`HumanStep`/`Report`, the `--json` envelope, `check`'s exit policy (0 in sync,
+1 drift or failed write/verification, 2 human step pending, 3 usage/config/auth/API error),
+`http.rs` (retries, no redirects on writes, `seg()`), the GitHub token lookup (§8.1) and the
+Cloudflare client. No new tool, no PAT. Fly stays out (owner's private repo).
+
+### 16.1 CLI
+
+```
+hoist org plan  [--file PATH] [--area A]...   # GET only, exit 0 (or 3)
+hoist org check [--file PATH] [--area A]...   # GET only, check's exit policy
+hoist org apply [--file PATH] [--area A]... [--yes]
+```
+
+`--file` defaults to `org.toml` in `-C DIR` (else `.`). `A` is `github`, `cloudflare`, `npm`,
+`crates` or `search_console`. `apply` confirms on a terminal like `hoist apply`; without one it
+needs `--yes` (else exit 3 before any write). `command` in `--json` is `org plan`, `org check`,
+`org apply`. Missing file: exit 3 naming the path. Unknown keys: exit 3 naming key and file.
+
+### 16.2 `org.toml`
+
+Every section is optional; an absent section produces no items and no reads.
+
+```toml
+[github]
+org = "acme"                                 # required in the section
+apps = ["claude", "acme-provisioner"]        # app slugs: installed on all repositories
+
+[github.provision]                           # the central provisioning repo (H1, H3, H5)
+repo = "provision"
+environment = "provision"
+branch = "main"                              # the only deployment branch; no reviewers
+secrets = ["SPLICE_BOT_TOKEN", "CLOUDFLARE_API_TOKEN", "PROVISIONER_KEY"]   # names only
+variables = []                               # names only
+
+[github.cloud_environment]                   # H4: not readable by any API hoist has
+name = "acme"
+
+[cloudflare]
+account_id = "…"                             # else env CLOUDFLARE_ACCOUNT_ID
+[[cloudflare.zones]]
+name = "example.dev"
+[[cloudflare.zones.records]]
+type = "TXT"                                 # A, AAAA, CNAME or TXT
+name = "example.dev"                         # FQDN inside the zone
+content = "v=spf1 -all"
+proxied = false                              # default false; TXT never proxied
+[[cloudflare.pages_domains]]
+project = "site"
+domain = "example.dev"
+
+[npm]
+scope = "acme"                               # without `@`
+packages = ["@acme/tool"]
+[npm.trusted_publisher]                      # optional; checked for every package
+repository = "acme/tool"
+workflow = "release.yml"
+environment = "release"
+
+[crates]
+crates = ["acme-tool"]
+owners = ["github:acme:owners", "someone"]   # logins or github:<org>:<team>
+[crates.trusted_publisher]                   # optional; read only (§16.6)
+repository = "acme/tool"
+workflow = "release.yml"
+environment = "release"
+
+[search_console]
+bridge = "https://sc-bridge.example.workers.dev"   # else env HOIST_SEARCH_CONSOLE_BRIDGE
+[[search_console.sites]]
+domain = "example.dev"
+zone = "example.dev"                         # Cloudflare zone for the TXT record
+sitemaps = ["https://example.dev/sitemap.xml"]
+```
+
+Validation (exit 3): `github.org` non-empty; `github.provision.repo` required (`environment` defaults to
+`provision`, `branch` to `main`); no TXT record with `proxied = true`; record `type` in the list; record `name` equal to
+or under its zone; `pages_domains` need `account_id`; site `zone` equal to or a parent of
+`domain`; sitemaps are `https://` URLs on `domain` or a subdomain of it; npm packages are
+`@<scope>/…`.
+
+### 16.3 Items
+
+| area | kind | key | how it is read (GET) | not ok |
+| --- | --- | --- | --- | --- |
+| github | org | `<org>` | `/orgs/{org}` | 404: `pending`, step `github:org` |
+| github | app | `<slug>` | `/orgs/{org}/installations` (`app_slug`, `repository_selection`) | absent or `selected`: `pending`, step `github:app:<slug>` (H2, H3) |
+| github | repo | `<org>/<repo>` | `/repos/{org}/{repo}` | 404: `pending`, step (H5) |
+| github | environment | `<repo>/<env>` | `/repos/…/environments/{env}`, `…/deployment-branch-policies` | absent: `create`; branches not exactly `[branch]` or reviewers set: `update` (H5) |
+| github | env_secret / env_variable | `<repo>/<env>/<NAME>` | `…/environments/{env}/secrets`, `…/variables` (names) | absent: `pending`, step (H1, H3) |
+| github | cloud_environment | `<name>` | none | always `unknown` + step `github:cloud_environment` with status `confirm` (H4) |
+| cloudflare | zone | `<zone>` | `/zones?name=` | absent: `pending`, step (add site, set nameservers) |
+| cloudflare | dns_record | `<type> <name> <content>` | `/zones/{id}/dns_records?name=` | absent: `create`; same type+name, other content (not TXT): `update`; wrong `proxied`: `update` |
+| cloudflare | pages_domain | `<project>/<domain>` | `/accounts/{a}/pages/projects/{p}/domains` | absent: `create`; project 404: `pending` |
+| npm | scope | `@<scope>` | any listed package found | none found: `unknown`, step `npm:scope` (create the npm org) |
+| npm | package | `<name>` | `{registry}/<name>` (anonymous) | 404: `pending`, step: `hoist release bootstrap` |
+| npm | trusted_publisher | `<name>` | `{registry}/-/package/<name>/trust` with `NPM_TOKEN` | no token, 401 or 403: `unknown`; no matching config: `pending`, step `npm trust …` |
+| crates | crate_owner | `<crate>/<owner>` | `/api/v1/crates/{c}/owners` (anonymous) | missing: `pending`, step `cargo owner --add` |
+| crates | trusted_publisher | `<crate>` | `/api/v1/trusted_publishing/github_configs?crate=` with `CARGO_REGISTRY_TOKEN` | no token, 401 or 403: `unknown`; none matching: `pending`, step (crates.io settings page) |
+| search_console | verification | `<domain>` | bridge `GET /sv/webResource` (`dns://<domain>` listed) | absent: `create` |
+| search_console | property | `sc-domain:<domain>` | bridge `GET /wm/sites` | absent: `create` |
+| search_console | sitemap | `<url>` | bridge `GET /wm/sites/{site}/sitemaps` | absent: `create` |
+
+Any 403, any missing token or any unreadable parent makes the affected items `unknown` with
+the reason (the GitHub, npm and crates readers and the bridge: never an error). A 401 from
+GitHub, Cloudflare or the bridge is exit 3 (a dead token must not read as in sync); a 401 from
+a registry trust read is `unknown` (§16.6). Human-step ids are `<area>:<kind>:<key>`;
+statuses are `pending` (exit 2) or `confirm` (listed, does not change the exit code). Every
+step title says how hoist verifies it. Sort order: area, kind, key.
+
+H1-H5 of the provision checklist map to: H1 env secrets `SPLICE_BOT_TOKEN`,
+`CLOUDFLARE_API_TOKEN`; H2 app `claude`; H3 app `<provisioner>` and env secret
+`PROVISIONER_KEY`; H4 `cloud_environment`; H5 repo + environment. `hoist org check --area
+github` replaces the README checklist.
+
+### 16.4 Apply
+
+Order: Cloudflare (records, Pages domains), then Search Console, then GitHub. Each write is one
+request; a failed write is exit 1 with the API's message and later writes in the same area
+still run. After writing, apply re-reads and reports like `check` (§16.3), so the exit code is
+the state after the run.
+
+- **Cloudflare**: `POST /zones/{id}/dns_records` (`ttl` 1, `proxied` for non-TXT), `PATCH` an
+  existing record's `content`/`proxied`, `POST /accounts/{a}/pages/projects/{p}/domains
+  {name}`. hoist never creates zones and never deletes records it does not manage.
+- **Search Console** (per site, in order): if not verified, `POST /sv/token`
+  (`{"site":{"type":"INET_DOMAIN","identifier":<domain>},"verificationMethod":"DNS_TXT"}`) →
+  `token`; create the TXT record `<domain> <token>` in `zone` through the Cloudflare client
+  unless it is there; `POST /sv/webResource?verificationMethod=DNS_TXT`. A refusal of that
+  insert after a new record is DNS propagation: the item is `pending` with step
+  `search_console:verification:<domain>` "re-run `hoist org apply` in a few minutes" (exit
+  2). Then `PUT /wm/sites/{seg(site)}` and `PUT /wm/sites/{seg(site)}/sitemaps/{seg(url)}`.
+  `plan`/`check` never POST to the bridge (the token request is a POST, so it is apply-only).
+- **GitHub**: writes (the `provision` environment with its one deployment branch, no reviewers)
+  run only inside GitHub Actions with an app installation token (`GITHUB_ACTIONS=true` and a
+  `ghs_` token, e.g. from `actions/create-github-app-token` with the provisioner app): the
+  documented path is a workflow in the provision repo, environment `provision`, that runs
+  `hoist org apply --area github --yes`. The default Actions `GITHUB_TOKEN` also starts with
+  `ghs_`, so hoist cannot tell it apart: with it the write fails with 403 (exit 1). Anywhere else (laptop, cloud session) the GitHub items
+  stay as planned (`create`/`update`), nothing is written, and the report hint says so. Every
+  other GitHub item is a human step: hoist lists and verifies, never performs (create the org,
+  install apps, set secret values).
+
+### 16.5 Credentials
+
+Static-header APIs work when a proxy injects the credential (e.g. a cloud environment's
+network secret): the process holds a dummy value, the proxy replaces the header. hoist never
+needs the real value and never prints one.
+
+| client | env var | header sent | dummy when proxy-injected |
+| --- | --- | --- | --- |
+| GitHub | `GITHUB_TOKEN`, `GH_TOKEN`, `gh auth token` | `Authorization: Bearer` | not supported for org apply (needs an app token in Actions); read-only reads work with any injected token |
+| Cloudflare | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (not secret) | `Authorization: Bearer` | `CLOUDFLARE_API_TOKEN=proxy-injected` |
+| npm | `NPM_TOKEN` (optional, trust reads only) | `Authorization: Bearer` | `NPM_TOKEN=proxy-injected` |
+| crates.io | `CARGO_REGISTRY_TOKEN` (optional, trust reads only) | `Authorization: <token>` on GETs (no `Bearer`, as cargo sends it) | `CARGO_REGISTRY_TOKEN=proxy-injected` |
+| Search Console bridge | `HOIST_SEARCH_CONSOLE_TOKEN` | `Authorization: Bearer` | `HOIST_SEARCH_CONSOLE_TOKEN=proxy-injected` |
+
+API bases: `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API`, `HOIST_NPM_REGISTRY`,
+`HOIST_CRATES_API`, and the bridge from `search_console.bridge` or
+`HOIST_SEARCH_CONSOLE_BRIDGE` (env wins; tests point it at the fake). A missing Cloudflare
+token makes Cloudflare items `unknown` in `plan`/`check`; `apply` with a `[cloudflare]` section
+in scope exits 3 without it (the writes cannot be known without reading). A missing bridge URL
+or token makes Search Console items `unknown` in `plan`/`check` and is exit 3 in `apply`.
+
+### 16.6 Answers to the open questions of #65
+
+- **Scope**: D-026 (`decisions/decisions/026-hoist-org-scope.md`).
+- **crates.io trusted publishing by API token** (not verified against the live API; checked
+  only against the crates.io source and docs as of 2026-11): the read is
+  `GET /api/v1/trusted_publishing/github_configs?crate=<name>` and the docs describe API-token
+  access, but whether a token without a browser session is accepted is **unknown** until run
+  on a canary. hoist therefore only reads it and treats 401/403 as `unknown`; adding a config
+  stays a human step on the crate's settings page. Verified: crate owners read anonymously.
+- **npm trust via a granular token with 2FA bypass**: unknown; the trust read uses the same
+  endpoint as `npm trust list` (§13). `hoist release bootstrap` is unchanged.
+- **Search Console bridge**: a minimal reference Worker ships in
+  `hoist/examples/search-console-bridge/` (docs, not a tool or a hull piece). The owner deploys it
+  in their own Cloudflare account with the service-account key as a Worker secret and one
+  static bearer token. It forwards only `/sv/*` (Site Verification v1) and `/wm/*`
+  (Webmasters v3) to Google with a minted, cached access token. hoist does not deploy it.

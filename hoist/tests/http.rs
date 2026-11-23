@@ -115,6 +115,20 @@ fn sends_bearer_token() {
 }
 
 #[test]
+fn crates_sends_the_raw_token_and_bridge_sends_bearer() {
+    let api = FakeApi::start(&[("GET /a", 200, "empty.json", &[])]);
+    Http::with_base(Service::Crates, Secret::from("cio-tok"), &api.url())
+        .get_json("/a")
+        .unwrap();
+    Http::with_base(Service::SearchConsole, Secret::from("sc-tok"), &api.url())
+        .get_json("/a")
+        .unwrap();
+    let reqs = api.requests();
+    assert_eq!(reqs[0].auth.as_deref(), Some("cio-tok"));
+    assert_eq!(reqs[1].auth.as_deref(), Some("Bearer sc-tok"));
+}
+
+#[test]
 fn only_get_requests() {
     let api = FakeApi::start(&[
         ("GET /one", 200, "empty.json", &[]),

@@ -41,7 +41,7 @@ impl fmt::Display for Secret {
     }
 }
 
-fn from_env(name: &str) -> Option<Secret> {
+pub(crate) fn from_env(name: &str) -> Option<Secret> {
     let value = std::env::var(name).ok()?;
     let value = value.trim();
     (!value.is_empty()).then(|| Secret::from(value))

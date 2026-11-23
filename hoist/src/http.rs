@@ -21,6 +21,9 @@ pub enum Service {
     /// The GitHub Actions OIDC token endpoint (`ACTIONS_ID_TOKEN_REQUEST_URL`); always built
     /// with [`Http::with_base`].
     ActionsOidc,
+    /// The Search Console bridge Worker (`hoist org`, spec §16); always built with
+    /// [`Http::with_base`].
+    SearchConsole,
 }
 
 /// crates.io answers 403 to requests without an identifying User-Agent.
@@ -39,6 +42,7 @@ impl Service {
             Service::Npm => "npm registry",
             Service::Crates => "crates.io",
             Service::ActionsOidc => "GitHub Actions OIDC",
+            Service::SearchConsole => "Search Console bridge",
         }
     }
 
@@ -54,6 +58,9 @@ impl Service {
             Service::Crates => ("HOIST_CRATES_API", "https://crates.io"),
             Service::ActionsOidc => panic!(
                 "Service::ActionsOidc has no base URL from env; build it with Http::with_base"
+            ),
+            Service::SearchConsole => panic!(
+                "Service::SearchConsole has no base URL from env; build it with Http::with_base"
             ),
         };
         std::env::var(var)
@@ -181,6 +188,7 @@ impl fmt::Display for HttpError {
                     Service::Npm | Service::Crates => "the registry credentials",
                     Service::ActionsOidc =>
                         "ACTIONS_ID_TOKEN_REQUEST_TOKEN (the job needs `permissions: id-token: write`)",
+                    Service::SearchConsole => "HOIST_SEARCH_CONSOLE_TOKEN",
                 }
             ),
             HttpError::PageLimit { service, path } => write!(
@@ -582,7 +590,7 @@ impl Http {
         for _ in 0..=5 {
             let started = std::time::Instant::now();
             let resp = self
-                .headers(self.write_agent.get(&url.to_string()))
+                .headers(self.write_agent.get(&url.to_string()), "GET")
                 .call()
                 .map_err(SameOrigin::Ureq)?;
             let to = resp.headers().get("location").and_then(|l| l.to_str().ok());
@@ -701,7 +709,11 @@ impl Http {
         }
     }
 
-    fn headers<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+    fn headers<B>(
+        &self,
+        request: ureq::RequestBuilder<B>,
+        method: &str,
+    ) -> ureq::RequestBuilder<B> {
         let github = matches!(self.service, Service::Github | Service::GithubUploads);
         let accept = if github {
             "application/vnd.github+json"
@@ -715,7 +727,13 @@ impl Http {
         let mut request = request.header("Accept", accept).header("User-Agent", agent);
         // An empty token means an anonymous request (registry reads).
         if !self.token.expose().is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", self.token.expose()));
+            // crates.io reads want the bare token, as cargo sends it (spec §16.5); the
+            // trusted-publishing token revoke (a DELETE) keeps `Bearer`.
+            let value = match (self.service, method) {
+                (Service::Crates, "GET") => self.token.expose().to_string(),
+                _ => format!("Bearer {}", self.token.expose()),
+            };
+            request = request.header("Authorization", value);
         }
         if github {
             request = request.header("X-GitHub-Api-Version", "2022-11-28");
@@ -740,11 +758,11 @@ impl Http {
             }
         };
         let result = match method {
-            "POST" => json(self.headers(self.write_agent.post(&url))),
-            "PUT" => json(self.headers(self.write_agent.put(&url))),
-            "PATCH" => json(self.headers(self.write_agent.patch(&url))),
+            "POST" => json(self.headers(self.write_agent.post(&url), "POST")),
+            "PUT" => json(self.headers(self.write_agent.put(&url), "PUT")),
+            "PATCH" => json(self.headers(self.write_agent.patch(&url), "PATCH")),
             "DELETE" => {
-                let r = self.headers(self.write_agent.delete(&url));
+                let r = self.headers(self.write_agent.delete(&url), "DELETE");
                 match body {
                     Some(_) => json(r.force_send_body()),
                     None => r.call(),
@@ -762,7 +780,7 @@ impl Http {
                     });
                 }
             },
-            _ => self.headers(self.agent.get(&url)).call(),
+            _ => self.headers(self.agent.get(&url), "GET").call(),
         };
         let transport = |detail: String| HttpError::Transport {
             service: self.service,

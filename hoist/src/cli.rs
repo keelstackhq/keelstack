@@ -15,6 +15,49 @@ pub enum Area {
     Release,
 }
 
+/// Areas of `hoist org` (`--area`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum OrgArea {
+    Github,
+    Cloudflare,
+    Npm,
+    Crates,
+    SearchConsole,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OrgCommand {
+    /// Diff org.toml against the live org, GET only, exit 0
+    Plan {
+        #[command(flatten)]
+        args: OrgArgs,
+    },
+    /// Plan plus the exit policy of `check`; GET only
+    Check {
+        #[command(flatten)]
+        args: OrgArgs,
+    },
+    /// Write the planned org changes, then re-read; asks for confirmation unless --yes
+    Apply {
+        #[command(flatten)]
+        args: OrgArgs,
+        /// Do not ask for confirmation (required in non-interactive runs)
+        #[arg(long)]
+        yes: bool,
+    },
+}
+
+#[derive(Debug, clap::Args)]
+pub struct OrgArgs {
+    /// The org file (default: org.toml in -C DIR)
+    #[arg(long, value_name = "PATH")]
+    pub file: Option<PathBuf>,
+    /// Limit to an area (repeatable)
+    #[arg(long, value_enum)]
+    pub area: Vec<OrgArea>,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "hoist",
@@ -117,6 +160,11 @@ pub enum Command {
     Release {
         #[command(subcommand)]
         command: ReleaseCommand,
+    },
+    /// Plan, check and apply the org's GitHub, Cloudflare, registry and Search Console setup
+    Org {
+        #[command(subcommand)]
+        command: OrgCommand,
     },
     /// Manage GitHub Actions secrets (values come from the environment or a hidden prompt)
     Secrets {
@@ -319,6 +367,15 @@ impl Command {
             Command::Changeset {
                 command: ChangesetCommand::Status { .. },
             } => "changeset status",
+            Command::Org {
+                command: OrgCommand::Plan { .. },
+            } => "org plan",
+            Command::Org {
+                command: OrgCommand::Check { .. },
+            } => "org check",
+            Command::Org {
+                command: OrgCommand::Apply { .. },
+            } => "org apply",
             Command::Release {
                 command: ReleaseCommand::Plan,
             } => "release plan",

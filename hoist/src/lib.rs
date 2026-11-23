@@ -19,6 +19,7 @@ pub mod github;
 pub mod github_write;
 pub mod http;
 pub mod ops;
+pub mod org;
 pub mod r2;
 pub mod release;
 pub mod repo;
@@ -104,6 +105,7 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
             },
             cli.verbose,
         ),
+        Command::Org { ref command } => org::run(&dir, command, cli.verbose),
         Command::Secrets {
             command:
                 cli::SecretsCommand::Set {
