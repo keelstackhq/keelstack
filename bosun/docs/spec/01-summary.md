@@ -24,7 +24,7 @@ through bosun commands, GitHub issues and PRs, and CI.
 | D16 | Init and upgrade (A4) | `bosun init` runs `splice channel add gh:keelstackhq/bosun//channel` (pieces `core`, `rust`, `ts-pnpm`). There is no `bosun upgrade`: the splice update bot (`keelstackhq/splice/action@v1`) keeps the channel fresh. |
 | D17 | Repo settings (A5) | Checklist steps 3 and 5 (branch protection, environments, secrets, variables) are done with `hoist apply`. `bosun doctor --remote` calls `hoist check`. |
 | D18 | Workspaces (A6) | Wave agents get isolated workspaces from `berth up` (worktree, env files, port block, database per agent). `berth gc` cleans up after merge. |
-| D19 | CI cache (A7) | Generated gate workflows cache through `keelstackhq/hoard@v0`. hoard is a Turborepo remote cache, so it applies to ts-pnpm stacks; Rust gate jobs (bosun's own CI included) cache with `Swatinem/rust-cache`, as berth and hoist do. |
+| D19 | CI cache (A7) | Generated gate workflows cache through `keelstackhq/keelstack/hoard@v0`. hoard is a Turborepo remote cache, so it applies to ts-pnpm stacks; Rust gate jobs (bosun's own CI included) cache with `Swatinem/rust-cache`, as berth and hoist do. |
 | D20 | Usage (A8) | The usage provider `claude-sessions` reads `usage.cost_usd` from the claude-code-remote `get_session` result. It ships in the seed with the `generic` estimate. |
 | D21 | Exit codes (A9) | Exit codes 0-6 as in §1.1; 2 is usage, as in splice and berth. Every error JSON has a `fix` field that says how to fix it. |
 | D22 | Seed shape (A10) | The seed is a sequence of PRs of at most 400 changed lines each, not one seed PR. |

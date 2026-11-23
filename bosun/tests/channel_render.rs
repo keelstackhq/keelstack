@@ -1793,7 +1793,7 @@ fn the_pnpm_steps_follow_the_configured_ts_stack_paths() {
     for u in [
         "pnpm/action-setup@",
         "actions/setup-node@",
-        "keelstackhq/hoard@",
+        "keelstackhq/keelstack/hoard@v0",
     ] {
         let s = b
             .iter()

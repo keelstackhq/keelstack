@@ -688,7 +688,7 @@ jobs:
           for d in $TS_PATHS; do
             if [ -f "$d/pnpm-lock.yaml" ]; then (cd "$d" && pnpm install --frozen-lockfile); fi
           done
-      - uses: keelstackhq/hoard@v0
+      - uses: keelstackhq/keelstack/hoard@v0
         if: needs.bosun-trusted.outputs.pr_gates != '' && needs.bosun-trusted.outputs.ts_lock == 'true'
 {% endraw %}{% raw %}      # The gates bosun-trusted left (fmt, lint, test), in order; the first failure stops the job.
       - if: needs.bosun-trusted.outputs.pr_gates != ''
