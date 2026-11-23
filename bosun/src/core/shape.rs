@@ -155,7 +155,7 @@ pub fn resolve_gated(
                     && !files.iter().any(|f| g.matches(f))
                 {
                     warns.push(format!(
-                        "{id}: touch `{w}` matches no file on the default branch"
+                        "{id}: touch `{w}` matches no file on the default branch (fine if the task adds it)"
                     ));
                 }
             }

@@ -490,7 +490,13 @@ pub(crate) fn record(
     // when one session approves at the threshold and no session's latest verdict blocks (a
     // request-changes, a blocker, an escalation); a low-confidence approve with no
     // findings neither counts nor blocks. Posting order does not matter.
-    let others = other_sessions(gh, pull, &verdict.head_sha, session)?;
+    let others = other_sessions(
+        gh,
+        &app.ctx.repo.to_string(),
+        pull,
+        &verdict.head_sha,
+        session,
+    )?;
     let blocks_self = blocks(verdict);
     let aggregate = (eff.approve || others.approve) && !blocks_self && others.blocks.is_empty();
     let state = if aggregate { "success" } else { "failure" };
@@ -597,6 +603,7 @@ struct Others {
 /// are one session). `session` is the verdict being recorded, which replaces its own earlier ones.
 fn other_sessions(
     gh: &dyn Github,
+    repo: &str,
     pull: &Pull,
     head: &str,
     session: &str,
@@ -612,10 +619,18 @@ fn other_sessions(
         let (None, Some(text)) = (why, text) else {
             continue;
         };
-        let Ok(v) = Verdict::parse(text) else {
+        let Ok(mut v) = Verdict::parse(text) else {
             continue;
         };
         if v.head_sha != head || v.pr != pull.number || counted_approval(&v, text) {
+            continue;
+        }
+        // Read as `verdict apply` reads it: an approval that does not cover every chunk of the
+        // pack is refused there, so it is no approval here either (it still may block).
+        if v.chunks_reviewed.is_empty() {
+            v.chunks_reviewed = comment_chunks(&c.body);
+        }
+        if v.verdict == "approve" && require_all_chunks(gh, repo, &v).is_err() {
             continue;
         }
         let key = if bot_verdict {

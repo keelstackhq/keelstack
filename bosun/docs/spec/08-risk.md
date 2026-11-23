@@ -264,7 +264,7 @@ High-risk PRs:
   unedited non-approving verdict record on the head, from any session and in any order, leaves
   nothing. The PR must close (`Closes`, `Fixes`, `Resolves`; the `bosun:task-pr` marker does not
   count) an issue that is open, not a PR, not the PR itself, carries task meta and has a lease
-  record written by the PR author, and this holds for every open task the PR closes (not any one); else it fails closed to the owner path. Waiting for the
+  record written by the PR author, and every other open task the PR closes is covered too: by the author's lease on it, or (a bundled task, which stays `ready`) by the author's lease on the PR's lead (its `bosun:task-pr` marker) while no one else has a lease record on it; else it fails closed to the owner path. Waiting for the
   verdict or signature is `high risk, autonomous mode (D-017): clean verdict and orchestrator
   signature needed`, which does not start with the owner-wait text, so `bosun approve --list`
   leaves it off the owner board. `data.autonomous_verdicts` lists the counted sessions. It
@@ -295,7 +295,7 @@ High-risk PRs:
 - Quorum policy (D-022, 0.22.0). `[approvals] policy = "quorum"`, set explicitly: no mode
   implies it (bosun#706), so a repo switches in one owner-approved PR (the file is trust root).
   It lets the orchestrator approve every PR except the trust root. Same signature as D-017
-  (`/bosun approve <head> autonomous`, owner or signer key, task link and lease rules: the author's lease on every open task the PR closes, not any one, unedited
+  (`/bosun approve <head> autonomous`, owner or signer key, task link and lease rules: the author's lease covers every open task the PR closes (directly or through the bundle's lead), not any one, unedited
   verdicts, a request for changes on the head blocks) with the note line `Signed under the quorum
   policy (D-022), not an owner answer` and `data.policy = "quorum"`, but it decides before every
   other refusal in `orchestrator_counts`: the allowlist, the deny set, workflows, R-weaken (also

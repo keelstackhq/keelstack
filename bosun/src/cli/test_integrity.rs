@@ -81,7 +81,7 @@ fn from_pr(dir: Option<&Path>, base: Option<&str>, n: u64) -> CmdResult {
 }
 
 /// The kinds a flat `BOSUN_INTEGRITY_ALLOW` may carry for this PR: a kind some grant lists whose
-/// every finding (of the kinds it allows) was allowed file by file. A flat list over the same
+/// findings (at least one, of the kinds it allows) were all allowed file by file. A flat list over the same
 /// diff then allows exactly what the grants allowed, never a finding outside its task's touch.
 fn flat_allow(grants: &[Grant], findings: &serde_json::Value) -> Vec<String> {
     let findings = findings.as_array().cloned().unwrap_or_default();
@@ -97,10 +97,13 @@ fn flat_allow(grants: &[Grant], findings: &serde_json::Value) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for g in grants {
         for k in &g.allow {
-            let all = findings
+            let of_kind: Vec<&serde_json::Value> = findings
                 .iter()
                 .filter(|f| covers(k).iter().any(|c| f["kind"] == *c))
-                .all(|f| f["allowed"] == true);
+                .collect();
+            // Only a kind the PR needs: a granted kind with no finding stays out, so a gate run on
+            // another diff cannot use it on a file outside the granting task's touch.
+            let all = !of_kind.is_empty() && of_kind.iter().all(|f| f["allowed"] == true);
             if all && !out.contains(k) {
                 out.push(k.clone());
             }

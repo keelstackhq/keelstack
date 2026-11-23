@@ -1067,19 +1067,6 @@ pub(crate) fn epic_shape(body: &str) -> Option<String> {
     v["shape"].as_str().map(str::to_string)
 }
 
-/// Whether the metadata of an epic body says `"pr":"one"` (the plan is one big PR).
-#[allow(dead_code)] // read by the PR-side consumers of a big-PR plan
-pub(crate) fn epic_pr_one(body: &str) -> bool {
-    let Some(i) = body.find("<!-- bosun:epic") else {
-        return false;
-    };
-    let rest = &body[i + "<!-- bosun:epic".len()..];
-    let Some(end) = rest.find("-->") else {
-        return false;
-    };
-    serde_json::from_str::<Value>(rest[..end].trim()).is_ok_and(|v| v["pr"] == "one")
-}
-
 /// `data.big_pr` of a `pr: one` plan: its tasks, the union of their touch globs, the `allow:`
 /// kinds per task and the strictest risk class.
 fn big_pr(p: &Plan) -> Value {

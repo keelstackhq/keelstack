@@ -1877,8 +1877,9 @@ pub fn verdict_inputs(gh: &dyn Github, n: u64, ls: &[u64]) -> Result<(Vec<Commen
 }
 
 /// D-017: the PR's comments and the sessions that cannot review it, only when the PR closes an
-/// open task issue (not a PR, not itself, with task meta) and the PR author wrote a lease record
-/// on every such task it closes (a bundle needs each of its tasks leased); else no reviewer can be shown independent of the author (a decoy link fails closed).
+/// open task issue (not a PR, not itself, with task meta) with the PR author's lease record, and
+/// every other open task it closes is covered too: by the author's lease on it, or (a bundled
+/// task) by the author's lease on the PR's lead when no one else has a lease record on it; else no reviewer can be shown independent of the author (a decoy link fails closed).
 /// The excluded sessions are every lease session on any linked issue.
 pub(crate) fn autonomous_inputs(
     gh: &dyn Github,
@@ -1889,22 +1890,31 @@ pub(crate) fn autonomous_inputs(
     if super::pr_no_ci::provider_default(gh)? == crate::config::CiProvider::None {
         return Ok(None);
     }
-    // A bundle: every open task the PR closes must be leased by the author, not just one.
-    let (mut leased, mut unleased) = (false, false);
+    // A bundle: every open task the PR closes is covered. A task is covered by the author's
+    // lease on it; a bundled task (stays `ready`, never claimed: spec 04) also by the author's
+    // lease on the PR's lead (its `bosun:task-pr` marker), but only while nobody else holds a
+    // lease record on it. The lead must be a closed task with the author's lease.
+    let lead = task_pr_lead(&pull.body);
+    let mut lead_leased = false;
+    let mut rest: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut leased_any = false;
     for i in closing_issues_in(&pull.body, Some(repo)) {
         let open = |x: &Issue| x.state == "open" && !x.pull_request && task_meta(x).is_some();
         if i != pull.number && gh.get_issue(i)?.is_some_and(|x| open(&x)) {
             let notes = gh.list_comments(i)?;
             let by = |c: &&Comment| c.user.eq_ignore_ascii_case(&pull.user);
-            let bodies = notes.iter().filter(by).map(|c| c.body.as_str());
-            if lease_sessions(bodies).is_empty() {
-                unleased = true;
-            } else {
-                leased = true;
+            let mine = !lease_sessions(notes.iter().filter(by).map(|c| c.body.as_str())).is_empty();
+            if mine {
+                leased_any = true;
+                lead_leased |= lead == Some(i);
+                continue;
             }
+            let others = lease_sessions(notes.iter().map(|c| c.body.as_str()));
+            rest.push((i, others));
         }
     }
-    let task = leased && !unleased;
+    let covered = |(_, others): &(u64, Vec<String>)| lead_leased && others.is_empty();
+    let task = leased_any && rest.iter().all(covered);
     let linked = linked_issues_in(&pull.body, repo);
     let (comments, excluded) = verdict_inputs(gh, pull.number, &linked)?;
     Ok(task.then_some((comments, excluded)))
@@ -2333,4 +2343,10 @@ fn closing_refs_outside_body(
     out.sort_unstable();
     out.dedup();
     Ok((out, cut))
+}
+
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
+fn task_pr_lead(body: &str) -> Option<u64> {
+    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
+    rest[..rest.find("-->")?].trim().parse().ok()
 }
