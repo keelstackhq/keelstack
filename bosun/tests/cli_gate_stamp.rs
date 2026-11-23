@@ -287,3 +287,25 @@ fn test_integrity_refuses_an_untracked_test_with_a_skip() {
     assert_eq!(v["data"]["findings"][0]["file"], "tests/new.rs", "{v}");
     assert!(!stamps_dir(&root).exists());
 }
+
+#[test]
+fn a_passing_ci_minutes_gate_stamps_the_tree() {
+    let (_tmp, root) = repo();
+    let (code, v) = gate_named(&root, "ci-minutes", &[], &[]);
+    assert_eq!(code, 0, "{v}");
+    assert!(v["data"]["stamp"].is_string(), "{v}");
+    assert!(stamp_text(&root, "ci-minutes").is_some(), "{v}");
+}
+
+#[test]
+fn a_failing_ci_minutes_gate_leaves_no_stamp() {
+    let (_tmp, root) = repo();
+    put(
+        &root,
+        ".github/workflows/ci.yml",
+        "name: ci\non:\n  pull_request:\njobs:\n  ci:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n",
+    );
+    let (code, v) = gate_named(&root, "ci-minutes", &[], &[]);
+    assert_eq!(code, 1, "{v}");
+    assert!(stamp_text(&root, "ci-minutes").is_none());
+}

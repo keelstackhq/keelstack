@@ -3,17 +3,27 @@
 //! and written by `cli::stamps`.
 
 /// The profile gates a PR must have passed locally before it leaves draft, in run order.
-/// `test-integrity` is built in and always required, so it comes first.
-pub const READY_GATES: [&str; 6] = ["test-integrity", "fmt", "lint", "types", "test", "deps"];
+/// `test-integrity` and `ci-minutes` are built in and always required, so they come first.
+pub const READY_GATES: [&str; 7] = [
+    "test-integrity",
+    "ci-minutes",
+    "fmt",
+    "lint",
+    "types",
+    "test",
+    "deps",
+];
 
-/// The ready gates for stacks whose profiles define the gates in `per_stack`: `test-integrity`
-/// and each other ready gate that some profile has, in `READY_GATES` order.
+const BUILT_IN: [&str; 2] = ["test-integrity", "ci-minutes"];
+
+/// The ready gates for stacks whose profiles define the gates in `per_stack`: `test-integrity`,
+/// `ci-minutes` and each other ready gate that some profile has, in `READY_GATES` order.
 pub fn required_gates(per_stack: &[Vec<String>]) -> Vec<String> {
     let has = |g: &str| per_stack.iter().any(|gates| gates.iter().any(|x| x == g));
     READY_GATES
         .iter()
         .copied()
-        .filter(|g| *g == "test-integrity" || has(g))
+        .filter(|g| BUILT_IN.contains(g) || has(g))
         .map(String::from)
         .collect()
 }
@@ -87,14 +97,32 @@ mod tests {
         let rust = names(&["fmt", "lint", "test", "deps", "mutants"]);
         assert_eq!(
             required_gates(std::slice::from_ref(&rust)),
-            names(&["test-integrity", "fmt", "lint", "test", "deps"])
+            names(&[
+                "test-integrity",
+                "ci-minutes",
+                "fmt",
+                "lint",
+                "test",
+                "deps"
+            ])
         );
         let ts = names(&["types", "fmt", "snapshots"]);
         assert_eq!(
             required_gates(&[rust, ts]),
-            names(&["test-integrity", "fmt", "lint", "types", "test", "deps"])
+            names(&[
+                "test-integrity",
+                "ci-minutes",
+                "fmt",
+                "lint",
+                "types",
+                "test",
+                "deps"
+            ])
         );
-        assert_eq!(required_gates(&[]), names(&["test-integrity"]));
+        assert_eq!(
+            required_gates(&[]),
+            names(&["test-integrity", "ci-minutes"])
+        );
     }
 
     #[test]

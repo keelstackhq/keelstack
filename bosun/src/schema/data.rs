@@ -45,7 +45,7 @@ doctor = {offline: bool, missing: int, items_ok?: int, summary?: bool, items: [{
 budget record = {usd: num, provider?: str, session?: str, model?: str | null, issue?: int | null,
     blocked?: bool, over_task_cap?: bool, task_total_usd?: num, prs?: [int], recorded?: [int],
     already_recorded?: [int], usd_per_pr?: num, lesson?: {created?: bool, hits?: int, issue?: int,
-    error?: str, fix?: str} | null, no_new_spend?: bool, ledger?: bool, session_total_usd?: num, recorded_before_usd?: num, at?: str};
+    error?: str, fix?: str} | null, no_new_spend?: bool, ledger?: bool, branch?: str | null, session_total_usd?: num, recorded_before_usd?: num, at?: str};
 budget check = {daily_usd: num, spent_today_usd: num, pct: num, level: str, stopped: [str]};
 budget raise = {recorded: [{epic: int, usd: int, digest: str}], refused: [{epic: int | null,
     usd: int | null, why: str}]};

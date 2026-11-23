@@ -7,7 +7,14 @@ use std::process::Command;
 use super::fake::FakeGithub;
 
 /// The gates the default (rust) stack must have passed before a PR is marked ready.
-pub const READY_GATES: [&str; 5] = ["test-integrity", "fmt", "lint", "test", "deps"];
+pub const READY_GATES: [&str; 6] = [
+    "test-integrity",
+    "ci-minutes",
+    "fmt",
+    "lint",
+    "test",
+    "deps",
+];
 
 fn git(dir: &Path, args: &[&str]) -> String {
     let out = Command::new("git")

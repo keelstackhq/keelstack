@@ -203,6 +203,7 @@ pub fn run(dir: Option<&Path>, args: &ResultArgs) -> CmdResult {
         Some(v) => {
             let a = BudgetRecordArgs {
                 issue: Some(n),
+                branch: None,
                 pr: Vec::new(),
                 usd: None,
                 session: Some(session.clone()),

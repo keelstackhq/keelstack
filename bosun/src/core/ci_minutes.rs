@@ -652,11 +652,22 @@ pub fn check(file: &str, text: &str) -> Vec<Finding> {
                 .as_ref()
                 .is_some_and(|ty| ty.iter().any(|x| x == "ready_for_review"))
             {
+                let mut list: Vec<String> = t
+                    .types
+                    .clone()
+                    .filter(|ty| !ty.is_empty())
+                    .unwrap_or_else(|| {
+                        ["opened", "synchronize", "reopened"]
+                            .map(String::from)
+                            .to_vec()
+                    });
+                list.push("ready_for_review".into());
                 add(
                     None,
                     "ready_for_review",
                     format!(
-                        "add `ready_for_review` to `types:` of {} (a skipped draft needs a run when it becomes ready; without `types:` the default set lacks it)",
+                        "in {file}, set `types: [{}]` under `on.{}` (a skipped draft needs a run when it becomes ready; without `types:` the default set lacks ready_for_review)",
+                        list.join(", "),
                         t.name
                     ),
                 );
@@ -859,6 +870,31 @@ jobs:
             "    types:\n      - opened\n      - ready_for_review\n",
         );
         assert_eq!(rules(&block), vec![]);
+    }
+
+    #[test]
+    fn ready_for_review_fix_names_the_exact_line() {
+        let fix = |t: &str| {
+            check("w.yml", t)
+                .into_iter()
+                .find(|f| f.rule == "ready_for_review")
+                .unwrap()
+                .fix
+        };
+        let kept = fix(&CLEAN.replace(", ready_for_review", ""));
+        assert!(
+            kept.starts_with(
+                "in w.yml, set `types: [opened, synchronize, ready_for_review]` under `on.pull_request`"
+            ),
+            "{kept}"
+        );
+        let none = fix(&CLEAN.replace("    types: [opened, synchronize, ready_for_review]\n", ""));
+        assert!(
+            none.starts_with(
+                "in w.yml, set `types: [opened, synchronize, reopened, ready_for_review]` under `on.pull_request`"
+            ),
+            "{none}"
+        );
     }
 
     #[test]

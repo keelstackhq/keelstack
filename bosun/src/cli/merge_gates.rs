@@ -116,9 +116,12 @@ fn snapshot(wt: &Path) -> Result<String, BosunError> {
 }
 
 fn non_empty(all: Vec<String>) -> Result<Vec<String>, BosunError> {
-    if all.iter().all(|g| g == "test-integrity") {
+    if all
+        .iter()
+        .all(|g| g == "test-integrity" || g == "ci-minutes")
+    {
         return Err(BosunError::needs_human(
-            "the default branch's profiles require no gate besides test-integrity, so nothing can vouch for the head",
+            "the default branch's profiles require no gate besides the built-in test-integrity and ci-minutes, so nothing can vouch for the head",
             "an owner fixes the stacks and profiles on the default branch",
         ));
     }
@@ -294,6 +297,19 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
                 &allow,
                 Some(&default_view),
             )
+        } else if gate == "ci-minutes" {
+            // Built in, reads the head's workflow files in the private checkout.
+            let (files, findings) = super::ci_minutes::scan(wt);
+            if findings.is_empty() {
+                Ok(crate::output::Outcome::data(
+                    json!({"gate": "ci-minutes", "files": files, "findings": []}),
+                ))
+            } else {
+                Err(BosunError::error(
+                    format!("{} CI-minute finding(s)", findings.len()),
+                    "run `bosun gate ci-minutes` on the PR branch",
+                ))
+            }
         } else {
             gates::run(&Request {
                 root: wt,

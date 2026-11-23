@@ -1,0 +1,1 @@
+- ci-minutes is a ready gate (stamped, required by `pr --ready`) and its `ready_for_review` fix names the line to write; `budget record --branch`; the worker rule "Spawn no sessions" yields to the owner

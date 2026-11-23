@@ -61,6 +61,9 @@ pub enum Record {
         /// The model the session ran on (`budget record --pr`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
+        /// The branch of owner-driven work with no issue (`budget record --branch`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        branch: Option<String>,
     },
     /// A question to the owner.
     Ask { session: String, question: String },

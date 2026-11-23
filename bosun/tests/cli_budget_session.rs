@@ -136,3 +136,19 @@ fn a_session_flag_that_contradicts_the_result_is_refused() {
     assert_eq!(code, 2, "{v}");
     assert!(registry_spends(&fake).is_empty());
 }
+
+#[test]
+fn branch_is_stored_on_the_ledger_record_and_refused_with_an_issue() {
+    let fake = FakeGithub::start();
+    let body = r#"{"session_id":"session_orch","usage":{"cost_usd":1.0}}"#;
+    let (code, v) = budget(&fake, body, &["--from", "-", "--branch", "feat/x"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["branch"], "feat/x", "{v}");
+    let r = registry_spends(&fake);
+    assert_eq!(r.len(), 1);
+    assert!(r[0].contains(r#""branch":"feat/x""#), "{}", r[0]);
+    let (code, v) = budget(&fake, body, &["5", "--from", "-", "--branch", "feat/x"]);
+    assert_eq!(code, 2, "{v}");
+    let (code, v) = budget(&fake, body, &["--pr", "5", "--branch", "feat/x"]);
+    assert_eq!(code, 2, "{v}");
+}

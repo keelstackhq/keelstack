@@ -359,6 +359,7 @@ fn record_spend(app: &App, usd: Result<f64, BosunError>, task: Option<u64>) -> V
             at: app.ctx.now.to_string(),
             issue: task,
             model: None,
+            branch: None,
         };
         if let Some(t) = task {
             gh.add_comment(t, &spend.to_line())?;
