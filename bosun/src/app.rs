@@ -4,12 +4,13 @@
 use std::path::Path;
 use std::sync::OnceLock;
 
-use crate::cli::risk_check::owner_logins;
+use crate::cli::risk_check::OWNERS_PATH;
 use crate::config::{LIMITS_FILE, Limits};
 use crate::core::glob::Glob;
 use crate::core::lease::{Lease, leases_of, race_winner};
 use crate::core::meta::{TaskMeta, closing_issues_in, parse_task_meta};
 use crate::core::records::{Note, Record, parse_record, replace_record};
+use crate::core::risk::{HaltPick, OWNER_TEAM_FIX, OwnerView, parse_owners_in};
 use crate::core::state::{State, labels_to_remove, state_of, transition_allowed};
 use crate::ctx::Ctx;
 use crate::github::{Github, Issue, IssueState, LiveGithub, Pull, Variable};
@@ -62,29 +63,44 @@ pub fn halt_reason(gh: &dyn Github) -> Result<Option<(String, String)>> {
         .list_issues(&[HALT_LABEL], IssueState::Open)
         .map_err(|e| closed("the bosun:halt issues", e))?;
     if !issues.is_empty() {
-        let owners = default_ref(gh)
-            .and_then(|r| owner_logins(gh, &r))
+        let view = default_ref(gh)
+            .and_then(|r| owner_view(gh, &r))
             .map_err(|e| closed("the owners on the default branch", e))?;
-        if owners.is_empty() {
-            return Ok(Some((
-                format!(
-                    "halt issue #{} is open and no owners are listed to judge it",
-                    issues[0].number
-                ),
-                "fill governance/owners.toml on the default branch, or close the halt issue".into(),
-            )));
-        }
-        let by_owner = issues
-            .iter()
-            .find(|i| owners.iter().any(|o| o.eq_ignore_ascii_case(&i.user)));
-        if let Some(i) = by_owner {
-            return Ok(Some((
-                format!(
-                    "halt issue #{} by {} is open: the owner stopped all work",
-                    i.number, i.user
-                ),
-                format!("wait for the owner to close #{}", i.number),
-            )));
+        let authors: Vec<&str> = issues.iter().map(|i| i.user.as_str()).collect();
+        match view.halt_pick(&authors) {
+            Some(HaltPick::NoOwners(i)) => {
+                return Ok(Some((
+                    format!(
+                        "halt issue #{} is open and no owners are listed to judge it",
+                        issues[i].number
+                    ),
+                    "fill governance/owners.toml on the default branch, or close the halt issue"
+                        .into(),
+                )));
+            }
+            Some(HaltPick::Owner(i)) => {
+                let i = &issues[i];
+                return Ok(Some((
+                    format!(
+                        "halt issue #{} by {} is open: the owner stopped all work",
+                        i.number, i.user
+                    ),
+                    format!("wait for the owner to close #{}", i.number),
+                )));
+            }
+            Some(HaltPick::UnreadableTeam(i)) => {
+                let i = &issues[i];
+                return Ok(Some((
+                    format!(
+                        "halt issue #{} by {} is open and owner team {} is unreadable, so it may be an owner's: bosun stays halted",
+                        i.number,
+                        i.user,
+                        view.unreadable.join(", ")
+                    ),
+                    format!("{OWNER_TEAM_FIX}; or close #{}", i.number),
+                )));
+            }
+            None => {}
         }
     }
     match gh.variable("BOSUN_HALT") {
@@ -98,6 +114,32 @@ pub fn halt_reason(gh: &dyn Github) -> Result<Option<(String, String)>> {
             "retry; only 404 (unset) or 403 (not readable) on BOSUN_HALT count as no signal",
         )),
     }
+}
+
+/// The owners at `git_ref` from `governance/owners.toml` (empty when the file is missing), with
+/// each team expanded by [`expand_team`]; one stderr line per unreadable team.
+pub fn owner_view(gh: &dyn Github, git_ref: &str) -> Result<OwnerView> {
+    let Some(text) = gh.file_at(OWNERS_PATH, git_ref)? else {
+        return Ok(OwnerView::default());
+    };
+    let owners = parse_owners_in(&text, gh.repo_owner()).map_err(|e| {
+        BosunError::error(
+            e,
+            format!("fix {OWNERS_PATH}: one `[[owner]]` table with `github = \"login\"` per owner"),
+        )
+    })?;
+    let view = OwnerView::from_owners(&owners, |t| expand_team(gh, t));
+    for t in &view.unreadable {
+        eprintln!("bosun: owner team {t} is unreadable and counts no member: {OWNER_TEAM_FIX}");
+    }
+    Ok(view)
+}
+
+/// The member logins of `team` (`org/slug`); `None` when it cannot be read (fail closed: it then
+/// counts no member). Not built yet: T2 (#25) wires the cached App-token expansion (child-team
+/// check, paged members) here, and nothing else in the callers changes.
+fn expand_team(_gh: &dyn Github, _team: &str) -> Option<Vec<String>> {
+    None
 }
 
 /// The repo's default branch from GitHub, looked up once per process.

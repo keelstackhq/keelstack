@@ -13,7 +13,9 @@ use crate::core::carry::{
     self, CarryFacts, Entry, FileChange, Hop, Kind, LockTexts, RawTree, Refusal,
 };
 use crate::core::records::{Record, parse_record};
-use crate::core::risk::{VERDICT_AUTHOR, apply_record, is_bot_session, relayer_excluded};
+use crate::core::risk::{
+    OwnerView, VERDICT_AUTHOR, apply_record, is_bot_session, relayer_excluded,
+};
 use crate::github::{Comment, Compare, GitCommit, Github, PrFile, Pull, Review, Status};
 
 /// Seven hex characters of a sha taken from GitHub data, else `?`.
@@ -327,6 +329,43 @@ pub(crate) fn carry_approval(
     owners: &[String],
     approve: &dyn Fn(&str) -> Option<Found>,
 ) -> Option<(String, String, Vec<String>)> {
+    carry_approval_in(gh, pull, default_branch, (owners, None), approve)
+}
+
+/// The association GitHub reports for the author of `r` (`OWNER`, `MEMBER`, ...); `None` when
+/// the review does not carry it (the client does not read it yet), which counts as a possible
+/// member (fail closed, spec §16).
+pub fn review_association(_r: &Review) -> Option<&str> {
+    None
+}
+
+/// While a team is unreadable: the logins that reviewed and may be its members (no listed user;
+/// association OWNER, MEMBER or COLLABORATOR, or unknown). They are added to the owners whose
+/// withdrawal blocks, never to those whose approval counts.
+pub fn unreadable_withdrawers(view: &OwnerView, reviews: &[Review]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for r in reviews {
+        let decisive = matches!(
+            r.state.as_str(),
+            "APPROVED" | "CHANGES_REQUESTED" | "DISMISSED"
+        );
+        let known = out.iter().any(|o| o.eq_ignore_ascii_case(&r.user));
+        if decisive && !known && view.unreadable_withdrawer(&r.user, review_association(r)) {
+            out.push(r.user.clone());
+        }
+    }
+    out
+}
+
+/// [`carry_approval`] with the owner view: while a team is unreadable, a withdrawal by a login
+/// that may be one of its members blocks the carry as an owner's would (spec §16).
+pub(crate) fn carry_approval_in(
+    gh: &dyn Github,
+    pull: &Pull,
+    default_branch: &str,
+    (owners, team): (&[String], Option<&OwnerView>),
+    approve: &dyn Fn(&str) -> Option<Found>,
+) -> Option<(String, String, Vec<String>)> {
     for h in candidates(gh, pull, default_branch) {
         let Some(found) = approve(&h).filter(Found::passed) else {
             continue;
@@ -342,6 +381,12 @@ pub(crate) fn carry_approval(
             c.user = crate::github::gate::record_author(&c.user);
         }
         reviews.sort_by_key(|r| r.id);
+        let mut owners = owners.to_vec();
+        owners.extend(
+            team.map(|v| unreadable_withdrawers(v, &reviews))
+                .unwrap_or_default(),
+        );
+        let owners = owners.as_slice();
         let approval = match found.counted() {
             None => Some(None),
             Some(sessions) => counted_floor(&comments, &h, sessions).map(Some),
@@ -381,6 +426,17 @@ pub fn carry_verdict(
     linked: &[u64],
     owners: &[String],
 ) -> Option<String> {
+    carry_verdict_in(gh, pull, default_branch, linked, (owners, None))
+}
+
+/// [`carry_verdict`] with the owner view (see [`carry_approval_in`]).
+pub fn carry_verdict_in(
+    gh: &dyn Github,
+    pull: &Pull,
+    default_branch: &str,
+    linked: &[u64],
+    (owners, team): (&[String], Option<&OwnerView>),
+) -> Option<String> {
     let cands = candidates(gh, pull, default_branch);
     let open = || matches!(delegation_blocked(gh, &pull.base_ref, linked), Ok(None));
     if cands.is_empty() || linked.is_empty() || has_verdict(gh, &pull.head_sha) || !open() {
@@ -390,6 +446,12 @@ pub fn carry_verdict(
     let models = review_models(gh, &pull.base_sha).ok()?;
     let mut reviews = gh.list_reviews(pull.number).ok()?;
     reviews.sort_by_key(|r| r.id);
+    let mut owners = owners.to_vec();
+    owners.extend(
+        team.map(|v| unreadable_withdrawers(v, &reviews))
+            .unwrap_or_default(),
+    );
+    let owners = owners.as_slice();
     cands.into_iter().find(|h| {
         let Some(id) = approved_by_independent(&comments, &excluded, models.as_deref(), h) else {
             return false;

@@ -1,0 +1,20 @@
+name: review-relay
+
+# Relay for risk.yml (B2W/T5): an owner's review (submitted or dismissed) is judged at once.
+# `pull_request_review` runs the PR's OWN copy of this file, so this workflow must hold nothing
+# worth stealing: no permissions (`permissions: {}`), no environment, no secrets, no checkout, no
+# actions, one trivial step. It exists only so that its completion fires risk.yml's `workflow_run`
+# trigger, which runs from the default branch with the bosun-app environment. A PR can rewrite
+# this file freely; the worst it gains is a harmless re-judge by base code (see risk.yml).
+on:
+  pull_request_review:
+    types: [submitted, dismissed]
+
+permissions: {}
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: echo "review event relayed to risk"

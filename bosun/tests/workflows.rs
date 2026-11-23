@@ -133,6 +133,14 @@ fn risk_judges_from_the_base_and_never_runs_pr_code() {
         1,
         "no job-level permissions"
     );
+    // `head.sha` appears only in the relay's jq equality filter, never in a checkout `ref:`.
+    let relay_filter = ".head.sha == env.HEAD_SHA";
+    assert_eq!(
+        yaml.matches(relay_filter).count(),
+        1,
+        "one jq head-sha filter"
+    );
+    let without_filter = yaml.replace(relay_filter, "");
     for bad in [
         "head.sha",
         "head.ref",
@@ -140,7 +148,10 @@ fn risk_judges_from_the_base_and_never_runs_pr_code() {
         "refs/pull",
         "merge_commit_sha",
     ] {
-        assert!(!yaml.contains(bad), "risk.yml mentions {bad}");
+        assert!(!without_filter.contains(bad), "risk.yml mentions {bad}");
+    }
+    for l in yaml.lines().filter(|l| l.trim_start().starts_with("ref:")) {
+        assert!(!l.contains("head"), "checkout ref names a head: {l}");
     }
     // No expression in a script: event data goes through env.
     let scripts = run_scripts(&yaml);
@@ -1070,15 +1081,32 @@ fn all_workflows() -> Vec<(String, String)> {
 /// `pull_request_review` and `pull_request_review_comment` run the PR's own copy of the file
 /// with the repo's token and secrets, so a PR author could rewrite the job and post any status
 /// (spec §8). `workflow_run` runs the default branch's file: it must never check out PR code.
-fn pr_copy_problems(yaml: &str) -> Vec<String> {
+fn pr_copy_problems(file: &str, yaml: &str) -> Vec<String> {
     let mut out = Vec::new();
     let on = events(yaml);
     if on.is_empty() {
         out.push("no events".to_string());
     }
+    // The one exception: the review relay, which holds nothing worth stealing.
+    let relay = file == "review-relay.yml" && yaml.starts_with("name: review-relay\n");
     for bad in ["pull_request_review", "pull_request_review_comment"] {
-        if on.iter().any(|e| e == bad) {
+        if on.iter().any(|e| e == bad) && !(relay && bad == "pull_request_review") {
             out.push(format!("runs on {bad}"));
+        }
+    }
+    if relay {
+        let code: String = yaml
+            .lines()
+            .filter(|l| !l.trim_start().starts_with('#'))
+            .collect::<Vec<_>>()
+            .join("\n");
+        if !code.contains("\npermissions: {}") {
+            out.push("relay without top-level permissions: {}".to_string());
+        }
+        for bad in ["environment", "secrets.", "uses:", "checkout"] {
+            if code.contains(bad) {
+                out.push(format!("relay holds `{bad}`"));
+            }
         }
     }
     if on.iter().any(|e| e == "workflow_run") {
@@ -1098,7 +1126,18 @@ fn pr_copy_problems(yaml: &str) -> Vec<String> {
         // The head of the run that fired it is PR (or fork) code: no script or env may name it,
         // except the fork guard's `head_repository.full_name`.
         let guard = "workflow_run.head_repository.full_name == github.repository";
-        if yaml.matches("workflow_run.head").count() != yaml.matches(guard).count() {
+        // risk.yml's relay run may name `workflow_run.head_sha` in its `HEAD_SHA:` env line and in
+        // its concurrency group only (the sha is the one payload field it trusts).
+        let named: usize = yaml
+            .lines()
+            .filter(|l| {
+                !(file == "risk.yml"
+                    && l.contains("workflow_run.head_sha")
+                    && (l.trim_start().starts_with("HEAD_SHA:") || l.contains("risk-${{")))
+            })
+            .map(|l| l.matches("workflow_run.head").count())
+            .sum();
+        if named != yaml.matches(guard).count() {
             out.push("names the workflow_run head".to_string());
         }
         for s in run_scripts(yaml) {
@@ -1117,7 +1156,8 @@ fn pr_copy_problems(yaml: &str) -> Vec<String> {
 #[test]
 fn no_workflow_runs_a_pr_copy_on_review_events() {
     for (path, yaml) in all_workflows() {
-        let problems = pr_copy_problems(&yaml);
+        let file = path.rsplit('/').next().unwrap();
+        let problems = pr_copy_problems(file, &yaml);
         assert!(problems.is_empty(), "{path}: {problems:?}");
     }
     // The channel's main-health has Jinja tags inside `on:`: every event is still seen.
@@ -1138,9 +1178,9 @@ fn no_workflow_runs_a_pr_copy_on_review_events() {
 fn the_pr_copy_scan_catches_jinja_events_and_workflow_run_head_code() {
     let jinja = "name: x\non:\n  push:\n{% if own_ci %}\n  pull_request_review:\n    types: [submitted]\n{% endif %}\n\njobs:\n";
     assert!(
-        pr_copy_problems(jinja).contains(&"runs on pull_request_review".to_string()),
+        pr_copy_problems("x.yml", jinja).contains(&"runs on pull_request_review".to_string()),
         "{:?}",
-        pr_copy_problems(jinja)
+        pr_copy_problems("x.yml", jinja)
     );
     let base = "name: x\non:\n  workflow_run:\n    workflows: [ci]\n\njobs:\n  a:\n    steps:\n";
     for step in [
@@ -1150,13 +1190,16 @@ fn the_pr_copy_scan_catches_jinja_events_and_workflow_run_head_code() {
         "      - uses: actions/download-artifact@v4\n",
     ] {
         let yaml = format!("{base}{step}");
-        assert!(!pr_copy_problems(&yaml).is_empty(), "missed: {step}");
+        assert!(
+            !pr_copy_problems("x.yml", &yaml).is_empty(),
+            "missed: {step}"
+        );
     }
     // The fork guard in main-health's `if:` is allowed.
     let guard = format!(
         "{base}    if: github.event.workflow_run.head_repository.full_name == github.repository\n"
     );
-    assert!(pr_copy_problems(&guard).is_empty(), "{guard}");
+    assert!(pr_copy_problems("x.yml", &guard).is_empty(), "{guard}");
 }
 
 /// `/bosun recheck` re-judges a PR without a push (an owner's GitHub review is read on the next
@@ -1203,16 +1246,24 @@ fn risk_rechecks_on_a_bosun_recheck_comment() {
     }
     assert_eq!(
         events(&yaml),
-        ["pull_request_target", "issue_comment", "push"],
+        [
+            "workflow_run",
+            "pull_request_target",
+            "issue_comment",
+            "push"
+        ],
         "risk.yml events"
     );
-    // A withdrawal re-runs nothing: both copies tell the owner how to make it count.
-    for y in [yaml.clone(), channel] {
-        assert!(
-            y.contains("to withdraw, request changes or dismiss the approval, then comment\n# `/bosun recheck` (or re-run the risk workflow; it re-judges and fails)"),
-            "{y}"
-        );
-    }
+    // A withdrawal: the monorepo copy re-judges through the review relay; the channel copy (repos
+    // outside the monorepo, no relay) still tells the owner to recheck.
+    assert!(
+        yaml.contains("base code. Withdrawing still works the same way: dismiss or request changes, and the relay\n# re-judges;"),
+        "{yaml}"
+    );
+    assert!(
+        channel.contains("to withdraw, request changes or dismiss the approval, then comment\n# `/bosun recheck` (or re-run the risk workflow; it re-judges and fails)"),
+        "{channel}"
+    );
 }
 
 /// The text from `start` up to `end` (exclusive).
@@ -1478,7 +1529,7 @@ const APP_TOKEN_ACTION: &str =
     "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
 
 /// What is wrong with a job that holds the App key (environment `bosun-app`, spec §15).
-fn app_job_problems(yaml: &str, job: &str) -> Vec<String> {
+fn app_job_problems(file: &str, yaml: &str, job: &str) -> Vec<String> {
     let mut out = Vec::new();
     for e in events(yaml) {
         let ok = [
@@ -1496,11 +1547,15 @@ fn app_job_problems(yaml: &str, job: &str) -> Vec<String> {
         }
     }
     if events(yaml).iter().any(|e| e == "workflow_run")
-        && !(yaml.contains("    branches: [main]")
+        && !((yaml.contains("    branches: [main]")
             && job.contains("github.event.workflow_run.event == 'push'")
             && job.contains(
                 "github.event.workflow_run.head_repository.full_name == github.repository",
             ))
+            // risk.yml: only a relay run caused by a review, from the default branch.
+            || (file == "risk.yml"
+                && yaml.contains("workflows: [review-relay]")
+                && job.contains("github.event.workflow_run.event == 'pull_request_review'")))
     {
         out.push("workflow_run job without the main-health filter".into());
     }
@@ -1611,7 +1666,7 @@ fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
             if !job.contains("      deployment: false") {
                 problems.push(format!("{path} job {id}: deployment not false"));
             }
-            for p in app_job_problems(&yaml, &job) {
+            for p in app_job_problems(&name, &yaml, &job) {
                 problems.push(format!("{path} job {id}: {p}"));
             }
         }
@@ -1644,7 +1699,7 @@ fn the_app_job_scan_catches_each_problem() {
     let job = |on: &str, steps: &str| {
         let yaml = format!("name: x\non:\n{on}\njobs:\n  j:\n    runs-on: x\n    steps:\n{steps}");
         let (jobs, _) = jobs_of(&yaml);
-        app_job_problems(&yaml, &jobs[0].1)
+        app_job_problems("x.yml", &yaml, &jobs[0].1)
     };
     let token = format!(
         "      - id: app\n        uses: {APP_TOKEN_ACTION}\n        with:\n          client-id: ${{{{ vars.BOSUN_APP_CLIENT_ID }}}}\n          private-key: ${{{{ secrets.BOSUN_APP_KEY }}}}\n          permission-checks: write\n        continue-on-error: true\n"

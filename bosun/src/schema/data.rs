@@ -26,7 +26,8 @@ review-pack = {pr: int, title: str, draft: bool, head_sha: str, base_sha: str, s
     verdict_skeleton: {pr: int, head_sha: str, verdict: str, confidence: num, findings: [any],
     lessons_hit: [str], escalate_risk: bool, chunks_reviewed: [int]}};
 ci-log = {pr: int, head_sha: str, jobs: [{name: str, conclusion: str, url: str, log: str}]};
-ask = {issue: int, comment_id: int, owners: [str], drafted: [int], pr_draft_error: str | null};
+ask = {issue: int, comment_id: int, owners: [str], owner_teams: [str],
+    owner_teams_unreadable: [str], owner_teams_fix?: str, drafted: [int], pr_draft_error: str | null};
 hold = {issue: int, id: str, checklist: {number: int, url: str}, released: bool, drafted: [int],
     pr_draft_error: str | null, lesson_error: str | null, warnings: [str]};
 answer = {issue: int, comment_id?: int, state?: str, ask?: int, key_id?: str, moved?: bool,
@@ -174,6 +175,7 @@ approve = {approved?: [{pr: int, head_sha: str, comment_id: int, repost?: bool,
     head_sha: str, files: [str], files_truncated: bool, risk_from_status: [str],
     owner_comment?: str, verdict?: str}], owner_step?: str, held?: [{pr: int, head_sha: str}],
     skipped?: [{pr: int | null, why: str}], waiting?: [{pr: int, why: str}], skipped_fix?: str,
+    owner_teams_unreadable?: [str], owner_teams_fix?: str,
     main_open?: {head_sha: str, pr: int}, bodies?: [{after_review: int | null, body: str}],
     body?: str, bootstrap_until?: str | null, head_sha?: str, key_id?: str, policy?: str | null,
     policy_source?: str | null, pr?: int, role?: str, requested?: bool, workflow?: str,

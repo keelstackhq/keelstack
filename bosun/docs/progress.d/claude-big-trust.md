@@ -1,0 +1,1 @@
+- 2026-11-23 · owner teams in the commands (#24): kill switch, approve (board, withdrawn, signer), ask, notify and the carry helpers fail closed; risk-check wires it with #25 (T2) while a team is unreadable; bus-factor note and team example in owners.toml (#23); `hoard/action.yaml` is trust root (#55) · this PR

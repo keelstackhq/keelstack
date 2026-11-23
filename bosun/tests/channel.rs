@@ -306,6 +306,15 @@ fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
                 .map(str::to_string)
                 .collect()
         };
+        // The review relay (#29, the owner's choice) is the monorepo's only: risk.yml's
+        // `workflow_run: review-relay` trigger has no channel twin, so it is left out here.
+        let relay = "  workflow_run:\n    workflows: [review-relay]\n    types: [completed]\n";
+        let mine = if f == "risk.yml" {
+            assert!(mine.contains(relay), "{f}: the review relay trigger moved");
+            mine.replacen(relay, "", 1)
+        } else {
+            mine
+        };
         for (a, b) in [
             ("\non:\n", "\npermissions:"),
             ("\npermissions:\n", "\njobs:"),

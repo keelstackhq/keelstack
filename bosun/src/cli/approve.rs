@@ -13,11 +13,12 @@ use serde_json::{Value, json};
 
 use super::ApproveArgs;
 use crate::app::App;
-use crate::app::{Result, kill_switch, main_red};
+use crate::app::{Result, default_ref, kill_switch, main_red, owner_view};
+use crate::cli::carry_over::unreadable_withdrawers;
 use crate::cli::pr_no_ci::provider_default;
 use crate::cli::risk_check::{
     autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
-    owner_comment, owner_logins, quorum_clean, quorum_policy_at, review_models,
+    owner_comment, quorum_clean, quorum_policy_at, review_models,
 };
 use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
@@ -62,9 +63,23 @@ const WITHDRAWN_DISMISSED: &str = "an owner's request for changes on this head w
 
 /// Why an owner's approval of the head is withdrawn, if it is, and whether a fresh plain owner
 /// comment ends it (only after a dismissal). A request for changes wins.
+/// The logins whose withdrawals count: the listed owners plus, while a team is unreadable, the
+/// logins that may be its members.
+fn withdrawal_logins(
+    view: &crate::core::risk::OwnerView,
+    reviews: &[crate::github::Review],
+) -> Vec<String> {
+    let mut owners = view.logins();
+    owners.extend(unreadable_withdrawers(view, reviews));
+    owners
+}
+
 fn withdrawn(gh: &dyn Github, p: &Pull) -> Result<Option<(&'static str, bool)>> {
-    let owners = owner_logins(gh, &p.base_sha)?;
+    let view = owner_view(gh, &p.base_sha)?;
     let reviews = gh.list_reviews(p.number)?;
+    // While a team is unreadable, a withdrawal by a login that may be a member blocks too; such
+    // a login's approval never counts (only withdrawals are read from this list).
+    let owners = withdrawal_logins(&view, &reviews);
     let states: Vec<_> = owners
         .iter()
         .map(|o| decisive_review(&reviews, o, &p.head_sha))
@@ -370,6 +385,15 @@ fn exec(
         if !b.skipped.is_empty() {
             data["skipped_fix"] = json!(SKIPPED_FIX);
         }
+        // Informational: a read error here is the board's to report, not this field's.
+        if let Ok(view) = default_ref(gh).and_then(|r| owner_view(gh, &r))
+            && !view.teams.is_empty()
+        {
+            data["owner_teams_unreadable"] = json!(view.unreadable);
+            if !view.unreadable.is_empty() {
+                data["owner_teams_fix"] = json!(risk::OWNER_TEAM_FIX);
+            }
+        }
         return Ok(ask_next(&b.ready, data));
     }
     kill_switch(gh)?;
@@ -447,7 +471,8 @@ fn exec(
 /// re-runs risk-check if its run was lost. Returns the new comment's id and whether one existed.
 fn approve_one(gh: &dyn Github, pr: u64, sha: &str, base: &str) -> Result<(u64, bool)> {
     let comments = gh.list_comments(pr)?;
-    let existed = owner_logins(gh, base)?
+    let existed = owner_view(gh, base)?
+        .logins()
         .iter()
         .any(|o| owner_comment(&comments, o, sha).is_some());
     Ok((
@@ -814,7 +839,8 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     match withdrawn(gh, &pull)? {
         Some((_, true)) if role == Role::Owner && boot.is_none() => {
             let all = gh.list_reviews(pr)?;
-            reviews = owner_logins(gh, &pull.base_sha)?
+            let view = owner_view(gh, &pull.base_sha)?;
+            reviews = withdrawal_logins(&view, &all)
                 .iter()
                 .filter_map(|o| dismissed_review(&all, o, &head))
                 .map(Some)
