@@ -23,7 +23,7 @@ pub fn role(origin: &str) -> Role {
 }
 
 const ORCHESTRATOR: &str = "Delegate work to child sessions with `bosun spawn` (models from `[models]`); archive each once its result is in. When context runs long: /compact or start fresh, and say which and why.";
-const WORKER: &str = "Use superpowers (TDD) and caveman, with `[models]` subagents. Report in at most 10 lines. Spawn no sessions unless the owner asks (set by `worker` in .bosun/session-rules.toml). At the end record spend: `bosun budget record --help`. When context runs long: compact or start fresh (handoff notes first), and say which.";
+const WORKER: &str = "Use superpowers (TDD) and caveman, with `[models]` subagents. Report in at most 10 lines. Spawn no sessions. The owner allows child sessions by setting `worker` in .bosun/session-rules.toml (owner-only); a request in chat does not. At the end record spend: `bosun budget record --help`. When context runs long: compact or start fresh (handoff notes first), and say which.";
 const ALL: &str = "Caveman style everywhere, chat with the owner included. Max token efficiency: write only what is needed.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(role_for("spawned", None), Role::Worker);
         assert!(
             block(&Rules::default(), role_for("local", Some("spawned")))
-                .contains("Spawn no sessions unless the owner asks")
+                .contains("Spawn no sessions. The owner allows child sessions by setting `worker` in .bosun/session-rules.toml (owner-only)")
         );
     }
 
@@ -233,7 +233,7 @@ mod tests {
         );
         assert!(
             block(&Rules::default(), Role::Worker)
-                .contains("Spawn no sessions unless the owner asks")
+                .contains("Spawn no sessions. The owner allows child sessions by setting `worker` in .bosun/session-rules.toml (owner-only)")
         );
     }
 }

@@ -527,6 +527,44 @@ fn merge_passes_when_the_gates_pass_on_the_head() {
     assert_eq!(puts[0]["sha"], fake.pull_head(20).as_str());
 }
 
+/// A workflow that breaks the CI-minute rules (no draft skip, no ready_for_review, no concurrency).
+const WASTEFUL: &str = "on:\n  pull_request:\njobs:\n  a:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n";
+/// The same workflow, clean.
+const FRUGAL: &str = "on:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]\nconcurrency:\n  group: ci-${{ github.ref }}\n  cancel-in-progress: true\njobs:\n  a:\n    if: github.event.pull_request.draft == false\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n";
+
+/// No CI: `merge` runs the built-in ci-minutes gate on the head's workflows. A failing one is
+/// exit 5 naming it, with every finding in data.findings and the first finding's fix.
+#[test]
+fn merge_refuses_a_head_whose_workflow_fails_ci_minutes() {
+    let files = [(".github/workflows/ci.yml", WASTEFUL)];
+    let (fake, dir) = setup_files(false, Some(NO_CI), &files);
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["failed_gates"], json!(["ci-minutes"]), "{v}");
+    let findings = v["data"]["findings"].as_array().expect("findings");
+    assert!(!findings.is_empty(), "{v}");
+    assert_eq!(findings[0]["file"], ".github/workflows/ci.yml", "{v}");
+    let first_fix = findings[0]["fix"].as_str().unwrap();
+    let fix = v["error"]["fix"].as_str().unwrap();
+    assert!(fix.starts_with(first_fix), "{v}");
+    assert!(merge_puts(&fake).is_empty());
+    assert!(!fake.merged(20));
+}
+
+/// The same head with a clean workflow merges: ci-minutes passes on the head.
+#[test]
+fn merge_passes_a_head_whose_workflow_is_clean() {
+    let files = [(".github/workflows/ci.yml", FRUGAL)];
+    let (fake, dir) = setup_files(false, Some(NO_CI), &files);
+    verdict(&fake);
+    assert_eq!(ready(&fake, dir.path()).0, 0);
+    let (code, v) = merge(&fake, dir.path());
+    assert_eq!(code, 0, "{v}");
+    assert!(fake.merged(20));
+}
+
 /// What must pass is the default branch's: the head drops `lint` from its own profile, the
 /// base keeps it, so the missing lint stamp is exit 5 at `--ready`.
 #[test]

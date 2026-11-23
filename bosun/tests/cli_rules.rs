@@ -34,7 +34,7 @@ fn write_renders_the_block_once_and_keeps_the_rest() {
     assert_eq!(rules(d, true).0, 0);
     let text = fs::read_to_string(d.join("CLAUDE.md")).unwrap();
     assert!(
-        text.contains(START) && text.contains("Spawn no sessions unless the owner asks"),
+        text.contains(START) && text.contains("Spawn no sessions. The owner allows child sessions by setting `worker` in .bosun/session-rules.toml (owner-only)"),
         "{text}"
     );
     assert!(

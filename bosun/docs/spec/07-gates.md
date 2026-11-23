@@ -83,7 +83,7 @@ as passed (a stale green): it keeps `always()`, runs on a draft and its first st
 (they post a status; none is posted until the PR is ready). The CircleCI pipeline has no draft
 flag and still runs on drafts (S12, open).
 
-`bosun gate ci-minutes` (built in, like test-integrity, and like it a ready gate: always required by `bosun pr --ready`, and a passing local run stamps the tree (a `provider = "none"` skip stamps `skipped`); it is not in a profile, it is not in a profile, runs no repo code
+`bosun gate ci-minutes` (built in, like test-integrity, and like it a ready gate: always required by `bosun pr --ready`, and a passing local run stamps the tree (a `provider = "none"` skip stamps `skipped`); it is not in a profile, runs no repo code
 and needs no GitHub) reads `.github/workflows/*.yml` and `*.yaml` with a small line-based reader
 (no YAML crate; it understands the subset these workflows use and is conservative) and fails
 (exit 1, `data.findings` = `{file, job, rule, fix}`, `error.fix` the first fix) on:
@@ -106,6 +106,9 @@ and needs no GitHub) reads `.github/workflows/*.yml` and `*.yaml` with a small l
   default set, which lacks it). The fix names the line to write: with `types:`, its entries in
   order plus `ready_for_review` (`types: [opened, synchronize, ready_for_review]`), else the
   default set plus it (`types: [opened, synchronize, reopened, ready_for_review]`) under `on.<trigger>`;
+  an `on:` in the list or scalar form (`on: [push, pull_request]`, `on: pull_request`) takes no
+  `types:`, so its one finding gives the exact block mapping to replace it with (each event kept, the
+  pull_request triggers with that `types:`);
 - `concurrency`: a `pull_request`, `pull_request_target` or `push` workflow without a top-level
   `concurrency:` whose `cancel-in-progress` is not `false` (an expression counts);
 - `paths`: a heavy job (a `macos*` or `windows*` runner, or a matrix) on a `pull_request(_target)`

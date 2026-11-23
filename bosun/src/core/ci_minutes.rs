@@ -284,6 +284,8 @@ struct Trigger {
     /// `None`: no `types:` key.
     types: Option<Vec<String>>,
     paths: bool,
+    /// Written in the list or scalar form of `on:`, which takes no `types:`.
+    short: bool,
 }
 
 fn triggers(lines: &[Line]) -> Vec<Trigger> {
@@ -299,6 +301,7 @@ fn triggers(lines: &[Line]) -> Vec<Trigger> {
             .into_iter()
             .map(|name| Trigger {
                 name,
+                short: true,
                 ..Trigger::default()
             })
             .collect();
@@ -310,6 +313,7 @@ fn triggers(lines: &[Line]) -> Vec<Trigger> {
         if let Some(item) = l.item().filter(|_| l.key().is_none()) {
             out.push(Trigger {
                 name: item.to_string(),
+                short: true,
                 ..Trigger::default()
             });
             continue;
@@ -662,6 +666,11 @@ pub fn check(file: &str, text: &str) -> Vec<Finding> {
                             .to_vec()
                     });
                 list.push("ready_for_review".into());
+                if t.short {
+                    add(None, "ready_for_review", short_fix(file, &trig, &list));
+                    // One mapping covers every trigger of the short form.
+                    break;
+                }
                 add(
                     None,
                     "ready_for_review",
@@ -701,6 +710,26 @@ pub fn check(file: &str, text: &str) -> Vec<Finding> {
         );
     }
     out
+}
+
+/// The `ready_for_review` fix for an `on:` in the list or scalar form: the exact mapping to
+/// replace it with (`types` on each pull_request trigger, the other events kept bare).
+fn short_fix(file: &str, trig: &[Trigger], types: &[String]) -> String {
+    let names: Vec<&str> = trig.iter().map(|t| t.name.as_str()).collect();
+    let was = match names.as_slice() {
+        [one] => format!("on: {one}"),
+        _ => format!("on: [{}]", names.join(", ")),
+    };
+    let mut mapping = String::from("on:");
+    for n in &names {
+        mapping.push_str(&format!("\n  {n}:"));
+        if matches!(*n, "pull_request" | "pull_request_target") {
+            mapping.push_str(&format!("\n    types: [{}]", types.join(", ")));
+        }
+    }
+    format!(
+        "in {file}, replace `{was}` with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
+    )
 }
 
 #[cfg(test)]
@@ -870,6 +899,46 @@ jobs:
             "    types:\n      - opened\n      - ready_for_review\n",
         );
         assert_eq!(rules(&block), vec![]);
+    }
+
+    /// The list and scalar forms of `on:` take no `types:`: the fix gives the whole mapping.
+    #[test]
+    fn ready_for_review_fix_for_the_list_and_scalar_forms_gives_the_mapping() {
+        let rest = "concurrency:\n  group: g\n  cancel-in-progress: true\njobs:\n  a:\n    runs-on: ubuntu-latest\n";
+        let fix = |on: &str| {
+            check("w.yml", &format!("{on}{rest}"))
+                .into_iter()
+                .find(|f| f.rule == "ready_for_review")
+                .unwrap()
+                .fix
+        };
+        let mapping = "on:\n  push:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]";
+        let list = fix("on: [push, pull_request]\n");
+        assert_eq!(
+            list,
+            format!(
+                "in w.yml, replace `on: [push, pull_request]` with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
+            )
+        );
+        let block = fix("on:\n  - push\n  - pull_request\n");
+        assert_eq!(
+            block,
+            format!(
+                "in w.yml, replace `on: [push, pull_request]` with this mapping (the list and scalar forms take no `types:`):\n{mapping}"
+            )
+        );
+        let scalar = fix("on: pull_request\n");
+        assert_eq!(
+            scalar,
+            "in w.yml, replace `on: pull_request` with this mapping (the list and scalar forms take no `types:`):\non:\n  pull_request:\n    types: [opened, synchronize, reopened, ready_for_review]"
+        );
+        // The mapping it gives passes the rule.
+        let fixed = scalar.split_once(":\n").unwrap().1;
+        assert!(
+            !check("w.yml", &format!("{fixed}\n{rest}"))
+                .iter()
+                .any(|f| f.rule == "ready_for_review")
+        );
     }
 
     #[test]
