@@ -334,9 +334,10 @@ fn has_other_workflow(dir: &Path) -> bool {
     })
 }
 
-/// Workflow files other than `release` (the configured `[release] workflow`, default
-/// release.yml) with a step that publishes; a `--dry-run` publish does not (sorted by name).
-fn publishing_workflows(dir: &Path, release: &str) -> Vec<String> {
+/// Workflow files with a step that publishes, other than `skip`: the configured `[release]
+/// workflow` (default release.yml) and every `[registry.*]` package's workflow (it publishes that
+/// package outside the release model, spec §5). A `--dry-run` publish does not count. Sorted.
+fn publishing_workflows(dir: &Path, skip: &[&str]) -> Vec<String> {
     const PUBLISH: [&str; 4] = [
         "npm publish",
         "pnpm publish",
@@ -351,7 +352,7 @@ fn publishing_workflows(dir: &Path, release: &str) -> Vec<String> {
         .filter_map(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
             let yaml = n.ends_with(".yml") || n.ends_with(".yaml");
-            if !yaml || n == release {
+            if !yaml || skip.contains(&n.as_str()) {
                 return None;
             }
             let text = std::fs::read_to_string(e.path()).ok()?;
@@ -405,6 +406,19 @@ pub fn init(
     };
     let has_launcher = r.packages.iter().any(|p| p.launcher.is_some());
     let release_workflow = r.workflow_file().to_string();
+    // A `[registry.*] workflow` may be written as a path; the check compares file names.
+    let registry_workflows: Vec<String> = r
+        .registry
+        .iter()
+        .map(|p| {
+            Path::new(&p.workflow)
+                .file_name()
+                .map_or_else(|| p.workflow.clone(), |n| n.to_string_lossy().into_owned())
+        })
+        .collect();
+    let skip: Vec<&str> = std::iter::once(release_workflow.as_str())
+        .chain(registry_workflows.iter().map(String::as_str))
+        .collect();
     check_names(&d.default_branch, &r.environment.value)?;
     let item = |kind: &str, key: &str, action, reason: String, source: &str| Item {
         area: if kind == "workflow-file" {
@@ -553,9 +567,9 @@ pub fn init(
             }
         }
     }
-    for file in publishing_workflows(dir, &release_workflow) {
+    for file in publishing_workflows(dir, &skip) {
         human_steps.push(HumanStep {
-            id: "release-workflow-race".into(),
+            id: format!("release-workflow-race:{file}"),
             title: format!(
                 "remove {file} or stop it publishing: `hoist release publish` publishes these \
                  packages, two publishers race"

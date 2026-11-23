@@ -34,8 +34,8 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
   `release-workflow` (repo has its own release.yml, left alone: keep it and add `environment: release`
   to its publish job, or run `hoist init --force` to replace it), `release-workflow-build` (npm
   launcher repo: init wrote no file; the release workflow must build the binaries, then run
-  `hoist release publish --assets <dir>`), `release-workflow-race` (another workflow publishes:
-  remove it or stop it publishing).
+  `hoist release publish --assets <dir>`), `release-workflow-race:<file>` (another workflow publishes:
+  remove it or stop it publishing; `[registry.*]` workflows are exempt).
 - `[publish] npm = { build = "<cmd>" }`: `release publish` runs it in the package directory before
   publishing that npm package (not on `--dry-run`, not when the version is already on npm).
 - `apply --dry-run` does not exist: use `hoist plan`.

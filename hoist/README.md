@@ -467,12 +467,18 @@ repository is public.
 release commit of this binary; a file you edited is kept unless `--force`. For an npm launcher
 `init` writes no file and reports the human step `release-workflow-build` (build the binaries, then
 `hoist release publish --assets <dir>`; hull's `template-rust` release.yml does this). `init` also
-flags other workflows (not the `[release] workflow`) that run `npm publish`, `pnpm publish`,
-`yarn npm publish` or `cargo publish` without `--dry-run` (`release-workflow-race`): two publishers race.
+flags other workflows (not the `[release] workflow`, nor a `[registry.npm|crates."<name>"]`
+`workflow`, which publishes its package outside the release model) that run `npm publish`, `pnpm publish`,
+`yarn npm publish` or `cargo publish` without `--dry-run` (`release-workflow-race:<file>`): two publishers race.
 
 An npm package that needs a build first sets `[publish] npm = { build = "pnpm build" }` in its
 `hoist.toml`: `hoist release publish` runs it (`sh -c`, in the package directory, output on stderr)
 before packing, only when the version is not yet on npm; a failure fails the publish (exit 1).
+The build gets neither the GitHub token nor the OIDC request variables
+(`ACTIONS_ID_TOKEN_REQUEST_TOKEN`/`_URL`), so code it runs cannot mint an id token and publish.
+Anything that runs in the publish job outside hoist (a setup step, a repo hook) has them: install
+there with `--ignore-scripts`, or build in a job without `id-token: write` and pass the output on
+as an artifact.
 `--dry-run` never runs it.
 One step per job instead of building hoist yourself: `uses: keelstackhq/keelstack/hoist/release@<full sha> # vX.Y.Z`
 with `command: detect | prepare | publish` (`assets:` for publish; `token:` is hoist's `GH_TOKEN`;

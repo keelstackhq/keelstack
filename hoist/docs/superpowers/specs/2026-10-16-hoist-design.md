@@ -946,8 +946,10 @@ step of that package instead of skipping it. With nothing pending the report is 
    run goes on with the other steps and packages. Else `npm --version` must be ≥ 11.5.1 (the
    first `MAJOR.MINOR.PATCH` in its output; unreadable counts as older; else the step fails),
    then the package's `build` command, if `[publish] npm = { build = "..." }` sets one, runs with
-   `sh -c` in the package directory (stdout to stderr, the GitHub token removed from its env, hoist
-   never prints the env); for a launcher it runs once, in the launcher's directory, before its first
+   `sh -c` in the package directory (stdout to stderr; the GitHub token, the `HOIST_RELEASE_*`
+   variables and the OIDC request variables `ACTIONS_ID_TOKEN_REQUEST_TOKEN`/`_URL` removed from
+   its env, so its dependencies' scripts cannot mint an id token and publish; hoist never prints
+   the env); for a launcher it runs once, in the launcher's directory, before its first
    platform package is published. A non-zero exit fails the step like any failed write (exit 1, the
    remaining steps "not attempted"). An already-published version is never built, and `--dry-run`
    never runs it: the reason of the step it runs before (a launcher's first platform package, else
@@ -1311,9 +1313,10 @@ that. A release.yml without the marker is still "your own release workflow, kept
 or not.
 
 In every run, workflow files other than the release workflow (`[release] workflow`, default
-release.yml; `.github/workflows/*.yml|*.yaml`) are scanned line by line (comment lines and lines
+release.yml) and the `[registry.npm|crates."<name>"] workflow` files (by file name; they publish
+their package outside the release model, §5) (`.github/workflows/*.yml|*.yaml`) are scanned line by line (comment lines and lines
 with `--dry-run` skipped) for `npm publish`, `pnpm publish`, `yarn npm publish` or
-`cargo publish`. Each file that matches adds a human step `release-workflow-race` (exit 2): "remove
+`cargo publish`. Each file that matches adds a human step `release-workflow-race:<file>` (exit 2; one id per file): "remove
 <file> or stop it publishing: `hoist release publish` publishes these packages, two publishers
 race".
 
