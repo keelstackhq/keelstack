@@ -142,3 +142,29 @@ fn dry_run_reports_the_chunks_reviewed() {
     assert_eq!(v["data"]["verdict"]["chunks_reviewed"], json!([1, 2]));
     assert!(gh.statuses_of("sha42").is_empty());
 }
+
+#[test]
+fn the_budget_is_checked_before_each_chunk_and_stops_the_rest() {
+    // Each call costs $0.008; the daily budget is $0.01: after two calls it is spent, so the
+    // third chunk is never sent (exit 6) and no status is written.
+    let (gh, ai, dir) = setup(3, CI, &reply("approve", 0.9));
+    gh.content(".bosun/limits.toml", "main", "[budget]\ndaily_usd = 0.01\n");
+    let (code, v) = review_ci(&gh, &ai, &dir);
+    assert_eq!(code, 6, "{v}");
+    assert_eq!(ai.requests().len(), 2, "{v}");
+    assert!(gh.statuses_of("sha42").is_empty());
+}
+
+#[test]
+fn a_cost_that_cannot_be_priced_stops_the_next_chunk_with_the_limit_error() {
+    // A model with no price: the cost so far is unknown, never 0, so chunk 2 is not sent.
+    let (gh, ai, dir) = setup(
+        3,
+        "[review]\nmode = \"ci\"\nmodel = \"mystery-1\"\n",
+        &reply("approve", 0.9),
+    );
+    let (code, v) = review_ci(&gh, &ai, &dir);
+    assert_eq!(code, 6, "{v}");
+    assert_eq!(ai.requests().len(), 1, "{v}");
+    assert!(gh.statuses_of("sha42").is_empty());
+}

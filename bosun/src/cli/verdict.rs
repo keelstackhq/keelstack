@@ -8,7 +8,7 @@ use std::path::Path;
 use serde_json::json;
 
 use super::review_ci::flat;
-use super::{ApplyArg, CommentArgs, FromArg, VerdictCmd};
+use super::{CommentArgs, FromArg, VerdictCmd};
 use crate::app::default_branch;
 use crate::app::{App, kill_switch, set_state};
 use crate::config::{CONFIG_FILE, Config};
@@ -70,7 +70,7 @@ pub fn run(dir: Option<&Path>, cmd: &VerdictCmd) -> CmdResult {
                 &verdict,
                 &app.ctx.session,
                 env_model().as_deref(),
-                None,
+                (None, None),
             )
         }
         VerdictCmd::Comment(CommentArgs {
@@ -126,7 +126,7 @@ pub fn run(dir: Option<&Path>, cmd: &VerdictCmd) -> CmdResult {
             }
             Ok(Outcome::data(data))
         }
-        VerdictCmd::Apply(ApplyArg { comment_id }) => apply(&app, *comment_id),
+        VerdictCmd::Apply(a) => apply(&app, a.comment_id, (a.check, a.require)),
     }
 }
 
@@ -221,7 +221,7 @@ pub(crate) fn current_pull(gh: &dyn Github, verdict: &Verdict) -> Result<Pull, B
 
 /// Check a verdict comment (unedited, by a member, on its own PR, for the current head) and
 /// record its verdict.
-pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
+pub(crate) fn apply(app: &App, id: u64, (check, require): (bool, bool)) -> CmdResult {
     let gh = app.gh.as_ref();
     let refuse = |why: String| {
         BosunError::error(
@@ -236,11 +236,22 @@ pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
         return Err(refuse("it was edited".into()));
     }
     let bot = c.user_type == "Bot";
-    let (why, text, bot_verdict, cfg) = neutral_refusal(gh, &c)?;
+    let Derived {
+        why,
+        text,
+        bot_verdict,
+        cfg,
+        session: recorded,
+    } = derive(gh, &c, false)?;
     if let Some(why) = why {
         eprintln!("bosun: verdict apply: comment {id} is refused: {why}");
+        // `--require`: the step that writes the record must not succeed without one.
+        if require {
+            return Err(refuse(why));
+        }
         return Ok(Outcome::data(
-            json!({"comment_id": id, "author": c.user, "refused": why, "status": null}),
+            json!({"comment_id": id, "author": c.user, "refused": why, "status": null,
+                "accepted": false}),
         ));
     }
     let text = text.ok_or_else(|| refuse(format!("no {COMMENT_MARKER}")))?;
@@ -259,13 +270,6 @@ pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
     // same head replaces this one. Another session's is a second verdict (two-verdict
     // approval), not a replacement; a comment without a session counts as "unknown".
     let session = comment_session(&c.body).unwrap_or("unknown");
-    // A bot names any session it likes: all its verdicts are one session, so it is one vote.
-    let bot_session = format!("{BOT_SESSION}{}", c.user);
-    let recorded = if bot_verdict {
-        bot_session.as_str()
-    } else {
-        session
-    };
     // Only the same bot's newer comment for the head replaces a bot verdict, whatever marker
     // either carries; another author's never does.
     let same = |o: &Comment| {
@@ -294,14 +298,20 @@ pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
         )));
     }
     require_all_chunks(gh, &app.ctx.repo.to_string(), &verdict)?;
+    if check {
+        // Nothing is written: the workflow runs the recording step only for an accepted comment.
+        return Ok(Outcome::data(
+            json!({"comment_id": id, "author": c.user, "accepted": true}),
+        ));
+    }
     let relayed_by = comment_relayed_by(&c.body);
     let mut out = record(
         app,
         &pull,
         &verdict,
-        recorded,
+        &recorded,
         comment_model(&c.body),
-        relayed_by,
+        (relayed_by, Some(c.id)),
     )?;
     if let Some(r) = relayed_by {
         out.data["relayed_by"] = json!(r);
@@ -316,6 +326,43 @@ pub(crate) fn apply(app: &App, id: u64) -> CmdResult {
     Ok(out)
 }
 
+/// What `verdict apply` derives from a comment before it looks at the PR's current state: the
+/// neutral refusal, the verdict text, whether it is a bot verdict, the trusted config and the
+/// session the record is written under. The reader of records (`verdict_run`) calls this too, so
+/// that a record counts only if apply would write exactly it.
+pub(crate) struct Derived<'c> {
+    pub why: Option<String>,
+    pub text: Option<&'c str>,
+    pub bot_verdict: bool,
+    pub cfg: Config,
+    pub session: String,
+}
+
+///
+/// `reader`: a reader behind the cloud proxy cannot ask a login's permission (`unknown`); the
+/// workflow that wrote the record could, and refused every non-writer. The reader then trusts a
+/// human account's comment (never a Bot's: its comment is a bot verdict, which never counts).
+pub(crate) fn derive<'c>(
+    gh: &dyn Github,
+    c: &'c Comment,
+    reader: bool,
+) -> Result<Derived<'c>, BosunError> {
+    let (why, text, bot_verdict, cfg) = neutral_refusal_as(gh, c, reader)?;
+    // A bot names any session it likes: all its verdicts are one session, so it is one vote.
+    let session = if bot_verdict {
+        format!("{BOT_SESSION}{}", c.user)
+    } else {
+        comment_session(&c.body).unwrap_or("unknown").to_string()
+    };
+    Ok(Derived {
+        why,
+        text,
+        bot_verdict,
+        cfg,
+        session,
+    })
+}
+
 /// What `neutral_refusal` finds: why the comment is refused neutrally (if it is), its verdict
 /// text, whether it is a bot verdict, and the trusted config.
 pub(crate) type Neutral<'c> = (Option<String>, Option<&'c str>, bool, Config);
@@ -327,13 +374,22 @@ pub(crate) fn neutral_refusal<'c>(
     gh: &dyn Github,
     c: &'c Comment,
 ) -> Result<Neutral<'c>, BosunError> {
+    neutral_refusal_as(gh, c, false)
+}
+
+fn neutral_refusal_as<'c>(
+    gh: &dyn Github,
+    c: &'c Comment,
+    reader: bool,
+) -> Result<Neutral<'c>, BosunError> {
     // author_association is no proof: a workflow token sees an org member as CONTRIBUTOR.
     let permission = gh.permission(&c.user)?.unwrap_or_else(|| "none".into());
     let (cfg, on_default) = trusted_config(gh, &c.issue_url)?;
-    let writer = matches!(permission.as_str(), "admin" | "write");
+    let bot = c.user_type == "Bot";
+    let writer = matches!(permission.as_str(), "admin" | "write")
+        || (reader && !bot && permission == crate::github::UNKNOWN_PERMISSION);
     // A bot's comment needs no markers: its one top-level ```json verdict counts (spec §7).
     // A marker-less comment of a Bot account is a bot verdict even with write access.
-    let bot = c.user_type == "Bot";
     let marked = comment_json(&c.body);
     let bot_verdict = !writer || (bot && marked.is_none());
     let text = marked.or_else(|| bot.then(|| bot_verdict_json(&c.body)).flatten());
@@ -476,7 +532,7 @@ pub(crate) fn record(
     verdict: &Verdict,
     session: &str,
     model: Option<&str>,
-    relayed_by: Option<&str>,
+    (relayed_by, applied): (Option<&str>, Option<u64>),
 ) -> CmdResult {
     let gh = app.gh.as_ref();
     let n = verdict.pr;
@@ -532,7 +588,7 @@ pub(crate) fn record(
         relayed_by: relayed_by.map(str::to_string),
     };
     let human = format!("Review verdict: {}.", verdict.summary());
-    w.add_record(n, &format!("{human}\n\n{}", record.to_line()))?;
+    w.add_record(n, &format!("{human}\n\n{}", bound_line(&record, applied)))?;
 
     let target = if verdict.escalate_risk {
         Some(State::NeedsHuman)
@@ -577,6 +633,31 @@ pub(crate) fn record(
         data["checks_skipped"] = json!(true);
     }
     Ok(Outcome::data(data))
+}
+
+/// The record line with the verdict workflow run that wrote it and the verdict comment it applied
+/// (`"run"`, `"attempt"`, `"applied"` from `BOSUN_RUN_ID`, `BOSUN_RUN_ATTEMPT` and the comment id,
+/// spec section 8): readers count a record only if that run is the verdict workflow's and the
+/// comment it names yields this record. Without the variables the record names no run and never
+/// counts.
+fn bound_line(record: &Record, applied: Option<u64>) -> String {
+    let line = record.to_line();
+    let num = |k: &str| {
+        std::env::var(k)
+            .ok()
+            .and_then(|v| v.trim().parse::<u64>().ok())
+    };
+    match (
+        num("BOSUN_RUN_ID"),
+        num("BOSUN_RUN_ATTEMPT"),
+        applied,
+        line.strip_suffix('}'),
+    ) {
+        (Some(run), Some(attempt), Some(applied), Some(head)) => {
+            format!(r#"{head},"run":{run},"attempt":{attempt},"applied":{applied}}}"#)
+        }
+        _ => line,
+    }
 }
 
 /// Whether a verdict blocks the aggregate status (#52): anything but an approve, a blocker, or an

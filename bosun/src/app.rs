@@ -1,8 +1,9 @@
 //! What commands share: the loaded context with a GitHub client, the kill switch, main-red,
 //! state changes and the issues that hold leases.
 
+use std::collections::BTreeMap;
 use std::path::Path;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use crate::cli::risk_check::OWNERS_PATH;
 use crate::config::{LIMITS_FILE, Limits};
@@ -13,6 +14,7 @@ use crate::core::records::{Note, Record, parse_record, replace_record};
 use crate::core::risk::{HaltPick, OWNER_TEAM_FIX, OwnerView, parse_owners_in};
 use crate::core::state::{State, labels_to_remove, state_of, transition_allowed};
 use crate::ctx::Ctx;
+use crate::github::gate::APP_TOKEN_ENV;
 use crate::github::{Github, Issue, IssueState, LiveGithub, Pull, Variable};
 use crate::output::BosunError;
 use crate::time::{Timestamp, parse_rfc3339};
@@ -117,7 +119,7 @@ pub fn halt_reason(gh: &dyn Github) -> Result<Option<(String, String)>> {
 }
 
 /// The owners at `git_ref` from `governance/owners.toml` (empty when the file is missing), with
-/// each team expanded by [`expand_team`]; one stderr line per unreadable team.
+/// each team expanded by [`expand_team`] (one stderr line per unreadable team, once per run).
 pub fn owner_view(gh: &dyn Github, git_ref: &str) -> Result<OwnerView> {
     let Some(text) = gh.file_at(OWNERS_PATH, git_ref)? else {
         return Ok(OwnerView::default());
@@ -128,18 +130,55 @@ pub fn owner_view(gh: &dyn Github, git_ref: &str) -> Result<OwnerView> {
             format!("fix {OWNERS_PATH}: one `[[owner]]` table with `github = \"login\"` per owner"),
         )
     })?;
-    let view = OwnerView::from_owners(&owners, |t| expand_team(gh, t));
-    for t in &view.unreadable {
-        eprintln!("bosun: owner team {t} is unreadable and counts no member: {OWNER_TEAM_FIX}");
-    }
-    Ok(view)
+    Ok(OwnerView::from_owners(&owners, |t| expand_team(gh, t)))
 }
 
-/// The member logins of `team` (`org/slug`); `None` when it cannot be read (fail closed: it then
-/// counts no member). Not built yet: T2 (#25) wires the cached App-token expansion (child-team
-/// check, paged members) here, and nothing else in the callers changes.
-fn expand_team(_gh: &dyn Github, _team: &str) -> Option<Vec<String>> {
-    None
+/// The member logins of `team` (`org/slug`) (spec §16): child teams are read first and any one
+/// makes the team unreadable, then every page of the members (at most 1000). Uses the
+/// `BOSUN_APP_TOKEN` client when set, else `gh`. Any error, 403, 404 or bad page is `None`
+/// (fail closed: the team counts no member). Cached per process, never on disk.
+fn expand_team(gh: &dyn Github, team: &str) -> Option<Vec<String>> {
+    static CACHE: Mutex<BTreeMap<String, Option<Vec<String>>>> = Mutex::new(BTreeMap::new());
+    let key = team.to_ascii_lowercase();
+    // The lock is held across the reads: a second asker waits and reuses the answer.
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(hit) = cache.get(&key) {
+        return hit.clone();
+    }
+    let read = read_team(gh, team);
+    let out = match read {
+        Ok(members) => Some(members),
+        Err(why) => {
+            eprintln!(
+                "bosun: owner team {team} is unreadable and counts no member ({why}): {OWNER_TEAM_FIX}"
+            );
+            None
+        }
+    };
+    cache.insert(key, out.clone());
+    out
+}
+
+fn read_team(gh: &dyn Github, team: &str) -> std::result::Result<Vec<String>, String> {
+    let (org, slug) = team
+        .split_once('/')
+        .filter(|(o, s)| !o.is_empty() && !s.is_empty() && !s.contains('/'))
+        .ok_or("not org/slug")?;
+    let app = std::env::var(APP_TOKEN_ENV)
+        .ok()
+        .filter(|t| !t.trim().is_empty())
+        .map(|t| LiveGithub::with_token(t.trim(), gh.repo_owner(), "-"));
+    let reader: &dyn Github = match &app {
+        Some(a) => a,
+        None => gh,
+    };
+    let children = reader
+        .team_child_teams(org, slug)
+        .map_err(|e| e.message.clone())?;
+    if !children.is_empty() {
+        return Err("it has child teams: list a team without child teams, or the users".into());
+    }
+    reader.team_members(org, slug).map_err(|e| e.message)
 }
 
 /// The repo's default branch from GitHub, looked up once per process.

@@ -88,7 +88,7 @@ of an issue is the newest lease comment with no later lease-end for the same ses
 Conflict avoidance (three layers):
 1. Registry: `bosun join` registers each session with its origin (spawned, slack, local, routine)
    as a comment on the registry issue (label `bosun:registry`). All caps count all origins.
-2. Claim check: `bosun claim` refuses a bundled task (exit 3, "#n is bundled into #lead's PR"; fix: work in the lead's bundle, its PR closes #n) when its epic has shape `single` and another task of the epic is active, gated tasks included (D-021). It refuses a task that an open PR led by another task closes (that PR's `<!-- bosun:task-pr N -->` marker; exit 3). It refuses a task if its touch paths overlap a live lease, or if another
+2. Claim check: `bosun claim` refuses a bundled task (exit 3, "#n is bundled into #lead's PR"; fix: work in the lead's bundle, its PR closes #n) when its epic has shape `single` and another task of the epic is active, gated tasks included (D-021). It refuses a task that an open PR led by another task closes (that PR's `<!-- bosun:task-pr N -->` marker; exit 3), but only when the marker is credible: the PR is into the default branch from this repo, its author is a writer, and the lead task N is in an active state with a live lease in a trusted (writer) note; any other PR is ignored, neither blocking nor counted. It refuses a task if its touch paths overlap a live lease, or if another
    orchestrator owns its area. Exit 3 with a JSON reason. An area owner that is the
    parent of the claiming session does not block it, so spawned workers can claim in their
    orchestrator's area. A per-task id `S/task` (a wave agent with

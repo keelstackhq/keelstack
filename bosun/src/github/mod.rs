@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use types::RawGitCommit;
 pub use types::{
     CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label, PrFile, Pull,
-    Review, RunState, Status, TreeEntry,
+    Review, RunJob, RunState, RunStep, Status, TreeEntry, WorkflowRun,
 };
 
 pub use crate::output::BosunError;
@@ -195,6 +195,21 @@ pub trait Github {
     fn repo_info(&self) -> Result<Option<RepoInfo>>;
     /// The owner (user or org) of the repository this client talks to.
     fn repo_owner(&self) -> &str;
+    /// The slugs of the child teams of org team `org/slug` (`GET /orgs/{org}/teams/{slug}/teams`,
+    /// every page). Any 403, 404, error or page that is no list is an error: the caller treats
+    /// the team as unreadable (spec §16, fail closed).
+    fn team_child_teams(&self, org: &str, slug: &str) -> Result<Vec<String>>;
+    /// The member logins of org team `org/slug` (`GET /orgs/{org}/teams/{slug}/members?per_page=100`,
+    /// every page, role ignored). A 403, 404, error, bad page or more than 1000 members is an error.
+    fn team_members(&self, org: &str, slug: &str) -> Result<Vec<String>>;
+    /// Workflow run `id` (`GET /actions/runs/{id}`); `None` on 404. Any other failure is an error.
+    fn workflow_run(&self, id: u64) -> Result<Option<WorkflowRun>>;
+    /// Attempt `n` of workflow run `id` (`GET /actions/runs/{id}/attempts/{n}`); `None` on 404.
+    fn workflow_run_attempt(&self, id: u64, n: u64) -> Result<Option<WorkflowRun>>;
+    /// The jobs of attempt `n` of run `id`, with their steps; a 404 is an error.
+    fn run_attempt_jobs(&self, id: u64, n: u64) -> Result<Vec<RunJob>>;
+    /// The repository name this client talks to.
+    fn repo_name(&self) -> &str;
     /// The login the token belongs to (`GET /user`); `None` when GitHub will not say.
     fn current_user(&self) -> Result<Option<String>>;
     /// The newest published release; `None` when there is none.
@@ -468,6 +483,17 @@ impl LiveGithub {
     }
 }
 
+/// Pages of 100 read for a team: one more than 1000 members need (the extra page is the cap check).
+const TEAM_PAGES: usize = 11;
+const TEAM_MEMBERS_MAX: usize = 1000;
+
+fn team_error(org: &str, slug: &str, what: &str) -> BosunError {
+    BosunError::error(
+        format!("team {org}/{slug}: {what}"),
+        "give the bosun App Members read and pass BOSUN_APP_TOKEN, or list the owner by login in governance/owners.toml",
+    )
+}
+
 impl Github for LiveGithub {
     fn current_user(&self) -> Result<Option<String>> {
         Ok(self.own_login())
@@ -477,11 +503,80 @@ impl Github for LiveGithub {
         &self.owner
     }
 
+    fn team_child_teams(&self, org: &str, slug: &str) -> Result<Vec<String>> {
+        let path = format!("/orgs/{}/teams/{}/teams?per_page=100", enc(org), enc(slug));
+        let (items, more) = self.http.get_pages_strict(&path, TEAM_PAGES)?;
+        if more {
+            return Err(team_error(org, slug, "too many child teams"));
+        }
+        items
+            .iter()
+            .map(|t| {
+                t["slug"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| team_error(org, slug, "a child team without a slug"))
+            })
+            .collect()
+    }
+
+    fn team_members(&self, org: &str, slug: &str) -> Result<Vec<String>> {
+        let path = format!(
+            "/orgs/{}/teams/{}/members?per_page=100",
+            enc(org),
+            enc(slug)
+        );
+        let (items, more) = self.http.get_pages_strict(&path, TEAM_PAGES)?;
+        if more || items.len() > TEAM_MEMBERS_MAX {
+            return Err(team_error(org, slug, "more than 1000 members"));
+        }
+        items
+            .iter()
+            .map(|m| {
+                m["login"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| team_error(org, slug, "a member without a login"))
+            })
+            .collect()
+    }
+
     fn repo_info(&self) -> Result<Option<RepoInfo>> {
         match self.http.get_json(&self.path(""))? {
             Some(v) => Ok(Some(self.parse("repository", v)?)),
             None => Ok(None),
         }
+    }
+
+    fn workflow_run(&self, id: u64) -> Result<Option<WorkflowRun>> {
+        match self
+            .http
+            .get_json(&self.path(&format!("/actions/runs/{id}")))?
+        {
+            Some(v) => Ok(Some(self.parse("workflow run", v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn workflow_run_attempt(&self, id: u64, n: u64) -> Result<Option<WorkflowRun>> {
+        let path = self.path(&format!("/actions/runs/{id}/attempts/{n}"));
+        match self.http.get_json(&path)? {
+            Some(v) => Ok(Some(self.parse("workflow run attempt", v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn run_attempt_jobs(&self, id: u64, n: u64) -> Result<Vec<RunJob>> {
+        let path = self.path(&format!(
+            "/actions/runs/{id}/attempts/{n}/jobs?per_page=100"
+        ));
+        self.parse_all("job", self.http.get_all_in(&path, "jobs")?)
+    }
+
+    fn repo_name(&self) -> &str {
+        &self.repo
     }
 
     fn latest_release(&self) -> Result<Option<Release>> {

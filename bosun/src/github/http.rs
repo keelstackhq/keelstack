@@ -279,6 +279,23 @@ impl Http {
         max: usize,
         stop: Option<&dyn Fn(&Value) -> bool>,
     ) -> Result<(Vec<Value>, bool)> {
+        self.pages_checked(path, key, max, stop, false)
+    }
+
+    /// Like `get_pages`, but a page that is not a JSON array is an error (a list read that
+    /// fails closed instead of reading as empty).
+    pub fn get_pages_strict(&self, path: &str, max: usize) -> Result<(Vec<Value>, bool)> {
+        self.pages_checked(path, None, max, None, true)
+    }
+
+    fn pages_checked(
+        &self,
+        path: &str,
+        key: Option<&str>,
+        max: usize,
+        stop: Option<&dyn Fn(&Value) -> bool>,
+        strict: bool,
+    ) -> Result<(Vec<Value>, bool)> {
         let mut items = Vec::new();
         let mut next = Some(path.to_string());
         let mut read = 0;
@@ -302,6 +319,11 @@ impl Http {
                 if done {
                     return Ok((items, false));
                 }
+            } else if strict {
+                return Err(BosunError::error(
+                    format!("GitHub GET {}: the page is not a list", bare(&path)),
+                    "retry; if it persists check https://www.githubstatus.com",
+                ));
             }
             next = match &r.link_next {
                 // Only follow links that stay on the configured API host.
@@ -521,7 +543,11 @@ impl Http {
 
     /// The error for a non-success response: method, path, status and GitHub's `message`.
     fn fail(&self, method: &str, path: &str, r: &Resp) -> BosunError {
-        let api = r.json()["message"].as_str().unwrap_or("").to_string();
+        let mut api = r.json()["message"].as_str().unwrap_or("").to_string();
+        // A server that echoes the token (an App token too) in its message never gets it out.
+        if !self.token.is_empty() {
+            api = api.replace(&self.token, "[redacted]");
+        }
         let message = format!("GitHub {method} {}: {} {api}", bare(path), r.status);
         let fix = match r.status {
             401 => "the token was rejected; check GITHUB_TOKEN",

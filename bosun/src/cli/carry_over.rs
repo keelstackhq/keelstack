@@ -14,7 +14,7 @@ use crate::core::carry::{
 };
 use crate::core::records::{Record, parse_record};
 use crate::core::risk::{
-    OwnerView, VERDICT_AUTHOR, apply_record, is_bot_session, relayer_excluded,
+    OwnerView, UNVERIFIED_AUTHOR, VERDICT_AUTHOR, apply_record, is_bot_session, relayer_excluded,
 };
 use crate::github::{Comment, Compare, GitCommit, Github, PrFile, Pull, Review, Status};
 
@@ -248,7 +248,11 @@ fn approved_by_independent(
     models: Option<&[String]>,
     h: &str,
 ) -> Option<u64> {
-    let bot = |c: &&Comment| c.user.eq_ignore_ascii_case(VERDICT_AUTHOR);
+    // A record whose run did not verify is the newest record too (it may withdraw), never an approval.
+    let bot = |c: &&Comment| {
+        c.user.eq_ignore_ascii_case(VERDICT_AUTHOR)
+            || c.user.eq_ignore_ascii_case(UNVERIFIED_AUTHOR)
+    };
     let on_h = |c: &Comment| match apply_record(&c.body) {
         Some(Record::Verdict {
             session,
@@ -276,7 +280,8 @@ fn approved_by_independent(
         .next_back();
     let (c, (session, approved)) = newest?;
     let known = !session.is_empty() && session != "unknown" && !is_bot_session(&session);
-    (approved && known && c.unedited() && !excluded.contains(&session)).then_some(c.id)
+    let trusted = c.user.eq_ignore_ascii_case(VERDICT_AUTHOR);
+    (approved && trusted && known && c.unedited() && !excluded.contains(&session)).then_some(c.id)
 }
 
 /// Rule 5: no owner withdrawn (per commit) on the path or `h`; with verdicts (`approval`: the oldest
@@ -319,24 +324,10 @@ fn counted_floor(comments: &[Comment], h: &str, sessions: &[String]) -> Option<u
     ids?.into_iter().min()
 }
 
-/// The older head `h` whose approval carries to `pull.head_sha` if rules 1-5 hold, and who gave
-/// it. `approve` judges a sha with the inputs of the current head and returns `None` on any
-/// error. `check` runs only for a head that is approved; any doubt tries the next head.
-pub(crate) fn carry_approval(
-    gh: &dyn Github,
-    pull: &Pull,
-    default_branch: &str,
-    owners: &[String],
-    approve: &dyn Fn(&str) -> Option<Found>,
-) -> Option<(String, String, Vec<String>)> {
-    carry_approval_in(gh, pull, default_branch, (owners, None), approve)
-}
-
 /// The association GitHub reports for the author of `r` (`OWNER`, `MEMBER`, ...); `None` when
-/// the review does not carry it (the client does not read it yet), which counts as a possible
-/// member (fail closed, spec §16).
-pub fn review_association(_r: &Review) -> Option<&str> {
-    None
+/// the review does not carry it, which counts as a possible member (fail closed, spec §16).
+pub fn review_association(r: &Review) -> Option<&str> {
+    r.author_association.as_deref()
 }
 
 /// While a team is unreadable: the logins that reviewed and may be its members (no listed user;
@@ -380,6 +371,7 @@ pub(crate) fn carry_approval_in(
         for c in &mut comments {
             c.user = crate::github::gate::record_author(&c.user);
         }
+        crate::cli::verdict_run::bind_records(gh, &mut comments);
         reviews.sort_by_key(|r| r.id);
         let mut owners = owners.to_vec();
         owners.extend(

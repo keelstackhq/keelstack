@@ -241,3 +241,16 @@ fn review_models_at_base_limit_which_verdict_carries() {
     assert!(!with(None, cfg));
     assert!(with(None, "")); // unset: any model counts
 }
+
+#[test]
+fn a_record_that_names_no_verdict_run_or_an_unreadable_one_is_not_carried() { // issue #39
+    let fake = world(); fake.raw_verdict_records(); verdict(&fake, H, "session_r", true);
+    assert!(!carried(&fake)); // no `run`
+    let fake = world(); fake.raw_verdict_records();
+    let r = Record::Verdict { session: "session_r".into(), head_sha: H.into(), approved: true, confidence: Some(0.95), major: Some(0), model: None, relayed_by: None };
+    let line = r.to_line(); let line = format!("{},\"run\":42,\"attempt\":1,\"applied\":43}}", line.trim_end_matches('}'));
+    fake.comment_by(1, "github-actions[bot]", &format!("Review verdict: x.\n\n{line}"));
+    assert!(!carried(&fake)); // run 42 is unreadable (404)
+    let fake = honest(); fake.default_run_field("path", json!(".github/workflows/ci.yml"));
+    assert!(!carried(&fake)); // the run is another workflow's
+}

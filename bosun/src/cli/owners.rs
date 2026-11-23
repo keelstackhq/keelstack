@@ -70,7 +70,7 @@ pub fn run(dir: Option<&Path>, a: &OwnersArgs) -> CmdResult {
         return Err(e);
     }
     let body = format!(
-        "Sets the repo owners in `{OWNERS}` (`bosun owners set`). R-gov: the owner approves the head SHA.\n\nA team entry counts no member until team expansion is built (spec §16): until then the logins are the owners."
+        "Sets the repo owners in `{OWNERS}` (`bosun owners set`). R-gov: the owner approves the head SHA.\n\nA team entry's members are owners when the team can be read (spec §16); an unreadable team counts no member, so list at least one owner by login."
     );
     let pull = gh.create_pull(title, &branch, &base, &body, true)?;
     let n = pull.number;

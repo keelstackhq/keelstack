@@ -187,7 +187,7 @@ risk-check = {pr: int, head_sha: str, level: str, matches: [{rule: str, why: str
     requirement?: str,
     policy?: str, policy_source?: str, verdicts?: [str], autonomous_verdicts?: [str], quorum_verdicts?: [str],
     delegate_verdicts?: [str], delegate_blocked?: str | null, checks_skipped?: bool, dry_run?: bool, author_is_owner?: bool,
-    verdict_cleared_by?: str};
+    verdict_cleared_by?: str, owner_teams_unreadable?: [str]};
 review-loop = {max: int, prs: [{pr: int, head_sha: str, step: str, rounds: int, findings: [{..}], reasons: [str],
     reason: str | null}]}
     | {pr: int, head_sha: str, step: str, rounds: int, max: int, findings: [{..}], reasons: [str], reason: str | null};
@@ -198,7 +198,8 @@ verdict comment = {pr: int, head_sha: str, comment_id: int, applied_by: str, rev
 verdict apply = {pr: int, head_sha: str, approved: bool, status: str, reasons: [str],
     task_state: str | null, checks_skipped?: bool, fix_task?: int | {..}, relayed_by?: str,
     tasks_moved?: [int], sessions?: [str]}
-    | {comment_id: int, author: str, refused: str, status: null};
+    | {comment_id: int, author: str, refused: str, status: null, accepted: bool}
+    | {comment_id: int, author: str, accepted: bool};
 pr = {pr: int, created: bool, draft: bool, head_sha: str, auto_merge: bool,
     task_state: str | null, ready?: bool | "pending", merged?: bool, epic_closed?: bool,
     auto_merge_route?: str | null, enforced_checks?: str | null, note?: str, touch_check?: str,

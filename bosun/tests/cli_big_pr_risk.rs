@@ -107,3 +107,32 @@ fn a_bundle_without_a_high_task_is_still_judged_by_its_paths() {
     assert_eq!(v["data"]["requirement"], "owner", "{v}");
     assert!(rule(&v, "R-plan").is_none(), "{v}");
 }
+
+const GATED_RULES: &str = "[[rule]]\nid = \"R-gate\"\nwhy = \"gated\"\npaths = [\"hoist/gated/**\", \"hull/template/.claude/**\"]\n";
+
+/// The bundle's risk is judged over the union of every changed file: one gated file among the
+/// ordinary ones of five folders makes the whole PR the owner's, whatever the tasks' risk says.
+#[test]
+fn one_gated_file_among_many_makes_the_bundle_the_owners() {
+    let mut files: Vec<String> = FILES.iter().map(|f| f.to_string()).collect();
+    files.extend((0..30).map(|n| format!("keel/src/gen{n}.rs")));
+    files.push("hoist/gated/deploy.toml".into());
+    let files: Vec<&str> = files.iter().map(String::as_str).collect();
+    for high in ["", r#","risk":"high""#] {
+        let fake = big_with(&files, high);
+        fake.content(".bosun/risk.toml", BASE, GATED_RULES);
+        let (code, v) = run(&fake, "session_test", NOW, &["risk-check", "100"]);
+        assert_eq!(code, 5, "{high}: {v}");
+        assert_eq!(v["data"]["requirement"], "owner", "{v}");
+        assert!(rule(&v, "R-gate").is_some(), "{v}");
+    }
+}
+
+#[test]
+fn a_bundle_whose_file_list_is_cut_is_not_judged_normal() {
+    let fake = big_with(&["keel/src/a.rs"], "");
+    fake.content(".bosun/risk.toml", BASE, GATED_RULES);
+    fake.pull_set(100, "changed_files", serde_json::json!(5000));
+    let (code, v) = run(&fake, "session_test", NOW, &["risk-check", "100"]);
+    assert_eq!(code, 5, "{v}");
+}

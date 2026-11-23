@@ -148,7 +148,31 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
     let (mut tokens_in, mut tokens_out) = (0u64, 0u64);
     let mut results: Vec<(u32, Result<Verdict, String>)> = Vec::new();
     let mut first_err: Option<BosunError> = None;
+    let mut stopped: Option<BosunError> = None;
     for (k, user) in &calls {
+        // Fail closed: before every chunk after the first, today's spend plus this run's own
+        // cost so far must still be under the daily budget; unreadable spend stops the run too.
+        if *k > 1 {
+            // A cost that cannot be priced is not zero: stop with the limit error (fail closed).
+            let own = usage::from_tokens(tokens_in, tokens_out, &cfg.model, &app.ctx.config.prices)
+                .ok()
+                .filter(|u| u.is_finite() && *u >= 0.0);
+            let Some(own) = own else {
+                stopped = Some(BosunError::limit(
+                    format!(
+                        "the cost of the {} chunk(s) reviewed so far cannot be priced (model {})",
+                        k - 1,
+                        cfg.model
+                    ),
+                    "add the model to [prices] in .bosun/bosun.toml, then run `bosun review-ci` again",
+                ));
+                break;
+            };
+            if let Err(e) = budget_check(&app, own) {
+                stopped = Some(e);
+                break;
+            }
+        }
         match client.message(&cfg.model, cfg.max_tokens, &system, user) {
             Ok(reply) => {
                 tokens_in += reply.input_tokens;
@@ -161,6 +185,24 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
                 first_err.get_or_insert(e);
             }
         }
+    }
+    if let Some(e) = stopped {
+        // The chunks already answered cost money: record it, write no verdict and no status.
+        let usd = usage::from_tokens(tokens_in, tokens_out, &cfg.model, &app.ctx.config.prices);
+        let spend = if dry || tokens_in + tokens_out == 0 {
+            Value::Null
+        } else {
+            let task = pack["task"]["meta"]
+                .is_object()
+                .then(|| pack["task"]["issue"].as_u64())
+                .flatten();
+            record_spend(&app, usd, task)
+        };
+        let done = results.len();
+        return Err(e.with_data(
+            json!({"pr": n, "head_sha": head_sha, "chunk_count": chunk_count,
+            "chunks_done": done, "spend": spend}),
+        ));
     }
     // No call was answered: the same error as a single failed call.
     if let Some(e) = first_err
@@ -223,7 +265,7 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
         &verdict,
         SESSION,
         valid_model(&cfg.model),
-        None,
+        (None, None),
     )?;
     let comment = if verdict.findings.is_empty() {
         Value::Null
@@ -313,9 +355,15 @@ fn invalid(
 /// Exit 6 when today's spend (the registry) has reached `daily_usd`: no call, no status. The
 /// per-task cap of `budget record` does not apply here.
 fn budget_guard(app: &App) -> Result<(), BosunError> {
+    budget_check(app, 0.0)
+}
+
+/// The same guard with `own` dollars this run has spent and not yet recorded on top.
+fn budget_check(app: &App, own: f64) -> Result<(), BosunError> {
     let gh = app.gh.as_ref();
     let daily = limits_from_default(gh, &app.ctx)?.budget.daily_usd;
-    let spent = spend_total_today(&registry::trusted_spend_notes(gh)?, app.ctx.now.day_start());
+    let spent =
+        spend_total_today(&registry::trusted_spend_notes(gh)?, app.ctx.now.day_start()) + own;
     if level(spent, daily) == Level::Stop {
         return Err(BosunError::limit(
             format!("spent ${spent:.2} of ${daily:.2} today; no CI review"),

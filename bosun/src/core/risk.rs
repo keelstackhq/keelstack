@@ -1443,7 +1443,7 @@ pub fn autonomous_verdicts<'a>(
     // Any verdict on the head that would not count blocks, edited too (an edit can only make it
     // count less): a rejection, majors, a low or missing confidence. Only all-clean passes.
     let refused = all.iter().any(|(a, b, _)| {
-        a.eq_ignore_ascii_case(VERDICT_AUTHOR)
+        (a.eq_ignore_ascii_case(VERDICT_AUTHOR) || a.eq_ignore_ascii_case(UNVERIFIED_AUTHOR))
             && matches!(apply_record(b), Some(Record::Verdict { head_sha, approved, confidence, major, .. })
                 if head_sha == head
                     && !(approved && major == Some(0)
@@ -1529,6 +1529,11 @@ pub fn apply_floor(matches: &mut [Match], critical: &[String]) {
 /// A verdict counts only from this author: the verdict workflow writes the record comment with
 /// its own token. A record an agent session posts directly is not a verdict (spec section 8).
 pub const VERDICT_AUTHOR: &str = "github-actions[bot]";
+/// The author a reader gives a [`VERDICT_AUTHOR`] verdict record whose run binding did not verify
+/// (no `run`, or the run is not the verdict workflow's, spec section 8). A GitHub login cannot
+/// contain `/`. Such a record never counts, but a rejection or a newer record on a head still
+/// blocks or withdraws (fail closed: an unreadable run must not hide a rejection).
+pub const UNVERIFIED_AUTHOR: &str = "github-actions[bot]/unverified";
 /// The confidence a verdict needs to count toward two verdicts.
 pub const VERDICT_MIN_CONFIDENCE: f64 = 0.9;
 /// The session prefix `verdict apply` records a `[approvals] verdict_bots` verdict under.
@@ -1564,6 +1569,22 @@ pub fn apply_record(body: &str) -> Option<Record> {
         Ok(r @ Record::Verdict { .. }) => Some(r),
         _ => None,
     }
+}
+
+/// A number field of the verdict record on the last line of `body` (`run`, `attempt`,
+/// `applied`); `None` when the record lacks it or it is no number.
+pub fn record_u64(body: &str, key: &str) -> Option<u64> {
+    let last = body.lines().map(str::trim).rfind(|l| !l.is_empty())?;
+    serde_json::from_str::<serde_json::Value>(last)
+        .ok()?
+        .get(key)?
+        .as_u64()
+}
+
+/// The workflow run id a verdict record names (`"run": <id>`, written by `bosun verdict apply`
+/// from `BOSUN_RUN_ID`).
+pub fn record_run(body: &str) -> Option<u64> {
+    record_u64(body, "run")
 }
 
 /// Sessions that hold or held a lease on a task: they did the work, so their verdict is not
@@ -1614,7 +1635,8 @@ fn verdict_sessions<'a>(
 ) -> Vec<String> {
     let mut newest: std::collections::BTreeMap<String, bool> = Default::default();
     for (author, body) in comments {
-        if !author.eq_ignore_ascii_case(VERDICT_AUTHOR) {
+        let unverified = author.eq_ignore_ascii_case(UNVERIFIED_AUTHOR);
+        if !unverified && !author.eq_ignore_ascii_case(VERDICT_AUTHOR) {
             continue;
         }
         if let Some(Record::Verdict {
@@ -1634,7 +1656,8 @@ fn verdict_sessions<'a>(
         {
             let enrolled = models.is_none_or(|m| model.is_some_and(|x| m.contains(&x)));
             // A newest record relayed by an excluded session withdraws, never counts.
-            let counts = !relayer_excluded(relayed_by.as_deref(), excluded)
+            let counts = !unverified
+                && !relayer_excluded(relayed_by.as_deref(), excluded)
                 && approved
                 && enrolled
                 && confidence.is_some_and(|c| c >= VERDICT_MIN_CONFIDENCE)
