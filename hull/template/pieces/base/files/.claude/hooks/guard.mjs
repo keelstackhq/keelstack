@@ -1429,7 +1429,10 @@ function findWrites(t) {
     if (!/^-(exec|execdir|ok|okdir)$/.test(x)) return false;
     const end = t.findIndex((y, n) => n > e && (y === ";" || y === "+"));
     const inner = stripPrefixes(t.slice(e + 1, end < 0 ? undefined : end));
-    return inner.some((y) => y.includes("{}")) && !READ_ONLY_PROGS.has(base(inner[0] ?? ""));
+    // `{}` is lexed as `{`: either form is the found path.
+    return (
+      inner.some((y) => y === "{" || y.includes("{}")) && !READ_ONLY_PROGS.has(base(inner[0] ?? ""))
+    );
   });
 }
 
@@ -1566,15 +1569,48 @@ function workflowRun(args) {
 
 /** `gh api` that opens a PR: a POST to `repos/<owner>/<repo>/pulls` (exactly; no `..`, query or
  * sub-path such as `/merge`), with no file read into the body. Like `gh pr create`. */
-const PR_CREATE_RE = /^\/?repos\/(?!\.\.?\/)[\w.-]+\/(?!\.\.?\/)[\w.-]+\/pulls\/?$/;
+const PR_CREATE_RE =
+  /^\/?repos\/(?:\{owner\}|(?!\.\.?\/)[\w.-]+)\/(?:\{repo\}|(?!\.\.?\/)[\w.-]+)\/pulls\/?$/;
 function prCreate(args) {
   const { method = "POST", endpoint, fileField, input } = ghApiParse(args);
+  if (args.some((a) => /^--hostname(=|$)/.test(a))) return false; // another GitHub host
   return (
     String(method).toUpperCase() === "POST" &&
     PR_CREATE_RE.test(endpoint ?? "") &&
     fileField === undefined &&
     input === undefined
   );
+}
+
+/** True when every part of `raw` the shell changes at run time (`$(...)`, backticks, `${...}`)
+ * sits inside double quotes, so its output stays one word; `$'`, `$"`, an unquoted brace or a
+ * line continuation is false. */
+function quotedOnly(raw) {
+  if (raw.includes("\\\n")) return false;
+  let q = "";
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (q === "'") {
+      if (c === "'") q = "";
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      continue;
+    }
+    if (c === "$" && raw[i + 1] === "(") {
+      if (q !== '"') return false;
+      i = subEnd(raw, i + 1);
+    } else if (c === "`") {
+      if (q !== '"') return false;
+      i = subEnd(raw, i);
+    } else if (c === "$" && /['"{]/.test(raw[i + 1] ?? "")) {
+      if (q !== '"' || raw[i + 1] !== "{") return false;
+    } else if (c === '"') q = q ? "" : '"';
+    else if (!q && c === "'") q = "'";
+    else if (!q && c === "{") return false;
+  }
+  return q === "";
 }
 
 /** Indices of the words of `gh api` / `gh pr|issue create|edit|comment` (`raws`: the words as
@@ -1586,7 +1622,9 @@ function ghDataWords(raws, bareWords) {
   const k = bareWords.findIndex((w) => base(w) === "gh");
   if (k < 0) return out;
   const [a0, a1] = [bareWords[k + 1], bareWords[k + 2]];
-  const literalKey = (r) => /^[\w[\]]+=/.test(r);
+  // A literal key, and every run-time part of the value inside double quotes: an unquoted
+  // `$(...)` is word-split, so its output could add flags (`-f t=$(echo x -F b=@.env)`).
+  const literalKey = (r) => /^[\w[\]]+=/.test(r) && quotedOnly(r);
   if (a0 === "api") {
     // Walk like ghApiParse: a short group is bools, then at most one value flag.
     for (let i = k + 2; i < raws.length; i++) {
@@ -1615,8 +1653,10 @@ function ghDataWords(raws, bareWords) {
   }
   if (!["pr", "issue"].includes(a0) || !["create", "edit", "comment"].includes(a1)) return out;
   for (let i = k + 3; i < raws.length; i++) {
-    if (/^(--body|-b|--title|-t)$/.test(bareWords[i])) out.add(++i);
-    else if (/^--(body|title)=/.test(bareWords[i]) && /^--(body|title)=/.test(raws[i])) out.add(i);
+    if (/^(--body|-b|--title|-t)$/.test(bareWords[i])) {
+      if (quotedOnly(raws[i + 1] ?? "")) out.add(i + 1);
+      i++;
+    } else if (/^--(body|title)=/.test(raws[i]) && quotedOnly(raws[i])) out.add(i);
   }
   return out;
 }
@@ -1938,6 +1978,8 @@ function bashRule(
   if (prog === "find" && findWrites(t)) {
     const roots = findRoots(t).map((i) => stripTok(t[i]));
     for (const r of roots.length ? roots : ["."]) {
+      // A root the guard cannot name (a substitution, variable, glob or `~`) fails closed.
+      if (/[$`*?[]|^~/.test(r)) return "protected";
       const real = realRel(r, projectDir, cwd);
       if (real === undefined || holdsGuarded(real)) return "protected";
     }
