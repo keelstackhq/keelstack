@@ -615,7 +615,7 @@ over the five JavaScript files, with devDependencies `typescript` and `@types/no
 with `hull.release = "ts-lib"` (read by the release workflow). `vite.config.ts` [owned] packs
 `src/index.ts` as `format: ["esm"]` with `dts: true` into `dist/index.mjs` and `dist/index.d.mts`;
 `exports` has `types` first plus `./package.json`; `files: ["dist"]`, `sideEffects: false`,
-`publishConfig: { access: "public", provenance: true }`. `tsconfig.json` [owned] sets
+`publishConfig: { access: "public" }` (no forced provenance: private repos refuse it, trusted publishing adds it in public ones). `tsconfig.json` [owned] sets
 `declaration` (TS5069 requires it) and `isolatedDeclarations`, and includes only `src`: TypeScript 7
 rejects the default export of `vite.config.ts` under `isolatedDeclarations` (TS9037).
 `build` is `vp pack && publint && attw --pack . --profile esm-only`; the checks run on the built
@@ -835,7 +835,7 @@ publishing jobs.
   last. ts-lib: `pnpm install --frozen-lockfile`, `pnpm turbo run build test --filter <name>`,
   `npm pkg set repository.type=git repository.url=git+https://github.com/$GITHUB_REPOSITORY.git`,
   `pnpm pack` (rewrites `catalog:`/`workspace:`). Every publish is
-  `npm publish <dir|tgz> --provenance --access public --tag <dist-tag>` (`next` for a version with a
+  `npm publish <dir|tgz> --access public --tag <dist-tag>` (`next` for a version with a
   `-` prerelease suffix, else `latest`; npm refuses or would mark a prerelease `latest` otherwise),
   skipped when `npm view <name>@<version>` already answers.
 
@@ -849,7 +849,7 @@ ts-lib `AGENTS.md`): the `release` environment with a tag rule; the first publis
 name by hand; an npm trusted publisher (repo, `release.yml`, environment `release`) on each
 package (launcher and five platform packages, or the library), which must see its first publish
 within 2 days. Unverified until the first real release (hull PROGRESS Blocked): `npm publish` of a
-`pnpm pack` tarball with `--provenance`, private repos (npm makes no provenance for them;
+`pnpm pack` tarball, private repos (npm makes no provenance for them;
 attestations need a public repo or GitHub Enterprise Cloud), `ubuntu-24.04-arm`, and
 `macos-latest` building `x86_64-apple-darwin`.
 
@@ -999,7 +999,7 @@ heading fails the run. `scripts/release-tag.mjs` decides (`changelogRelease`, `r
 - Module tests for the hull-tested template scripts: `guard.mjs` (`decide()` table, one spawn
   test), `agents-index.mjs` (exact output, determinism, `--check`, budget) and `release-plan.mjs`
   (`plan()` on fixtures); `release.yml` shape (tag trigger, `contents: read`, `id-token: write`
-  only on publishing jobs, `--provenance`, no npm token).
+  only on publishing jobs, no npm token).
 - Skeleton pieces: `rust-cli` (exact `=x.y.z` pins, no OpenSSL, `deny.toml`, debug `--locked`
   build), `npm-cli` (no `optionalDependencies` or install scripts, `bin` = crate), `ts-lib`
   (`exports` shape, publint and attw in `build`).
