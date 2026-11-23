@@ -998,7 +998,7 @@ export function commands(cmd) {
       out.push(["@deny", "alias", segText]);
     if (SHELLS.has(prog))
       for (let n = 1; n < t.length; n++) {
-        const rc = /^--(?:rcfile|init-file)(?:=(.*))?$/s.exec(t[n]);
+        const rc = /^--?(?:rcfile|init-file)(?:=(.*))?$/s.exec(t[n]); // bash: `-rcfile` too
         if (rc) out.push(["source", rc[1] ?? t[n + 1] ?? ""]);
       }
     if (SHELLS.has(prog) && !viaXargs) {
@@ -2365,8 +2365,18 @@ const MAX_SCRIPT = 512 * 1024;
 const RC_RE =
   /^(\.(bashrc|bash_profile|bash_login|profile|zshrc|zprofile|zshenv|zlogin|kshrc|mkshrc|cshrc|tcshrc)|\.config\/fish\/config\.fish)$/;
 const MAX_SCRIPTS = 32;
-const SHELL_OPT_VALUE = new Set(["-o", "+o", "-O", "+O", "--rcfile", "--init-file"]);
-const SHELL_C_RE = /^-[a-zA-Z]*c[a-zA-Z]*$/;
+const SHELL_OPT_VALUE = new Set([
+  "-o",
+  "+o",
+  "-O",
+  "+O",
+  "--rcfile",
+  "--init-file",
+  "-rcfile",
+  "-init-file",
+]);
+// `-rcfile` is bash's one-dash long option (it takes a file), not `-r -c`.
+const SHELL_C_RE = /^-(?!rcfile$)[a-zA-Z]*c[a-zA-Z]*$/;
 
 /** Where a shell command's code comes from: `{kind: "c"}` (a `-c` string), `"doc"`, `"herestring"`,
  * `"file"` (a script operand, its arguments), `"info"` (`--version`, `--help`) or `"stdin"` (with
@@ -2405,6 +2415,11 @@ function shellSource(t) {
     if (ops[i] === "--") {
       i++;
       break;
+    }
+    // `-rcfile f` is bash's long option with one dash, not `-r -c`.
+    if (SHELL_OPT_VALUE.has(ops[i])) {
+      i += 2;
+      continue;
     }
     if (SHELL_C_RE.test(ops[i])) return { kind: "c" };
     if (/^-[a-zA-Z]*s[a-zA-Z]*$/.test(ops[i])) return { kind: "stdin", stdinFile }; // args follow

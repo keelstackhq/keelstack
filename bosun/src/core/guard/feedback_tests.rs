@@ -322,6 +322,7 @@ fn g2_a_startup_file_a_shell_sources_is_read_like_its_script() {
         "bash --rcfile ok.sh -i",
         "bash --init-file ok.sh -i -c true",
         "bash --rcfile=ok.sh -i",
+        "bash -rcfile ok.sh -i -c true",
     ] {
         assert_eq!(hook(cmd, &files), None, "{cmd}");
     }
@@ -332,6 +333,10 @@ fn g2_a_startup_file_a_shell_sources_is_read_like_its_script() {
         "bash --init-file=x.sh ok.sh",
         "bash --rcfile \"$X\" -i",
         "bash --rcfile $(echo x.sh) -i",
+        "bash -rcfile x.sh -i -c true",
+        "bash -rcfile ok.sh x.sh",
+        "bash -init-file x.sh -i",
+        "bash -init-file=x.sh -i",
     ] {
         assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
     }

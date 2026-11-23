@@ -701,6 +701,10 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Crates skipped because they are not on crates.io yet (`hoist release bootstrap`); job
+    # major does not move the Action's tag while any is missing.
+    outputs:
+      skipped: ${{ steps.publish.outputs.skipped }}
     concurrency:
       group: release-crates-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
@@ -723,6 +727,7 @@ jobs:
           toolchain: "1.97"
       # No build cache in the jobs that hold an OIDC token.
       - name: Publish the crates, dependencies first
+        id: publish
         run: |
           set -euo pipefail
           api=https://crates.io/api/v1
@@ -744,7 +749,9 @@ jobs:
                   if d.get("path") and d["name"] in pk:
                       visit(d["name"])
               if n in want:
-                  deps = sorted({d["name"] for d in pk[n]["dependencies"] if d.get("path") and d["name"] in want})
+                  # cargo publish strips a path dev-dependency: it never holds a crate back.
+                  deps = sorted({d["name"] for d in pk[n]["dependencies"]
+                                 if d.get("path") and d["name"] in want and d.get("kind") != "dev"})
                   out.append(" ".join([n] + deps))
           for n in sorted(pk):
               visit(n)
@@ -783,6 +790,7 @@ jobs:
             fi
             todo+=("$c")
           done <<<"$order"
+          echo "skipped=${new[*]}" >>"${GITHUB_OUTPUT:-/dev/null}"
           if [ "${#new[@]}" -gt 0 ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "crates.io: not published yet (run \`hoist release bootstrap\`): ${new[*]}" >>"$GITHUB_STEP_SUMMARY"
           fi
@@ -811,6 +819,10 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Packages skipped because they are not on npm yet (`hoist release bootstrap`); job major
+    # does not move the Action's tag while any is missing.
+    outputs:
+      skipped: ${{ steps.publish.outputs.skipped }}
     concurrency:
       group: release-npm-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
@@ -887,6 +899,7 @@ jobs:
             --artifacts "$PWD/art" --out "$RUNNER_TEMP/splice-npm" >>publish-dirs.txt
           cat publish-dirs.txt
       - name: Publish (trusted publishing, provenance), platform packages before their launcher
+        id: publish
         run: |
           set -euo pipefail
           [ -s publish-dirs.txt ] || { echo "::error::no packages to publish"; exit 1; }
@@ -909,7 +922,8 @@ jobs:
             got=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).version" "$dir")
             [ "$got" = "$VERSION" ] || { echo "::error::$name in $dir is $got, not $VERSION"; exit 1; }
             held=""
-            for d in $(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).optionalDependencies ?? {}).join(' ')" "$dir"); do
+            opt=$(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).optionalDependencies ?? {}).join(' ')" "$dir")
+            for d in $opt; do
               if [[ " ${new[*]} " == *" $d "* ]]; then held=$d; fi
             done
             if [ -n "$held" ]; then
@@ -942,18 +956,21 @@ jobs:
             )
             npm publish "$dir" --provenance --access public --tag "$dist_tag" </dev/null
           done <publish-dirs.txt
+          echo "skipped=${new[*]}" >>"${GITHUB_OUTPUT:-/dev/null}"
           if [ "${#new[@]}" -gt 0 ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             echo "npm: not published yet (run \`hoist release bootstrap\`): ${new[*]}" >>"$GITHUB_STEP_SUMMARY"
           fi
 
   # The Action's major tag follows the newest stable release, and only moves once the release,
   # crates.io and npm all have it (the splice Action installs `@keelstackhq/splice` at its
-  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist.
+  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist. A
+  # crate or package skipped as new (`hoist release bootstrap`) holds the tag until a re-run.
   major:
     needs: [plan, release, crates, npm]
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
       needs.crates.result == 'success' && needs.npm.result == 'success' &&
+      needs.crates.outputs.skipped == '' && needs.npm.outputs.skipped == '' &&
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5

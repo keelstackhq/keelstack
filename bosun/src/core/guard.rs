@@ -1735,7 +1735,12 @@ fn word_scripts(command: &str) -> Vec<String> {
                 k += 1;
                 if opts && *a == "--" {
                     opts = false;
-                } else if opts && matches!(a.as_str(), "--rcfile" | "--init-file") {
+                } else if opts
+                    && matches!(
+                        a.as_str(),
+                        "--rcfile" | "--init-file" | "-rcfile" | "-init-file"
+                    )
+                {
                     k += 1;
                 } else if opts && a.starts_with("--") {
                 } else if opts && a.len() > 1 && a.starts_with(['-', '+']) {

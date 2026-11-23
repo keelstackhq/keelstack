@@ -1794,8 +1794,8 @@ fn shell_run(name: &str, args: &[String]) -> Vec<ScriptPath> {
             Some(path) => ScriptPath::file(path, true, true),
             None => ScriptPath {
                 unseen: Some((
-                    "its startup file (`--rcfile`) path is built when the command runs, which \
-                     the guard cannot read",
+                    "its startup file (`--rcfile`, `--init-file`) path is built when the \
+                     command runs, which the guard cannot read",
                     true,
                 )),
                 ..ScriptPath::file(name.to_string(), true, true)
@@ -1849,15 +1849,18 @@ fn shell_main<'a>(name: &str, args: &'a [String], rc: &mut Vec<&'a str>) -> Opti
                 opts = false;
                 continue;
             }
-            if matches!(a, "--rcfile" | "--init-file") {
+            // bash takes its long options with one dash too (`-rcfile f`): not `-r -c ..`.
+            let long = a.strip_prefix("--").or_else(|| a.strip_prefix('-'));
+            if matches!(long, Some("rcfile" | "init-file")) {
                 rc.extend(args.get(i).map(String::as_str));
                 i += 1;
                 continue;
             }
-            if let Some(v) = a
-                .strip_prefix("--rcfile=")
-                .or_else(|| a.strip_prefix("--init-file="))
-            {
+            // `--rcfile=f`: bash refuses it, another shell may not; read it all the same.
+            if let Some(v) = long.and_then(|l| {
+                l.strip_prefix("rcfile=")
+                    .or_else(|| l.strip_prefix("init-file="))
+            }) {
                 rc.push(v);
                 continue;
             }
