@@ -43,6 +43,7 @@ fn desired() -> Desired {
                 name: "hoist: default branch".into(),
                 branch: "main".into(),
                 required_checks: vec![s("ci-ok".to_string())],
+                check_pins: Vec::new(),
                 merge_queue: s(false),
                 admin_bypass: true,
             },

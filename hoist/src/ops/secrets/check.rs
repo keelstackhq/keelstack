@@ -46,7 +46,13 @@ pub fn secrets_check(dir: &Path, remote: bool, verbose: bool) -> Result<Report, 
         if std::fs::symlink_metadata(dir.join("secrets.toml")).is_ok() {
             return super::consumer::check(dir, remote, verbose);
         }
-        // A repo that uses neither has nothing to check: not an error.
+        if remote {
+            return usage("`--remote` needs secrets.toml (a consumer repo); there is none here");
+        }
+        // Only a real local repo that uses neither has nothing to check; a wrong `-C` is an error.
+        if !dir.is_dir() || !dir.ancestors().any(|a| a.join(".git").exists()) {
+            return usage("not a git repository (no access.toml or secrets.toml either); check -C");
+        }
         let none = item(
             "secrets",
             "config",

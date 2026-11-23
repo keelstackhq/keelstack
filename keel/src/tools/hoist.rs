@@ -8,6 +8,8 @@ pub enum Res {
     Ok,
     /// Drift (exit 1) or pending human steps (exit 2) as reported by `check`.
     Drift,
+    /// `check_cloudflare` found no item of the slice's kinds at all (nothing to compare).
+    NoItems,
     /// The first of `human_steps` (exit 2).
     Human {
         title: String,
@@ -146,7 +148,9 @@ pub fn check_cloudflare(r: &dyn Runner, dir: &Path, s: &Slice, t: Duration) -> R
                         .filter(|i| s.kinds.contains(&i["kind"].as_str().unwrap_or("")))
                         .collect()
                 });
-                if !mine.is_empty() && !mine.iter().any(|i| in_drift(i)) {
+                if mine.is_empty() {
+                    Res::NoItems
+                } else if !mine.iter().any(|i| in_drift(i)) {
                     Res::Ok
                 } else {
                     Res::Drift
@@ -492,11 +496,14 @@ mod tests {
             res
         };
         // Done needs at least one item of the slice's kinds, all with action "ok".
-        assert!(matches!(chk(Out::ok(r#"{"items":[]}"#), &DNS), Res::Drift));
-        assert!(matches!(chk(Out::ok(r#"{"ok":true}"#), &R2), Res::Drift));
+        assert!(matches!(
+            chk(Out::ok(r#"{"items":[]}"#), &DNS),
+            Res::NoItems
+        ));
+        assert!(matches!(chk(Out::ok(r#"{"ok":true}"#), &R2), Res::NoItems));
         let ok = r#"{"items":[{"kind":"dns_record","key":"k","action":"ok"}]}"#;
         assert!(matches!(chk(Out::ok(ok), &DNS), Res::Ok));
-        assert!(matches!(chk(Out::ok(ok), &R2), Res::Drift));
+        assert!(matches!(chk(Out::ok(ok), &R2), Res::NoItems));
         let weird = r#"{"items":[{"kind":"dns_record","key":"k","action":"weird"}]}"#;
         assert!(matches!(chk(Out::ok(weird), &DNS), Res::Drift));
         assert!(matches!(chk(Out::with(1, weird, ""), &DNS), Res::Drift));

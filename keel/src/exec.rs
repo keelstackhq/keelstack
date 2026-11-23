@@ -1,4 +1,6 @@
 use std::io::{Read, Write};
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, mpsc};
@@ -91,6 +93,18 @@ pub trait Runner {
     fn run(&self, cmd: &Cmd) -> Out;
 }
 
+/// SIGKILL the whole process group `pgid` (the child leads its own group). Safe code only: the
+/// crate forbids `unsafe`, so this shells out to `kill`.
+#[cfg(unix)]
+fn kill_group(pgid: u32) {
+    let _ = Command::new("kill")
+        .args(["-KILL", "--", &format!("-{pgid}")])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
 /// Runs real subprocesses. Stdin is piped only when the call has some; it is never logged.
 pub struct SystemRunner;
 
@@ -111,6 +125,9 @@ impl Runner for SystemRunner {
         for (k, v) in &cmd.env {
             c.env(k, v);
         }
+        // Own process group, so a timeout can stop the grandchildren too (flyctl under fly-setup.sh).
+        #[cfg(unix)]
+        c.process_group(0);
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => return Out::with(-1, "", &e.to_string()),
@@ -155,6 +172,8 @@ impl Runner for SystemRunner {
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
                 timed_out = true;
+                #[cfg(unix)]
+                kill_group(child.id());
                 let _ = child.kill();
                 break child.wait();
             }
@@ -285,6 +304,33 @@ mod tests {
             (out.code, out.stdout.as_str(), out.stderr.as_str()),
             (3, "hi\n", "err\n")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn timeout_kills_the_whole_process_group() {
+        // UC-WH-1: a script that spawns a child (flyctl under fly-setup.sh) must not leave it behind.
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("child.pid");
+        let script = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
+        let c = Cmd::new("sh", &["-c", &script]).timeout(Duration::from_secs(1));
+        let out = SystemRunner.run(&c);
+        assert_eq!(out.code, 124, "{out:?}");
+        let pid = std::fs::read_to_string(&pidfile)
+            .unwrap()
+            .trim()
+            .to_string();
+        let mut dead = false;
+        for _ in 0..50 {
+            // `kill -0` fails once the process is gone (a zombie still answers: check /proc state).
+            let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            if state.is_empty() || state.contains(") Z") {
+                dead = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert!(dead, "child {pid} survived the timeout");
     }
 
     #[test]

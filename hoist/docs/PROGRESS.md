@@ -25,6 +25,7 @@ Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.
 - 2026-11-21 Changesets CS-3b (ported, opt-in): npm comparator lists, `||`, `< <= >`, Cargo comma lists; dev ranges of packages that do not release are rewritten (`plan_with_rewrites`).
 - 2026-11-21 Changesets CS-4 (ported, opt-in): `release prepare` in changesets mode (only when `.changeset/config.json` exists): plan from changesets, rewrites only planned ranges, changesets changelog layout with dated heading (O1), `## Unreleased` moves, consumed changesets deleted, PR body `## Changesets`; `publish` reads a bare `## <version>` heading; spec §9.2/§9.3, README.
 - 2026-11-21 Changesets CS-5 (ported, opt-in): `hoist changeset status [--since REV]`: files changed since the merge base, matched by `changedFilePatterns` per package (launcher and platform dirs count for their crate), need a changeset the diff adds naming the package or an empty one; `hoist/release` exempt (same-repo PR only); changesets read from HEAD via git; no HTTP. Spec §3, README.
+- 2026-11-23 Review fixes (#47, #48, #58 nit) and required-check sources (#31, #37, spec §6.1 as built): `required_checks` entries `{ context, app | integration_id }` pin the ruleset's `integration_id` (slug via `GET /apps/{slug}`, exit 3 if unresolvable); unknown-key errors name the right table; `secrets check` on a non-repo or `--remote` without `secrets.toml` is exit 3; shell-quoted `gh variable set` steps; non-Unix `--emit-secrets` refused; `import` does not write pins yet.
 
 ## Blocked
 

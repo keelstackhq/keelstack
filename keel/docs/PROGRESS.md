@@ -11,6 +11,9 @@ Deploy, DNS, backup and verify (`[deploy.fly]`, `[backup]`; steps deploy, dns, b
 issue #2 land on `claude/keel-deploy-backup-dns`. The fly-setup.sh, hoist `--area`/`--secrets-to` flags (relayed) and
 bosun `pr --single` flags are assumed behind adapters until upstream relays the exact ones.
 
+Issue #45: a step timeout kills the whole process group (fly-setup.sh and flyctl stop too); dns says so when hoist
+has no dns_record item (not "remove old records"); verify names the newer run when a push cancelled the deploy.
+
 ## Blocked
 
 Human-only items, with the exact action:

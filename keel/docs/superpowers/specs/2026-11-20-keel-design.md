@@ -56,7 +56,7 @@ keel [-C DIR] [--json] [-v] doctor
   anything else is passed to `splice new` as the source.
 - `--wait SECS` (default 300): how long a GitHub-App gate polls before it returns exit 5. `0` = check
   once. Poll interval: `KEEL_POLL_SECS` (default 10).
-- Tool timeout: every `hoist` call and `scripts/fly-setup.sh` and `scripts/smoke.sh` are killed after `KEEL_TOOL_TIMEOUT_SECS` (default 600; a value that is not a positive integer is ignored). A timed-out call fails with "timed out after N s" (exit 124 internally).
+- Tool timeout: every `hoist` call and `scripts/fly-setup.sh` and `scripts/smoke.sh` are killed after `KEEL_TOOL_TIMEOUT_SECS` (default 600; a value that is not a positive integer is ignored). A timed-out call fails with "timed out after N s" (exit 124 internally). Each call runs in its own process group so a timeout also stops its grandchildren (Unix); the accepted tradeoff is that Ctrl-C in the terminal no longer reaches those children.
 - `--token-stdin`: read the PAT for step 6 from stdin (one line, trailing newline trimmed).
 - `--confirm ID`: only ids hoist cannot read back are recorded in `[confirmed] steps = ["ID", ...]`: `npm-trust:<pkg>` and `crates-trust:<crate>`. Any other id (`secret:X`, an empty id, whitespace) is a usage error (exit 2) naming the allowed forms. Confirmations filter only hoist's trust steps from the checklist, never other hoist steps and never keel's own step ids (`human_step` is always `checklist[0]`). `agent-env|dns|backup` keep their meaning: record that the cloud environment setup script is attached
   (step 7), that the DNS records were added by hand (step 9) or that the backup bucket was created

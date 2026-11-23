@@ -186,6 +186,22 @@ fn ruleset_with_other_check_is_update() {
 }
 
 #[test]
+fn a_pinned_check_with_another_live_source_is_an_update() {
+    let (_dir, d) =
+        desired("[github]\nrequired_checks = [{ context = \"ci-ok\", integration_id = 123 }]\n");
+    let api = fake_with(&[]);
+    let (items, _) = run(&api, &d);
+    let item = find(&items, "ruleset", "hoist: default branch");
+    assert_eq!(item.action, Action::Update, "{}", item.reason);
+    assert!(
+        item.reason
+            .contains("`ci-ok`: live source app id 15368, want app id 123"),
+        "{}",
+        item.reason
+    );
+}
+
+#[test]
 fn merge_queue_config_false_overrides_the_trigger() {
     let (_dir, d) = desired("[github]\nmerge_queue = false\n");
     assert!(!d.github.ruleset.merge_queue.value);

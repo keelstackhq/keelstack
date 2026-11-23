@@ -121,6 +121,8 @@ pub struct Run {
     pub conclusion: String,
     pub url: String,
     pub head_sha: String,
+    /// URL of the newest run listed before this one (a newer push), if any.
+    pub newer_url: Option<String>,
 }
 
 /// The newest run of a workflow on a branch whose `headSha` is `sha`: `gh run list --repo R
@@ -159,15 +161,20 @@ pub fn run_for_commit(
         return Err(super::not_json(&c));
     };
     let s = |r: &serde_json::Value, k: &str| r[k].as_str().unwrap_or("").to_string();
-    Ok(runs
+    // `gh run list` is newest first: whatever precedes the match is a newer run.
+    let at = runs
         .iter()
-        .find(|r| !sha.is_empty() && r["headSha"].as_str() == Some(sha))
-        .map(|r| Run {
-            status: s(r, "status"),
-            conclusion: s(r, "conclusion"),
-            url: s(r, "url"),
-            head_sha: s(r, "headSha"),
-        }))
+        .position(|r| !sha.is_empty() && r["headSha"].as_str() == Some(sha));
+    Ok(at.map(|i| Run {
+        status: s(&runs[i], "status"),
+        conclusion: s(&runs[i], "conclusion"),
+        url: s(&runs[i], "url"),
+        head_sha: s(&runs[i], "headSha"),
+        newer_url: runs[..i]
+            .iter()
+            .map(|r| s(r, "url"))
+            .find(|u| !u.is_empty()),
+    }))
 }
 
 pub fn label_create(r: &dyn Runner, repo: &str, name: &str) -> Result<(), String> {

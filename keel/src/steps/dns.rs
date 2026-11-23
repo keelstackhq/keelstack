@@ -130,21 +130,43 @@ impl Step for Dns {
         match hoist_check(res, self.id(), SECTION, "applied") {
             // keel never passes `--prune`: a record still in drift after apply is a stray
             // A/AAAA record hoist will not delete on its own.
-            Check::Done(_) => Ok(match self.check(cx)? {
-                Check::Todo(_) => Check::Human(HumanStep {
-                    id: self.id().into(),
-                    title: format!(
-                        "Remove the old A/AAAA records for {} in Cloudflare, or rerun with `hoist apply --prune`",
-                        f.host
-                    ),
-                    url: "https://dash.cloudflare.com/".into(),
-                    command: format!(
-                        "hoist --json apply --yes --area cloudflare --prune --secrets-to fly:{}   # then keel up",
-                        f.app
-                    ),
-                }),
-                other => other,
-            }),
+            Check::Done(_) => {
+                let t = cx.opts.tool_timeout();
+                let after = hoist::check_cloudflare(cx.runner, &cx.dir, &hoist::DNS, t);
+                if matches!(after, hoist::Res::NoItems) {
+                    return Ok(Check::Human(HumanStep {
+                        id: self.id().into(),
+                        title: format!(
+                            "hoist reports no DNS record for {} after apply: check [{SECTION}] in hoist.toml (zone, host), that CLOUDFLARE_API_TOKEN can edit the zone, and the fly app's IPs",
+                            f.host
+                        ),
+                        url: "https://dash.cloudflare.com/".into(),
+                        command: "hoist --json check --area cloudflare   # then keel up".into(),
+                    }));
+                }
+                Ok(
+                    match hoist_check(
+                        after,
+                        self.id(),
+                        SECTION,
+                        &format!("DNS records for {} are in place", f.host),
+                    ) {
+                        Check::Todo(_) => Check::Human(HumanStep {
+                            id: self.id().into(),
+                            title: format!(
+                                "Remove the old A/AAAA records for {} in Cloudflare, or rerun with `hoist apply --prune`",
+                                f.host
+                            ),
+                            url: "https://dash.cloudflare.com/".into(),
+                            command: format!(
+                                "hoist --json apply --yes --area cloudflare --prune --secrets-to fly:{}   # then keel up",
+                                f.app
+                            ),
+                        }),
+                        other => other,
+                    },
+                )
+            }
             other => Ok(other),
         }
     }
@@ -369,6 +391,37 @@ mod tests {
         assert!(
             !r.calls().iter().any(|c| c.line().contains("--prune")),
             "keel never passes --prune"
+        );
+    }
+
+    #[test]
+    fn no_dns_record_item_after_apply_is_not_called_a_stray_record() {
+        let d = tempfile::tempdir().unwrap();
+        let r = FakeRunner::new()
+            .on(
+                &["hoist", "--json", "apply"],
+                Out::ok(r#"{"ok":true,"items":[]}"#),
+            )
+            .on(
+                &["hoist", "--json", "check"],
+                Out::ok(r#"{"ok":true,"items":[]}"#),
+            );
+        let Check::Human(h) = run(&r, d.path(), cf_manifest(), true, true) else {
+            panic!("want a human step")
+        };
+        assert_eq!(h.id, "dns");
+        assert!(!h.title.contains("Remove"), "{}", h.title);
+        assert!(!h.command.contains("--prune"), "{}", h.command);
+        assert!(
+            h.title.contains("no DNS record") && h.title.contains("app.example.com"),
+            "{}",
+            h.title
+        );
+        assert!(h.title.contains("[cloudflare.dns]"), "{}", h.title);
+        assert!(
+            h.command.contains("hoist --json check --area cloudflare"),
+            "{}",
+            h.command
         );
     }
 

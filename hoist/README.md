@@ -143,7 +143,10 @@ set (`main-open`, `review-verdict`, `risk-check`) plus `[github] statuses = ["na
 check verifies when some workflow job has `statuses: write` (or `write-all`) in its effective
 `permissions` (a job's own replace the workflow's; none at all counts only with
 `actions_permissions = "write"`), else it fails. Each `statuses` entry must also be in
-`required_checks` (else exit 3). Known limit: hoist cannot tell which job posts which status, so any
+`required_checks` (else exit 3). An entry of `required_checks` may pin the App that posts the check:
+`{ context = "risk-check", app = "my-app-slug" }` (resolved with `GET /apps/<slug>`; an unresolvable App is exit 3) or
+`{ context = "x", integration_id = 123 }`; the ruleset then carries that `integration_id`, and a different live source is an `update`.
+A plain string leaves the source alone. Known limit: hoist cannot tell which job posts which status, so any
 one job with `statuses: write` makes every listed status verify. Mark
 secrets a workflow names but that may stay unset with `[github] optional_secrets = ["NAME"]`:
 they show as `optional_secret` items (action `ok`), not as pending human steps.
@@ -164,7 +167,8 @@ step (exit 2 on `check`) that gives the command:
 `environment:` also counts as present when that environment (if it exists) holds it
 (`GET .../environments/<env>/variables`, reason "present (environment production)"), and its
 command is then `gh variable set NAME --env <env> --repo <owner>/<repo> --body '<value>'`; a job
-without an environment needs the repository variable. Give the value in `hoist.toml`
+without an environment needs the repository variable. An organization variable is not checked for a
+job with an environment, and `[github.variables]` compares the repository-level value only. Give the value in `hoist.toml`
 instead and `hoist apply` sets it (a missing variable is `create`, a different value `update`);
 values are not secret and show in the report. Names must be letters, digits and `_` (no leading digit,
 no `GITHUB_` prefix, no two keys that differ only in case), else exit 3:
@@ -221,6 +225,9 @@ name or `{name: ..., url: ...}`), or `with: {environment: <name>}` on a job that
 workflow. An environment name that is an expression (`${{ ... }}`) cannot be known before the run:
 it is an `unknown` `environment` item naming the `file:line` (once per expression); list the real names in `hoist.toml`.
 (`environment: ${{ inputs.X }}` in a local reusable workflow is skipped when every caller passes a literal `with: X:`.)
+Limits: a remote callee (`uses: owner/repo/.github/workflows/x.yml@ref`) is not read, a `with:` expression is not a name,
+and only an input named `environment` counts; list such environments in `hoist.toml`.
+A preview-deploy environment needs `branches = ["*"]` (any branch) or `branches = []` (no restriction); the default is the default branch only.
 Each environment is created with a deployment branch policy for the default branch.
 
 ```toml
@@ -351,7 +358,7 @@ write:
 ```bash
 hoist apply --secrets-to gh-env:backups   # sealed secrets of GitHub environment `backups` (must exist)
 hoist apply --secrets-to fly:my-app       # `fly secrets import -a my-app`, lines on stdin (HOIST_FLY: the fly program)
-hoist apply --emit-secrets | ...          # the lines on stdout; refused on a terminal, a file and with --json; the report goes to stderr
+hoist apply --emit-secrets | ...          # the lines on stdout; refused on a terminal, a file (and always on non-Unix builds) and with --json; the report goes to stderr
 ```
 
 If delivery fails, hoist revokes the new token and exits 1; if the revoke fails too, the human

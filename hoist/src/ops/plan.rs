@@ -128,6 +128,10 @@ pub(crate) fn run_with_state(
         dns_writes = dns.writes;
     }
     if let Some(http) = &github {
+        if wants(Area::Github) {
+            crate::github::resolve_check_pins(http, &mut desired)?;
+            crate::diff::ensure_pins_resolved(&desired)?;
+        }
         let live = read_github(http, &desired)?;
         // --adopt: live settings stricter than the desired ones are kept (spec §7.6).
         let kept = match adopt {
