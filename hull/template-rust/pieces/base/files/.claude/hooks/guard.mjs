@@ -233,7 +233,7 @@ const REASON = {
   ghAdmin:
     "Releases, repo settings, branch protection, rulesets and secrets belong to the human: ask the human to run it; gh pr create, view, checks and merge --auto stay open.",
   evasion:
-    "Hidden or indirect push, publish or release is blocked: run the command directly (git push -u origin <feature-branch>) so the guard can see it.",
+    "Hidden or indirect push, publish or release is blocked: run the command directly and write the word plainly, with no $(...), backticks, ${...}, $'...', {a,b} or line continuation in it (git push -u origin <feature-branch>), so the guard can see it.",
   lock: "only splice writes the lock (.splice/lock.toml): run `splice update` or `splice add` instead.",
   protected:
     "Guard rails (.claude/hooks, .claude/settings*.json, release workflows, .bosun/, pins.toml, .git/hooks, .git/config, git hooksPath and aliases) belong to the human: ask the human; put local rules in docs/agents/project.md. Use paths from the repo root (no cd, -C, --chdir or --work-tree into guarded dirs) and apply patches from a file in the repo.",
@@ -341,8 +341,10 @@ function docSubs(body) {
   for (let i = 0; i < body.length; i++) {
     if (body[i] === "\\") i++;
     else if (body[i] === "`" || (body[i] === "$" && body[i + 1] === "(")) {
-      const e = subEnd(body, body[i] === "`" ? i : i + 1);
-      out.push(body.slice(i + (body[i] === "`" ? 1 : 2), e));
+      const tick = body[i] === "`";
+      const e = subEnd(body, tick ? i : i + 1);
+      const sub = body.slice(i + (tick ? 1 : 2), e);
+      out.push(tick ? sub.replace(/\\([\\`$])/g, "$1") : sub);
       i = e;
     }
   }
@@ -368,6 +370,8 @@ function split(cmd) {
 function lex(cmd, from, nested, arithOk = true) {
   const segments = [];
   const subs = [];
+  let segSubs = []; // this segment's substitutions, read right before it
+  let raws = []; // each word as typed (quotes, escapes and substitutions kept)
   let tokens = [];
   let cur = "";
   let has = false;
@@ -389,6 +393,7 @@ function lex(cmd, from, nested, arithOk = true) {
   const endToken = (at) => {
     if (has) {
       tokens.push(cur);
+      raws.push(at === undefined ? cur : cmd.slice(tokStart, at));
       if (nested) {
         const raw = cmd.slice(tokStart, at).replaceAll("\\\n", "");
         if (raw === "case") cases++;
@@ -405,8 +410,12 @@ function lex(cmd, from, nested, arithOk = true) {
     if (tokens.length) {
       if (docs.length) tokens.docs = docs;
       if (expand) tokens.docExpand = true;
+      tokens.raws = raws;
+      tokens.subs = segSubs;
+      segSubs = [];
       segments.push(tokens);
     }
+    raws = [];
     tokens = [];
     docs = [];
     expand = false;
@@ -459,7 +468,11 @@ function lex(cmd, from, nested, arithOk = true) {
     } else if (open) {
       const at = c === "`" ? i : i + 1;
       const e = subEnd(cmd, at);
-      subs.push(cmd.slice(at + 1, e));
+      const body = cmd.slice(at + 1, e);
+      // in backticks `\``, `\$` and `\\` lose the backslash (nested backticks run too)
+      const sub = c === "`" ? body.replace(/\\([\\`$])/g, "$1") : body;
+      subs.push(sub);
+      segSubs.push(sub);
       if (e >= cmd.length) subs.unclosed = true; // runs to the end: the guard cannot read it
       cur += cmd.slice(i, e + 1);
       has = true;
@@ -516,7 +529,11 @@ function lex(cmd, from, nested, arithOk = true) {
         }
         if (nested && !closed) return { segments, end: cmd.length }; // unclosed: fail closed
         docs.push(body);
-        if (!data) subs.push(...docSubs(body)); // an unquoted delimiter runs $(...) and backticks
+        if (!data) {
+          const found = docSubs(body); // an unquoted delimiter runs $(...) and backticks
+          subs.push(...found);
+          segSubs.push(...found);
+        }
         if (!data && /[$`]/.test(body)) expand = true;
       }
       pending = [];
@@ -537,6 +554,7 @@ function lex(cmd, from, nested, arithOk = true) {
   }
   endSegment(cmd.length);
   segments.subs = subs;
+  segments.orphanSubs = segSubs; // substitutions in no command's words
   segments.comments = comments;
   return { segments, end: cmd.length };
 }
@@ -861,6 +879,48 @@ const fed = (x) => /^(\/dev\/(stdin|fd\/\d+)|\/proc\/[^/]+\/fd\/\d+|-|<\(.*)$/.t
  * runs a file the kernel refuses as a script, so they count as run through a wrapper. */
 const viaSh = (list) => list.map((x) => wrap(x, true));
 
+/** A word as typed that the shell changes when it runs: a substitution (`$(`, backtick, `${`),
+ * ANSI-C or locale quoting (`$'`, `$"`), a brace expansion (`{a,b}`, `{a..b}`) or a line
+ * continuation. Quoted text is data (`'{a,b}'`, `'$(x)'`; braces in double quotes too). */
+function changesAtRunTime(raw) {
+  if (raw.includes("\\\n")) return true;
+  let quote = "";
+  let plain = ""; // the unquoted text, quoted parts blanked
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i];
+    if (quote === "'") {
+      if (c === "'") quote = "";
+      plain += " ";
+      continue;
+    }
+    if (c === "\\") {
+      i++;
+      plain += "  ";
+      continue;
+    }
+    if (c === "$" && /[('{"`]/.test(raw[i + 1] ?? "")) return true;
+    if (c === "`") return true;
+    if (c === '"') quote = quote ? "" : '"';
+    else if (!quote && c === "'") quote = "'";
+    plain += quote || c === '"' ? " " : c;
+  }
+  return /\{[^{}\s]*(,|\.\.)[^{}\s]*\}/.test(plain);
+}
+
+/** A word with its substitution bodies cut (`$(cat <<EOF ... EOF)` is `$()`): the command's
+ * own words, not the text it is given. */
+function bare(word) {
+  let out = "";
+  for (let i = 0; i < word.length; i++) {
+    const c = word[i];
+    if (c === "`" || (c === "$" && word[i + 1] === "(")) {
+      i = subEnd(word, c === "`" ? i : i + 1);
+      out += "$()";
+    } else out += c;
+  }
+  return out;
+}
+
 export function commands(cmd) {
   const text = String(cmd ?? "");
   const out = [];
@@ -880,9 +940,11 @@ export function commands(cmd) {
   };
   const segs = split(text);
   if (segs.subs.unclosed) out.push(["@evade", text]);
-  for (const sub of segs.subs) for (const inner of commands(sub)) out.push(inner);
+  for (const sub of segs.orphanSubs) for (const inner of commands(sub)) out.push(inner);
   let caseDepth = 0;
   for (const seg of segs) {
+    // A substitution runs right before its command, after the earlier `cd` and `PATH=`.
+    for (const sub of seg.subs ?? []) for (const inner of commands(sub)) out.push(inner);
     if (caseAt(seg) >= 0) caseDepth++;
     const stripped = stripPrefixes(seg, caseDepth > 0);
     const t = stripped.flatMap(splitRedirect).map(unmark);
@@ -913,6 +975,10 @@ export function commands(cmd) {
     out.push(t);
     const prog = base(t[0]);
     const segText = seg.join(" ");
+    // A risky command (push, publish, merge, release, secrets) with a word that changes at run
+    // time (`publish$()`, `--force${x}`, `HEAD:{main,x}`) is not what the guard read.
+    if (seg.raws?.some(changesAtRunTime) && RISKY_RE.test(seg.map(bare).join(" ")))
+      out.push(["@deny", "evasion", segText]);
     // `xargs git ...` takes its last arguments from stdin; `find -exec cmd ... ;` runs cmd.
     const viaXargs = base(seg[0].replace(/^[({]+/, "")) === "xargs";
     if (viaXargs) out.push(["@evade", text]); // args come from the pipe
@@ -1421,6 +1487,15 @@ function workflowInputs(args) {
   return null;
 }
 
+/** The workflow `gh workflow run` gets: its first positional (a value flag's value skipped). */
+function workflowArg(args) {
+  for (let n = 0; n < args.length; n++) {
+    if (/^(-[rfFR]|--(ref|field|raw-field|repo))$/.test(args[n])) n++;
+    else if (!args[n].startsWith("-")) return args[n];
+  }
+  return undefined;
+}
+
 /** Workflow file names the guard treats as release workflows (never started from here):
  * `GUARD_RELEASE_WORKFLOWS` (a case-insensitive regex, set in .claude/settings.json `env`), else
  * release, publish or deploy. */
@@ -1633,6 +1708,8 @@ function bashRule(
     if (a0 === "release" && !["list", "view", "download", undefined].includes(a1)) return "ghAdmin";
     if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1)) {
       if (args.slice(2).some(releaseWorkflow)) return "publish";
+      // `gh workflow run <id>`: a number does not name its workflow (it may be a release one)
+      if (a1 === "run" && /^\d+$/.test(workflowArg(args.slice(2)) ?? "")) return "ghApi";
       if (a1 === "run") return workflowInputs(args.slice(2));
       return null;
     }

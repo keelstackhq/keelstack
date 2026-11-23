@@ -78,6 +78,11 @@ with the full path instead, so the guard sees the target.
 - No `gh api` writes to repo settings (rulesets, environments, secrets): those are owner steps.
 - A target the guard cannot read (`cd "$D"`, `eval`) is refused when it could hide one of the
   above; a pipe into `sh` is always refused: spell the command out.
+- A push, publish, merge, tag, release or secrets command with a word the shell changes when it
+  runs is refused: `$(...)`, backticks, `${...}`, `$'...'`, `$"..."`, a brace expansion
+  (`HEAD:{main,x}`) or a line continuation inside a word. Write the word plainly (a PR body from
+  a file: `gh pr create --body-file f`). `gh workflow run <id>` is refused: name the workflow file.
+  A `$(...)` runs after the `cd` and `PATH=` before it (`cd d && x=$(./s.sh)` reads `d/s.sh`).
 
 ## Gaps that stay open
 
