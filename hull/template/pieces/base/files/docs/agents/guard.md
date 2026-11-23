@@ -25,7 +25,7 @@ rule and the allowed alternative. Use the patterns below; they pass.
 | A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                                                                |
 | Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                                                                      |
 | Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`)                                               |
-| Open a PR                   | `gh pr create --title t --body-file f`, or (cloud: `gh api` only) `gh api -X POST repos/<o>/<r>/pulls -f title=t -f head=<branch> -f base=main -f body="$(cat f)"` |
+| Open a PR                   | `gh pr create --title t --body-file f`, or (cloud: `gh api` only) `gh api -X POST repos/<o>/<r>/pulls -f title=t -f head=<branch> -f base=main -F body=@f` (every word literal; `f` a non-secret file in the repo) |
 
 A script does not hide a command: the guard reads a shell script before it runs (any shell by
 name: `bash`, `sh`, `rbash`, `mksh`, `busybox sh`, ...; also `bash < f`, `< f bash`, scripts it
@@ -82,9 +82,13 @@ with the full path instead, so the guard sees the target.
   above; a pipe into `sh` is always refused: spell the command out.
 - A push, publish, merge, tag, release or secrets command with a word the shell changes when it
   runs is refused: `$(...)`, backticks, `${...}`, `$'...'`, `$"..."`, a brace expansion
-  (`HEAD:{main,x}`) or a line continuation inside a word. Write the word plainly. Only request
-  data may change: a `gh api -f key="$(cat f)"` value or a `gh pr|issue create|edit|comment
-  --body`/`--title` value (the `$(...)` itself is still judged). `gh workflow run <id>` is refused: name the workflow file.
+  (`HEAD:{main,x}`) or a line continuation inside a word, a `gh` title or body value too. Write
+  the word plainly. `gh workflow run <id>` is refused: name the workflow file.
+- Opening a PR or issue (`gh pr|issue create`, `gh api` POST `repos/<o>/<r>/pulls`) and a
+  `gh api` workflow dispatch or re-run pass only with every word literal: no `$VAR`, `"$@"`,
+  `${...}`, `$(...)` or backticks anywhere, no `GH_HOST=`/`GH_TOKEN=`/`GITHUB_TOKEN=`/
+  `GH_ENTERPRISE_TOKEN=` prefix (or `env X=`) and no `--hostname`. Put the body in a non-secret
+  file in the repo: `--body-file pr.md` or `-F body=@pr.md` (no `~`, `/`, `..` or stdin).
   A `$(...)` runs after the `cd` and `PATH=` before it (`cd d && x=$(./s.sh)` reads `d/s.sh`).
 
 ## Gaps that stay open

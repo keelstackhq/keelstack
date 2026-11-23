@@ -27,10 +27,12 @@
 // `gh api` with an explicit GET and graphql queries are reads; a POST whose endpoint (the first
 // positional) dispatches a literal workflow file that is not a release workflow (release, publish,
 // deploy; GUARD_RELEASE_WORKFLOWS overrides) or re-runs a run/job matches `gh workflow run` /
-// `gh run rerun`; a POST to exactly `repos/<o>/<r>/pulls` opens a PR like `gh pr create`. A word
-// the shell changes at run time is refused in a risky command, except a `gh api -f key=` value or
-// a `gh pr|issue create|edit|comment --body/--title` value (request data; its `$(...)` is judged).
-// `-F x=@file` and `--input` read a file into the request: refused (use `-f`).
+// `gh run rerun`; a POST to exactly `repos/<o>/<r>/pulls` opens a PR like `gh pr create`. These
+// routes and `gh pr|issue create` apply only when every word is literal (no `$VAR`, `"$@"`,
+// `${...}`, `$(...)` or backtick, a -f / --body value too) with no GH_HOST / token env prefix;
+// a body comes from a non-secret repo file (`--body-file pr.md`, `-F body=@pr.md`). A word the
+// shell changes at run time is refused in any risky command. Other `-F x=@file` and `--input`
+// read a file into the request: refused (use `-f`).
 // `cd` into a guarded dir is allowed when the rest of the chain only reads (docs/agents/guard.md
 // lists the safe patterns). A deny names its rule and the match.
 // A script missing at hook time, or run after an earlier command that may write files the guard
@@ -212,9 +214,11 @@ const REASON = {
   secret:
     "Secret files and values are off limits: read .env.example for the variable names, run what needs values as `hoist secrets exec -- <your command>` (never env, printenv or a shell), or ask the human.",
   ghApi:
-    'gh api writes are blocked except opening a PR: `gh api -X POST repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f base=<default> -f body="$(cat <file>)"`; use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else (merge, review, tags, releases) ask the human (a PR merges by its owner).',
+    "gh api writes are blocked except opening a PR: `gh api -X POST repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f base=<default> -F body=@<file>` (every word literal; or `gh pr create --title ... --body-file <file>`); use plain GET reads; start a workflow with `gh workflow run <file> --ref <branch>` and re-run one with `gh run rerun <run-id>` (release, publish and deploy workflows excepted); for anything else (merge, review, tags, releases) ask the human (a PR merges by its owner).",
   ghField:
-    "gh api / gh workflow run -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`).",
+    "gh api / gh workflow run -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`); only a PR body may come from a repo file (`gh api -X POST repos/<o>/<r>/pulls ... -F body=@pr.md`).",
+  ghLiteral:
+    'gh opens a PR or issue or starts a workflow from here only when the guard can read every word: write each word literally (no $VAR, "$@", ${...}, $(...) or backticks, in a title or body too), with no GH_HOST/GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN prefix or --hostname, and put the body in a non-secret file in the repo: `gh pr create --title <title> --body-file pr.md` or `gh api -X POST repos/<o>/<r>/pulls -f title=<title> -f head=<branch> -f base=<default> -F body=@pr.md`.',
   unscanned:
     "The guard must read a script before a shell runs it, and cannot read this one (too large, binary bytes, missing, unreadable, nested too deep, fed on stdin or a pipe, or named by a variable, glob or {}): run it as `bash <path>` with a literal path to a readable text script, or run the command directly.",
   ghFlag:
@@ -955,6 +959,10 @@ export function commands(cmd) {
     wrap(t, stripped.wrapped);
     // The words with their quoted `<`/`>` still marked: writesTarget reads a redirect only there.
     Object.defineProperty(t, "marked", { value: marked, configurable: true });
+    // `GH_HOST=x gh ...`, `env GH_TOKEN=x gh ...`: gh talks to another host or as another user.
+    const prefix = seg.slice(0, Math.max(0, seg.length - stripped.length));
+    const ghEnv = prefix.some((x) => GH_ENV_RE.test(unmark(x)));
+    Object.defineProperty(t, "ghEnv", { value: ghEnv, configurable: true });
     if (seg.some((x) => /^esac\b/.test(x)) && caseDepth > 0) caseDepth--;
     // An assignment that makes git or a pager run a program (`GIT_EXTERNAL_DIFF=x git diff`).
     if (seg.some((x) => RUNS_ENV_RE.test(x))) out.push(["@runs-env", seg.join(" ")]);
@@ -983,11 +991,7 @@ export function commands(cmd) {
     const segText = seg.join(" ");
     // A risky command (push, publish, merge, release, secrets) with a word that changes at run
     // time (`publish$()`, `--force${x}`, `HEAD:{main,x}`) is not what the guard read.
-    const data = seg.raws ? ghDataWords(seg.raws, seg.map(bare)) : new Set();
-    if (
-      seg.raws?.some((r, i) => changesAtRunTime(r) && !data.has(i)) &&
-      RISKY_RE.test(seg.map(bare).join(" "))
-    )
+    if (seg.raws?.some(changesAtRunTime) && RISKY_RE.test(seg.map(bare).join(" ")))
       out.push(["@deny", "evasion", segText]);
     // `xargs git ...` takes its last arguments from stdin; `find -exec cmd ... ;` runs cmd.
     const viaXargs = base(seg[0].replace(/^[({]+/, "")) === "xargs";
@@ -1463,7 +1467,8 @@ const GH_API_SHORT_LONG = { X: "--method", f: "--raw-field", F: "--field", H: "-
 
 /** `gh api` arguments read like gh (pflag): a short group is bools, then at most one value flag
  * that takes the rest of the word or the next argument (`-iXPUT`, `-iF k=v`); the endpoint is the
- * first positional. `fileField` is a `-F`/`--field` value read from a file (`@path`), `input` a
+ * first positional. `fileField` is the first `-F`/`--field` value read from a file (`@path`,
+ * all in `fileFields`), `input` a
  * `--input` body, `unknown` a flag gh api does not have (or a group the guard cannot read). */
 function ghApiParse(args) {
   let method;
@@ -1473,10 +1478,14 @@ function ghApiParse(args) {
   let unknown;
   let override = false; // a method-override header: the server may run another method
   const fields = [];
+  const fileFields = []; // every `-F k=@path`
   const take = (flag, value) => {
     if (flag === "--method") method = value;
     if (flag === "--field" || flag === "--raw-field") fields.push(value ?? "");
-    if (flag === "--field" && /^[^=]*=@/.test(value ?? "")) fileField = value;
+    if (flag === "--field" && /^[^=]*=@/.test(value ?? "")) {
+      fileField ??= value;
+      fileFields.push(value);
+    }
     if (flag === "--input") input = value ?? "";
     if (flag === "--header" && /method-override/i.test(value ?? "")) override = true;
   };
@@ -1506,7 +1515,7 @@ function ghApiParse(args) {
     } else if (endpoint === undefined) endpoint = a;
   }
   if (override) method = "OVERRIDE"; // whatever `-X` says, before or after it
-  return { method, endpoint, fileField, input, unknown, fields };
+  return { method, endpoint, fileField, fileFields, input, unknown, fields };
 }
 
 /** `gh workflow run` inputs: `-F`/`--field` `@file` reads a local file into an input (`ghField`);
@@ -1568,95 +1577,48 @@ function workflowRun(args) {
 }
 
 /** `gh api` that opens a PR: a POST to `repos/<owner>/<repo>/pulls` (exactly; no `..`, query or
- * sub-path such as `/merge`), with no file read into the body. Like `gh pr create`. */
+ * sub-path such as `/merge`), on github.com, whose only file read is `-F body=@<repo file>`. Like
+ * `gh pr create --body-file`. */
 const PR_CREATE_RE =
   /^\/?repos\/(?:\{owner\}|(?!\.\.?\/)[\w.-]+)\/(?:\{repo\}|(?!\.\.?\/)[\w.-]+)\/pulls\/?$/;
 function prCreate(args) {
-  const { method = "POST", endpoint, fileField, input } = ghApiParse(args);
+  const { method = "POST", endpoint, fileFields, input } = ghApiParse(args);
   if (args.some((a) => /^--hostname(=|$)/.test(a))) return false; // another GitHub host
   return (
     String(method).toUpperCase() === "POST" &&
     PR_CREATE_RE.test(endpoint ?? "") &&
-    fileField === undefined &&
+    fileFields.every((f) => /^body=@/.test(f) && repoFile(f.slice(6))) &&
     input === undefined
   );
 }
 
-/** True when every part of `raw` the shell changes at run time (`$(...)`, backticks, `${...}`)
- * sits inside double quotes, so its output stays one word; `$'`, `$"`, an unquoted brace or a
- * line continuation is false. */
-function quotedOnly(raw) {
-  if (raw.includes("\\\n")) return false;
-  let q = "";
-  for (let i = 0; i < raw.length; i++) {
-    const c = raw[i];
-    if (q === "'") {
-      if (c === "'") q = "";
-      continue;
-    }
-    if (c === "\\") {
-      i++;
-      continue;
-    }
-    if (c === "$" && raw[i + 1] === "(") {
-      if (q !== '"') return false;
-      i = subEnd(raw, i + 1);
-    } else if (c === "`") {
-      if (q !== '"') return false;
-      i = subEnd(raw, i);
-    } else if (c === "$" && /['"{]/.test(raw[i + 1] ?? "")) {
-      if (q !== '"' || raw[i + 1] !== "{") return false;
-    } else if (c === '"') q = q ? "" : '"';
-    else if (!q && c === "'") q = "'";
-    else if (!q && c === "{") return false;
-  }
-  return q === "";
+/** A body file the PR / issue routes may read: a relative path inside the repo (no `/`, `~` or
+ * `..`, not stdin), not a secret file, written literally. */
+function repoFile(p) {
+  return (
+    !!p &&
+    p !== "-" &&
+    !/^[/~]/.test(p) &&
+    !/[$`]/.test(p) &&
+    !p.split("/").includes("..") &&
+    !secretLike(p)
+  );
 }
 
-/** Indices of the words of `gh api` / `gh pr|issue create|edit|comment` (`raws`: the words as
- * typed, `bareWords` without quotes) whose run-time value is only request data: a `-f` /
- * `--raw-field` value with a literal key (`body="$(cat f)"`), or a `--body`/`-b`/`--title`/`-t`
- * value. Never `-F` (an `@` from a substitution reads a file), the endpoint, a method or a flag. */
-function ghDataWords(raws, bareWords) {
-  const out = new Set();
-  const k = bareWords.findIndex((w) => base(w) === "gh");
-  if (k < 0) return out;
-  const [a0, a1] = [bareWords[k + 1], bareWords[k + 2]];
-  // A literal key, and every run-time part of the value inside double quotes: an unquoted
-  // `$(...)` is word-split, so its output could add flags (`-f t=$(echo x -F b=@.env)`).
-  const literalKey = (r) => /^[\w[\]]+=/.test(r) && quotedOnly(r);
-  if (a0 === "api") {
-    // Walk like ghApiParse: a short group is bools, then at most one value flag.
-    for (let i = k + 2; i < raws.length; i++) {
-      const a = bareWords[i];
-      if (a === "--") break;
-      if (a.startsWith("--")) {
-        const eq = /^(--[\w-]+)=/.exec(a);
-        if (eq) {
-          if (eq[1] === "--raw-field" && literalKey(raws[i].slice(eq[0].length))) out.add(i);
-        } else if (GH_API_LONG_VALUE.has(a)) {
-          if (a === "--raw-field" && literalKey(raws[i + 1] ?? "")) out.add(i + 1);
-          i++;
-        }
-      } else if (a.startsWith("-") && a.length > 1) {
-        for (let c = 1; c < a.length; c++) {
-          if (GH_API_SHORT_BOOL.has(a[c])) continue;
-          if (GH_API_SHORT_VALUE.has(a[c]) && c === a.length - 1) {
-            if (a[c] === "f" && literalKey(raws[i + 1] ?? "")) out.add(i + 1);
-            i++;
-          }
-          break;
-        }
-      }
-    }
-    return out;
-  }
-  if (!["pr", "issue"].includes(a0) || !["create", "edit", "comment"].includes(a1)) return out;
-  for (let i = k + 3; i < raws.length; i++) {
-    if (/^(--body|-b|--title|-t)$/.test(bareWords[i])) {
-      if (quotedOnly(raws[i + 1] ?? "")) out.add(i + 1);
-      i++;
-    } else if (/^--(body|title)=/.test(raws[i]) && quotedOnly(raws[i])) out.add(i);
+/** Env prefixes that point gh at another host or token (`GH_HOST=x gh api ...`). */
+const GH_ENV_RE = /^(GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN)=/;
+
+/** The gh write routes the guard opens (a PR, a workflow dispatch or re-run, an issue) apply only
+ * to a command the guard read in full: every word literal (no `$VAR`, `"$@"`, `${...}`, `$(...)`
+ * or backtick, a -f / --body value too) and no GH_HOST / token env prefix. */
+const ghLiteral = (t) => !t.ghEnv && !t.some((w) => /[$`]/.test(w));
+
+/** The `gh pr|issue create` body file (`--body-file p`, `-F p`, `--body-file=p`, `-Fp`). */
+function bodyFiles(args) {
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const m = /^(?:--body-file|-F)(?:=?(.*))?$/s.exec(args[i]);
+    if (m) out.push(m[1] ? m[1] : (args[++i] ?? ""));
   }
   return out;
 }
@@ -1826,13 +1788,18 @@ function bashRule(
     if (a0 === "api") {
       const api = ghApiParse(args.slice(1));
       if (api.unknown !== undefined) return "ghFlag";
-      if (api.fileField !== undefined) return "ghField";
+      if (api.fileField !== undefined && !prCreate(args.slice(1))) return "ghField";
       if (api.method === "OVERRIDE") return "ghApi";
       if (api.fields.some((f) => SECRET_VAR_RE.test(f))) return "secret"; // a token sent as input
       if (ghApiWrites(args.slice(1))) {
         if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
         if (!workflowRun(args.slice(1)) && !prCreate(args.slice(1))) return "ghApi";
+        if (!ghLiteral(t)) return "ghLiteral";
       } else if (api.input !== undefined) return "ghField";
+    }
+    if (["pr", "issue"].includes(a0) && a1 === "create") {
+      if (!ghLiteral(t)) return "ghLiteral";
+      if (!bodyFiles(args.slice(2)).every(repoFile)) return "ghLiteral";
     }
     if (a0 === "pr" && a1 === "merge") {
       if (args.includes("--admin")) return "ghMerge";

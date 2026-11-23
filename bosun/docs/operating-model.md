@@ -38,7 +38,8 @@ widen them on measured evidence, never on confidence or on agents agreeing with 
    **Owner switch "agents open PRs".** Agents open their own PRs: `bosun pr` (a planned task) or
    `bosun pr --one-off` (an unplanned fix), and in cloud sessions, where `gh api` is the only
    GitHub route, `gh api -X POST repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f
-   base=<default> -f body="$(cat <file>)"` (the hull guard allows this one write). A one-off may
+   base=<default> -F body=@<file>` with every word literal and `<file>` a relative repo path (the
+   hull guard allows this one write; a `$`, a backtick or a token/host prefix is refused). A one-off may
    edit the autonomous allow set plus the base's `apps/**`, `crates/**` and `packages/**` (their
    manifests and agent rules excepted). The one switch that lets agents open PRs on more paths is
    `[approvals] oneoff_allow` in `.bosun/bosun.toml` on the default branch: the owner adds the
