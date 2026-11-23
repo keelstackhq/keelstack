@@ -268,8 +268,9 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
     let all = non_empty(stamps::ready_gates(wt)?)?;
     let config = &overlay.config;
     let want = snapshot(wt)?;
-    // The PR's allow list, as `test-integrity --pr` reads it (a linked task whose touch covers the PR).
-    let (_, allow, _) = super::test_integrity::pr_allow(app, pull)?;
+    // The PR's grants, as `test-integrity --pr` reads them: each linked task's `allow` on its own
+    // touch, only when the tasks' touch together covers the PR.
+    let grants = super::test_integrity::pr_grants(app, pull)?.grants;
     // Fail closed: an API error counts as "the default branch has it".
     let default = default_ref(app.gh.as_ref())?;
     let on_default = |path: &str| app.gh.file_at(path, &default).map_or(true, |f| f.is_some());
@@ -296,7 +297,8 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
                 Some(wt),
                 Some(&pull.base_sha),
                 &pull.body,
-                &allow,
+                &[],
+                &grants,
                 Some(&default_view),
             )
         } else if gate == "ci-minutes" {

@@ -8,11 +8,11 @@ use serde_json::{Value, json};
 use super::PrArg;
 use crate::app::{App, notes, task_meta, trusted_notes};
 use crate::core::lessons;
-use crate::core::meta::{closing_issues_in, linked_issues};
+use crate::core::meta::closing_issues_in;
 use crate::core::records::{Record, parse_record};
 use crate::core::review::{chunks, use_cases};
 use crate::core::risk::test_path;
-use crate::core::verdict::closes_issue;
+use crate::core::verdict::{closes_issue, closes_issues};
 use crate::github::{Github, Pull};
 use crate::output::{BosunError, CmdResult, Outcome};
 
@@ -50,7 +50,7 @@ const SKELETON_NOTE: &str = " Start from `verdict_skeleton` (pr and head_sha fil
 Its fail-safe values (request-changes, confidence 0) never approve.";
 
 /// Pack fields whose text comes from people or agents (never from the base branch).
-const UNTRUSTED: [&str; 15] = [
+const UNTRUSTED: [&str; 16] = [
     "title",
     "task.title",
     "task.body",
@@ -66,6 +66,7 @@ const UNTRUSTED: [&str; 15] = [
     "task.touch_added",
     "bundle_tasks[].meta",
     "delta_not_in_pr",
+    "tasks[].title",
 ];
 
 /// The most `delta_not_in_pr` names the pack lists (the count is always full).
@@ -121,20 +122,26 @@ fn gate_stamps(dir: &Path, head: &str) -> Result<Value, BosunError> {
     Ok(json!({"tree": tree, "present": present, "missing": missing}))
 }
 
-/// `{"planned":P,"actual":A}` when the PR changes more than twice the planned `size:` of the tasks
-/// its body links; else null. Tests and lockfiles do not count.
-fn drift(gh: &dyn Github, pull: &Pull) -> Result<Value, BosunError> {
-    let mut planned = 0u64;
-    for n in linked_issues(&pull.body) {
-        if let Some(issue) = gh.get_issue(n)? {
-            // A linked task without `size:` has no plan to drift from: no signal at all.
-            match task_meta(&issue).map(|m| m.size) {
-                Some(Some(s)) => planned += u64::from(s),
-                Some(None) => return Ok(Value::Null),
-                None => {}
-            }
+/// Every task the PR body links (an issue with task metadata), in body order:
+/// `{issue, title, touch, size, epic}`; `size` is null when the task has none.
+fn tasks(gh: &dyn Github, pull: &Pull) -> Result<Vec<Value>, BosunError> {
+    let mut out = Vec::new();
+    for n in closes_issues(&pull.body) {
+        if let Some(issue) = gh.get_issue(n)?
+            && let Some(m) = task_meta(&issue)
+        {
+            out.push(json!({"issue": n, "title": issue.title, "touch": m.touch,
+                "size": m.size, "epic": m.epic}));
         }
     }
+    Ok(out)
+}
+
+/// `{"planned":P,"actual":A}` when the PR changes more than twice the planned `size:` of the tasks
+/// it links that have one (the unsized ones are listed apart, not a reason for no signal); else
+/// null, also when no task is sized. Tests and lockfiles do not count.
+fn drift(gh: &dyn Github, pull: &Pull, tasks: &[Value]) -> Result<Value, BosunError> {
+    let planned: u64 = tasks.iter().filter_map(|t| t["size"].as_u64()).sum();
     if planned == 0 {
         return Ok(Value::Null);
     }
@@ -340,9 +347,27 @@ pub(crate) fn build(gh: &dyn Github, repo: &str, n: u64, full: bool) -> Result<V
             )
         })
         .collect();
+    let chunk_list = chunks(&sizes, CHUNK_BYTES);
+    let in_chunks: HashSet<&str> = chunk_list.iter().flatten().map(String::as_str).collect();
+    // Exact paths whose diff no chunk shows: in no chunk, or without a patch (binary or too
+    // large for GitHub to show), so the reviewer has no content for them.
+    let not_shown: Vec<&String> = files
+        .iter()
+        .filter(|f| f.patch.is_none() || !in_chunks.contains(f.filename.as_str()))
+        .map(|f| &f.filename)
+        .collect();
+    let task_list = tasks(gh, &pull)?;
+    let unsized_tasks: Vec<&Value> = task_list
+        .iter()
+        .filter(|t| t["size"].is_null())
+        .map(|t| &t["issue"])
+        .collect();
     Ok(json!({
-        "chunks": chunks(&sizes, CHUNK_BYTES),
-        "drift": drift(gh, &pull)?,
+        "chunks": chunk_list,
+        "not_shown": not_shown,
+        "tasks": task_list,
+        "unsized_tasks": unsized_tasks,
+        "drift": drift(gh, &pull, &task_list)?,
         "pr": n, "title": pull.title, "draft": pull.draft, "head_sha": pull.head_sha, "base_sha": pull.base_sha,
         "since_sha": since, "files": files.iter().map(|f| json!({
             "filename": f.filename, "status": f.status, "additions": f.additions,

@@ -522,6 +522,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     // Every linked issue counts: the agent writes the PR body, so a decoy first link must not
     // hide the real task's capabilities.
     let mut task = None;
+    // Every task the PR closes: a bundle's lease warning reads all of their leases.
+    let mut tasks: Vec<u64> = Vec::new();
     let mut plan_high = Vec::new();
     let mut one_off = false;
     // D-021: gated work may bundle, so every task the PR closes counts for R-plan: links in the
@@ -535,11 +537,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             linked.push(n);
         }
     }
-    if incomplete {
-        plan_high.push(format!(
-            "the PR has {COMMIT_CAP} or more commits: closing refs in later commits cannot be ruled out"
-        ));
-    }
+    // Fails closed (#49): a cut or unreadable commit list sends the PR to the owner.
+    let unread = incomplete;
+
     for i in linked {
         let issue = gh.get_issue(i)?;
         let meta = issue.as_ref().and_then(task_meta);
@@ -555,6 +555,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             one_off |= is_one_off(gh, issue, &meta, base, &ctx.config.project)?;
             capabilities.extend(meta.capabilities);
             task.get_or_insert(i);
+            tasks.push(i);
         }
     }
 
@@ -566,6 +567,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             why: "the linked task is `risk: high` in the plan, so the owner decides".into(),
             approval: Approval::Owner,
             evidence: plan_high,
+        });
+    }
+    if let Some(why) = unread {
+        matches.push(risk::Match {
+            rule: "R-plan".into(),
+            why: "the PR's commit messages could not all be read, so a closing ref to a `risk: high` task cannot be ruled out: the owner decides".into(),
+            approval: Approval::Owner,
+            evidence: vec![why],
         });
     }
     let lines: u64 = pr_files.iter().map(|f| f.additions + f.deletions).sum();
@@ -672,7 +681,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     apply_floor(&mut matches, &critical);
     let level = risk::level(&matches);
     let high = level == "high";
-    let out_of_touch = out_of_touch(gh, ctx, task, &pr_files, pull.changed_files);
+    let out_of_touch = out_of_touch(gh, ctx, &tasks, &pr_files, pull.changed_files);
 
     let warning = out_of_touch.as_deref().and_then(touch_warning);
     if let Some(w) = &warning {
@@ -1576,14 +1585,14 @@ fn touch_warning(out: &[String]) -> Option<String> {
     ))
 }
 
-/// The PR files outside the linked task's newest live lease (design C3), for a warning. `None`
-/// when the PR links no task, the task has no live lease with a touch, the file list is cut or
-/// the comments cannot be read. The task is the first linked issue with task metadata; humans'
-/// PRs have no lease and so get `None`.
+/// The PR files outside the union of its tasks' newest live leases (design C3), for a warning.
+/// `None` when the PR links no task, no task has a live lease with a touch, the file list is cut
+/// or the comments cannot be read. The tasks are every linked issue with task metadata (a
+/// bundle); humans' PRs have no lease and so get `None`.
 fn out_of_touch(
     gh: &dyn Github,
     ctx: &Ctx,
-    task: Option<u64>,
+    tasks: &[u64],
     pr_files: &[PrFile],
     changed_files: u64,
 ) -> Option<Vec<String>> {
@@ -1591,22 +1600,31 @@ fn out_of_touch(
     if (pr_files.len() as u64) < changed_files || pr_files.len() >= 3000 {
         return None;
     }
-    let task = task?;
-    // Only a warning: a failed read costs the warning, never the check.
-    let notes = match trusted_notes(gh, task) {
-        Ok(notes) => notes,
-        Err(e) => {
-            eprintln!(
-                "bosun: risk-check: no touch warning, cannot read the comments of #{task}: {}",
-                e.message
-            );
-            return None;
+    // A bundle: the union of each task's newest live lease (a task without one adds nothing).
+    let mut touch: Vec<String> = Vec::new();
+    for &task in tasks {
+        // Only a warning: a failed read costs the warning, never the check.
+        let notes = match trusted_notes(gh, task) {
+            Ok(notes) => notes,
+            Err(e) => {
+                eprintln!(
+                    "bosun: risk-check: no touch warning, cannot read the comments of #{task}: {}",
+                    e.message
+                );
+                return None;
+            }
+        };
+        if let Some(lease) = leases_of(task, &notes)
+            .into_iter()
+            .filter(|l| l.is_live(ctx.now) && !l.touch.is_empty())
+            .max_by_key(|l| l.comment_id)
+        {
+            touch.extend(lease.touch);
         }
-    };
-    let lease = leases_of(task, &notes)
-        .into_iter()
-        .filter(|l| l.is_live(ctx.now) && !l.touch.is_empty())
-        .max_by_key(|l| l.comment_id)?;
+    }
+    if touch.is_empty() {
+        return None;
+    }
     let changed: Vec<Changed> = pr_files
         .iter()
         .map(|f| Changed {
@@ -1621,7 +1639,7 @@ fn out_of_touch(
             ),
         })
         .collect();
-    Some(outside(&changed, &lease.touch))
+    Some(outside(&changed, &touch))
 }
 
 /// When a review was submitted; `None` when GitHub gave no time or it does not parse.
@@ -1859,8 +1877,9 @@ pub fn verdict_inputs(gh: &dyn Github, n: u64, ls: &[u64]) -> Result<(Vec<Commen
 }
 
 /// D-017: the PR's comments and the sessions that cannot review it, only when the PR closes an
-/// open task issue (not a PR, not itself, with task meta) on which the PR author wrote a lease
-/// record; else no reviewer can be shown independent of the author (a decoy link fails closed).
+/// open task issue (not a PR, not itself, with task meta) with the PR author's lease record, and
+/// every other open task it closes is covered too: by the author's lease on it, or (a bundled
+/// task) by the author's lease on the PR's lead when no one else has a lease record on it; else no reviewer can be shown independent of the author (a decoy link fails closed).
 /// The excluded sessions are every lease session on any linked issue.
 pub(crate) fn autonomous_inputs(
     gh: &dyn Github,
@@ -1871,16 +1890,31 @@ pub(crate) fn autonomous_inputs(
     if super::pr_no_ci::provider_default(gh)? == crate::config::CiProvider::None {
         return Ok(None);
     }
-    let mut task = false;
+    // A bundle: every open task the PR closes is covered. A task is covered by the author's
+    // lease on it; a bundled task (stays `ready`, never claimed: spec 04) also by the author's
+    // lease on the PR's lead (its `bosun:task-pr` marker), but only while nobody else holds a
+    // lease record on it. The lead must be a closed task with the author's lease.
+    let lead = task_pr_lead(&pull.body);
+    let mut lead_leased = false;
+    let mut rest: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut leased_any = false;
     for i in closing_issues_in(&pull.body, Some(repo)) {
         let open = |x: &Issue| x.state == "open" && !x.pull_request && task_meta(x).is_some();
         if i != pull.number && gh.get_issue(i)?.is_some_and(|x| open(&x)) {
             let notes = gh.list_comments(i)?;
             let by = |c: &&Comment| c.user.eq_ignore_ascii_case(&pull.user);
-            let bodies = notes.iter().filter(by).map(|c| c.body.as_str());
-            task |= !lease_sessions(bodies).is_empty();
+            let mine = !lease_sessions(notes.iter().filter(by).map(|c| c.body.as_str())).is_empty();
+            if mine {
+                leased_any = true;
+                lead_leased |= lead == Some(i);
+                continue;
+            }
+            let others = lease_sessions(notes.iter().map(|c| c.body.as_str()));
+            rest.push((i, others));
         }
     }
+    let covered = |(_, others): &(u64, Vec<String>)| lead_leased && others.is_empty();
+    let task = leased_any && rest.iter().all(covered);
     let linked = linked_issues_in(&pull.body, repo);
     let (comments, excluded) = verdict_inputs(gh, pull.number, &linked)?;
     Ok(task.then_some((comments, excluded)))
@@ -2276,22 +2310,43 @@ pub fn owner_comment<'a>(comments: &'a [Comment], owner: &str, head: &str) -> Op
 /// GitHub lists at most this many commits of a PR.
 const COMMIT_CAP: usize = 250;
 
-/// Closing refs to this repo's issues in the PR title and commit messages, and whether the
-/// commit list hit GitHub's 250-commit cap. A commit that cannot be read (an API error, not
-/// the author's choice) is skipped; risk-check runs again on every push.
+/// Closing refs to this repo's issues in the PR title and commit messages, and why the list may
+/// be incomplete: the commit list hit GitHub's 250-commit cap or could not be read (#49: both
+/// fail closed to the owner).
 fn closing_refs_outside_body(
     gh: &dyn crate::github::Github,
     pull: &crate::github::Pull,
     repo: &str,
-) -> crate::app::Result<(Vec<u64>, bool)> {
+) -> crate::app::Result<(Vec<u64>, Option<String>)> {
     let mut out = closing_issues_in(&pull.title, Some(repo));
-    let shas = gh.pull_commits(pull.number)?;
-    let incomplete = shas.len() >= COMMIT_CAP;
-    for sha in &shas {
-        if let Ok(Some(c)) = gh.commit(sha) {
-            out.extend(closing_issues_in(&c.message, Some(repo)));
+    // One paged list with the messages (#49): no per-commit read an author could rate-limit.
+    let messages = match gh.pull_commit_messages(pull.number) {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok((
+                out,
+                Some(format!(
+                    "cannot read the PR's commit messages ({}): closing refs in them cannot be ruled out",
+                    e.message
+                )),
+            ));
         }
+    };
+    let cut = (messages.len() >= COMMIT_CAP).then(|| {
+        format!(
+            "the PR has {COMMIT_CAP} or more commits: closing refs in later commits cannot be ruled out"
+        )
+    });
+    for m in &messages {
+        out.extend(closing_issues_in(m, Some(repo)));
     }
+    out.sort_unstable();
     out.dedup();
-    Ok((out, incomplete))
+    Ok((out, cut))
+}
+
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
+fn task_pr_lead(body: &str) -> Option<u64> {
+    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
+    rest[..rest.find("-->")?].trim().parse().ok()
 }

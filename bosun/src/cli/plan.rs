@@ -214,6 +214,9 @@ fn check(dir: Option<&Path>, a: &PlanCheckArgs) -> CmdResult {
         .collect();
     let mut data = json!({"file": a.file, "title": p.title,
         "project": p.project, "items": items, "warnings": p.warnings});
+    if p.pr_one {
+        data["big_pr"] = big_pr(&p);
+    }
     if let Some((len, fixed_file)) = &lenient {
         add_fixed(&mut data, len, fixed_file);
     } else {
@@ -622,7 +625,13 @@ fn item_budget(item: &Item, per_task: Option<f64>) -> Option<(f64, &'static str)
     }
 }
 
-fn epic_body(item: &Item, file: &str, gated: &shape::Gated, per_task: Option<f64>) -> String {
+fn epic_body(
+    item: &Item,
+    file: &str,
+    gated: &shape::Gated,
+    per_task: Option<f64>,
+    pr_one: bool,
+) -> String {
     let tasks: String = item
         .tasks
         .iter()
@@ -637,6 +646,9 @@ fn epic_body(item: &Item, file: &str, gated: &shape::Gated, per_task: Option<f64
     let mut meta = json!({"item": item.id, "area": item.area, "plan": file,
         "depends": item.depends, "ucs": ids,
         "shape": shape::effective_by(item, &|i, t| gated.is(i, t)).shape});
+    if pr_one {
+        meta["pr"] = json!("one");
+    }
     if let Some((usd, source)) = item_budget(item, per_task) {
         meta["budget_usd"] = json!(usd);
         meta["budget_source"] = json!(source);
@@ -783,11 +795,8 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
     let globs = crate::app::gated_from_default(app.gh.as_ref())?;
     // Wildcard touches are resolved against the default branch's tree (one read).
     let files = crate::app::base_files(app.gh.as_ref())?;
-    let (resolved, errs) = shape::resolve_gated(&p.items, &globs, files.as_deref());
+    let (resolved, resolve_warnings) = shape::resolve_gated(&p.items, &globs, files.as_deref());
     let gated = shape::Gated { globs, resolved };
-    if !errs.is_empty() {
-        return Err(plan_errors(&a.file, &errs));
-    }
     let mut roots = vec![app.ctx.dir.clone()];
     roots.extend(std::fs::canonicalize(&app.ctx.dir).ok());
     let knob = super::budget::knob_from_default(app.gh.as_ref())?;
@@ -798,7 +807,7 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
         ensured: HashSet::new(),
         epics: vec![],
         tasks: vec![],
-        warnings: vec![],
+        warnings: resolve_warnings,
         refused: vec![],
         dir: app.ctx.dir.clone(),
         repo: app.ctx.repo.to_string(),
@@ -876,6 +885,9 @@ fn run_import(dir: Option<&Path>, a: &PlanImportArgs, amend: bool) -> CmdResult 
         data[key] = Value::Array(all);
     }
     data["warnings"] = json!(imp.warnings);
+    if p.pr_one {
+        data["big_pr"] = big_pr(&p);
+    }
     if !imp.refused.is_empty() {
         return Err(BosunError::error(
             imp.refused.join("; "),
@@ -939,10 +951,7 @@ fn offline_import(
             let text = String::from_utf8_lossy(&o.stdout).into_owned();
             text.lines().map(String::from).collect::<Vec<_>>()
         });
-    let (_, errs) = shape::resolve_gated(&p.items, &globs, tracked.as_deref());
-    if !errs.is_empty() {
-        return Err(plan_errors(&a.file, &errs));
-    }
+    let (_, resolve_warnings) = shape::resolve_gated(&p.items, &globs, tracked.as_deref());
     let (mut epics, mut tasks) = (vec![], vec![]);
     let make = |slots: &mut Vec<Slot>, id: &str, labels: Vec<String>| {
         slots.push(Slot {
@@ -980,9 +989,20 @@ fn offline_import(
         "held": [],
         "on_default": [],
         "on_default_open": [],
-        "warnings": ["no GitHub token: nothing was read, so every issue is listed as would-create; \
-            an existing issue, the default branch and `allow:` grants were not checked"],
+        "warnings": [],
     });
+    data["warnings"] = json!(
+        std::iter::once(
+            "no GitHub token: nothing was read, so every issue is listed as would-create; \
+            an existing issue, the default branch and `allow:` grants were not checked"
+                .to_string()
+        )
+        .chain(resolve_warnings)
+        .collect::<Vec<_>>()
+    );
+    if p.pr_one {
+        data["big_pr"] = big_pr(p);
+    }
     add_fixed(&mut data, len, fixed_file);
     if a.dry_run {
         return Ok(Outcome::data(data));
@@ -1045,6 +1065,32 @@ pub(crate) fn epic_shape(body: &str) -> Option<String> {
     let rest = &body[body.find("<!-- bosun:epic")? + "<!-- bosun:epic".len()..];
     let v: Value = serde_json::from_str(rest[..rest.find("-->")?].trim()).ok()?;
     v["shape"].as_str().map(str::to_string)
+}
+
+/// `data.big_pr` of a `pr: one` plan: its tasks, the union of their touch globs, the `allow:`
+/// kinds per task and the strictest risk class.
+fn big_pr(p: &Plan) -> Value {
+    let tasks: Vec<&Task> = p.items.iter().flat_map(|i| i.tasks.iter()).collect();
+    let ids: Vec<String> = p
+        .items
+        .iter()
+        .flat_map(|i| i.tasks.iter().map(|t| t.plan_id(&i.id)))
+        .collect();
+    let touch: std::collections::BTreeSet<&String> =
+        tasks.iter().flat_map(|t| t.touch.iter()).collect();
+    let allow: serde_json::Map<String, Value> = p
+        .items
+        .iter()
+        .flat_map(|i| i.tasks.iter().map(|t| (t.plan_id(&i.id), t)))
+        .filter(|(_, t)| !t.allow.is_empty())
+        .map(|(id, t)| (id, json!(t.allow)))
+        .collect();
+    let risk = if tasks.iter().any(|t| t.risk == "high") {
+        "high"
+    } else {
+        "normal"
+    };
+    json!({"tasks": ids, "touch": touch, "allow": allow, "risk": risk})
 }
 
 /// Replace the task metadata comment of `body`, keeping every other byte.
@@ -1561,7 +1607,7 @@ fn import_items(imp: &mut Importer, p: &Plan, a: &PlanImportArgs) -> Result<()> 
         let epic = imp.slot(&item.id, (&item.id, None), || {
             (
                 format!("{}: {}", item.id, item.title),
-                epic_body(item, &plan_path, &gated, per_task),
+                epic_body(item, &plan_path, &gated, per_task, p.pr_one),
                 labels("feature", &item.area, "planned"),
             )
         })?;

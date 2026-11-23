@@ -8,7 +8,7 @@ changes this file in the same PR.
 
 | Value | Default | Evidence |
 | ----- | ------- | -------- |
-| Task size | no cap, gated tasks included; drift note at 2x planned | D-021: the shape follows the goal, with no line cap. A PR over twice the planned `size:` of its tasks (tests and lockfiles excluded) gets a drift note in `review-pack`. |
+| Task size | no cap, gated tasks included; drift note at 2x planned | D-021: the shape follows the goal, with no line cap. A PR over twice the planned `size:` of its tasks (tests and lockfiles excluded) gets a drift note in `review-pack` (sized tasks only). `pr: one` in the plan header makes the whole plan one PR. |
 | Review chunk | 40000 patch bytes per reviewer subagent | Estimate: keeps each subagent's diff well inside its context. |
 | Risky task size | no cap or warning (D-021) | A high-risk PR waits for the owner whatever its size; chunked review keeps a big diff readable. |
 | Critical path per item | at most 4 tasks | With 30-60 min per task, 4 sequential tasks keep an epic inside one working day; a longer path is a sign the item is two items. Estimate. |
