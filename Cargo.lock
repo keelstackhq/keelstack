@@ -1906,24 +1906,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-cli"
-version = "0.21.0"
-dependencies = [
- "assert_cmd",
- "base64",
- "clap",
- "predicates",
- "rpassword",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
- "toml",
- "zeroize",
-]
-
-[[package]]
 name = "keel-hoard"
 version = "0.21.0"
 dependencies = [
@@ -2003,6 +1985,24 @@ dependencies = [
  "toml_edit",
  "walkdir",
  "yaml_serde",
+]
+
+[[package]]
+name = "keelstack-cli"
+version = "0.21.0"
+dependencies = [
+ "assert_cmd",
+ "base64",
+ "clap",
+ "predicates",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "zeroize",
 ]
 
 [[package]]

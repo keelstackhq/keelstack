@@ -423,7 +423,7 @@
   {
    "area": "crates",
    "kind": "first_publish",
-   "key": "keel-cli",
+   "key": "keelstack-cli",
    "action": "pending",
    "reason": "not on crates.io yet",
    "source": "registry"
@@ -431,7 +431,7 @@
   {
    "area": "crates",
    "kind": "trusted_publisher",
-   "key": "keel-cli",
+   "key": "keelstack-cli",
    "action": "pending",
    "reason": "hoist cannot read trusted publishers: repository keelstackhq/keelstack, workflow release.yml, environment release",
    "source": "registry"

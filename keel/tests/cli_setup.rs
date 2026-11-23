@@ -163,8 +163,8 @@ fn setup_needles() -> Vec<String> {
         "keel-bosun",
         "keel-hoist",
         "keel-berth",
-        "keel-cli",
-        "first-publish:keel-cli",
+        "keelstack-cli",
+        "first-publish:keelstack-cli",
         "crates-trust:keel-bosun",
     ]
     .map(String::from)

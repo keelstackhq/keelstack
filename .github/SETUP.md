@@ -10,7 +10,7 @@ Nothing here is clicked by hand except the steps keel prints as its checklist (D
    environment: `export CLOUDFLARE_API_TOKEN=... CLOUDFLARE_ACCOUNT_ID=...` (never on a command
    line you keep in history; `read -rs CLOUDFLARE_API_TOKEN; export CLOUDFLARE_API_TOKEN` works).
    Without them keel skips Cloudflare and lists it in the checklist.
-3. keel and hoist from this checkout: `cargo build -p keel-cli -p keel-hoist --locked &&
+3. keel and hoist from this checkout: `cargo build -p keelstack-cli -p keel-hoist --locked &&
    export PATH=$PWD/target/debug:$PATH`.
 
 ## One command
@@ -35,7 +35,7 @@ Computer steps first, then phone steps. Typical first run:
 | computer | `deploy-keys-policy` | allow deploy keys for the organization (https://github.com/organizations/keelstackhq/settings), then re-run `keel up` |
 | computer | `first-publish:<crate>` | `hoist release bootstrap` publishes every crate not on crates.io yet (trusted publishing cannot create a crate) |
 | phone | `app:keelstackhq-bosun-gate` | install `keelstackhq-bosun-gate` on the repo: https://github.com/apps/keelstackhq-bosun-gate/installations/new |
-| phone | `crates-trust:<crate>` | trusted publisher on `keel-bosun`, `keel-hoist`, `keel-berth`, `keel-cli`: repository `keelstackhq/keelstack`, workflow `release.yml`, environment `release` (https://crates.io/crates/<crate>/settings) |
+| phone | `crates-trust:<crate>` | trusted publisher on `keel-bosun`, `keel-hoist`, `keel-berth`, `keelstack-cli`: repository `keelstackhq/keelstack`, workflow `release.yml`, environment `release` (https://crates.io/crates/<crate>/settings) |
 | phone | `npm-trust:<package>` | trusted publisher on every npm package: the bosun, splice, hoist, berth and keel launchers and their platform packages (workflow `release.yml`), the cargo-deny packages (workflow `cargo-deny-npm.yml`); environment `release` (https://www.npmjs.com/package/<package>/access). npm provenance needs a public repository |
 
 `BOSUN_REVIEW_CI` stays unset (review.yml off) until bosun's `[review] mode = "ci"`; then

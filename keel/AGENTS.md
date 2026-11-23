@@ -10,5 +10,5 @@ Read `CLAUDE.md` for layout, commands and how to work; the spec is
 - The PAT never reaches argv, files, logs or output. No HTTP/TLS crate; `#![forbid(unsafe_code)]`.
 - Tests never call real tools: FakeRunner or stub scripts on `PATH`.
 - Never merge, tag, release, publish or force-push.
-- From the repo root run `cargo fmt --all --check`, `cargo clippy -p keel-cli --all-targets --locked -- -D warnings`
-  and `cargo test -p keel-cli --locked` before every commit. Human-only items go to Blocked in `docs/PROGRESS.md`.
+- From the repo root run `cargo fmt --all --check`, `cargo clippy -p keelstack-cli --all-targets --locked -- -D warnings`
+  and `cargo test -p keelstack-cli --locked` before every commit. Human-only items go to Blocked in `docs/PROGRESS.md`.
