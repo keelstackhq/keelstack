@@ -149,7 +149,9 @@ fn text_behind_program_magic_is_read_as_a_script() {
     let mut real = host_elf();
     real.extend(b"gh pr merge 1\n");
     std::fs::write(dir.join("prog"), real).unwrap();
-    for command in ["./prog", "timeout 5 ./prog", "cd . && ./prog"] {
+    for command in ["./prog", "cd . && ./prog"] {
         assert_eq!(hook(dir, command), "", "{command}");
     }
+    // Through a wrapper, `execvp` hands a file the kernel refuses to `sh`: not read, refused.
+    assert!(hook(dir, "timeout 5 ./prog").contains("\"deny\""));
 }

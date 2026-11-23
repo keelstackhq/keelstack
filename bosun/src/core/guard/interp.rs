@@ -160,6 +160,25 @@ pub(super) fn indirect_rule(command: &str) -> Option<String> {
                  themselves in bash"
             ));
         }
+        // `xargs` is a runner, so its command is the word after it: look back for it.
+        let seg_start = w[..i].iter().rposition(|x| x == SEP).map_or(0, |p| p + 1);
+        let xargs = w[seg_start..i].iter().rposition(|x| base(x) == "xargs");
+        let xargs_args: Vec<&str> = match xargs {
+            Some(x) => w[seg_start + x + 1..]
+                .iter()
+                .take_while(|a| *a != SEP)
+                .map(String::as_str)
+                .collect(),
+            None => Vec::new(),
+        };
+        if xargs.is_some() && xargs_runs_unread(&xargs_args) {
+            return Some(
+                "`xargs` is refused here: it runs a program named by its input (`{}`, a \
+                 wrapper such as `env` or `timeout`, a shell), which the guard cannot read; run \
+                 the commands themselves"
+                    .to_string(),
+            );
+        }
         let sub = match name {
             "gh" => args.first().copied().filter(|a| built(a)).or_else(|| {
                 args.get(1)
@@ -525,6 +544,38 @@ fn git_cmd_key(key: &str) -> String {
     )
 }
 
+/// Whether `xargs ARGS` runs a program its input names: the command after xargs's options is
+/// its `-I` placeholder, a wrapper or runner (`env`, `nice`, `timeout`, `nohup`), or a shell
+/// or interpreter.
+fn xargs_runs_unread(args: &[&str]) -> bool {
+    let vals = RUNNERS
+        .iter()
+        .find(|r| r.0 == "xargs")
+        .map_or(&[][..], |r| r.1);
+    let (mut k, mut repl) = (0, None::<&str>);
+    while let Some(a) = args.get(k) {
+        k += 1;
+        if let Some(r) = a.strip_prefix("-I").filter(|r| !r.is_empty()) {
+            repl = Some(r);
+        } else if *a == "-I" || a.starts_with("--replace") {
+            repl = args.get(k).copied().or(Some("{}"));
+            k += usize::from(*a == "-I");
+        } else if vals.contains(a) {
+            k += 1;
+        } else if !a.starts_with('-') {
+            let b = base(a);
+            return Some(*a) == repl
+                || *a == "{}"
+                || repl.is_some_and(|r| a.contains(r))
+                || WRAPPERS.contains(&b)
+                || RUNNERS.iter().any(|r| r.0 == b)
+                || is_runner(a)
+                || UNREAD.contains(&b);
+        }
+    }
+    false
+}
+
 /// The subcommand of `git ARGS`: the first word after git's global options and their values.
 fn git_subcommand<'a>(args: &[&'a str]) -> Option<&'a str> {
     const VALUED: &[&str] = &[
@@ -585,20 +636,26 @@ fn elf_for_host(b: &[u8]) -> bool {
         }
         v
     };
-    let machine: u16 = match std::env::consts::ARCH {
-        "x86_64" => 62,
-        "x86" => 3,
-        "aarch64" => 183,
-        "arm" => 40,
-        "riscv64" | "riscv32" => 243,
-        "powerpc64" => 21,
-        "powerpc" => 20,
-        "s390x" => 22,
-        "loongarch64" => 258,
-        "mips" | "mips64" => 8,
-        "sparc64" => 43,
-        _ => return false,
+    let machine: u16 = if cfg!(target_arch = "x86_64") {
+        62
+    } else if cfg!(target_arch = "x86") {
+        3
+    } else if cfg!(target_arch = "aarch64") {
+        183
+    } else if cfg!(target_arch = "arm") {
+        40
+    } else if cfg!(any(target_arch = "riscv64", target_arch = "riscv32")) {
+        243
+    } else if cfg!(target_arch = "powerpc64") {
+        21
+    } else if cfg!(target_arch = "s390x") {
+        22
+    } else if cfg!(target_arch = "loongarch64") {
+        258
+    } else {
+        return false;
     };
+
     if b.len() < ehsize || !b.starts_with(b"\x7fELF") {
         return false;
     }
@@ -668,11 +725,14 @@ fn macho_for_host(b: &[u8]) -> bool {
     }
     let le = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
     let be = |o: usize| u32::from_be_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
-    let cpu: u32 = match std::env::consts::ARCH {
-        "x86_64" => 0x0100_0007,
-        "aarch64" => 0x0100_000c,
-        _ => return false,
+    let cpu: u32 = if cfg!(target_arch = "x86_64") {
+        0x0100_0007
+    } else if cfg!(target_arch = "aarch64") {
+        0x0100_000c
+    } else {
+        return false;
     };
+
     // 64-bit Mach-O, executable (`MH_EXECUTE`), for this CPU.
     (le(0) == 0xfeed_facf && le(4) == cpu && le(12) == 2)
         // A fat binary: a small number of slices, one for this CPU.
@@ -769,6 +829,9 @@ struct ScriptPath {
     unseen: Option<(&'static str, bool)>,
     /// The command word itself (`./tool`): the kernel runs it, so a binary is a program.
     direct: bool,
+    /// Run through a program (`env`, `timeout`, `nice`, ..) that hands a file the kernel
+    /// refuses to `sh` (glibc `execvp`), not by bash itself.
+    wrapped: bool,
     /// The directory it runs in, relative to the hook's (`None`: a `cd` the guard cannot tell).
     cwd: Cwd,
     /// A relative path after a `cd` the guard cannot tell: which file runs is unknown.
@@ -786,6 +849,7 @@ impl ScriptPath {
             first,
             unseen: None,
             direct: false,
+            wrapped: false,
             cwd: Some(String::new()),
             lost: false,
             tainted: false,
@@ -1199,9 +1263,32 @@ fn script_paths(
         moves |= dirs.as_ref().is_none_or(|d| !d.is_empty());
         let (word, name) = (&w[i], runner_name(&w[i]));
         if word.contains('/') && !RUNS.contains(&name) && pathish(word) {
+            // Bash runs the command itself after keywords and its own builtins; any other word
+            // before it is a program that runs it with `execvp`.
+            let own = |x: &String| {
+                super::assigned(x).is_some()
+                    || matches!(
+                        x.as_str(),
+                        "command"
+                            | "exec"
+                            | "builtin"
+                            | "time"
+                            | "!"
+                            | "{"
+                            | "if"
+                            | "then"
+                            | "else"
+                            | "elif"
+                            | "do"
+                            | "while"
+                            | "until"
+                    )
+            };
+            let wrapped = !w[segs[j].start..i].iter().all(own);
             let p = match script_word(word) {
                 Some(path) => ScriptPath {
                     direct: true,
+                    wrapped,
                     ..ScriptPath::file(path, false, true)
                 },
                 None => ScriptPath {
@@ -1508,6 +1595,13 @@ fn leading_redirects_last(words: Vec<String>) -> Vec<String> {
 /// operand or `-s`, its stdin: a `< f` file is read as the script, a here-string with `$` or a
 /// substitution is refused. A pipe into a shell is refused elsewhere.
 fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
+    // Exactly `sh -n FILE` only parses; any other option may turn running back on (`+n`).
+    if let [n, f] = args
+        && n == "-n"
+        && !f.starts_with(['-', '+', '<'])
+    {
+        return None;
+    }
     let (mut opts, mut i) = (!matches!(name, "source" | "."), 0);
     let (mut file, mut code, mut expect_code, mut stdin_mode) = (None, None, false, false);
     let (mut stdin, mut here) = (None::<&str>, None::<&str>);
@@ -1551,9 +1645,6 @@ fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
                 continue;
             }
             if a.len() > 1 && a.starts_with(['-', '+']) {
-                if a.starts_with('-') && a[1..].contains('n') {
-                    return None; // `-n`: parse only, nothing runs
-                }
                 expect_code |= a[1..].contains('c');
                 stdin_mode |= a[1..].contains('s');
                 if a[1..].contains(['o', 'O']) {
@@ -1777,6 +1868,7 @@ fn walk(
         first,
         unseen,
         direct,
+        wrapped,
         cwd: run_in,
         lost,
         tainted,
@@ -1842,7 +1934,14 @@ fn walk(
                 ));
             }
             None => continue,
-            Some(Script::Binary) if direct => continue,
+            Some(Script::Binary) if direct && !wrapped => continue,
+            Some(Script::Binary) if direct => {
+                return Some(format!(
+                    "the program `{path}` is refused: run through another program (`env`, \
+                     `timeout`, `nice`, ..), a file the kernel refuses is handed to `sh`, and the \
+                     guard does not read programs; run it directly (`./x`), or ask the owner"
+                ));
+            }
             // A shell or interpreter told to run a binary may run text inside it (`perl -x`
             // skips to a `#!` line): not read, so refused.
             Some(Script::Binary) => {

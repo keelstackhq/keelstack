@@ -2257,14 +2257,18 @@ fn exec_rule(
             let inner = &words[at + 1..end];
             // The found files themselves run (`-exec {} ;`, `-exec sh {} ;`): unread.
             let (cmd, _, _) = unwrap_runners(inner);
+            // Also a path-named program (`-exec ./x.sh {} ;`), never read; only exactly
+            // `sh -n {}` (parse only) passes.
+            // (`\;` reaches here as `\` when the segment was cut at its `;`.)
+            let bare: Vec<&str> = cmd.iter().copied().filter(|a| *a != "\\").collect();
+            let parse_only = matches!(bare[..], [s, "-n", "{}"] if SHELLS.contains(&base(s)));
             let runs_found = cmd.first() == Some(&"{}")
-                || cmd
-                    .first()
-                    .is_some_and(|c| interp::is_runner(c) || SHELLS.contains(&base(c)))
-                    && !cmd[1..]
-                        .iter()
-                        .any(|a| a.starts_with('-') && !a.starts_with("--") && a.contains('n'))
-                    && cmd[1..].iter().find(|a| !a.starts_with('-')) == Some(&"{}");
+                || cmd.first().is_some_and(|c| c.contains('/'))
+                || !parse_only
+                    && cmd
+                        .first()
+                        .is_some_and(|c| interp::is_runner(c) || SHELLS.contains(&base(c)))
+                    && cmd[1..].contains(&"{}");
             if runs_found {
                 return Some(FIND_RUNS);
             }

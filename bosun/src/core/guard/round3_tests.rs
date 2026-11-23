@@ -372,3 +372,41 @@ fn only_a_valid_host_program_header_is_a_binary() {
     assert!(!super::host_binary(b"\xca\xfe\xba\xbe\ngh pr merge 1\n"));
     assert!(!super::host_binary(b"#!/bin/sh\n\0gh pr merge 1\n"));
 }
+
+#[test]
+fn parse_only_wrapped_programs_and_xargs_runners_are_exact() {
+    let files = [("x.sh", BAD)];
+    for cmd in [
+        "bash -n +n x.sh",
+        "bash -n +o noexec x.sh",
+        "sh -n -o x x.sh",
+        "find . -name '*.sh' -exec bash -n +n {} \\;",
+        "find . -exec env {} \\;",
+        "find . -ok {} \\;",
+        "find . -execdir {} +",
+        "find . -exec ./x.sh {} \\;",
+        "ls | xargs env",
+        "ls | xargs nice",
+        "ls | xargs timeout 5",
+        "ls | xargs nohup",
+        "ls | xargs -I{} {}",
+        "ls | xargs -I % sh -c %",
+        "env ./bin",
+        "timeout 5 ./bin",
+        "nice ./bin",
+        "nohup ./bin",
+    ] {
+        assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
+    }
+    for cmd in [
+        "bash -n x.sh",
+        "find . -name '*.sh' -exec bash -n {} \\;",
+        "ls | xargs wc -l",
+        "ls | xargs -I{} cp {} /tmp/",
+        "./bin --version",
+        "exec ./bin",
+        "X=1 ./bin",
+    ] {
+        assert_eq!(hook(cmd, &files), None, "{cmd}");
+    }
+}
