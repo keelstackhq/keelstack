@@ -12,9 +12,11 @@ use super::{
 /// `python3.12` is `python`).
 const RUNS: &[&str] = &[
     "python", "node", "nodejs", "ruby", "perl", "deno", "bun", "php", "tsx", "ts-node", "sh",
-    "bash", "zsh", "dash", "ksh", "source", ".",
+    "bash", "zsh", "dash", "ksh", "rbash", "mksh", "ash", "posh", "yash", "source", ".",
 ];
-const SHELL_RUNS: &[&str] = &["sh", "bash", "zsh", "dash", "ksh", "source", "."];
+const SHELL_RUNS: &[&str] = &[
+    "sh", "bash", "zsh", "dash", "ksh", "rbash", "mksh", "ash", "posh", "yash", "source", ".",
+];
 
 fn runner_name(word: &str) -> &str {
     let b = base(word);
@@ -193,7 +195,7 @@ fn script_paths(command: &str, depth: usize) -> Vec<ScriptPath> {
     // the substitutions of an unquoted body run.
     let (code, subs) = split_heredocs(command);
     let code = strip_comments(&code);
-    let w = shell_words(&code);
+    let w = leading_redirects_last(shell_words(&code));
     let mut out = Vec::new();
     for i in command_words(&w) {
         let (word, name) = (&w[i], runner_name(&w[i]));
@@ -241,6 +243,34 @@ fn built(word: &str) -> bool {
         !v.is_empty() && v.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
     });
     !word.starts_with('\'') && (w.contains("$(") || w.contains('`') || var)
+}
+
+/// Each segment with its leading redirections (`< f bash`, `<f sh -s`) moved after the
+/// command, where `shell_run` reads them.
+fn leading_redirects_last(words: Vec<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for (n, seg) in words.split(|w| w == SEP).enumerate() {
+        if n > 0 {
+            out.push(SEP.to_string());
+        }
+        let (mut moved, mut k) = (Vec::new(), 0);
+        while let Some(w) = seg.get(k) {
+            let r = w.trim_start_matches(|c: char| c.is_ascii_digit());
+            if !(r.starts_with(['<', '>']) || r.starts_with("&>")) {
+                break;
+            }
+            moved.push(w.clone());
+            let op = r.chars().take_while(|c| "<>&|".contains(*c)).count();
+            if r.len() == op {
+                moved.extend(seg.get(k + 1).cloned());
+                k += 1;
+            }
+            k += 1;
+        }
+        out.extend(seg[k.min(seg.len())..].iter().cloned());
+        out.extend(moved);
+    }
+    out
 }
 
 /// What a shell runs: the file of its first operand after options (`-o`/`-O`/`+o`/`+O` and
@@ -292,6 +322,9 @@ fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
                 continue;
             }
             if a.len() > 1 && a.starts_with(['-', '+']) {
+                if a.starts_with('-') && a[1..].contains('n') {
+                    return None; // `-n`: parse only, nothing runs
+                }
                 expect_code |= a[1..].contains('c');
                 stdin_mode |= a[1..].contains('s');
                 if a[1..].contains(['o', 'O']) {
@@ -517,6 +550,15 @@ fn walk(
             continue;
         }
         let code = match read(&path) {
+            // Missing when the hook runs: the command makes it (`curl -o`, `tar x`, `python`),
+            // so it cannot be read. Inside a script a path may be relative to a `cd` (skipped).
+            None if first && (shell || direct) && seen.is_empty() => {
+                return Some(format!(
+                    "the script `{path}` is refused: it does not exist when the guard runs, so \
+                     whatever this command makes there cannot be read; create it first, read \
+                     it, then run it"
+                ));
+            }
             None => continue,
             Some(Script::Binary) if direct => continue,
             // A shell or interpreter told to run a binary may run text inside it (`perl -x`

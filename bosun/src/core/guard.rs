@@ -1691,7 +1691,31 @@ fn word_scripts(command: &str) -> Vec<String> {
                 .take_while(|w| *w != SEP)
                 .collect();
             out.push(rest.join(" "));
-        } else if matches!(name, "sh" | "bash" | "zsh" | "dash" | "ksh") {
+        } else if name == "trap" {
+            // `trap CODE SIG..`: CODE runs on the signal.
+            let code = words[i + 1..]
+                .iter()
+                .take_while(|w| **w != SEP)
+                .find(|w| !w.starts_with('-'));
+            out.extend(code.cloned());
+        } else if matches!(name, "su" | "runuser" | "script") {
+            // `su -c CMD`, `--command CMD`, `--command=CMD`; `script -qc CMD`.
+            let args: Vec<&String> = words[i + 1..].iter().take_while(|w| **w != SEP).collect();
+            for (k, a) in args.iter().enumerate() {
+                if let Some(v) = a.strip_prefix("--command=") {
+                    out.push(v.to_string());
+                } else if *a == "--command"
+                    || a.starts_with('-') && !a.starts_with("--") && a.ends_with('c')
+                {
+                    out.extend(args.get(k + 1).map(|v| (*v).clone()));
+                } else if a.starts_with('-') && !a.starts_with("--") && a.contains('c') {
+                    out.push(a[a.find('c').unwrap_or(0) + 1..].to_string());
+                }
+            }
+        } else if matches!(
+            name,
+            "sh" | "bash" | "zsh" | "dash" | "ksh" | "rbash" | "mksh" | "ash" | "posh" | "yash"
+        ) {
             // `-c` anywhere among the options; the code is the first operand after them all
             // (`bash -c -- 'x'`, `bash -ec 'x'`, `bash -c -o pipefail 'x'`).
             let args: Vec<&String> = words[i + 1..].iter().take_while(|w| **w != SEP).collect();
@@ -1805,7 +1829,7 @@ fn shell_words(s: &str) -> Vec<String> {
 /// Words that run the next word as a command (`sudo gh ...`) or open a shell group.
 const WRAPPERS: &[&str] = &[
     "env", "command", "sudo", "nohup", "time", "exec", "nice", "{", "!", "then", "do", "else",
-    "if", "while", "until", "builtin",
+    "if", "while", "until", "builtin", "coproc",
 ];
 
 /// Commands that run the command after their options: name, options with a separate value,
@@ -1825,6 +1849,7 @@ const RUNNERS: &[(&str, &[&str], usize, &[&str])] = &[
     // `-c` takes no value: the mask positional is the cpu list then.
     ("taskset", &[], 1, &[]),
     ("watch", &["-n", "--interval", "-q", "--equexit"], 0, &[]),
+    ("runuser", &["-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"], 0, &[]),
     // `FILE -c CMD`: `-c` is a flag here, so its value is the command.
     ("flock", &["-w", "--timeout", "--wait", "-E", "--conflict-exit-code"], 1, &[]),
     ("strace", &["-a", "-b", "-e", "-E", "-I", "-o", "-O", "-p", "-P", "-s", "-S", "-u", "-U", "-X", "--output", "--attach", "--string-limit", "--user", "--env", "--detach-on", "--columns", "--overhead", "--summary-sort-by", "--trace-path", "--summary-columns", "--const-print-style", "--trace", "--trace-fds", "--signal", "--signals", "--status", "--abbrev", "--verbose", "--raw", "--read", "--write", "--fault", "--inject", "--kvm", "--decode-pids"], 0, &[]),
@@ -2742,8 +2767,8 @@ const GH_DATA: &[&str] = &["t", "title", "b", "body", "notes", "f", "F", "raw-fi
 const PAGERS_OK: &[&str] = &["less", "more", "most", "cat"];
 const VIEWERS_OK: &[&str] = &["vi", "vim", "nvim", "view", "nano", "emacs", "code"];
 const SHELLS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "busybox", "python", "python3", "perl", "ruby",
-    "node", "deno", "bun", "php", "source", "xargs", "eval",
+    "sh", "bash", "zsh", "dash", "ksh", "rbash", "mksh", "ash", "posh", "yash", "fish", "busybox",
+    "python", "python3", "perl", "ruby", "node", "deno", "bun", "php", "source", "xargs", "eval",
 ];
 
 /// The files that `> f`, `>> f` and `tee f` write in these words.
@@ -3699,7 +3724,23 @@ fn graphql_hidden(args: &[&str]) -> bool {
             _ if a.starts_with("--") => a
                 .strip_prefix("--field=")
                 .or_else(|| a.strip_prefix("--raw-field=")),
-            _ => a.strip_prefix("-f").or_else(|| a.strip_prefix("-F")),
+            // A short cluster read as pflag does: boolean letters (`-i`), then the first letter
+            // that takes a value takes the rest of the cluster or the next word (`-iF q=@f`).
+            _ if a.starts_with('-') => {
+                let cluster = &a[1..];
+                let at = cluster.find(|c: char| "fFHXqtp".contains(c));
+                at.and_then(|k| {
+                    let rest = &cluster[k + 1..];
+                    let v = if rest.is_empty() {
+                        i += 1;
+                        args.get(i - 1).copied()
+                    } else {
+                        Some(rest)
+                    };
+                    matches!(&cluster[k..=k], "f" | "F").then_some(v).flatten()
+                })
+            }
+            _ => None,
         };
         let Some(q) = value.and_then(|v| v.trim_start_matches(['\'', '"']).strip_prefix("query="))
         else {
