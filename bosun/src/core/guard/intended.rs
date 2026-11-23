@@ -62,15 +62,37 @@ fn bump_version(w: &[&str]) -> bool {
     matches!(w, ["bash", "scripts/bump-version.sh", v] if version(v))
 }
 
-/// `bash -n <file>...` or `sh -n <file>...`: the shell only parses the files (#60, round 2).
+/// `bash -n <file>` or `sh -n <file>`: the shell only parses the file (#60, round 2).
 fn parse_only(w: &[&str]) -> bool {
-    matches!(w, [sh, "-n", files @ ..] if matches!(*sh, "bash" | "sh") && !files.is_empty()
-        && files.iter().all(|f| plain(f) && !f.starts_with('-')))
+    // One file, not an option: `+nc` would turn execution back on and read code (#66 hunt).
+    matches!(w, [sh, "-n", f] if matches!(*sh, "bash" | "sh") && plain(f)
+        && !f.starts_with(['-', '+']))
+}
+
+/// The repo's own bump script: `bump-version` overrides a legacy deny only while
+/// `scripts/bump-version.sh` has exactly this SHA-256 (an edited script keeps main's verdict;
+/// a test keeps the hash in step with the file).
+pub const BUMP_SCRIPT: (&str, &str) = (
+    "scripts/bump-version.sh",
+    "69c0dc93a5b9e6166d6d5a90fb8181ffcfbff95b871d7d00b9f1844fc0ab7b33",
+);
+
+/// Whether `text` is the pinned script of an allow (`bump-version`); other allows pin none.
+pub fn script_pinned(name: &str, path: &str, text: &str) -> bool {
+    if name != "bump-version" {
+        return true;
+    }
+    let sha: String = ring::digest::digest(&ring::digest::SHA256, text.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    path.trim_start_matches("./") == BUMP_SCRIPT.0 && sha == BUMP_SCRIPT.1
 }
 
 /// A read-only git command (or `git add`) whose glob words are pathspecs: each glob word has a
-/// `/` before its first glob character, or follows a literal `--`, so it cannot expand to an
-/// option (#60 g1, #64 round 4). Globs are `*` and `?` only.
+/// `/` before its first glob character (every expansion starts with that directory, never an
+/// option) and only value-less options appear (#60 g1, #64 round 4). Globs are `*` and `?`.
 fn pathspec_glob(w: &[&str]) -> bool {
     let ["git", sub, rest @ ..] = w else {
         return false;
@@ -81,11 +103,31 @@ fn pathspec_glob(w: &[&str]) -> bool {
     ) {
         return false;
     }
-    let mut after_dashes = false;
+    // Only options that take no value, so no glob can become an option's value (`-S`, `-L`,
+    // `--output`) or follow a `--` that is itself a value.
+    const FLAGS: &[&str] = &[
+        "--",
+        "--cached",
+        "--staged",
+        "--stat",
+        "--name-only",
+        "--name-status",
+        "--oneline",
+        "-p",
+        "--patch",
+        "-u",
+        "--update",
+        "-A",
+        "--all",
+        "-v",
+        "--verbose",
+    ];
     let mut globbed = false;
     for word in rest {
-        if *word == "--" {
-            after_dashes = true;
+        if word.starts_with('-') {
+            if !FLAGS.contains(word) {
+                return false;
+            }
             continue;
         }
         let glob_at = word.find(['*', '?']);
@@ -96,19 +138,12 @@ fn pathspec_glob(w: &[&str]) -> bool {
             return false;
         }
         match glob_at {
-            None => {
-                if word.starts_with('-') && after_dashes {
-                    return false;
-                }
-            }
+            None => {}
             Some(i) => {
                 // The last path part keeps a literal character (`*.rs`, not `*` or `src/*`),
                 // so it cannot expand to a program name such as `git`.
                 let last = word.rsplit('/').next().unwrap_or(word);
-                if word.starts_with('-')
-                    || !(after_dashes || word[..i].contains('/'))
-                    || !last.chars().any(|c| c.is_ascii_alphanumeric())
-                {
+                if !word[..i].contains('/') || !last.chars().any(|c| c.is_ascii_alphanumeric()) {
                     return false;
                 }
                 globbed = true;
@@ -141,7 +176,18 @@ pub fn allow(command: &str) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::allow;
+    use super::{BUMP_SCRIPT, allow, script_pinned};
+
+    #[test]
+    fn the_pinned_bump_script_hash_is_the_repo_file() {
+        let body = include_str!("../../../../scripts/bump-version.sh");
+        assert!(
+            script_pinned("bump-version", BUMP_SCRIPT.0, body),
+            "scripts/bump-version.sh changed: update BUMP_SCRIPT's hash"
+        );
+        let evil = format!("{body}\nbash +c -- '(/usr/bin/g?t push -f origin HEAD:main)'\n");
+        assert!(!script_pinned("bump-version", BUMP_SCRIPT.0, &evil));
+    }
 
     #[test]
     fn only_the_literal_shapes_match() {
@@ -154,11 +200,18 @@ mod tests {
             ("bash scripts/bump-version.sh 1.2.3 extra", None),
             // The legacy judge allows it already: no enumerated allow needed.
             ("bash decisions/scripts/check-index.sh", None),
-            ("bash -n a.sh b.sh", Some("parse-only")),
+            ("bash -n a.sh", Some("parse-only")),
+            ("bash -n a.sh b.sh", None),
             ("bash -n -c x", None),
             ("bash -n a.sh && bash a.sh", None),
             ("bash -n a*.sh", None),
-            ("git diff -- *.md", Some("pathspec-glob")),
+            ("git diff -- src/*.md", Some("pathspec-glob")),
+            ("git diff -- *.md", None),
+            ("git blame --since -- *.md", None),
+            ("git log -L -- src/*.md", None),
+            ("git diff --output src/*.md", None),
+            ("bash -n +nc ./evil.sh", None),
+            ("sh -n +cn x.sh", None),
             ("git log src/*.rs", Some("pathspec-glob")),
             ("git ls-files docs/**/*.md", Some("pathspec-glob")),
             ("git add *.rs", None),

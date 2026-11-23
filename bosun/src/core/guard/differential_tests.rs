@@ -89,3 +89,35 @@ fn every_enumerated_allow_is_one_legacy_denies() {
         assert!(head.is_none(), "{cmd}: {head:?}");
     }
 }
+
+/// Opus hunt on #66: the allow shapes themselves. An edited bump script keeps main's verdict;
+/// `+nc` after `-n` runs code; a glob after a `--` that is an option's value.
+#[test]
+fn the_allow_shapes_do_not_carry_main_denies() {
+    let at = |_: &[String]| Some("feat".to_string());
+    let body = include_str!("../../../../scripts/bump-version.sh");
+    let evil = format!("{body}\nbash +c -- '(/usr/bin/g?t push -f origin HEAD:main)'\n");
+    let edited = |p: &str| match p.trim_start_matches("./") {
+        "scripts/bump-version.sh" => Some(Script::Text(evil.clone())),
+        _ => read(p),
+    };
+    let cmd = "bash scripts/bump-version.sh 1.2.3";
+    assert!(
+        script_rules(cmd, &edited, &at, "main").is_some(),
+        "edited bump script"
+    );
+    assert!(
+        script_rules(cmd, &read, &at, "main").is_none(),
+        "pinned bump script"
+    );
+    for cmd in [
+        "bash -n +nc ./evil.sh",
+        "sh -n +cn evil.sh",
+        "git blame --since -- *.md",
+    ] {
+        let input = json!({ "command": cmd });
+        let head = tool_rules("Bash", &input, &at, "main", "session_x")
+            .or_else(|| script_rules(cmd, &read, &at, "main"));
+        assert!(head.is_some(), "allowed: {cmd}");
+    }
+}

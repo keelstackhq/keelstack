@@ -93,15 +93,14 @@ fn a_bare_pathspec_glob_can_expand_to_a_git_option() {
     ] {
         assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
     }
-    for cmd in [
-        "git add src/*.rs",
-        "git diff -- *.md",
-        "git ls-files docs/**/*.md",
-    ] {
+    for cmd in ["git add src/*.rs", "git ls-files docs/**/*.md"] {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
-    // Denied by the legacy judge (main) and not an enumerated intended allow.
-    assert!(hook("git grep -e x -- '*.rs' *.md", &[]).is_some());
+    // Denied by the legacy judge (main) and not an enumerated intended allow (a glob with no
+    // `/` before it can expand to an option even after `--`, which may be an option's value).
+    for cmd in ["git grep -e x -- '*.rs' *.md", "git diff -- *.md"] {
+        assert!(hook(cmd, &[]).is_some(), "{cmd}");
+    }
 }
 
 #[test]

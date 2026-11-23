@@ -67,9 +67,21 @@ pub fn script_rules(
     default_branch: &str,
 ) -> Option<String> {
     let old_read = |p: &str| read(p).map(legacy_script);
+    let old = || legacy::script_rules(command, &old_read, branch_at, default_branch);
+    // An allow that pins its script (`bump-version`) overrides a legacy deny only while the
+    // script is the pinned text; an edited script keeps main's verdict.
+    if let Some(name) = intended::allow(command) {
+        let pinned = match read(intended::BUMP_SCRIPT.0) {
+            Some(Script::Text(t)) => intended::script_pinned(name, intended::BUMP_SCRIPT.0, &t),
+            _ => intended::script_pinned(name, "", ""),
+        };
+        if !pinned && let Some(why) = old() {
+            return Some(why);
+        }
+    }
     either(
         || super::script_rules_new(command, read, branch_at, default_branch),
-        || legacy::script_rules(command, &old_read, branch_at, default_branch),
+        old,
         Some(command),
     )
 }
