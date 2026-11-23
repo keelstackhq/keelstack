@@ -120,6 +120,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 - 2026-11-20 · rust-service/6 · `feat(template-rust): fly piece` · static-musl scratch image (docker build verified), fly-setup.sh, deploy.yml + image.yml split
 - 2026-11-20 · rust-service/7 · `docs: rust service pieces in spec, pieces doc and progress` · spec §15 Service pieces, combo `rust-service-full`, AGENTS lines; `fix(template-rust): explain a root-owned Fly volume` (error hint, docs/fly.md, `--fix-volume-owner`). `docs/pieces.md` is generated from `template/` only: unchanged. Unverified: `fly machine run` flags against a real flyctl (docs say to check `--help`).
 - 2026-11-23 · feedback · `feat(hull): release-pre hook, hoist-driven detect, no forced provenance` · template-rust release wording
+- 2026-11-23 · review fixes · template-rust release.yml: gate before the dry run, pending = unreleased versions only, e2e detect test (hoist/tests/release_workflow_detect.rs); release-pre.sh owner-only (guard path, bosun bootstrap exclusion, docs); guard publish reason fits both templates
 
 ## Measurements
 
