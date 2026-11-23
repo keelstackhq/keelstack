@@ -1140,23 +1140,41 @@ pub fn autonomous_excluded(
 /// The list is compiled into the binary that judges the PR, and risk-check is built from the
 /// PR's base (or runs the base pin), so a single PR cannot widen or shrink it for itself.
 ///
-/// The rule, not a file list: everything that builds or decides the judge is trust root. In every
-/// repo (and under each code root): the approval config and rules, the trust files of
+/// The rule, not a file list: everything that builds or decides the judge is trust root, and
+/// `bosun/tests/trust_root_inputs.rs` walks the repo to prove it. Two parts:
+/// (a) every `.claude/**` file and every `.mcp.json` at any depth (`**/.claude/**`,
+/// `**/.mcp.json`): hooks, SessionStart commands, subagent prompts, rules, loop and memory files
+/// of the root and of every folder (splice, hoist, hull, hoard, berth);
+/// (b) every file that a trust-root workflow, hook, SessionStart command, setup script or
+/// secret-holding job reads or executes. The test extracts those inputs from
+/// `.github/workflows/*.yml`, every hook command, every `docs/setup-script.sh` and the channel
+/// templates (`scripts/*` and `*.sh` paths, `cd X` / `working-directory` / `pnpm --dir X` /
+/// `pnpm -C X` as `X/package.json`, `X/pnpm-lock.yaml`, `X/pnpm-workspace.yaml`,
+/// `X/.pnpmfile.cjs`, cargo as `Cargo.toml` / `build.rs`, files read at the base such as
+/// `pins.toml`) and fails when one is not listed here, so a new input needs a list edit in the
+/// same PR. `.github/CODEOWNERS` has a line for every glob (`governance_owners.rs`).
+///
+/// In every repo (and under each code root): the approval config and rules, the trust files of
 /// [`TRUST_FILES`](super::approve::TRUST_FILES) (keys, owners, CODEOWNERS, `.bosun/pins.toml`,
 /// the decisions index, D-022 and D-025), every `.github/workflows/**` and `.github/actions/**`
-/// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the session
-/// settings that run bosun's hooks, and the reviewers' prompts (`.claude/agents/reviewer.md`,
-/// `REVIEW.md`, `docs/lessons.toml`) and the agent notes `AGENTS.md`, `CLAUDE.md` (in every folder),
-/// `CLAUDE.local.md` and `.claude/CLAUDE.md` (at the repo root and in each code root), and
-/// `.github/scripts/**`, `scripts/**`, `docs/setup-script.sh`, `.claude-plugin/**` and
-/// `.claude/rules/**`. The scripts that `release.yml` runs in jobs holding a secret or an id-token
+/// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the
+/// reviewers' prompts (`.claude/agents/**`, `REVIEW.md`, `docs/lessons.toml`) and the agent notes
+/// `AGENTS.md`, `CLAUDE.md` (in every folder), `CLAUDE.local.md`, and
+/// `.github/scripts/**`, `scripts/**`, `**/docs/setup-script.sh` and `.claude-plugin/**`.
+/// `hull/package.json`, `hull/pnpm-lock.yaml`, `hull/pnpm-workspace.yaml` and `hull/.pnpmfile.*`
+/// are what the root SessionStart hook installs (`cd hull && pnpm install`); `pins.toml` is read
+/// at the base by bosun's channel templates. The scripts that `release.yml` runs in jobs holding
+/// a secret or an id-token
 /// are listed by hand (`splice/scripts/**`, `hoard/scripts/**`, `*/npm/**`), and so is what the
-/// other jobs holding a secret or an id-token build or load: "every file a trust-root workflow
-/// executes" is not a rule this compiled-in list can apply, as it reads no workflow. The groups:
+/// other jobs holding a secret or an id-token build or load: a compiled-in list reads no
+/// workflow, which is why the test is the check. The groups:
 /// - `**/Cargo.toml`, `**/build.rs`, `**/.cargo/config*`: `cargo publish` (id-token) builds every
 ///   crate and runs its build script. A proc-macro crate's `src/` would also run at build: none
 ///   exists today, add it here when one does.
 /// - `**/.npmrc`: `npm publish` and `npm pkg` load the project config.
+/// - `**/.cargo/**`, `**/rust-toolchain*`, `**/.pnpmfile.*`, `**/deny*.toml`,
+///   `**/package.json`, `**/pnpm-workspace.y*ml`: the files the gate jobs restore from the base
+///   (the `pat=` regexes), at any depth.
 /// - `hoard/src/**`, `hoard/action.yml`, `hoard/action/dist/**`, `hoard/tests/fixtures/**`: the
 ///   hoard server that gets the R2 keys in hoard-self-test.yml, and fixture code run beside it.
 /// - `site/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`,
@@ -1173,7 +1191,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 40] = [
+pub const TRUST_ROOT: [&str; 54] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
@@ -1186,10 +1204,20 @@ pub const TRUST_ROOT: [&str; 40] = [
     ".github/scripts/**",
     // What sessions run or load: the setup script, repo scripts (`bump-version.sh`), the plugin
     // and the rules.
-    "docs/setup-script.sh",
+    "**/docs/setup-script.sh",
     "scripts/**",
     ".claude-plugin/**",
-    ".claude/rules/**",
+    // Every `.claude/**` file (settings and hooks, agents, rules, loop, memory) and every MCP
+    // server config, at the repo root and in every folder: what a session starts and runs.
+    "**/.claude/**",
+    "**/.mcp.json",
+    // The root SessionStart hook runs `cd hull && pnpm install`: what pnpm loads there. Read at
+    // the base by bosun's channel templates (bosun.yml.jinja, the circleci bosun-ok job).
+    "hull/package.json",
+    "hull/pnpm-lock.yaml",
+    "hull/pnpm-workspace.yaml",
+    "hull/.pnpmfile.*",
+    "pins.toml",
     // What `release.yml` runs in the jobs that hold the tag key or an OIDC token (`release`,
     // `npm`, `crates`): listed by hand, because this list is compiled in and cannot read the
     // workflow. Add a script here when a release job starts to run it.
@@ -1203,11 +1231,27 @@ pub const TRUST_ROOT: [&str; 40] = [
     "**/.cargo/config*",
     // Project npm config, loaded by `npm publish` / `npm pkg` (jobs `npm`, cargo-deny-npm).
     "**/.npmrc",
+    // The files the channel templates' gate jobs restore from the base before they run (the
+    // `pat=` regexes of bosun.yml.jinja, the circleci bosun-ok job and ci.yml), at any depth:
+    // a PR's change to one is judged by the base's copy, so no quorum may count it.
+    "**/.cargo/**",
+    "**/rust-toolchain",
+    "**/rust-toolchain.toml",
+    "**/.pnpmfile.*",
+    "**/deny.toml",
+    "**/.deny.toml",
+    "**/deny.exceptions.toml",
+    "**/.deny.exceptions.toml",
+    "**/package.json",
+    "**/pnpm-workspace.yaml",
+    "**/pnpm-workspace.yml",
     // hoard-self-test.yml hands R2 keys to the server that `uses: ./hoard` starts (action.yml,
     // action/dist built from src) and then runs the fixtures as the same user.
     "hoard/src/**",
     "hoard/action.yml",
     "hoard/action/dist/**",
+    // Read and copied into the release bundle by the `release` job (tag key).
+    "hoard/action/src/checksums.generated.ts",
     "hoard/tests/fixtures/**",
     // deploy-site.yml job `wrangler` stages wrangler that `deploy` runs with the Cloudflare
     // token: what pnpm loads there. `site/.npmrc` is covered by `**/.npmrc`.
@@ -1217,14 +1261,12 @@ pub const TRUST_ROOT: [&str; 40] = [
     "site/.node-version",
     "site/.pnpmfile.*",
     "site/packages/deploy/**",
-    ".claude/settings*.json",
-    // Rules and templates that sessions and the guard load, the loop, and every subagent prompt.
+    // Rules and templates that sessions and the guard load.
     ".bosun/session-rules.toml",
     ".bosun/template-tests",
     ".bosun/template-tests/**",
-    ".claude/loop.md",
-    // The reviewers' prompts and what they are taught: they decide what a verdict says.
-    ".claude/agents/**",
+    // What the reviewers are taught (their prompts are `.claude/agents/**`, above): they decide
+    // what a verdict says.
     "REVIEW.md",
     "docs/lessons.toml",
     // What every session is told, reviewers included: at the root and in every folder.
@@ -1232,7 +1274,6 @@ pub const TRUST_ROOT: [&str; 40] = [
     "**/CLAUDE.md",
     // The memory files Claude Code loads besides `CLAUDE.md`.
     "CLAUDE.local.md",
-    ".claude/CLAUDE.md",
 ];
 
 /// Counting verdicts from different sessions a quorum approval needs (D-022). One verdict's bar is
@@ -1348,6 +1389,17 @@ pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> V
         })
         .map(|(path, _)| path.to_string())
         .collect()
+}
+
+/// The changed paths no quorum counts on (D-022), without the pin and secret judgements:
+/// [`trust_root_changed`] plus every CI file of [`workflow_files`], sorted and unique. One set
+/// for risk-check (`quorum_trust_root`) and the carry (rule 4).
+pub fn quorum_trust_paths(files: &[(&str, Option<&str>)], roots: &[String]) -> Vec<String> {
+    let mut out = trust_root_changed(files, roots);
+    out.extend(workflow_files(files));
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The paths among `(path, patch)` pairs whose added lines hold a strong secret (PEM or PGP
@@ -3310,12 +3362,21 @@ mod monorepo_tests {
         }
         // Without a code root the lockfile and toolchain stay ordinary files (manifests and cargo
         // config are trust root everywhere: `cargo publish` builds them); the workflows never do.
-        for f in ["Cargo.toml", ".cargo/config.toml"] {
+        // The toolchain file too, at any depth: the gate jobs restore every `rust-toolchain(.toml)`
+        // from the base (the `pat=` regexes of the channel templates), so a PR's copy is never
+        // what ran and no quorum may count it.
+        for f in [
+            "Cargo.toml",
+            ".cargo/config.toml",
+            "rust-toolchain.toml",
+            "a/b/rust-toolchain",
+            "a/deny.toml",
+            "a/.pnpmfile.mjs",
+            "web/package.json",
+        ] {
             assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
         }
-        for f in ["Cargo.lock", "rust-toolchain.toml"] {
-            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
-        }
+        assert!(trust_root_changed(&[("Cargo.lock", None)], &[]).is_empty());
         for f in [
             ".github/workflows/ci.yml",
             ".github/actions/a/action.yml",

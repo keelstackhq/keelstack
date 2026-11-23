@@ -164,10 +164,11 @@ fn ci_of(t: &toml::Table) -> Option<&str> {
     t.get("ci")?.get("provider")?.as_str()
 }
 
-const GH_WORKFLOWS: [&str; 5] = [
+const GH_WORKFLOWS: [&str; 6] = [
     ".github/workflows/bosun.yml",
     ".github/workflows/risk.yml",
     ".github/workflows/verdict.yml",
+    ".github/workflows/signer.yml",
     ".github/workflows/main-open.yml",
     ".github/workflows/main-health.yml",
 ];

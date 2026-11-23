@@ -113,13 +113,27 @@ fn list_is_stable_and_never_prints_the_owner_token() {
     assert_eq!(a["data"]["owner_step"], b["data"]["owner_step"]);
 }
 
+/// The message id (what a question id was before D-025) is stable for one ready list and changes
+/// with it; no question key remains.
 #[test]
-fn question_ids_stable_per_now() {
+fn message_id_is_stable_for_one_ready_list_and_changes_with_it() {
     let fake = FakeGithub::start();
     ready(&fake, 12, "gov change", &head("abc1234"));
     let a = list(&fake, None);
     let b = list(&fake, None);
-    assert_eq!(a["next"], b["next"]);
-    assert_eq!(a["data"]["ready"], b["data"]["ready"]);
-    assert!(!a["data"]["ready"].as_array().unwrap().is_empty(), "{a}");
+    let id = a["data"]["message_id"].as_str().unwrap().to_string();
+    assert_eq!(id.len(), 8, "{a}");
+    assert_eq!(b["data"]["message_id"], json!(id));
+    assert_eq!(a["data"], b["data"]);
+    assert_eq!(a["next"], json!([]));
+    assert!(!a.to_string().contains("question"), "{a}");
+    // Another head for the same PR is another list, so another id.
+    let other = FakeGithub::start();
+    ready(&other, 12, "gov change", &head("def5678"));
+    let c = list(&other, None);
+    assert_ne!(c["data"]["message_id"], json!(id), "{c}");
+    // Another PR in the list too.
+    ready(&fake, 13, "more", &head("abc9999"));
+    let d = list(&fake, None);
+    assert_ne!(d["data"]["message_id"], json!(id), "{d}");
 }

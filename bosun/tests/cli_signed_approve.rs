@@ -375,7 +375,12 @@ fn the_signer_needs_a_pinned_head_https_and_no_halt() {
         let v = one_object(&out.stdout);
         (out.status.code().unwrap(), v)
     };
-    assert_eq!(sign(&["1"], None).0, 2, "a bare PR number is a usage error");
+    let (code, v) = sign(&["1"], None);
+    assert_eq!(code, 2, "a bare PR number is a usage error");
+    // D-025: the fix points at the owner's comment, never at a chat confirmation.
+    let fix = v["error"]["fix"].as_str().unwrap();
+    assert!(fix.contains("`/bosun approve <head_sha>` comment"), "{fix}");
+    assert!(!fix.contains("confirm the head with the owner"), "{fix}");
     assert_eq!(sign(&[&format!("1@{OLD}")], None).0, 3, "the head moved");
     let (code, v) = sign(
         &[&format!("1@{HEAD}"), "--print"],

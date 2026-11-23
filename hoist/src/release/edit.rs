@@ -144,6 +144,43 @@ fn json_strings(text: &str) -> Result<Vec<StrMember>, String> {
     Ok(s.out)
 }
 
+/// Decode the JSON string escapes of a string's raw content (`\"`, `\\`, `\n`, `\uXXXX`, ...).
+fn json_unescape(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut it = raw.chars().peekable();
+    let hex4 = |it: &mut std::iter::Peekable<std::str::Chars>| -> Option<u32> {
+        let h: String = (0..4).filter_map(|_| it.next()).collect();
+        u32::from_str_radix(&h, 16).ok().filter(|_| h.len() == 4)
+    };
+    while let Some(c) = it.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match it.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('b') => out.push('\u{8}'),
+            Some('f') => out.push('\u{c}'),
+            Some('u') => {
+                let mut cp = hex4(&mut it).unwrap_or(0xFFFD);
+                if (0xD800..0xDC00).contains(&cp) && it.peek() == Some(&'\\') {
+                    it.next();
+                    if it.next() == Some('u') {
+                        let lo = hex4(&mut it).unwrap_or(0);
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + lo.wrapping_sub(0xDC00);
+                    }
+                }
+                out.push(char::from_u32(cp).unwrap_or('\u{FFFD}'));
+            }
+            Some(other) => out.push(other),
+            None => {}
+        }
+    }
+    out
+}
+
 fn json_escape(v: &str) -> String {
     v.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -206,7 +243,10 @@ pub fn rewrite_package_json_dep(
     let edits: Vec<_> = json_strings(text)?
         .into_iter()
         .filter(|m| m.path.len() == 2 && m.path[1] == dep && sections.contains(&&*m.path[0]))
-        .map(|m| (m.start, m.end, json_escape(&f(&text[m.start..m.end]))))
+        .map(|m| {
+            let old = json_unescape(&text[m.start..m.end]);
+            (m.start, m.end, json_escape(&f(&old)))
+        })
         .collect();
     if edits.is_empty() {
         return Err(format!("package.json does not depend on `{dep}`"));
@@ -457,7 +497,13 @@ pub fn prepend_section(
     if unreleased && let Some((i, len)) = line {
         let after = &body[i + len..];
         let end = first_heading(after).unwrap_or(after.len());
-        let moved = after[..end].trim_matches(['\r', '\n', ' ']);
+        // Drop blank lines around the block, but keep the first line's indentation.
+        let block = &after[..end];
+        let start = (block.split_inclusive('\n'))
+            .take_while(|l| l.trim().is_empty())
+            .map(str::len)
+            .sum::<usize>();
+        let moved = block[start..].trim_end();
         if !moved.is_empty() {
             blocks.push(format!("{moved}{nl}"));
         }
@@ -486,9 +532,11 @@ pub fn prepend_section(
 pub fn changelog_section(text: &str, version: &str) -> Option<String> {
     let heading = format!("## {version}");
     let mut lines = text.split_inclusive('\n');
+    let mut fence = None;
     lines.find(|l| {
-        l.strip_prefix(&heading)
-            .is_some_and(|r| r.starts_with(" (") || r.trim_end().is_empty())
+        !fence_step(&mut fence, l)
+            && l.strip_prefix(&heading)
+                .is_some_and(|r| r.starts_with(" (") || r.trim_end().is_empty())
     })?;
     let mut fence = None;
     let body: String = lines

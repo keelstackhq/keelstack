@@ -8,6 +8,10 @@
 #
 # CODEOWNERS is case-sensitive, risk-check matches in any case: a name the rules write in lower
 # case (`**/agents.md`) is listed in lower case and in its usual spelling (`AGENTS.md`).
+# Every glob of the quorum trust root (TRUST_ROOT in bosun/src/core/risk.rs, a rule plus the
+# check bosun/tests/trust_root_inputs.rs: `.claude/**` and `.mcp.json` at any depth, and every file
+# a trust-root workflow, hook, SessionStart script or secret-holding job reads or executes) has a
+# line here, and bosun/tests/governance_owners.rs fails when one is missing or a line maps to none.
 # Delegate or two-verdict paths outside the floor are not listed: R-gate and R-ci-review. Under
 # quorum (D-022) bosun's quorum trust root is the owner's too (QUORUM_CODE_FILES in
 # bosun/src/core/approve.rs, TRUST_ROOT in bosun/src/core/risk.rs), so the folders it compiles in, `bosun/channel/` and `bosun/profiles/`,
@@ -24,6 +28,11 @@ claude.md                @urbanisierung
 CLAUDE.local.md          @urbanisierung
 claude.local.md          @urbanisierung
 .claude/                 @urbanisierung
+.mcp.json                @urbanisierung
+**/docs/setup-script.sh  @urbanisierung
+**/workflows/risk.yml*   @urbanisierung
+Cargo.toml               @urbanisierung
+**/.cargo/config*        @urbanisierung
 plans/                   @urbanisierung
 action.yml               @urbanisierung
 action.yaml              @urbanisierung
@@ -62,6 +71,11 @@ access.toml              @urbanisierung
 .yarnrc                  @urbanisierung
 .yarnrc.yml              @urbanisierung
 .pnpmfile.cjs            @urbanisierung
+.pnpmfile.*              @urbanisierung
+package.json             @urbanisierung
+pnpm-workspace.yaml      @urbanisierung
+pnpm-workspace.yml       @urbanisierung
+.cargo/                  @urbanisierung
 bunfig.toml              @urbanisierung
 **/.yarn/plugins/        @urbanisierung
 **/.yarn/releases/       @urbanisierung
@@ -104,6 +118,22 @@ bunfig.toml              @urbanisierung
 /.cargo/                 @urbanisierung
 /src/                    @urbanisierung
 /npm/                    @urbanisierung
+/*/npm/                  @urbanisierung
+/bosun/*/npm/             @urbanisierung
+/hull/package.json       @urbanisierung
+/hull/pnpm-lock.yaml     @urbanisierung
+/hull/pnpm-workspace.yaml @urbanisierung
+/hull/.pnpmfile.*        @urbanisierung
+/hoard/src/              @urbanisierung
+/hoard/action/dist/      @urbanisierung
+/hoard/action/src/checksums.generated.ts @urbanisierung
+/hoard/tests/fixtures/   @urbanisierung
+/site/package.json       @urbanisierung
+/site/pnpm-lock.yaml     @urbanisierung
+/site/pnpm-workspace.yaml @urbanisierung
+/site/.node-version      @urbanisierung
+/site/.pnpmfile.*        @urbanisierung
+/site/packages/deploy/   @urbanisierung
 
 # Org decisions (R-gov `decisions/**`; D-022 names its own row as trust root).
 /decisions/              @urbanisierung

@@ -622,7 +622,11 @@ impl FakeGithub {
         self.state.lock().unwrap().anonymous_reads = true;
     }
 
-    /// A file at a ref; the contents API serves it base64-encoded.
+    /// A file at a ref; the contents API serves it base64-encoded. Base reads are NOT isolated:
+    /// a read at a pull's base sha (`base0000`) of a path nobody wrote at that sha is served from
+    /// `refs/heads/main` (and a write to main stands for every base). Use [`Self::absent_at`] to
+    /// say the base lacks the path; `tests/fake_base_reads.rs` guards that this is the only
+    /// fallback (no other ref falls back to main).
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
         s.absent.remove(&format!("{git_ref}:{path}"));

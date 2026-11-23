@@ -90,6 +90,12 @@ fn templates() -> Vec<Tpl> {
             ".github/workflows/verdict.yml.jinja",
             true
         ),
+        // The keyless fast lane `bosun approve --via-signer` dispatches (spec §8, D-017).
+        tpl!(
+            ".github/workflows/signer.yml",
+            ".github/workflows/signer.yml.jinja",
+            true
+        ),
         tpl!(
             ".github/workflows/main-open.yml",
             ".github/workflows/main-open.yml.jinja",
@@ -105,6 +111,22 @@ fn templates() -> Vec<Tpl> {
     ]
 }
 
+/// The templates of the stacks in use (the channel's rust piece seeds `deny.toml`).
+fn stack_templates(stacks: &[String]) -> Vec<Tpl> {
+    let mut v = Vec::new();
+    if stacks.iter().any(|s| s == "rust") {
+        v.push(DENY);
+    }
+    v
+}
+
+const DENY: Tpl = Tpl {
+    path: "deny.toml",
+    src: include_str!("../../channel/pieces/rust/files/deny.toml"),
+    jinja: false,
+    exec: false,
+};
+
 impl Tpl {
     fn text(&self, vars: &Vars) -> std::result::Result<String, String> {
         if self.jinja {
@@ -118,6 +140,7 @@ impl Tpl {
 /// Every file adopt can write (with the owners file), rendered; for the render tests.
 pub fn render_all(vars: &Vars) -> std::result::Result<Vec<(&'static str, String)>, String> {
     let mut all = templates();
+    all.extend(stack_templates(&vars.pieces));
     all.push(OWNERS);
     all.iter()
         .map(|t| t.text(vars).map(|s| (t.path, s)))
@@ -319,6 +342,7 @@ fn uncommitted<'a>(root: &Path, rel: &'a str) -> Option<&'a str> {
 /// Every path adopt can write; `bosun uninstall` deletes nothing else.
 pub fn known_paths() -> Vec<&'static str> {
     let mut v: Vec<&'static str> = templates().iter().map(|t| t.path).collect();
+    v.push(DENY.path);
     v.push(OWNERS.path);
     v
 }
@@ -550,6 +574,7 @@ pub fn run(dir: Option<&Path>, a: &AdoptArgs) -> CmdResult {
 
     // Plan the files.
     let mut tpls = templates();
+    tpls.extend(stack_templates(&stacks));
     if !owner.is_empty() {
         tpls.push(OWNERS);
     }

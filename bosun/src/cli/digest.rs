@@ -1,6 +1,7 @@
 //! `bosun digest` (spec §14, §18): the owner's daily digest as one D-012 chat form, and with
-//! `--answer` the owner's reply turned into `bosun approve` calls in `next`. It writes nothing
-//! and signs no approval: the orchestrator, the key holder, runs those calls. A raise counts only
+//! `--answer` the owner's reply parsed into signed budget raises. A chat reply approves nothing
+//! (D-025): the held heads come back with the `/bosun approve <sha>` comment the owner posts on
+//! the PR, and `next` is empty. It writes nothing and signs no approval. A raise counts only
 //! signed with an enrolled owner key (`--sign-key`), as `answer --chat`.
 
 use std::path::Path;
@@ -263,7 +264,7 @@ fn answer(dir: Option<&Path>, app: &App, args: &DigestArgs) -> CmdResult {
     if reply.ids.is_empty() {
         return Err(BosunError::usage(
             "the owner's reply quotes no digest id",
-            "relay the owner's reply as typed from the form (`<id> approve ...`); ask the owner to reply with the id",
+            "relay the owner's reply as typed from the form (`<id> raise ...`); ask the owner to reply with the id",
         ));
     }
     if let Some(quoted) = reply.ids.iter().find(|q| **q != id) {
@@ -314,19 +315,16 @@ fn answer(dir: Option<&Path>, app: &App, args: &DigestArgs) -> CmdResult {
             Err(why) => refused.push(json!({"raise": {"epic": epic, "usd": usd}, "why": why})),
         }
     }
-    let mut out = Outcome::data(json!({
+    let out = Outcome::data(json!({
         "message_id": id,
-        "approve": approve.iter().map(|(pr, h)| json!({"pr": pr, "head_sha": h}))
-            .collect::<Vec<_>>(),
+        // D-025: chat approves nothing; the owner comments the line on the PR.
+        "approve": approve.iter().map(|(pr, h)| json!({"pr": pr, "head_sha": h,
+            "owner_comment": format!("/bosun approve {h}")})).collect::<Vec<_>>(),
         "dropped": dropped,
         "raises": raises,
         "refused": refused,
         "unknown": reply.unknown,
     }));
-    for (pr, h) in &approve {
-        let command = format!("bosun approve {pr}@{h} --sign-key <pem>");
-        out = out.with_next("Bash", json!({"command": command}));
-    }
     Ok(out)
 }
 

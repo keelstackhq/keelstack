@@ -196,9 +196,10 @@ fn two_verdicts_from_the_same_session_count_once() {
 fn a_verdict_from_the_author_or_a_lease_holder_does_not_count() {
     let k = key();
     let fake = quorum(&k);
-    let (code, v) = with(&fake, &k, &["session_w", "session_r"]);
+    let (code, v) = with(&fake, &k, &["session_w", "session_r1"]);
     assert_eq!(code, 5, "{v}");
     assert!(description(&fake).starts_with(QUORUM));
+    assert_eq!(v["data"]["quorum_verdicts"], json!(["session_r1"]), "{v}");
     // A leaseholder of another linked issue is excluded as well.
     let fake = quorum(&k);
     fake.issue(8, "other", &[], "x");
@@ -209,6 +210,8 @@ fn a_verdict_from_the_author_or_a_lease_holder_does_not_count() {
     );
     let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
     assert_eq!(code, 5, "{v}");
+    assert!(description(&fake).starts_with(QUORUM), "{v}");
+    assert_eq!(v["data"]["quorum_verdicts"], json!(["session_r"]), "{v}");
 }
 
 #[test]
@@ -510,16 +513,28 @@ fn approve_signs_the_autonomous_form_after_two_clean_verdicts() {
     assert_eq!(v["data"]["policy"], "quorum");
 }
 
+/// The refusal text of `approve` for too few counting verdicts, with the count it saw.
+fn few_verdicts(v: &Value, counted: usize, what: &str) {
+    let m = v["error"]["message"].as_str().unwrap_or_default();
+    assert!(
+        m.contains("quorum (D-022) needs 2 clean verdict(s) from different sessions")
+            && m.contains(&format!("({counted} counted)"))
+            && m.contains("neither the author (a task lease holder) nor this session"),
+        "{what}: {v}"
+    );
+}
+
 #[test]
 fn approve_refuses_with_fewer_than_two_counting_verdicts() {
     let k = key();
     // None, one, the same session twice, the author's, the signer's own (not counted).
-    for sessions in [
-        &[][..],
-        &["session_r"][..],
-        &["session_r", "session_r"][..],
-        &["session_r", "session_w"][..],
-        &["session_r", "session_o"][..],
+    for (sessions, counted) in [
+        (&[][..], 0),
+        (&["session_r"][..], 1),
+        (&["session_r", "session_r"][..], 1),
+        (&["session_r", "session_w"][..], 1),
+        (&["session_w", "session_r1"][..], 1),
+        (&["session_r", "session_o"][..], 1),
     ] {
         let fake = quorum(&k);
         for s in sessions {
@@ -527,7 +542,30 @@ fn approve_refuses_with_fewer_than_two_counting_verdicts() {
         }
         let (code, v) = sign(&fake, &k, "session_o");
         assert_eq!(code, 1, "{sessions:?}: {v}");
+        few_verdicts(&v, counted, &format!("{sessions:?}"));
     }
+}
+
+/// Control for the author exclusion: the author's verdict is the only difference between
+/// refusal (`[w, r1]`: one counted) and a signature (`[w, r1, r2]`: two counted, not the author).
+#[test]
+fn the_authors_verdict_is_not_counted_but_two_other_sessions_sign() {
+    let k = key();
+    let fake = quorum(&k);
+    for s in ["session_w", "session_r1", "session_r2"] {
+        post_verdict(&fake, s, HEAD);
+    }
+    let (code, v) = sign(&fake, &k, "session_o");
+    assert_eq!(code, 0, "{v}");
+    assert!(v["data"]["body"].is_string(), "{v}");
+    let fake = quorum(&k);
+    let (code, v) = with(&fake, &k, &["session_w", "session_r1", "session_r2"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(
+        v["data"]["quorum_verdicts"],
+        json!(["session_r1", "session_r2"]),
+        "the author is not a counted reviewer: {v}"
+    );
 }
 
 #[test]

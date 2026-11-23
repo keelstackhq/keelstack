@@ -202,6 +202,44 @@ fn signer_and_bootstrap_need_the_policy_at_both_the_base_and_the_default_branch(
     refused(&fake, &k, "base quorum, main owner-gated");
 }
 
+/// `--as signer` signs only when the default branch is not stricter than the base in any of the
+/// three dimensions (`policy_dims`): quorum is stricter in the verdicts it needs, autonomous in
+/// that R-weaken still applies, so each fails closed against the other, and a base the signer
+/// policy does not cover (orchestrator under owner-gated) is refused with the policy at the ref.
+#[test]
+fn the_signer_refuses_a_default_branch_stricter_in_any_dimension() {
+    let k = key();
+    let (quorum, auto) = (config("quorum", true), config("autonomous", true));
+    let two = ["session_r1", "session_r2"];
+    for (base, main, what) in [
+        (&auto, &quorum, "base autonomous, default quorum"),
+        (&quorum, &auto, "base quorum, default autonomous"),
+    ] {
+        let v = refused(&pr(&k, base, main, &two), &k, what);
+        let msg = v["error"]["message"].as_str().unwrap();
+        assert!(
+            msg.contains("looser than on the default branch") && msg.contains("nothing was signed"),
+            "{what}: {msg}"
+        );
+    }
+    let (orch, gated) = (config("orchestrator", true), config("owner-gated", true));
+    let v = refused(
+        &pr(&k, &orch, &gated, &two),
+        &k,
+        "base orchestrator, default owner-gated",
+    );
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("signs only under the quorum") && msg.contains("owner-gated"),
+        "{msg}"
+    );
+    // Equal policies sign, in both signing policies.
+    for cfg in [&quorum, &auto] {
+        let (code, v) = sign(&pr(&k, cfg, cfg, &two), &k);
+        assert_eq!(code, 0, "{v}");
+    }
+}
+
 #[test]
 fn signer_off_at_either_ref_is_refused() {
     let k = key();

@@ -155,6 +155,18 @@ fn job_line(text: &str, job: &str) -> usize {
     }
 }
 
+/// Whether `on` names `workflow_call` and nothing else: the workflow only runs when another
+/// workflow calls it, and its token is capped by the caller's permissions.
+fn only_workflow_call(on: &Value) -> bool {
+    let call = |v: &Value| matches!(v, Value::String(s) if s == "workflow_call");
+    match on {
+        Value::String(_) => call(on),
+        Value::Sequence(items) => !items.is_empty() && items.iter().all(call),
+        Value::Mapping(map) => map.len() == 1 && map.contains_key(key("workflow_call")),
+        _ => false,
+    }
+}
+
 fn has_merge_group(on: &Value) -> bool {
     match on {
         Value::String(s) => s == "merge_group",
@@ -256,6 +268,12 @@ pub fn read_workflows(dir: &Path) -> Result<Workflows, HoistError> {
                 out.merge_group_source = Some(format!("{rel}:{line}"));
             }
         }
+        // Known limit: a `workflow_call`-only workflow is judged by its callers in this repo
+        // (their jobs count); callers in other repos are not seen.
+        let capped = [key("on"), Value::Bool(true)]
+            .iter()
+            .find_map(|k| top.get(k))
+            .is_some_and(only_workflow_call);
         let Some(jobs) = top.get(key("jobs")) else {
             continue;
         };
@@ -277,6 +295,7 @@ pub fn read_workflows(dir: &Path) -> Result<Workflows, HoistError> {
             // `permissions: ~` is no override.
             let set = |v: Option<&Value>| v.filter(|v| !v.is_null()).cloned();
             match set(job.get(key("permissions"))).or(set(top.get(key("permissions")))) {
+                _ if capped => {}
                 Some(p) if grants_statuses(&p) => out.status_writers.push(format!("{name}:{id}")),
                 Some(_) => {}
                 None => out.default_permission_jobs.push(format!("{name}:{id}")),

@@ -1959,9 +1959,8 @@ pub(crate) fn quorum_trust_root(
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))
         .collect();
-    let mut out = risk::trust_root_changed(&paths, roots);
+    let mut out = risk::quorum_trust_paths(&paths, roots);
     out.extend(pin_trust_root(gh, &paths, (base, head)));
-    out.extend(risk::workflow_files(&paths));
     let patches: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.patch.as_deref()))
         .collect();

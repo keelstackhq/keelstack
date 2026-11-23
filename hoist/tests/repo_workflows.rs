@@ -373,3 +373,29 @@ fn a_reusable_workflow_caller_is_a_status_writer_only_if_it_keeps_statuses() {
     assert!(writers("    permissions:\n      contents: read\n").is_empty());
     assert!(writers("    permissions: {}\n").is_empty());
 }
+
+#[test]
+fn a_workflow_call_only_workflow_is_capped_by_its_caller() {
+    // The callee's token never exceeds its caller's, so its own `permissions` (or the repo
+    // default) say nothing; only the caller job counts.
+    let callee = |on: &str| {
+        format!(
+            "on: {on}\njobs:\n  w:\n    permissions: write-all\n    runs-on: x\n    steps: []\n  d:\n    runs-on: x\n    steps: []\n"
+        )
+    };
+    for on in [
+        "workflow_call",
+        "[workflow_call]",
+        "\n  workflow_call:\n    inputs: {}",
+    ] {
+        let dir = inline(&[("lib.yml", &callee(on))]);
+        let w = read_workflows(dir.path()).expect("workflows");
+        assert!(w.status_writers.is_empty(), "{on}: {:?}", w.status_writers);
+        assert!(w.default_permission_jobs.is_empty(), "{on}");
+    }
+    // Also triggered directly: its own permissions count.
+    let dir = inline(&[("lib.yml", &callee("[push, workflow_call]"))]);
+    let w = read_workflows(dir.path()).expect("workflows");
+    assert_eq!(w.status_writers, vec!["lib.yml:w"]);
+    assert_eq!(w.default_permission_jobs, vec!["lib.yml:d"]);
+}

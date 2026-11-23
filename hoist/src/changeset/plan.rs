@@ -328,7 +328,13 @@ pub fn plan_with_rewrites(
             };
             let update = (e.name.clone(), v.to_string(), e.kind);
             let wanted = !inr || *t >= cfg.update_internal_dependencies;
-            if wanted && rewrite(old, v) != old && !n.dep_updates.contains(&update) {
+            // `workspace:*|^|~` and bare `^`/`~` keep their text but still count as an updated
+            // dependency in the changelog.
+            let keeps = matches!(
+                old.trim(),
+                "workspace:*" | "workspace:^" | "workspace:~" | "^" | "~"
+            );
+            if wanted && (keeps || rewrite(old, v) != old) && !n.dep_updates.contains(&update) {
                 n.dep_updates.push(update);
             }
         }

@@ -379,7 +379,7 @@ skips the install with a warning.
   container (`openssl genpkey -algorithm ed25519 -out key.pem`) and never shares the private key;
   **Practice:** keep it in the orchestrator's scratchpad only. Enroll the public key with a pull
   request to `.bosun/approvers.toml` that the owner approves on GitHub
-  ([steps](/docs/risk/#signed-approvals-from-chat)).
+  ([steps](/docs/risk/#signed-approvals)).
 - Service tokens a session needs (for example a read-only API token) go in the environment's
   network secrets or variables, never in the chat.
 

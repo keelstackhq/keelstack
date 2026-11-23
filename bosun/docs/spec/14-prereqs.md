@@ -79,9 +79,8 @@ updated checklist once and folds the step into the plan (`replaces: X1`, in an i
 the held task; `replaces` never releases another task's hold).
 
 **Approval batches.** `bosun approve --list` gives `data.message` (at most 10 ready PRs with inert
-titles and the reply `approve 12 15`), `data.message_id` (8 hex of the SHA-256 of the shown pairs'
-sorted `<pr>@<head>` lines) and `data.message_pairs`. Only the latest relayed message is
-answerable; PR numbers come only from the owner's chat; each (id, pr) is signed at most once (§8).
+titles, no reply line), `data.message_id` (8 hex of the SHA-256 of the shown pairs'
+sorted `<pr>@<head>` lines) and `data.message_pairs`. The message is display text only: since D-025 a chat reply approves nothing and agents do not relay it; the owner approves with a `/bosun approve <sha>` comment or review on GitHub (§8).
 Each `data.ready[]` item also has `owner_comment` (`/bosun approve <full head>`) and `verdict`; `data.owner_step` says "the owner comments /bosun approve <sha> on the PR" (D-025). `next` is empty for every origin: no `AskUserQuestion`, no `slack_post`, no "answer approve" text; agents never ask the owner for an approval.
 Legacy path: `approve --list` no longer asks, so it records no new hold; only an answer to a question from an older bosun (with its `[bosun:<id>]` marker) is still stored and read. The PostToolUse hook (`bosun hook post-tool-use`, matcher `AskUserQuestion`, in
 `.claude/settings.json` and the core channel piece) stores the answer to each marked PR in
@@ -95,10 +94,9 @@ and reads only `data`.
 
 **Daily digest (§18, `approvals_batch = "daily"`).** For Claude-Tag-first repos the Slack kind `digest` (§10, opt-in) posts the owner-waiting PRs with GitHub links and the comment to approve with; Slack itself approves nothing. `bosun digest` (the orchestrator, once a day)
 reads the `approve --list` board and the needs-human issues, and writes nothing. `data.message`
-is one D-012 chat form for the repo: its first line `Daily digest <owner>/<repo> <id>`, every
+is one chat-form text for the repo (legacy: since D-025 a reply to it approves nothing, the owner uses a `/bosun approve <sha>` comment or review): its first line `Daily digest <owner>/<repo> <id>`, every
 owner-waiting PR (`#<pr>@<short head>`, its `R-` rule ids, the inert title), the open asks
-(answered with `bosun answer <issue> --chat`), budget asks (under `budget_feature = ask`, each indexed epic at 100 % of its feature budget, with the reply line `<id> raise <epic> +<usd>`; they are not in the id; epics at 80 % or more that are not asks are listed as `Budget warnings`, also with no hint) and the reply
-`<id> approve 12 15`. While main is red, mainfix PRs are in `data.bypass`,
+(answered with `bosun answer <issue> --chat`), budget asks (under `budget_feature = ask`, each indexed epic at 100 % of its feature budget, with the reply line `<id> raise <epic> +<usd>`; they are not in the id; epics at 80 % or more that are not asks are listed as `Budget warnings`, also with no hint) and, for each owner-waiting PR, the comment `- #<pr>: /bosun approve <full head>` after the line "A chat reply approves nothing (D-025)"; no chat approve line. While main is red, mainfix PRs are in `data.bypass`,
 not in the digest; release-environment taps never wait for it. `data.summary` (D-022) is the once-a-day owner summary: `merged` (PRs with `merged_at` in the last 24 hours before `BOSUN_NOW`), `released` (every release published in that window, from the first page of 30) and `blocked` (the owner-waiting PRs and open `needs-human` asks). A PR or release listing that cannot be read is left out with a line on stderr, never an error. What a tokenless listing could
 not read is in `data.skipped`. `data.header` is `/bosun digest <owner>/<repo> <day> <id>
 <pr>@<head>...` (`day`: the digest's UTC date; `id`: as `message_id` above over the pairs and a
@@ -106,11 +104,11 @@ not read is in `data.skipped`. `data.header` is `/bosun digest <owner>/<repo> <d
 forgery: the orchestrator relays the header of the message it showed). `bosun digest --answer`
 (after the kill switch) takes that header as the first line, then the owner's reply verbatim: a
 header that does not check or names another repo is exit 2. The owner quotes the id they saw
-(the form's last line, pasted as is, is a valid reply): a reply that quotes no id is exit 2, one
+(a form's `raise` line, pasted as is, is a valid reply): a reply that quotes no id is exit 2, one
 whose quoted ids are not all the header's id is exit 3, so a reply never pairs with another
 digest's heads. A PR the owner names counts only when the digest showed it and it still waits at that
-head, else it is in `data.dropped` (a moved head is listed in the next digest). Each approval is
-a `next` call `bosun approve <pr>@<head> --sign-key <pem>` for the key holder: the digest signs
+head, else it is in `data.dropped` (a moved head is listed in the next digest). A named PR approves nothing (D-025): `data.approve[]` lists `{pr, head_sha, owner_comment}` with
+`owner_comment` `/bosun approve <head>` for the owner to post on the PR, and `next` is empty; the digest signs
 no approval. A raise `<id> raise <epic> +<usd>` counts only with `--sign-key` and a key enrolled
 as owner on the default branch: `data.raises` carries the signature of `bosun-raise v1
 <owner>/<repo> digest <id> day <YYYY-MM-DD> reply <sha256 of the normalized reply> epic <n> usd

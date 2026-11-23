@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::path::Path;
 
 const NOW: &str = "2026-11-06T10:00:00Z";
-const ALL: [&str; 14] = [
+const ALL: [&str; 15] = [
     ".bosun/bosun.toml",
     ".bosun/version",
     ".bosun/limits.toml",
@@ -18,6 +18,7 @@ const ALL: [&str; 14] = [
     ".github/workflows/bosun.yml",
     ".github/workflows/risk.yml",
     ".github/workflows/verdict.yml",
+    ".github/workflows/signer.yml",
     ".github/workflows/main-open.yml",
     ".github/workflows/main-health.yml",
     ".claude/settings.json",
@@ -147,10 +148,12 @@ fn writes_files_labels_registry_and_manifest() {
         ".github/workflows/splice.yml",
         "hoist.toml",
         ".github/CODEOWNERS",
-        "deny.toml",
     ] {
         assert!(!t.path().join(p).exists(), "{p}");
     }
+    // The rust stack seeds the channel's cargo-deny config.
+    assert_eq!(action(&v, "deny.toml"), "create");
+    assert!(read(t.path(), "deny.toml").contains("[graph]"));
     // Remote.
     let names = fake.label_names();
     for l in [
@@ -474,4 +477,41 @@ fn dry_run_with_a_token_that_cannot_read_the_repo_still_succeeds() {
     let (code, v) = adopt(&fake, t.path(), &["--dry-run"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["data"]["registry"]["action"], "unknown");
+}
+
+#[test]
+fn adopt_writes_signer_workflow_and_deny_toml_only_for_rust() {
+    let fake = FakeGithub::start();
+    let rust = common::git_tempdir();
+    let (code, v) = adopt(&fake, rust.path(), &["--stack", "rust"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(action(&v, ".github/workflows/signer.yml"), "create");
+    assert_eq!(action(&v, "deny.toml"), "create");
+    let signer = read(rust.path(), ".github/workflows/signer.yml");
+    assert!(signer.contains("name: signer") && !signer.contains("{%"));
+    // A kept deny.toml is never overwritten.
+    write(rust.path(), "deny.toml", "# mine\n");
+    let (_, v) = adopt(&fake, rust.path(), &["--stack", "rust"]);
+    assert_eq!(action(&v, "deny.toml"), "kept");
+    assert_eq!(read(rust.path(), "deny.toml"), "# mine\n");
+
+    let ts = common::git_tempdir();
+    let (code, v) = adopt(&fake, ts.path(), &["--stack", "ts-pnpm"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(action(&v, ".github/workflows/signer.yml"), "create");
+    assert!(!ts.path().join("deny.toml").exists());
+    assert!(
+        !v["data"]["changes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["path"] == "deny.toml")
+    );
+
+    // Without CI, no workflow lands (spec §11), signer included.
+    let none = common::git_tempdir();
+    // Exit 2: human steps remain (the owner enrols keys).
+    let (code, v) = adopt(&fake, none.path(), &["--stack", "rust", "--ci", "none"]);
+    assert_eq!(code, 2, "{v}");
+    assert!(!none.path().join(".github/workflows/signer.yml").exists());
 }

@@ -74,7 +74,9 @@ fn the_digest_lists_owner_waiting_prs_and_open_asks_and_skips_mainfix() {
     let d = &v["data"];
     let id = d["message_id"].as_str().unwrap();
     let want = format!(
-        "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@abc1234 R-gov, R-ci: `first change`\n- #15@def5678 R-gov, R-ci: `second change`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nReply with (drop the PRs you hold):\n{id} approve 12 15"
+        "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@abc1234 R-gov, R-ci: `first change`\n- #15@def5678 R-gov, R-ci: `second change`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nA chat reply approves nothing (D-025). Approve on each PR with a comment:\n- #12: /bosun approve {a}\n- #15: /bosun approve {b}",
+        a = head("abc1234"),
+        b = head("def5678")
     );
     assert_eq!(d["message"], json!(want));
     let pairs = format!("12@{} 15@{}", head("abc1234"), head("def5678"));
@@ -106,31 +108,32 @@ fn the_answer_returns_approve_calls_and_drops_a_moved_head() {
     let (_, v) = digest(&fake, &[], "");
     let header = v["data"]["header"].as_str().unwrap().to_string();
     let id = v["data"]["message_id"].as_str().unwrap().to_string();
-    // The form's reply line, pasted as is, parses.
-    let line = v["data"]["message"]
-        .as_str()
-        .unwrap()
-        .lines()
-        .last()
-        .unwrap()
-        .to_string();
-    let (code, v) = digest(&fake, &["--answer"], &format!("{header}\n{line}\n"));
+    // D-025: the form offers no chat approve line, only the PR comments.
+    let message = v["data"]["message"].as_str().unwrap().to_string();
+    assert!(!message.contains(&format!("{id} approve")), "{message}");
+    assert!(message.contains(&format!("- #12: /bosun approve {}", head("abc1234"))));
+    // A typed reply still parses, into comment lines only.
+    let (code, v) = digest(
+        &fake,
+        &["--answer"],
+        &format!("{header}\n{id} approve 12 15\n"),
+    );
     assert_eq!((code, v["data"]["unknown"].clone()), (0, json!([])), "{v}");
     assert_eq!(v["data"]["approve"].as_array().unwrap().len(), 2);
+    assert_eq!(v["next"], json!([]), "{v}");
     let moved = head("def9999");
     set_head(&fake, 15, &moved);
     let input = format!("{header}\n{id} Approve 12, 15, 20\nraise 7 +20\nthanks\n");
     let (code, v) = digest(&fake, &["--answer"], &input);
     assert_eq!(code, 0, "{v}");
     let d = &v["data"];
-    let cmd = format!("bosun approve 12@{} --sign-key <pem>", head("abc1234"));
-    assert_eq!(
-        v["next"],
-        json!([{"tool": "Bash", "args": {"command": cmd}}])
-    );
+    // D-025: a chat reply never becomes `bosun approve` next steps; the owner approves on GitHub.
+    assert_eq!(v["next"], json!([]), "{v}");
+    assert!(!v.to_string().contains("--sign-key <pem>"), "{v}");
     assert_eq!(
         d["approve"],
-        json!([{"pr": 12, "head_sha": head("abc1234")}])
+        json!([{"pr": 12, "head_sha": head("abc1234"),
+            "owner_comment": format!("/bosun approve {}", head("abc1234"))}])
     );
     let dropped: Vec<u64> = d["dropped"]
         .as_array()

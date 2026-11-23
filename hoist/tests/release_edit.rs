@@ -310,3 +310,37 @@ fn unreleased_inside_a_code_fence_is_ignored() {
         "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n```\n## not a heading\n```\n- moved\n\n## 1.0.0 (d)\n"
     );
 }
+
+#[test]
+fn changelog_section_heading_inside_a_fence_is_not_the_section() {
+    let text = "## 2.0.0 (d)\n\n```md\n## 1.0.0 (fake)\n- fake\n```\n\n## 1.0.0 (d)\n\n- real\n";
+    assert_eq!(changelog_section(text, "1.0.0").as_deref(), Some("- real"));
+    let only_fenced = "## 2.0.0 (d)\n\n~~~\n## 1.0.0 (x)\n- fake\n~~~\n";
+    assert_eq!(changelog_section(only_fenced, "1.0.0"), None);
+}
+
+#[test]
+fn rewrite_package_json_dep_sees_decoded_json_escapes() {
+    use hoist::release::edit::rewrite_package_json_dep;
+    let pkg = "{\n  \"dependencies\": {\"core\": \"\\u005e1.0.0\"}\n}\n";
+    let seen = std::cell::RefCell::new(String::new());
+    let out = rewrite_package_json_dep(pkg, "core", &["dependencies"], |old| {
+        *seen.borrow_mut() = old.to_string();
+        format!("{old}-x\"q")
+    })
+    .unwrap();
+    assert_eq!(*seen.borrow(), "^1.0.0");
+    assert!(out.contains("\"^1.0.0-x\\\"q\""), "{out}");
+}
+
+#[test]
+fn a_moved_unreleased_block_keeps_its_first_line_indent() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "## Unreleased\n\n    indented code\n- item\n  - nested\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n    indented code\n- item\n  - nested\n\n## 1.0.0 (d)\n"
+    );
+}

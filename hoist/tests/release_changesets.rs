@@ -413,7 +413,12 @@ fn workspace_star_dependent_gets_a_patch() {
     let p = plan(&m, &[cs("x", &[("a", CsType::Major)])], &cfg("{}"));
     assert_eq!(find(&p, "b").to, v("1.0.1"));
     assert_eq!(find(&p, "c").to, v("1.0.1"));
-    assert!(find(&p, "b").dep_updates.is_empty(), "workspace:* is kept");
+    assert_eq!(
+        find(&p, "b").dep_updates,
+        vec![("a".to_string(), "2.0.0".to_string(), DepKind::Normal)],
+        "workspace:* is kept in the file but listed in the changelog"
+    );
+    assert_eq!(find(&p, "c").dep_updates.len(), 1);
 }
 
 #[test]

@@ -40,7 +40,7 @@ https://keelstack.dev/llms-full.txt.
    `docs/setup-script.sh`; a later pin change needs no new paste. [Cloud environment](/docs/cloud/#short-version).
 6. **Enroll the orchestrator's signing key** (orchestrator makes the key, owner approves the pull
    request on GitHub). After this, the owner approves in chat.
-   [Risk and review](/docs/risk/#signed-approvals-from-chat).
+   [Risk and review](/docs/risk/#signed-approvals).
 7. **Write the plan** (agent). `plans/<project>.md` with items, tasks (`touch:` paths, at most 400
    lines each) and "Done when" lines; `bosun plan check` validates it.
    [Tasks and sessions](/docs/tasks/#plans-items-tasks-and-ucs).

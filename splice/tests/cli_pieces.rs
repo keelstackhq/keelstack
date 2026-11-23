@@ -166,6 +166,16 @@ fn default_name_matches_new_yes() {
             ("single".into(), serde_json::Value::Null),
         ]
     );
+    // The listed default name is the one `new --yes` gives the piece: run it for both.
+    for (piece, name) in [("dflt", "web"), ("plain", "plain")] {
+        let dest = tempfile::tempdir().unwrap();
+        splice_cmd()
+            .args(["new", s(&tpl), s(&dest), "--yes", "--piece", piece])
+            .assert()
+            .success();
+        let lock = std::fs::read_to_string(dest.path().join(".splice/lock.toml")).unwrap();
+        assert!(lock.contains(name), "{piece}: {lock}");
+    }
     // null for `nodflt` is real: `new --yes` cannot name it.
     let dest = tempfile::tempdir().unwrap();
     splice_cmd()

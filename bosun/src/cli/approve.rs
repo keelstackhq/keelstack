@@ -685,7 +685,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     .ok_or_else(|| {
         BosunError::usage(
             "--sign-key takes one <pr>@<40-hex head sha>: the head the owner approved",
-            "run `bosun approve --list` (it works in the cloud), confirm the head with the owner, then `bosun approve <pr>@<head> --sign-key <pem>`",
+            "run `bosun approve --list` for the ready heads; the owner approves with a `/bosun approve <head_sha>` comment on the PR (D-025), and only an enrolled-key signer runs `bosun approve <pr>@<head> --sign-key <pem>` on the exact head",
         )
     })?;
     let api = crate::github::http::api_base();
@@ -971,18 +971,29 @@ fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
 /// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
 type Boot = (Option<String>, String, Policy, &'static str);
 
-/// How much a policy lets bosun sign, strictest first (0 = owner: bosun signs nothing). A PR whose
-/// base ranks higher (looser) than the default branch fails closed. Quorum ranks above autonomous
-/// (it ignores R-weaken), so a default branch that moved from quorum to autonomous fails closed
-/// for a PR whose base still says quorum.
-fn policy_rank(p: Policy) -> u8 {
+/// What a policy asks of a signature, one number per dimension, higher = stricter:
+/// 1. how much stays with the owner (owner 3, owner-gated 2, orchestrator 1, autonomous and
+///    quorum 0: they also sign gated PRs),
+/// 2. independent verdicts required on the head (quorum 2; owner 2 too, nobody signs; autonomous
+///    and owner-gated 1, an independent review; orchestrator 0),
+/// 3. whether R-weaken still applies (quorum ignores it: 0).
+///
+/// Policies are not totally ordered: quorum is stricter in 2, autonomous in 3.
+fn policy_dims(p: Policy) -> [u8; 3] {
     match p {
-        Policy::Owner => 0,
-        Policy::OwnerGated => 1,
-        Policy::Orchestrator => 2,
-        Policy::Autonomous => 3,
-        Policy::Quorum => 4,
+        Policy::Owner => [3, 2, 1],
+        Policy::OwnerGated => [2, 1, 1],
+        Policy::Orchestrator => [1, 0, 1],
+        Policy::Autonomous => [0, 1, 1],
+        Policy::Quorum => [0, 2, 0],
     }
+}
+
+/// True when the default branch's policy is stricter than the PR's base in ANY dimension; the
+/// base policy then fails closed and may not sign.
+fn default_stricter(main: Policy, base: Policy) -> bool {
+    let (m, b) = (policy_dims(main), policy_dims(base));
+    m.iter().zip(b.iter()).any(|(m, b)| m > b)
 }
 
 /// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
@@ -1004,7 +1015,6 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
         None => Default::default(),
     };
     let signs = |p: Policy| matches!(p, Policy::Autonomous | Policy::Quorum);
-    let rank = policy_rank;
     let end_of = |a: &crate::config::Approvals| {
         (a.bootstrap_until.as_ref()).map(|u| u.clone().min(BOOTSTRAP_END.to_string()))
     };
@@ -1015,7 +1025,7 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
             p.name()
         }
     };
-    let stricter = rank(main.policy()) < rank(policy)
+    let stricter = default_stricter(main.policy(), policy)
         || (signs(policy) && !signs(main.policy()))
         // A window the base has open today must not be shortened or dropped; one that already
         // ended is not "open", so the default branch dropping its stale date is fine.
@@ -1279,12 +1289,31 @@ pub(crate) fn read_key(path: &Path) -> Result<ring::signature::Ed25519KeyPair> {
 mod tests {
     use super::*;
 
-    /// Quorum ignores R-weaken, so autonomous is the stricter of the two: a default branch that
-    /// went quorum -> autonomous leaves a quorum base looser (fail closed), never the reverse.
+    /// Quorum and autonomous are each stricter in a different dimension (quorum: two verdicts;
+    /// autonomous: R-weaken still applies), so neither base may sign under the other default.
     #[test]
-    fn autonomous_ranks_stricter_than_quorum() {
-        assert!(policy_rank(Policy::Autonomous) < policy_rank(Policy::Quorum));
-        assert!(policy_rank(Policy::Orchestrator) < policy_rank(Policy::Autonomous));
-        assert!(policy_rank(Policy::Owner) < policy_rank(Policy::OwnerGated));
+    fn default_stricter_in_any_dimension_refuses() {
+        use Policy::*;
+        for p in [Owner, OwnerGated, Orchestrator, Autonomous, Quorum] {
+            assert!(!default_stricter(p, p), "{p:?} vs itself signs");
+        }
+        // Base quorum, default autonomous: autonomous still applies R-weaken.
+        assert!(default_stricter(Autonomous, Quorum));
+        // Base autonomous, default quorum: quorum needs two verdicts.
+        assert!(default_stricter(Quorum, Autonomous));
+        // Orchestrator signs without a verdict; the autonomous default asks for one.
+        assert!(default_stricter(Autonomous, Orchestrator));
+        assert!(default_stricter(Quorum, Orchestrator));
+        // A base that signs nothing is never looser than the default.
+        for m in [Owner, OwnerGated, Orchestrator, Autonomous, Quorum] {
+            assert!(!default_stricter(m, Owner), "{m:?} vs owner base");
+        }
+        // The owner default keeps everything with the owner.
+        assert!(default_stricter(Owner, Quorum));
+        assert!(default_stricter(OwnerGated, Autonomous));
+        // Default looser or equal in every dimension.
+        assert!(!default_stricter(Orchestrator, OwnerGated));
+        assert!(!default_stricter(Orchestrator, Owner));
+        assert!(!default_stricter(OwnerGated, Owner));
     }
 }

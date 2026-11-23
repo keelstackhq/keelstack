@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { readdir, readFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import YAML from "yaml";
@@ -42,11 +44,28 @@ test("root ci.yml ci-hull Rust condition matches rust-tool and rust-cli combos o
   assert.equal(await exit(["rust"]), 0);
 });
 
-test("root ci.yml ci-hull installs nextest@0.9.148 and cargo-deny@0.20.2, with rust-cache for the cli and rust combos", async () => {
+test("root ci.yml ci-hull installs nextest and cargo-deny at the .bosun/pins.toml versions, with rust-cache for the cli and rust combos", async () => {
   const steps = await hullCi();
   const install = steps.find((s) => s.uses?.startsWith("taiki-e/install-action"));
-  assert.equal(install.with.tool, "cargo-nextest@0.9.148,cargo-deny@0.20.2");
+  assert.equal(install.with.tool, "${{ steps.pins.outputs.tools }}");
   assert.equal(install.if, "steps.rust.outputs.needed == 'true'");
+  // One source: the pins step reads .bosun/pins.toml; run it and compare with the file.
+  const pins = steps.find((s) => s.id === "pins");
+  assert.ok(pins && steps.indexOf(pins) < steps.indexOf(install), "pins step before install");
+  const root = fileURLToPath(new URL("../..", import.meta.url));
+  const out = join(await mkdtemp(join(tmpdir(), "pins-")), "out");
+  const r = spawnSync("bash", ["-euo", "pipefail", "-c", pins.run], {
+    cwd: root,
+    env: { ...process.env, GITHUB_OUTPUT: out },
+    encoding: "utf8",
+  });
+  assert.equal(r.status, 0, r.stderr);
+  const toml = await readFile(join(root, ".bosun/pins.toml"), "utf8");
+  const ver = (t) => toml.match(new RegExp(`^\\[${t}\\]\\nversion = "([^"]+)"`, "m"))[1];
+  assert.equal(
+    (await readFile(out, "utf8")).trim(),
+    `tools=cargo-nextest@${ver("nextest")},cargo-deny@${ver("cargo-deny")}`,
+  );
   // One cache for the workspace's splice build (always) and the two Rust combos.
   const cache = steps.find((s) => s.uses?.startsWith("Swatinem/rust-cache@"));
   assert.equal(
