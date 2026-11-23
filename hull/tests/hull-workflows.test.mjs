@@ -53,9 +53,15 @@ test("root ci.yml ci-hull installs nextest and cargo-deny at the .bosun/pins.tom
   const pins = steps.find((s) => s.id === "pins");
   assert.ok(pins && steps.indexOf(pins) < steps.indexOf(install), "pins step before install");
   const root = fileURLToPath(new URL("../..", import.meta.url));
+  // Run it where Actions would: the step's working-directory, else the job's `defaults.run`.
+  const job = YAML.parse(await readFile(ROOT_DIR + "ci.yml", "utf8")).jobs["ci-hull"];
+  const wd = (pins["working-directory"] ?? job.defaults?.run?.["working-directory"] ?? ".").replace(
+    "${{ github.workspace }}",
+    root,
+  );
   const out = join(await mkdtemp(join(tmpdir(), "pins-")), "out");
   const r = spawnSync("bash", ["-euo", "pipefail", "-c", pins.run], {
-    cwd: root,
+    cwd: wd.startsWith("/") ? wd : join(root, wd),
     env: { ...process.env, GITHUB_OUTPUT: out },
     encoding: "utf8",
   });

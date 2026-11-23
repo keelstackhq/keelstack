@@ -430,6 +430,7 @@ jobs:
       - name: Read the tool pins
         id: pins
         if: steps.rust.outputs.needed == 'true'
+        working-directory: ${{ github.workspace }}
         run: |
           pin() { sed -n "/^\[$1\]/,/^\[/s/^version = \"\(.*\)\"\$/\1/p" .bosun/pins.toml | head -n1; }
           nextest="$(pin nextest)"; deny="$(pin cargo-deny)"
