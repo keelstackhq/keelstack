@@ -53,6 +53,7 @@ import {
   closeSync,
   existsSync,
   openSync,
+  lstatSync,
   readFileSync,
   readSync,
   realpathSync,
@@ -218,7 +219,7 @@ const REASON = {
   ghField:
     "gh api / gh workflow run -F/--field @file and --input read a local file into the request: pass literal values with -f/--raw-field (`-f ref=main -f inputs[x]=1`); only a PR body may come from a repo file (`gh api -X POST repos/<o>/<r>/pulls ... -F body=@pr.md`).",
   ghLiteral:
-    'gh opens a PR or issue or starts a workflow from here only when the guard can read every word: write each word literally (no $VAR, "$@", ${...}, $(...) or backticks, in a title or body too), with no GH_HOST/GH_TOKEN/GITHUB_TOKEN/GH_ENTERPRISE_TOKEN prefix or --hostname, and put the body in a non-secret file in the repo: `gh pr create --title <title> --body-file pr.md` or `gh api -X POST repos/<o>/<r>/pulls -f title=<title> -f head=<branch> -f base=<default> -F body=@pr.md`.',
+    'gh opens a PR or issue or starts a workflow from here only when the guard can read every word: write each word literally (no $VAR, "$@", ${...}, $(...) or backticks, in a title or body too), with no GH_*, GITHUB_* or *TOKEN* variable set anywhere in the command, no cd/pushd before it, no --hostname or -R/--repo, and put the body in a regular file in the repo (not a dotfile, symlink or credential file), from the repo root: `gh pr create --title <title> --body-file pr.md` or `gh api -X POST repos/<o>/<r>/pulls -f title=<title> -f head=<branch> -f base=<default> -F body=@pr.md`.',
   unscanned:
     "The guard must read a script before a shell runs it, and cannot read this one (too large, binary bytes, missing, unreadable, nested too deep, fed on stdin or a pipe, or named by a variable, glob or {}): run it as `bash <path>` with a literal path to a readable text script, or run the command directly.",
   ghFlag:
@@ -1587,31 +1588,50 @@ function prCreate(args) {
   return (
     String(method).toUpperCase() === "POST" &&
     PR_CREATE_RE.test(endpoint ?? "") &&
-    fileFields.every((f) => /^body=@/.test(f) && repoFile(f.slice(6))) &&
+    fileFields.every((f) => /^body=@/.test(f)) && // the file itself: repoFile
     input === undefined
   );
 }
 
-/** A body file the PR / issue routes may read: a relative path inside the repo (no `/`, `~` or
- * `..`, not stdin), not a secret file, written literally. */
-function repoFile(p) {
-  return (
-    !!p &&
-    p !== "-" &&
-    !/^[/~]/.test(p) &&
-    !/[$`]/.test(p) &&
-    !p.split("/").includes("..") &&
-    !secretLike(p)
-  );
+/** File names that hold credentials or configuration a body must not carry. */
+const CRED_NAME_RE =
+  /^(environ|.*credential.*|.*secret.*|.*token.*|.*netrc|.*npmrc|.*pypirc|.*yarnrc.*|config(\.json)?|.*\.(pem|key|p12|pfx|kdbx)|id_\w+|keys\.txt)$/i;
+
+/** A body file the PR / issue routes may read: written literally as a relative path with no
+ * dotfile, `..`, credential or config segment; on disk a regular file inside the repo reached
+ * with no symlink; not written by this command (`ln -sf .env pr.md && ...`). Fail closed. */
+function repoFile(p, projectDir, cwd, chain) {
+  if (!p || p === "-" || /^[/~]/.test(p) || /[$`*?[{\\]/.test(p)) return false;
+  const parts = p.split("/").filter((x) => x && x !== ".");
+  if (!parts.length || parts.some((x) => x.startsWith(".") || CRED_NAME_RE.test(x))) return false;
+  if (secretLike(p) || !chain.later || chain.later.opaque || chain.state?.opaque) return false;
+  try {
+    const root = realpathSync(projectDir);
+    const abs = resolve(realpathSync(cwd), p);
+    if (!abs.startsWith(`${root}/`) || realpathSync(abs) !== abs) return false;
+    if (!lstatSync(abs).isFile()) return false;
+    const written = [...chain.later.names, ...chain.made, ...chain.tainted];
+    return !written.some((w) => w === abs || w === resolve(cwd, p) || abs.startsWith(`${w}/`));
+  } catch {
+    return false; // missing or unreadable
+  }
 }
 
 /** Env prefixes that point gh at another host or token (`GH_HOST=x gh api ...`). */
-const GH_ENV_RE = /^(GH_HOST|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN|GH_TOKEN|GITHUB_TOKEN)=/;
+const GH_ENV_RE = /^(GH_\w*|GITHUB_\w*|\w*TOKEN\w*)=/;
+
+/** Text that may point gh at another host, repo, config or token anywhere in the command
+ * (`export GH_HOST=x; gh ...`, `declare -x`, `read GH_REPO`, `MY_TOKEN=x`). */
+const GH_TAINT_RE = /\b(?:GH|GITHUB)_\w+|\w*TOKEN\w*=/;
 
 /** The gh write routes the guard opens (a PR, a workflow dispatch or re-run, an issue) apply only
  * to a command the guard read in full: every word literal (no `$VAR`, `"$@"`, `${...}`, `$(...)`
- * or backtick, a -f / --body value too) and no GH_HOST / token env prefix. */
-const ghLiteral = (t) => !t.ghEnv && !t.some((w) => /[$`]/.test(w));
+ * or backtick, a -f / --body value too), no GH_* / GITHUB_* / token variable set anywhere in the
+ * command (or the script that runs it), no directory change before it and no `-R`/`--repo`. */
+const ghLiteral = (t, chain) =>
+  chain.ghClean === true &&
+  !t.ghEnv &&
+  !t.some((w) => /[$`]/.test(w) || /^(-R|--repo)(=|$)|^-R./.test(w));
 
 /** The `gh pr|issue create` body file (`--body-file p`, `-F p`, `--body-file=p`, `-Fp`). */
 function bodyFiles(args) {
@@ -1794,12 +1814,15 @@ function bashRule(
       if (ghApiWrites(args.slice(1))) {
         if (ADMIN_API_RE.test(`/${api.endpoint ?? ""}`)) return "ghAdmin";
         if (!workflowRun(args.slice(1)) && !prCreate(args.slice(1))) return "ghApi";
-        if (!ghLiteral(t)) return "ghLiteral";
+        if (!ghLiteral(t, chain)) return "ghLiteral";
+        const files = api.fileFields.map((f) => f.slice(6));
+        if (!files.every((f) => repoFile(f, projectDir, cwd, chain))) return "ghLiteral";
       } else if (api.input !== undefined) return "ghField";
     }
     if (["pr", "issue"].includes(a0) && a1 === "create") {
-      if (!ghLiteral(t)) return "ghLiteral";
-      if (!bodyFiles(args.slice(2)).every(repoFile)) return "ghLiteral";
+      if (!ghLiteral(t, chain)) return "ghLiteral";
+      if (!bodyFiles(args.slice(2)).every((f) => repoFile(f, projectDir, cwd, chain)))
+        return "ghLiteral";
     }
     if (a0 === "pr" && a1 === "merge") {
       if (args.includes("--admin")) return "ghMerge";
@@ -2100,6 +2123,12 @@ function checkShell(text, projectDir, cwd, opts) {
     vars: varValues(text, parent?.vars),
   };
   const cmds = commands(text);
+  // gh's PR / issue / workflow routes: no GH_* / GITHUB_* / token variable and no directory
+  // change anywhere in this text or the one that runs it (`ghLiteral`).
+  chain.ghClean =
+    (parent ? parent.ghClean === true : true) &&
+    !GH_TAINT_RE.test(text) &&
+    !cmds.some((t) => ["cd", "pushd", "popd", "chdir", "@chdir"].includes(base(t[0])));
   // Writes anywhere in this text (a later command can run first: `(sleep 1; bash f) & cp x f`).
   const later = {
     names: new Set(parent?.later?.names ?? []),

@@ -86,9 +86,11 @@ with the full path instead, so the guard sees the target.
   the word plainly. `gh workflow run <id>` is refused: name the workflow file.
 - Opening a PR or issue (`gh pr|issue create`, `gh api` POST `repos/<o>/<r>/pulls`) and a
   `gh api` workflow dispatch or re-run pass only with every word literal: no `$VAR`, `"$@"`,
-  `${...}`, `$(...)` or backticks anywhere, no `GH_HOST=`/`GH_TOKEN=`/`GITHUB_TOKEN=`/
-  `GH_ENTERPRISE_TOKEN=` prefix (or `env X=`) and no `--hostname`. Put the body in a non-secret
-  file in the repo: `--body-file pr.md` or `-F body=@pr.md` (no `~`, `/`, `..` or stdin).
+  `${...}`, `$(...)` or backticks anywhere, no `GH_*`, `GITHUB_*` or `*TOKEN*` variable set
+  anywhere in the command (prefix, `export`, `declare`), no `cd`/`pushd` before it, no
+  `--hostname` or `-R`/`--repo`. Put the body in a regular file in the repo, named from the repo
+  root: `--body-file pr.md` or `-F body=@pr.md` (no `~`, `/`, `..`, stdin, dotfile, symlink or
+  credential/config name; not written by the same command).
   A `$(...)` runs after the `cd` and `PATH=` before it (`cd d && x=$(./s.sh)` reads `d/s.sh`).
 
 ## Gaps that stay open
