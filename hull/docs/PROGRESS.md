@@ -121,6 +121,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 - 2026-11-20 · rust-service/7 · `docs: rust service pieces in spec, pieces doc and progress` · spec §15 Service pieces, combo `rust-service-full`, AGENTS lines; `fix(template-rust): explain a root-owned Fly volume` (error hint, docs/fly.md, `--fix-volume-owner`). `docs/pieces.md` is generated from `template/` only: unchanged. Unverified: `fly machine run` flags against a real flyctl (docs say to check `--help`).
 - 2026-11-23 · feedback · `feat(hull): release-pre hook, hoist-driven detect, no forced provenance` · template-rust release wording
 - 2026-11-23 · review fixes · template-rust release.yml: gate before the dry run, pending = unreleased versions only, e2e detect test (hoist/tests/release_workflow_detect.rs); release-pre.sh owner-only (guard path, bosun bootstrap exclusion, docs); guard publish reason fits both templates
+- 2026-11-23 · review round 2 · template-rust detect: pinned hoist < 0.22.0 falls back to `release-pending.mjs detect` (version compare; pin moves by PR once released, not bump-version), exit 1 fails, release-pre.sh `--ignore-scripts`
 
 ## Measurements
 
@@ -143,6 +144,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 
 ## Blocked
 
+- template-rust hoist pin: `pins.toml` pins hoist 0.5.1, so `release.yml` detect uses the crate-tag fallback (no npm packages; `[publish] npm.build` and environment `tags` in hoist.toml need the new hoist). Action: once hoist 0.22.0 is on npm (`npm view @keelstackhq/hoist version`), a PR sets `hoist = "0.22.0"` in `hull/template-rust/pieces/base/files/pins.toml`.
 - Next step 2026-11-12: bump astro 7.4.8, wrangler 4.159.0, hono 4.13.17, workers-types 5.20261109.1.
 
 - First real release of a keelstackhq tool (needs a public npm scope + repo settings): verify `npm publish <pnpm-pack tgz> --provenance`, private-repo behaviour (npm generates no provenance for private repos; artifact attestations need a public repo or GitHub Enterprise Cloud), `ubuntu-24.04-arm`, `macos-latest` cross-building `x86_64-apple-darwin`, and that the `npm view <name>@<version> || npm publish` skip works with setup-node's placeholder `NODE_AUTH_TOKEN` (a 401 on the read would make a re-run try to republish). Before it, per repo: create the GitHub environment `release` with a tag rule `*-v*` and required reviewers (npm and github-release run in parallel, so the reviewers are the only gate before publishing); publish each new npm name once by hand; add an npm trusted publisher (repo, `release.yml`, environment `release`) to the launcher and all five platform packages, or the library, then release within 2 days.

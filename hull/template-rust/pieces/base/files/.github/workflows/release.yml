@@ -3,7 +3,8 @@ name: release
 # Releases through hoist (keelstackhq/hoist), the way berth and bosun do it:
 # - detect: is releasing switched on (repository variable HOIST_RELEASE = enabled)? Only then it
 #   asks hoist (`hoist release publish --dry-run --json`, the source of truth for crates and npm
-#   packages): is any package not released yet?
+#   packages): is any package not released yet? A pinned hoist older than 0.22.0 cannot plan
+#   before the build, so then detect reads the crate tags (release-pending.mjs detect).
 # - advisories: `node scripts/deny.mjs --locked check advisories` (pull request CI checks
 #   advisories too; advisories.yml scans main weekly).
 # - build: release binaries for 5 targets as dist/<bin>-<target>. Runs when a release is pending
@@ -61,22 +62,35 @@ jobs:
         if: steps.gate.outputs.enabled == 'true'
         env:
           HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
-      # Read-only dry run, before any build (no --assets): exit 0 and 2 are plans (2 = a human
-      # step pending), anything else fails. Pending = a version not released yet: an item hoist
-      # would create or update. A human step (`pending`) or an unreadable registry (`unknown`)
-      # alone starts no release.
+      # hoist 0.22.0 is the first that plans with `release publish --dry-run --json` before any
+      # build (no --assets) and reads npm packages; an older pin exits 3 there, so with it detect
+      # falls back to the crate tags (`release-pending.mjs detect`, crates only).
+      # Read-only dry run: exit 0 and 2 are plans (2 = a human step pending); anything else fails,
+      # 1 included (the dry run never exits 1; publish would stop on a drifted tag or release).
+      # Pending = a version not released yet: an item hoist would create or update. A human step
+      # (`pending`) or an unreadable registry (`unknown`) alone starts no release.
       - id: detect
         if: steps.gate.outputs.enabled == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
         run: |
           set -o pipefail
+          min=0.22.0
+          if [ "$(printf '%s\n%s\n' "$min" "$HOIST_VERSION" | sort -V | head -n 1)" != "$min" ]; then
+            echo "hoist $HOIST_VERSION is older than $min: detect from the crate tags"
+            node .github/scripts/release-pending.mjs detect | tee -a "$GITHUB_OUTPUT"
+            exit 0
+          fi
           set +e
           out=$(hoist release publish --dry-run --json)
           rc=$?
           set -e
-          if [ "$rc" -gt 2 ]; then echo "hoist release publish --dry-run failed ($rc)" >&2; exit "$rc"; fi
+          case "$rc" in
+            0 | 2) ;;
+            *) echo "hoist release publish --dry-run failed ($rc)" >&2; exit "$rc" ;;
+          esac
           pending=$(jq -r '[.items[] | select(.action == "create" or .action == "update")] | length > 0' <<< "$out")
           echo "pending: $pending"
           echo "pending=$pending" >> "$GITHUB_OUTPUT"

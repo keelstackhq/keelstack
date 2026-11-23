@@ -1208,10 +1208,15 @@ sha256-pinned downloads (a checksum belongs to one version); a hull test keeps t
 5. `Job duration` against the budget (45 s typical PR, 15 s docs-only).
 
 **Release** (`release.yml`, owned; the berth/bosun flow through hoist 0.5.0 from npm): on push
-to `main` + `workflow_dispatch`; `detect` installs the pinned hoist and runs `hoist release publish --dry-run --json`
-(exit > 2 fails): pending is any item whose `action` is not `ok`, so npm packages count, not only
-crates. `.github/scripts/release-pending.mjs` keeps `stage` (and exported crate helpers for hull's
-tests). The gate is
+to `main` + `workflow_dispatch`; `detect` installs the pinned hoist (`pins.toml` `hoist`) and,
+from hoist 0.22.0, runs `hoist release publish --dry-run --json` (exit 0 and 2 are plans, any
+other exit fails): pending is any item hoist would `create` or `update`, so npm packages count, not
+only crates. A pin older than 0.22.0 (it exits 3 on that dry run without `--assets` and does not
+know npm packages there) falls back to `.github/scripts/release-pending.mjs detect` (crate tags
+`{name}@{version}` or hoist.toml `tag_format`, missing or on HEAD = pending); the step compares
+the versions (`sort -V`), so a rendered repo works with the pin it has at any time. The pin is a
+version on npm: `scripts/bump-version.sh` does not move it (it runs before the release exists); a
+reviewed PR moves it once the release is on npm. `release-pending.mjs` also has `stage`. The gate is
 `vars.HOIST_RELEASE == 'enabled'`, so nothing releases until a person turns it on. `build` is
 the bosun target matrix (`cargo build --release --locked --target <t>`; each binary is copied to
 `dist/<bin>-<t>`). `publish` (environment `release`, `contents: write`, `id-token: write`) runs

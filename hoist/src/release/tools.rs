@@ -181,7 +181,9 @@ pub fn run_interactive(tool: Tool, dir: &Path, args: &[&str]) -> Result<(), Tool
 
 /// Run a package's `build` command with `sh -c` in `dir` (spec §5 `[publish]`). Its stdout goes
 /// to hoist's stderr, so `--json` stdout stays clean. Like npm and cargo it never sees the
-/// GitHub token; hoist prints the command, never the environment.
+/// GitHub token; unlike them it never sees the OIDC request variables either
+/// (`ACTIONS_ID_TOKEN_REQUEST_TOKEN`/`_URL`: with them a build script could mint an id token and
+/// publish as the release workflow). hoist prints the command, never the environment.
 pub fn run_build(dir: &Path, cmd: &str) -> Result<(), HoistError> {
     let mut c = Command::new("sh");
     c.args(["-c", cmd])
@@ -195,6 +197,8 @@ pub fn run_build(dir: &Path, cmd: &str) -> Result<(), HoistError> {
         "HOIST_RELEASE_TOKEN",
         "HOIST_RELEASE_APP_ID",
         "HOIST_RELEASE_APP_KEY",
+        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+        "ACTIONS_ID_TOKEN_REQUEST_URL",
     ] {
         c.env_remove(name);
     }

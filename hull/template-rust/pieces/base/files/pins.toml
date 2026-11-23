@@ -8,6 +8,10 @@ nextest = "0.9.148"
 cargo_deny = "0.20.2"
 splice = "0.6.0"
 bosun = "0.21.0"
+# hoist: a version on npm (release.yml installs it). Below 0.22.0 release.yml detects from the
+# crate tags; from 0.22.0 it asks `hoist release publish --dry-run`. hoist.toml keys newer than
+# the pin (`[publish] npm.build`, environment `tags`) need a pin that knows them. Not moved by
+# scripts/bump-version.sh: the pin moves in a reviewed PR once that release is on npm.
 hoist = "0.5.1"
 
 # Crates several pieces share: every workspace crate pins them to exactly these versions

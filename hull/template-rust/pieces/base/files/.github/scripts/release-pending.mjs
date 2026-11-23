@@ -1,10 +1,13 @@
 // Release helper for release.yml (spec §15). Node built-ins only; runs on every runner's node.
+//   node .github/scripts/release-pending.mjs detect          → pending=true|false, packages=[…]
 //   node .github/scripts/release-pending.mjs stage <target>  → copies each workspace binary to
 //                                                              dist/<bin>-<target>[.exe]
-// release.yml `detect` asks `hoist release publish --dry-run --json` now (hoist knows npm packages
-// too). The exported helpers below keep hoist's crate rules for reference and tests: a crate is a package unless `publish` is false or empty or it has
-// no `version`; tags are `[release] tag_format` from hoist.toml, else `{name}@{version}` (a
-// virtual workspace); a package is pending when its tag is missing or points at HEAD.
+// release.yml `detect` asks `hoist release publish --dry-run --json` (hoist knows npm packages
+// too) when the pinned hoist is 0.22.0 or newer; with an older pin (which exits 3 on that dry
+// run without --assets) it runs `detect` here. `detect` uses hoist's crate rules: a crate is a
+// package unless `publish` is false or empty or it has no `version`; tags are `[release]
+// tag_format` from hoist.toml, else `{name}@{version}` (a virtual workspace); a package is
+// pending when its tag is missing or points at HEAD.
 import { execFileSync } from "node:child_process";
 import {
   copyFileSync,
@@ -143,10 +146,13 @@ const isMain = () => {
 };
 if (isMain()) {
   const [cmd, arg] = process.argv.slice(2);
-  if (cmd === "stage" && arg) {
+  if (cmd === "detect") {
+    const list = pending(packages("."), tagSha, git("rev-parse", "HEAD"));
+    process.stdout.write(`pending=${list.length > 0}\npackages=${JSON.stringify(list)}\n`);
+  } else if (cmd === "stage" && arg) {
     stage(arg);
   } else {
-    process.stderr.write("usage: release-pending.mjs stage <target>\n");
+    process.stderr.write("usage: release-pending.mjs detect | stage <target>\n");
     process.exit(2);
   }
 }

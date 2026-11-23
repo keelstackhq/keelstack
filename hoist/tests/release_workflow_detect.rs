@@ -66,6 +66,9 @@ fn run(dir: &Path, api: &FakeApi, script: &str, release: &str) -> (i32, String) 
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GITHUB_OUTPUT", out.path())
         .env("HOIST_RELEASE", release)
+        // The pin this hoist will ship as: the step's dry-run path (older pins fall back to the
+        // crate tags, tested in hull/tests/release-hooks.test.mjs).
+        .env("HOIST_VERSION", "0.22.0")
         .env("GH_TOKEN", "test-token")
         .env("HOIST_GITHUB_API", api.url())
         .env("HOIST_NPM_REGISTRY", api.url())

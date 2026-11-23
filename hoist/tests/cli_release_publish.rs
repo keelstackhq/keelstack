@@ -1753,6 +1753,32 @@ fn npm_build_runs_in_package_dir_before_publish() {
     assert!(stderr(&output).contains("building"), "{}", stderr(&output));
 }
 
+/// The build runs code from the repo's dependencies: it gets neither the GitHub tokens nor the
+/// OIDC request variables (it could mint an id token and publish as the release workflow).
+#[test]
+fn npm_build_gets_no_tokens_and_no_oidc_request() {
+    let mut env = setup();
+    let seen = env.tools.path().join("build.env");
+    with_build(
+        &mut env,
+        &format!(
+            "env | cut -d= -f1 | grep -xE 'GH_TOKEN|GITHUB_TOKEN|HOIST_RELEASE_TOKEN|HOIST_RELEASE_APP_KEY|ACTIONS_ID_TOKEN_REQUEST_TOKEN|ACTIONS_ID_TOKEN_REQUEST_URL' > {}; true",
+            seen.display()
+        ),
+    );
+    let api = lib_unpublished(&env);
+    let output = in_actions(&env, &api)
+        .env("GH_TOKEN", "gh-test-token")
+        .env("HOIST_RELEASE_TOKEN", "rel-test-token")
+        .env("HOIST_RELEASE_APP_KEY", "app-key-test")
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    let seen = std::fs::read_to_string(&seen).unwrap();
+    assert_eq!(seen, "", "the build saw: {seen}");
+}
+
 #[test]
 fn npm_build_failure_is_a_failed_write() {
     let mut env = setup();
