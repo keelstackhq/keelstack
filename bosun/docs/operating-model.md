@@ -61,7 +61,7 @@ mode's target) turns the spawn and heal helpers down by itself.
 Until 2026-11-30 (`[approvals] bootstrap_until` in `.bosun/bosun.toml`, hard cap `BOOTSTRAP_END`
 in `src/core/approve.rs`) the orchestrator may sign gated approvals itself after green checks and
 an independent agent review (D-012). `BOOTSTRAP_EXCLUDED` (`src/core/risk.rs`) keeps `.bosun/**`,
-`governance/**`, CODEOWNERS, `hoist.toml`, the risk, verdict, release and splice workflows and the
+`governance/**`, CODEOWNERS, `hoist.toml`, the risk, verdict, release and splice workflows, `scripts/release-pre.sh` and the
 approval code owner-only, and `orchestrator_counts` (`src/core/approve.rs`) refuses the window on any R-gov or R-prod-write
 match (the rest of R-gov: `.claude/**` with the hook settings, `REVIEW.md`, plans,
 `docs/agents/**`, agent and Claude instruction files). This trades the rule "agent agreement is

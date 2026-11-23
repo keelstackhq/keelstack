@@ -198,10 +198,74 @@ fn an_unreleased_version_still_inits_with_sha() {
 }
 
 #[test]
-fn a_launcher_repo_is_refused() {
+fn a_launcher_repo_gets_no_workflow_and_a_build_step() {
     let repo = fixture_repo("release-launcher", "https://github.com/acme/x.git");
-    let a = init(repo.path(), &["--sha", SHA]).code(3);
-    assert!(String::from_utf8_lossy(&a.get_output().stdout).contains("launcher"));
+    let d = repo.path();
+    std::fs::remove_file(file(d)).unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["items"][0]["action"], "pending");
+    assert!(!file(d).exists());
+    let step = &v["human_steps"][0];
+    assert_eq!(step["id"], "release-workflow-build");
+    let title = step["title"].as_str().unwrap();
+    assert!(title.contains("hoist release publish --assets"), "{title}");
+    assert!(title.contains("github_release"), "{title}");
+}
+
+#[test]
+fn a_launcher_repo_with_its_own_release_workflow_keeps_it() {
+    let repo = fixture_repo("release-launcher", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(file(d), "name: release\non: push\n").unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["items"][0]["reason"], "your own release workflow, kept");
+    let ids: Vec<&str> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, ["release-workflow"]);
+}
+
+#[test]
+fn another_publishing_workflow_is_a_race() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(
+        d.join(".github/workflows/npm.yml"),
+        "name: npm\njobs:\n  p:\n    steps:\n      - run: pnpm publish --access public\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join(".github/workflows/ok.yaml"),
+        "name: ok\n# npm publish is commented\njobs: {}\n",
+    )
+    .unwrap();
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let steps = v["human_steps"].as_array().unwrap();
+    let races: Vec<&Value> = steps
+        .iter()
+        .filter(|s| {
+            s["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("release-workflow-race")
+        })
+        .collect();
+    assert_eq!(races.len(), 1, "{steps:?}");
+    assert_eq!(
+        races[0]["id"],
+        "release-workflow-race:.github/workflows/npm.yml"
+    );
+    let title = races[0]["title"].as_str().unwrap();
+    assert!(title.contains(".github/workflows/npm.yml"), "{title}");
+    assert!(title.contains("two publishers race"), "{title}");
 }
 
 #[test]
@@ -412,4 +476,108 @@ fn the_table_has_no_trailing_colon_for_a_step_without_a_url() {
     let text = String::from_utf8_lossy(&out.get_output().stdout).into_owned();
     let line = text.lines().find(|l| l.contains("(ci-ok)")).unwrap();
     assert!(line.ends_with("(ci-ok)"), "{line:?}");
+}
+
+/// The race check skips the configured `[release] workflow` (not only `release.yml`) and a
+/// `--dry-run` publish, which publishes nothing.
+#[test]
+fn the_configured_release_workflow_and_dry_runs_are_no_race() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::write(d.join("hoist.toml"), "[release]\nworkflow = \"ship.yml\"\n").unwrap();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(
+        d.join(".github/workflows/ship.yml"),
+        "name: ship\njobs:\n  p:\n    environment: release\n    steps:\n      - run: cargo publish\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join(".github/workflows/check.yml"),
+        "name: check\njobs:\n  p:\n    steps:\n      - run: cargo publish --dry-run\n      - run: npm publish --dry-run\n",
+    )
+    .unwrap();
+    let a = init(d, &["--sha", SHA]);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let races: Vec<&Value> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| {
+            s["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("release-workflow-race")
+        })
+        .collect();
+    assert!(races.is_empty(), "{races:?}");
+}
+
+/// Two racing workflows are two human steps with distinct ids.
+#[test]
+fn each_racing_workflow_has_its_own_step_id() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    for n in ["a.yml", "b.yml"] {
+        std::fs::write(
+            d.join(".github/workflows").join(n),
+            "jobs:\n  p:\n    steps:\n      - run: npm publish\n",
+        )
+        .unwrap();
+    }
+    let a = init(d, &["--sha", SHA]).code(2);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let ids: Vec<&str> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|s| s["id"].as_str())
+        .filter(|id| id.starts_with("release-workflow-race"))
+        .collect();
+    assert_eq!(
+        ids,
+        [
+            "release-workflow-race:.github/workflows/a.yml",
+            "release-workflow-race:.github/workflows/b.yml"
+        ]
+    );
+}
+
+/// A `[registry.npm|crates."<name>"]` package publishes through its own workflow outside the
+/// release model (spec §5): that workflow is no race.
+#[test]
+fn a_registry_package_workflow_is_no_race() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::write(
+        d.join("hoist.toml"),
+        "[registry.npm.\"@acme/other\"]\nworkflow = \"other-npm.yml\"\n\n\
+         [registry.crates.other-crate]\nworkflow = \"other-crate.yaml\"\n",
+    )
+    .unwrap();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(
+        d.join(".github/workflows/other-npm.yml"),
+        "name: other\njobs:\n  p:\n    steps:\n      - run: npm publish --access public\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join(".github/workflows/other-crate.yaml"),
+        "name: other\njobs:\n  p:\n    steps:\n      - run: cargo publish\n",
+    )
+    .unwrap();
+    let a = init(d, &["--sha", SHA]);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let races: Vec<&Value> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| {
+            s["id"]
+                .as_str()
+                .unwrap()
+                .starts_with("release-workflow-race")
+        })
+        .collect();
+    assert!(races.is_empty(), "{races:?}");
 }
