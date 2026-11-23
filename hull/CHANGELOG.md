@@ -7,7 +7,7 @@ Releases are automatic: merging a change to `main` whose top heading is a new da
 `v<version>` and publishes the GitHub release after the owner approves the `release` environment.
 Keep `unreleased` while changes accumulate.
 
-## v0.14.0 — unreleased
+## v0.22.0 — 2026-11-23
 
 - template-rust bootstrap friction (client feedback): `pins.toml` + `scripts/pins.mjs` are the one
   source of tool versions (rust, nextest, cargo-deny, splice, bosun, hoist); CI and release.yml read

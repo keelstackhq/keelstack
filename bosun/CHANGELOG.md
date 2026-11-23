@@ -4,6 +4,8 @@ All notable changes to bosun. The format follows [Keep a Changelog](https://keep
 
 ## Unreleased
 
+## 0.22.0 (2026-11-23)
+
 - Gated PRs have no line cap and may bundle (D-021): plan lint, wave, claim, `bosun pr --bundle` and risk-check (`R-bundle`) drop the 400-line, one-task, alone rule; chunked review stays.
 - Adds the chat-approval implementation plan (`docs/superpowers/plans/2026-11-10-chat-approval.md`), updated for the port onto 0.20.0.
 - Core chat approval record (`chat_comment`, `parse_chat_record`, orchestrator rule) and `[approvals] chat` key (default on, not counted yet; D-018).
