@@ -603,7 +603,11 @@ fn stale_verdict(p: &Pushed) -> Result<Option<String>, String> {
 fn read_script(dir: &Path, path: &str) -> Option<Script> {
     use std::io::Read;
     const MAX: u64 = 1 << 20;
-    let file = dir.join(path);
+    // `~/x` (also `$HOME/x` in the command): the home of the user the hook runs as.
+    let file = match path.strip_prefix("~/") {
+        Some(rest) => Path::new(&std::env::var_os("HOME")?).join(rest),
+        None => dir.join(path),
+    };
     let meta = std::fs::metadata(&file).ok()?;
     if meta.is_dir() {
         return None;
@@ -640,11 +644,46 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
     }
     let mut buf = Vec::new();
     let read = opened.and_then(|f| f.take(MAX + 1).read_to_end(&mut buf));
+    // A binary is a program this host's kernel runs (a valid ELF or Mach-O header and a NUL
+    // in the first line); any other file is read as text: a kernel that refuses it leaves it
+    // to `sh`, and a shell runs a script with a NUL past its first line.
+    let binary = crate::core::guard::host_binary(&buf);
     match read {
         Err(_) => Some(Script::Unreadable("it cannot be opened")),
+        Ok(_) if binary && interpreter_binary(&real, meta.len()) => Some(Script::Unreadable(
+            "a shell or interpreter program, by its name or its bytes",
+        )),
+        Ok(_) if binary => Some(Script::Binary),
         Ok(n) if n as u64 > MAX => Some(Script::Unreadable("larger than 1 MiB")),
         Ok(_) => Some(Script::Text(String::from_utf8_lossy(&buf).into_owned())),
     }
+}
+
+/// Whether a program (its resolved path, `len` bytes) is a shell or interpreter: its own name
+/// (a symlink to `/bin/bash`), or the same bytes as one in `/bin`, `/usr/bin` or
+/// `/usr/local/bin` (a copy).
+fn interpreter_binary(real: &Path, len: u64) -> bool {
+    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+    if name(real).is_some_and(|n| crate::core::guard::interpreter_name(&n)) {
+        return true;
+    }
+    let mut mine: Option<Vec<u8>> = None;
+    ["/bin", "/usr/bin", "/usr/local/bin"].iter().any(|d| {
+        std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| {
+                let p = e.path();
+                if !name(&p).is_some_and(|n| crate::core::guard::interpreter_name(&n))
+                    || !std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() == len)
+                {
+                    return false;
+                }
+                let ours = mine.get_or_insert_with(|| std::fs::read(real).unwrap_or_default());
+                std::fs::read(&p).is_ok_and(|b| &b == ours)
+            })
+    })
 }
 
 /// `<git common dir>/bosun/repeat/<key>.json` of the session, agent and directory; `None`
