@@ -493,7 +493,13 @@ settings pin no main-session model (the session's own choice stands).
   (`.splice/lock.toml`, `.claude/hooks/*`, `.claude/settings*.json`, `release*.yml`, `.bosun/*`,
   `git config core.hooksPath|alias.*`). It judges what runs: command substitutions (`$(...)`,
   backticks, `<(...)`; not in single quotes or quoted-delimiter heredocs) are checked as commands;
-  `gh api` with an explicit GET or a graphql query (not a mutation) is a read. Indirection (`eval`,
+  `gh api` with an explicit GET or a graphql query (not a mutation) is a read; a POST whose endpoint (the
+  first positional) dispatches a literal workflow file that is not a release workflow (`release`,
+  `publish`, `deploy`, or `GUARD_RELEASE_WORKFLOWS`) or re-runs a run or job is allowed like
+  `gh workflow run` / `gh run rerun`; `-F x=@file` and `--input` are refused (use `-f`). A shell
+  script the command runs (`bash f`, `bash < f`, `source f`, `./f`) is read and judged like typed
+  commands; one the guard cannot read in full (too large, NUL bytes, missing at hook time or after an earlier writer,
+  stdin, a variable path, nested more than 32 deep) is refused. Indirection (`eval`,
   `sh` or an interpreter fed from a pipe, `$VAR`/`$(...)` as the command, `git -c alias.x=`) denies
   when the text mentions push, publish or release; interpreter code (`-c`/`-e`, heredoc) is data
   only when every statement is inert (print/echo of literals or names; Python: read or
