@@ -46,14 +46,16 @@ on:
   push:
     branches: [main]
 
-# A relay run shares its PR's group (`workflow_run.pull_requests[0].number`, grouping only, never judging;
-# the head sha when the list is empty), so a stale pull_request_target or recheck pass cannot race a relay re-judge.
+# A relay run is grouped by its PR (`workflow_run.pull_requests[0].number`, grouping only, never judging;
+# the head sha when the list is empty) and by its own head sha (`relay-<sha>`), apart from the PR's
+# judge runs: a late relay for an old head never cancels the run that judges a new head, and it
+# judges only a PR whose head is still exactly its sha (so it judges nothing when stale).
 # A comment that is neither an approval nor a recheck by the repo's people, and an edit that
 # changes neither body nor base, get a group of their own: their runs are skipped and must never
 # cancel the run that judges a new head.
 concurrency:
   group: >-
-    risk-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || 'main' }}-${{
+    risk-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || 'main' }}${{ github.event_name == 'workflow_run' && format('-relay-{0}', github.event.workflow_run.head_sha) || '' }}-${{
     ((github.event_name == 'workflow_run' && github.event.workflow_run.event != 'pull_request_review') ||
     (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/bosun approve')
     && !(contains(github.event.comment.body, '/bosun recheck') &&

@@ -1491,7 +1491,8 @@ fn script_paths(
         if SHELL_RUNS.contains(&name) {
             // A shell runs only its first operand; later ones are the script's arguments.
             let all: Vec<String> = args.cloned().collect();
-            let run = shell_run(name, &all).filter(|p| p.unseen.is_some() || pathish(&p.path));
+            let run = shell_run(name, &all).into_iter();
+            let run = run.filter(|p| p.unseen.is_some() || pathish(&p.path));
             out.extend(run.map(|p| place(p, &here, j)));
         } else if RUNS.contains(&name) {
             let all: Vec<String> = args.cloned().collect();
@@ -1782,8 +1783,30 @@ fn leading_redirects_last(words: Vec<String>) -> Vec<String> {
 /// `--rcfile`/`--init-file` take a value, `--` ends them; `source` and `.` take no options);
 /// with `-c`, its code string (judged as a nested command, refused when built); with no
 /// operand or `-s`, its stdin: a `< f` file is read as the script, a here-string with `$` or a
-/// substitution is refused. A pipe into a shell is refused elsewhere.
-fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
+/// substitution is refused. A pipe into a shell is refused elsewhere. A `--rcfile`/`--init-file`
+/// value is a script the shell sources first: read like the main one, refused when built.
+fn shell_run(name: &str, args: &[String]) -> Vec<ScriptPath> {
+    let mut rc = Vec::new();
+    let main = shell_main(name, args, &mut rc);
+    let mut out: Vec<ScriptPath> = rc
+        .into_iter()
+        .map(|f| match literal_path(f) {
+            Some(path) => ScriptPath::file(path, true, true),
+            None => ScriptPath {
+                unseen: Some((
+                    "its startup file (`--rcfile`) path is built when the command runs, which \
+                     the guard cannot read",
+                    true,
+                )),
+                ..ScriptPath::file(name.to_string(), true, true)
+            },
+        })
+        .collect();
+    out.extend(main);
+    out
+}
+
+fn shell_main<'a>(name: &str, args: &'a [String], rc: &mut Vec<&'a str>) -> Option<ScriptPath> {
     // Exactly `sh -n FILE` only parses; any other option may turn running back on (`+n`).
     if let [n, f] = args
         && n == "-n"
@@ -1827,7 +1850,15 @@ fn shell_run(name: &str, args: &[String]) -> Option<ScriptPath> {
                 continue;
             }
             if matches!(a, "--rcfile" | "--init-file") {
+                rc.extend(args.get(i).map(String::as_str));
                 i += 1;
+                continue;
+            }
+            if let Some(v) = a
+                .strip_prefix("--rcfile=")
+                .or_else(|| a.strip_prefix("--init-file="))
+            {
+                rc.push(v);
                 continue;
             }
             if a.starts_with("--") {

@@ -2,6 +2,17 @@
 
 ## 0.22.0 (2026-11-23)
 
+### Features
+
+- `required_checks` takes a table form that pins each required check to the GitHub App that
+  must post it; plan, diff and apply carry the pin into the ruleset
+- the plan says why a release build step is skipped
+
+### Fixes
+
+- publish the keel crate as keelstack-cli; the binary stays keel
+- `secrets check`, DNS, environment and carry-back fixes from review
+
 ## 0.5.1 (2026-11-15)
 
 ### Fixes

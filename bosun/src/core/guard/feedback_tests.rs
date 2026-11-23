@@ -314,3 +314,25 @@ fn the_repo_bump_script_passes() {
     let cmd = "BUMP_DATE=2026-11-23 bash scripts/bump-version.sh 0.22.0";
     assert_eq!(hook(cmd, &[("scripts/bump-version.sh", body)]), None);
 }
+
+#[test]
+fn g2_a_startup_file_a_shell_sources_is_read_like_its_script() {
+    let files = [("x.sh", BAD), ("ok.sh", "echo ok\n")];
+    for cmd in [
+        "bash --rcfile ok.sh -i",
+        "bash --init-file ok.sh -i -c true",
+        "bash --rcfile=ok.sh -i",
+    ] {
+        assert_eq!(hook(cmd, &files), None, "{cmd}");
+    }
+    for cmd in [
+        "bash --rcfile x.sh -i",
+        "bash --init-file x.sh -i -c true",
+        "bash --rcfile=x.sh -i",
+        "bash --init-file=x.sh ok.sh",
+        "bash --rcfile \"$X\" -i",
+        "bash --rcfile $(echo x.sh) -i",
+    ] {
+        assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
+    }
+}

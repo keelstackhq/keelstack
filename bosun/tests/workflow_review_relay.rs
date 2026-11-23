@@ -94,3 +94,13 @@ fn relay_runs_group_per_pr() {
         "relay group per PR: {g}"
     );
 }
+
+#[test]
+fn a_relay_never_shares_the_judge_group_of_a_new_head() {
+    let y = code(&read("risk.yml"));
+    let g = &y[y.find("concurrency:").unwrap()..y.find("permissions:").unwrap()];
+    assert!(
+        g.contains("format('-relay-{0}', github.event.workflow_run.head_sha)"),
+        "relay runs get a group per head sha, apart from the judge: {g}"
+    );
+}

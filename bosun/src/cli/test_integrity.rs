@@ -154,7 +154,8 @@ pub(crate) fn pr_grants(app: &App, pull: &crate::github::Pull) -> Result<PrGrant
         let Some(m) = app
             .gh
             .get_issue(i)?
-            .filter(|x| !x.pull_request)
+            // Only an open task lends its grants: a closed one (done, or a decoy) never does.
+            .filter(|x| !x.pull_request && x.state == "open")
             .and_then(|x| parse_task_meta(x.body_text()))
         else {
             continue;

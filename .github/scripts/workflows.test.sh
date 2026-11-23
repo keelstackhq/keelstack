@@ -14,6 +14,9 @@
 #    git error (a missing object) fails the step. The plan checkout keeps no credentials.
 # 5. release.yml: the tag deploy key step fails closed without RELEASE_TAG_KEY, pins github.com's
 #    host key, and both tag jobs stop the agent in an always() step.
+# 6. release.yml crates and npm: a crate or package not published yet (and whatever depends on
+#    it) is skipped with a notice naming `hoist release bootstrap`; all others still publish; an
+#    unexpected registry answer fails the step.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 wf="$here/../workflows"
@@ -273,5 +276,92 @@ done
 n="$(grep -vE '^[[:space:]]*#' "$rel" | grep -cE 'git/refs|extraheader' || true)"
 [ "$n" = 0 ] || bad "release.yml: a tag is still written through the API or an HTTPS token"
 [ "$fail" = 1 ] || ok "release.yml: tag deploy key fails closed, host key pinned, agent stopped"
+
+# --- 6. release.yml crates and npm: a new crate or package is skipped, never a partial stop ----
+fb="$tmp/fakebin"
+mkdir -p "$fb"
+cat >"$fb/cargo" <<'X'
+#!/usr/bin/env bash
+case "$1" in
+  metadata) cat <<'J'
+{"packages":[
+ {"name":"keel-splice","publish":null,"dependencies":[]},
+ {"name":"keel-bosun","publish":null,"dependencies":[{"name":"keel-splice","path":"/s"}]},
+ {"name":"keel-newlib","publish":null,"dependencies":[]},
+ {"name":"keel-cli","publish":null,"dependencies":[{"name":"keel-newlib","path":"/n"},{"name":"keel-bosun","path":"/b"}]},
+ {"name":"keel-private","publish":[],"dependencies":[]}]}
+J
+  ;;
+  publish) echo "$3" >>"$FAKE_LOG" ;;
+esac
+X
+cat >"$fb/curl" <<'X'
+#!/usr/bin/env bash
+url="${*: -1}"
+case "$*" in
+  *-X\ DELETE*) exit 0 ;;
+  *trusted_publishing/tokens*) cat >/dev/null; echo '{"token":"t"}'; exit 0 ;;
+  *audience=crates.io*) echo '{"value":"j"}'; exit 0 ;;
+esac
+case "$url" in
+  */keel-splice/*) c=200 ;;
+  */keel-newlib*) c=404 ;;
+  */keel-bosun/*) c=404 ;;
+  */crates/keel-bosun) c=${FAKE_BOSUN:-200} ;;
+  *) c=404 ;;
+esac
+printf '%s' "$c"
+X
+cat >"$fb/npm" <<'X'
+#!/usr/bin/env bash
+case "$1" in
+  view) case "$2" in
+    old-a@*) echo 1; exit 0 ;;
+    *@*) echo "npm error code E404"; exit 1 ;;
+    new-plat) echo "npm error code E404"; exit 1 ;;
+    *) echo "$2"; exit 0 ;;
+  esac ;;
+  publish) echo "$2" >>"$FAKE_LOG" ;;
+  pkg) exit 0 ;;
+esac
+X
+printf '#!/usr/bin/env bash\necho refs/tags/v0.22.0\n' >"$fb/gh"
+chmod +x "$fb"/*
+crates="$(step_run "$rel" crates 'Publish the crates, dependencies first')"
+[ -n "$crates" ] || bad "release.yml crates: publish step not found"
+d="$tmp/crates"; mkdir -p "$d"; : >"$d.log"
+if out="$(cd "$d" && PATH="$fb:$PATH" FAKE_LOG="$d.log" VERSION=0.22.0 GITHUB_REPOSITORY=o/r \
+  ACTIONS_ID_TOKEN_REQUEST_TOKEN=x ACTIONS_ID_TOKEN_REQUEST_URL='http://x/?a=1' GITHUB_STEP_SUMMARY="$d.sum" \
+  bash -e -c "$crates" 2>&1)"; then
+  [ "$(cat "$d.log")" = keel-bosun ] || bad "crates: published '$(tr '\n' ' ' <"$d.log")', want only keel-bosun: $out"
+  grep -q '^::notice::skip keel-newlib 0.22.0: .*`hoist release bootstrap`' <<<"$out" || bad "crates: no notice for the new crate: $out"
+  grep -q '^::notice::skip keel-cli 0.22.0: it depends on keel-newlib' <<<"$out" || bad "crates: a dependent of a new crate is not skipped: $out"
+  grep -q 'hoist release bootstrap' "$d.sum" || bad "crates: no step summary for the new crates"
+else
+  bad "crates: a new crate failed the job: $out"
+fi
+: >"$d.log"
+if out="$(cd "$d" && PATH="$fb:$PATH" FAKE_LOG="$d.log" FAKE_BOSUN=503 VERSION=0.22.0 GITHUB_REPOSITORY=o/r \
+  bash -e -c "$crates" 2>&1)"; then
+  bad "crates: a 503 from crates.io passed"
+else
+  grep -q '^::error::crates.io answered 503 for keel-bosun' <<<"$out" || bad "crates: no clear error on 503: $out"
+  [ ! -s "$d.log" ] || bad "crates: published before the checks were done"
+fi
+npm_step="$(step_run "$rel" npm 'Publish (trusted publishing, provenance), platform packages before their launcher')"
+[ -n "$npm_step" ] || bad "release.yml npm: publish step not found"
+d="$tmp/npm"; : >"$d.log"
+mkpkg() { mkdir -p "$d/$1"; printf '{"name":"%s","version":"0.22.0","optionalDependencies":{%s}}' "$1" "${2:-}" >"$d/$1/package.json"; echo "./$1" >>"$d/publish-dirs.txt"; }
+mkdir -p "$d"; : >"$d/publish-dirs.txt"
+mkpkg old-a; mkpkg old-plat; mkpkg new-plat; mkpkg launcher '"old-plat":"0.22.0","new-plat":"0.22.0"'; mkpkg other
+if out="$(cd "$d" && PATH="$fb:$PATH" FAKE_LOG="$d.log" VERSION=0.22.0 TAG=v0.22.0 GH_REPO=o/r \
+  GITHUB_STEP_SUMMARY="$d.sum" bash -e -c "$npm_step" 2>&1)"; then
+  [ "$(tr '\n' ' ' <"$d.log")" = "./old-plat ./other " ] || bad "npm: published '$(tr '\n' ' ' <"$d.log")', want old-plat other: $out"
+  grep -q '^::notice::skip new-plat@0.22.0: .*`hoist release bootstrap`' <<<"$out" || bad "npm: no notice for the new package: $out"
+  grep -q '^::notice::skip launcher@0.22.0: it depends on new-plat' <<<"$out" || bad "npm: a launcher of a new package is not skipped: $out"
+else
+  bad "npm: a new package failed the job: $out"
+fi
+[ "$fail" = 1 ] || ok "release.yml: a new crate or npm package is skipped with a bootstrap notice, the rest publish"
 
 exit "$fail"

@@ -310,6 +310,11 @@ mod tests {
     #[test]
     fn timeout_kills_the_whole_process_group() {
         // UC-WH-1: a script that spawns a child (flyctl under fly-setup.sh) must not leave it behind.
+        // The liveness check reads /proc, which macOS lacks: skip there instead of passing vacuously.
+        if !std::path::Path::new("/proc/self/stat").exists() {
+            eprintln!("skip: no /proc");
+            return;
+        }
         let dir = tempfile::tempdir().unwrap();
         let pidfile = dir.path().join("child.pid");
         let script = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
@@ -323,7 +328,12 @@ mod tests {
         let mut dead = false;
         for _ in 0..50 {
             // `kill -0` fails once the process is gone (a zombie still answers: check /proc state).
-            let state = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap_or_default();
+            // A missing /proc/<pid> means the process is gone; any other read error fails the test.
+            let state = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+                Err(e) => panic!("cannot read /proc/{pid}/stat: {e}"),
+            };
             if state.is_empty() || state.contains(") Z") {
                 dead = true;
                 break;
