@@ -1,1 +1,0 @@
-- 2026-11-18 · chat-approval T2 · risk-check counts chat records (orchestrator, owner, unedited, head), no-owners fallback, no carry · this PR

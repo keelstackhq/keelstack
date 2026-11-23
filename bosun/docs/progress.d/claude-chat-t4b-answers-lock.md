@@ -1,1 +1,0 @@
-- Chat approvals T4b: answers hook verifies the transcript, small answers.json write guard; no hook-word lock.

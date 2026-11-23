@@ -1,1 +1,0 @@
-- Chat approval T10: `bosun merge <pr>` for the orchestrator; spec D13 amended (D-019).
