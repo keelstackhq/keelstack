@@ -40,9 +40,10 @@ fn a_large_binary_runs_like_a_program_and_a_large_script_is_refused_everywhere()
     )
     .unwrap();
     std::fs::write(dir.join("ci-bin.sh"), "#!/bin/bash\n./tool --test\n").unwrap();
-    for command in ["./tool --version", "bash ci-bin.sh"] {
-        assert_eq!(hook(dir, command), "", "{command}");
-    }
+    // Main's guard (the legacy judge) cannot read a program over 1 MiB and refuses it; the
+    // no-regression rule keeps that.
+    assert!(hook(dir, "./tool --version").contains("\"deny\""));
+    assert_eq!(hook(dir, "bash ci-bin.sh"), "");
     // A NUL byte does not make a script a binary: only a valid ELF or Mach-O header does.
     std::fs::write(
         dir.join("n.sh"),
@@ -149,8 +150,10 @@ fn text_behind_program_magic_is_read_as_a_script() {
     let mut real = host_elf();
     real.extend(b"gh pr merge 1\n");
     std::fs::write(dir.join("prog"), real).unwrap();
+    // Main's guard (the legacy judge) reads a binary as text and refuses a protected literal
+    // in it (reviewers C and D on #66: a copy of git or gh); the no-regression rule keeps that.
     for command in ["./prog", "cd . && ./prog"] {
-        assert_eq!(hook(dir, command), "", "{command}");
+        assert!(hook(dir, command).contains("\"deny\""), "{command}");
     }
     // Through a wrapper, `execvp` hands a file the kernel refuses to `sh`: not read, refused.
     assert!(hook(dir, "timeout 5 ./prog").contains("\"deny\""));

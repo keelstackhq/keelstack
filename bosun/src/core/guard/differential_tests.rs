@@ -58,9 +58,6 @@ fn head_denies_whatever_main_denies_outside_the_enumerated_allows() {
                 .or_else(|| script_rules(p, &read, &at, "main"));
             if raw.is_none() {
                 caught += 1;
-                if std::env::var_os("DIFF_DUMP").is_some() {
-                    eprintln!("CAUGHT[{branch}] {p:?} => {old:?}");
-                }
             }
             if head.is_none() && intended::allow(p).is_none() {
                 leaks.push(p.clone());
