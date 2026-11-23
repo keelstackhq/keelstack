@@ -87,8 +87,8 @@ pub enum EnvBranches {
     Unrestricted,
     /// Only branches with protection rules (not what hoist writes).
     Protected,
-    /// Custom policies: the branch (or tag) name patterns.
-    Custom(Vec<String>),
+    /// Custom policies: the branch name patterns, then the tag name patterns.
+    Custom(Vec<String>, Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +241,19 @@ fn read_env_branches(
                 crate::http::seg(name)
             );
             match list(http, &what, &path, Some("branch_policies"))? {
-                Fetch::Got(rows) => Fetch::Got(EnvBranches::Custom(names(rows, "name"))),
+                Fetch::Got(rows) => {
+                    let of = |kind: &str| -> Vec<String> {
+                        let picked = rows
+                            .iter()
+                            .filter(|r| {
+                                r.get("type").and_then(Value::as_str).unwrap_or("branch") == kind
+                            })
+                            .cloned()
+                            .collect();
+                        names(picked, "name")
+                    };
+                    Fetch::Got(EnvBranches::Custom(of("branch"), of("tag")))
+                }
                 Fetch::Unknown(why) => Fetch::Unknown(why),
             }
         } else {

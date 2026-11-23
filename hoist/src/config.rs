@@ -56,6 +56,8 @@ impl<'de> Deserialize<'de> for TagsBypass {
 pub struct EnvCfg {
     /// Deployment branch policies. Unset: the default branch. `[]`: no branch restriction.
     pub branches: Option<Vec<String>>,
+    /// Deployment tag policies (name patterns such as `v*`), added to the branch policies.
+    pub tags: Vec<String>,
     /// `false`: hoist leaves this environment alone.
     pub manage: bool,
 }
@@ -64,6 +66,7 @@ impl Default for EnvCfg {
     fn default() -> Self {
         Self {
             branches: None,
+            tags: Vec::new(),
             manage: true,
         }
     }

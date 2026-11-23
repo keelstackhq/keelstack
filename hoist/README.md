@@ -225,12 +225,17 @@ Each environment is created with a deployment branch policy for the default bran
 ```toml
 [github.environments.production]
 branches = ["main", "release/*"]   # default: the default branch; [] = no branch restriction
+tags = ["v*"]                      # optional: tag deployment policies, so a tag-triggered job may use the environment
 
 [github.environments.splice-bot]
 manage = false                     # hoist leaves this one alone (an `ok` "not managed" item)
 
 [github.environments.canary]       # listed only here: created too
 ```
+
+`tags` also works for the `release` environment (a tag-triggered publish job cannot use a branch-only
+environment). Each pattern is a deployment policy of type `tag`; branch and tag policies are read
+and compared by type, so a branch policy named `v*` does not satisfy a wanted tag.
 
 Unknown keys under `[github.environments.<name>]` are an error (exit 3).
 

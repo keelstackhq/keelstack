@@ -534,3 +534,60 @@ fn restricting_an_existing_environment_keeps_its_reviewers_and_wait_timer() {
         "{body}"
     );
 }
+
+fn typed_rows(rows: &[(&str, &str)]) -> String {
+    let rows: Vec<String> = rows
+        .iter()
+        .map(|(n, t)| format!(r#"{{"id":1,"name":"{n}","type":"{t}"}}"#))
+        .collect();
+    format!(
+        r#"{{"total_count":{},"branch_policies":[{}]}}"#,
+        rows.len(),
+        rows.join(",")
+    )
+}
+
+#[test]
+fn a_wanted_tag_policy_is_ok_when_live_has_it_as_a_tag() {
+    let dir = production_only();
+    write_toml(
+        dir.path(),
+        "[github.environments.production]\ntags = [\"v*\"]\n",
+    );
+    let api = start(&live(
+        CUSTOM,
+        &typed_rows(&[("main", "branch"), ("v*", "tag")]),
+    ));
+    let report = run(&api, dir.path(), &["plan", "--json"], 0);
+    let it = item(&report, "environment", "production");
+    assert_eq!(it["action"], "ok", "{it}");
+    api.assert_only_get();
+}
+
+#[test]
+fn a_branch_policy_named_like_the_tag_does_not_satisfy_it() {
+    let dir = production_only();
+    write_toml(
+        dir.path(),
+        "[github.environments.production]\ntags = [\"v*\"]\n",
+    );
+    let api = start(&live(
+        CUSTOM,
+        &typed_rows(&[("main", "branch"), ("v*", "branch")]),
+    ));
+    let report = run(&api, dir.path(), &["plan", "--json"], 0);
+    let it = item(&report, "environment", "production");
+    assert_eq!(it["action"], "update", "{it}");
+    assert!(it["reason"].as_str().unwrap().contains("tag `v*`"), "{it}");
+    api.assert_only_get();
+    let _ = run(&api, dir.path(), &["apply", "--yes", "--json"], 1);
+    let post = api
+        .requests()
+        .into_iter()
+        .find(|q| q.method == "POST")
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(post.body.as_deref().unwrap()).unwrap(),
+        serde_json::json!({"name": "v*", "type": "tag"})
+    );
+}

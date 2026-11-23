@@ -75,6 +75,7 @@ fn execute_github_plain(http: &Http, d: &Desired, change: &Change) -> Result<(),
         Change::Environment {
             name,
             branches,
+            tags,
             write_env,
             exists,
             release,
@@ -82,7 +83,7 @@ fn execute_github_plain(http: &Http, d: &Desired, change: &Change) -> Result<(),
         } => {
             let env = format!("{repo}/environments/{}", seg(name));
             // No branches: no restriction at all (`null`), as for an environment made by hand.
-            let mut body = if branches.is_empty() {
+            let mut body = if branches.is_empty() && tags.is_empty() {
                 json!({"deployment_branch_policy": null})
             } else {
                 json!({"deployment_branch_policy":{
@@ -124,8 +125,12 @@ fn execute_github_plain(http: &Http, d: &Desired, change: &Change) -> Result<(),
                 Err(err) => return Err(err.into()),
             }
             let path = format!("{env}/deployment-branch-policies");
-            for branch in branches {
-                let policy = json!({"name": branch, "type": "branch"});
+            let all = branches
+                .iter()
+                .map(|b| (b, "branch"))
+                .chain(tags.iter().map(|t| (t, "tag")));
+            for (branch, kind) in all {
+                let policy = json!({"name": branch, "type": kind});
                 match http.send_json(Method::Post, &path, Some(&policy)) {
                     Ok(_) => {}
                     // 303: the policy exists (GitHub redirects to it); writes never follow it.

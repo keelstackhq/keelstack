@@ -63,6 +63,8 @@ pub enum Change {
         name: String,
         /// Deployment branch policies to write; empty: no branch restriction.
         branches: Vec<String>,
+        /// Deployment tag policies to write (`type: tag`).
+        tags: Vec<String>,
         /// PUT the environment itself. `false` for an existing environment that already uses
         /// custom branch policies: only the missing ones are added, so its other settings
         /// (reviewers) are not rewritten.
@@ -244,15 +246,24 @@ fn env_write(
     gh: Option<&LiveGithub>,
     name: &str,
     release: bool,
-) -> (Vec<String>, bool) {
+) -> (Vec<String>, Vec<String>, bool) {
     let want = d.env_branches(name);
+    let want_tags = d.env_tags(name);
     let live = gh.and_then(|l| l.env_branches.get(name));
     match live {
-        Some(Fetch::Got(EnvBranches::Custom(have))) if !release && !want.is_empty() => (
-            want.into_iter().filter(|b| !have.contains(b)).collect(),
-            false,
-        ),
-        _ => (want, true),
+        Some(Fetch::Got(EnvBranches::Custom(have, have_tags)))
+            if !release && !(want.is_empty() && want_tags.is_empty()) =>
+        {
+            (
+                want.into_iter().filter(|b| !have.contains(b)).collect(),
+                want_tags
+                    .into_iter()
+                    .filter(|t| !have_tags.contains(t))
+                    .collect(),
+                false,
+            )
+        }
+        _ => (want, want_tags, true),
     }
 }
 
@@ -330,10 +341,11 @@ pub fn plan_changes(
         let release = d.release_environment() == Some(env.value.as_str());
         let items = if release { &release_items } else { &gh_items };
         if todo(items, "environment", &env.value).is_some() {
-            let (branches, write_env) = env_write(d, gh, &env.value, release);
+            let (branches, tags, write_env) = env_write(d, gh, &env.value, release);
             out.push(Change::Environment {
                 name: env.value.clone(),
                 branches,
+                tags,
                 write_env,
                 exists: gh
                     .and_then(|l| l.environments.as_got().ok())

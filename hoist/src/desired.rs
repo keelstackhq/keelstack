@@ -87,6 +87,8 @@ impl DesiredTagRuleset {
 pub struct EnvSettings {
     /// `None`: the default branch; `Some([])`: no branch restriction.
     pub branches: Option<Vec<String>>,
+    /// Deployment tag policies (`tags = ["v*"]`).
+    pub tags: Vec<String>,
     pub manage: bool,
     /// `hoist.toml:github.environments.<name>`
     pub source: String,
@@ -241,6 +243,7 @@ fn secret_homes(w: &Workflows) -> Vec<SecretHomes> {
 fn env_settings(name: &str, c: &EnvCfg) -> EnvSettings {
     EnvSettings {
         branches: c.branches.clone(),
+        tags: c.tags.clone(),
         manage: c.manage,
         source: format!("hoist.toml:github.environments.{name}"),
     }
@@ -536,6 +539,15 @@ impl Desired {
             Some(b) => b,
             None => vec![self.default_branch.clone()],
         }
+    }
+
+    /// The deployment tag policies wanted for environment `name` (`tags` in hoist.toml).
+    pub fn env_tags(&self, name: &str) -> Vec<String> {
+        self.github
+            .env_settings
+            .get(name)
+            .map(|e| e.tags.clone())
+            .unwrap_or_default()
     }
 
     /// Whether hoist manages environment `name` (`manage = false` leaves it alone). The
