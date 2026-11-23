@@ -7,6 +7,7 @@ import ToolCard from "./ToolCard.astro";
 
 <section id="tools" class="tools" aria-labelledby="tools-h">
   <SectionHead id="tools-h" label={sections.tools.label} heading={sections.tools.heading} />
+  <p class="note">{sections.tools.body}</p>
   <div class="grid">
     {tools.map((tool) => <ToolCard tool={tool} />)}
   </div>
@@ -17,6 +18,11 @@ import ToolCard from "./ToolCard.astro";
     max-width: 1240px;
     margin: 0 auto;
     padding: 0 24px 96px;
+  }
+  .note {
+    margin-top: 16px;
+    max-width: 62ch;
+    color: var(--muted, inherit);
   }
   .grid {
     display: grid;
