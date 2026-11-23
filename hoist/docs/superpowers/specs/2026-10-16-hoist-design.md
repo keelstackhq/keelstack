@@ -1599,7 +1599,8 @@ zone = "example.dev"                         # Cloudflare zone for the TXT recor
 sitemaps = ["https://example.dev/sitemap.xml"]
 ```
 
-Validation (exit 3): `github.org` non-empty; record `type` in the list; record `name` equal to
+Validation (exit 3): `github.org` non-empty; `github.provision.repo` required (`environment` defaults to
+`provision`, `branch` to `main`); no TXT record with `proxied = true`; record `type` in the list; record `name` equal to
 or under its zone; `pages_domains` need `account_id`; site `zone` equal to or a parent of
 `domain`; sitemaps are `https://` URLs on `domain` or a subdomain of it; npm packages are
 `@<scope>/…`.
@@ -1676,14 +1677,15 @@ needs the real value and never prints one.
 | GitHub | `GITHUB_TOKEN`, `GH_TOKEN`, `gh auth token` | `Authorization: Bearer` | not supported for org apply (needs an app token in Actions); read-only reads work with any injected token |
 | Cloudflare | `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (not secret) | `Authorization: Bearer` | `CLOUDFLARE_API_TOKEN=proxy-injected` |
 | npm | `NPM_TOKEN` (optional, trust reads only) | `Authorization: Bearer` | `NPM_TOKEN=proxy-injected` |
-| crates.io | `CARGO_REGISTRY_TOKEN` (optional, trust reads only) | `Authorization: <token>` (no `Bearer`, as cargo sends it) | `CARGO_REGISTRY_TOKEN=proxy-injected` |
+| crates.io | `CARGO_REGISTRY_TOKEN` (optional, trust reads only) | `Authorization: <token>` on GETs (no `Bearer`, as cargo sends it) | `CARGO_REGISTRY_TOKEN=proxy-injected` |
 | Search Console bridge | `HOIST_SEARCH_CONSOLE_TOKEN` | `Authorization: Bearer` | `HOIST_SEARCH_CONSOLE_TOKEN=proxy-injected` |
 
 API bases: `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API`, `HOIST_NPM_REGISTRY`,
 `HOIST_CRATES_API`, and the bridge from `search_console.bridge` or
 `HOIST_SEARCH_CONSOLE_BRIDGE` (env wins; tests point it at the fake). A missing Cloudflare
-token makes Cloudflare items `unknown` in `plan`/`check` and is exit 3 in `apply` when there is
-a Cloudflare or Search Console write to do.
+token makes Cloudflare items `unknown` in `plan`/`check`; `apply` with a `[cloudflare]` section
+in scope exits 3 without it (the writes cannot be known without reading). A missing bridge URL
+or token makes Search Console items `unknown` in `plan`/`check` and is exit 3 in `apply`.
 
 ### 16.6 Answers to the open questions of #65
 

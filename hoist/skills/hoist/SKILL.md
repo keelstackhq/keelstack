@@ -20,6 +20,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 
 - Understand the setup: `hoist explain`. Existing repo without `hoist.toml`: `hoist import`.
 - Limit any of plan/apply/check with `--area github|cloudflare|npm|crates|release`.
+- Org (`org.toml`: GitHub org, Cloudflare zones, npm scope, crates owners, Search Console): `hoist org plan|check` (GET only; exit 2 lists human steps such as `npm trust github ...`, `cargo owner --add ...`), `hoist org apply --yes` writes only Cloudflare and Search Console (GitHub only in Actions with an app token). Missing registry/bridge tokens make items `unknown`, never exit 3 (except `apply`). Spec section 16.
 - Secrets: `hoist secrets set|rotate` (`set NAME --from-file key.pem` for multi-line values such as PEMs; the prompt reads one line and refuses a pasted PEM); shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
   in a repo with no `access.toml` or `secrets.toml` exits 0 (one `secrets/config` item, `ok`).
 - Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only),

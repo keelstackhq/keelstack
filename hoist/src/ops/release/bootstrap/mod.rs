@@ -18,7 +18,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 
 mod publish;
-mod trust;
+pub(crate) mod trust;
 use trust::{Registered, npm_trusted, trust_command};
 
 const COMMAND: &str = "release bootstrap";

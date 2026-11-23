@@ -259,6 +259,19 @@ self-review rule and reviewers are read and sent back, so they are kept (an envi
 read first is not changed). Under `--adopt` the gap is `drift` and
 nothing is written. The `release` environment is not read for branch policies.
 
+## Org (`hoist org`)
+
+`hoist org plan|check|apply [--file PATH] [--area github|cloudflare|npm|crates|search_console] [--yes]`
+diffs an org's GitHub, Cloudflare, npm, crates.io and Search Console setup against `org.toml`
+(default `./org.toml`, separate from `hoist.toml`). `plan` and `check` send GET requests only
+(`plan` exits 0, `check` uses the usual exit codes); `apply` writes Cloudflare records and Pages
+domains, the Search Console verification, property and sitemaps (through a bridge Worker, see
+`examples/search-console-bridge/README.md`), and the GitHub `provision` environment only inside
+GitHub Actions with an app token; everything else is a listed human step. The `org.toml` format
+and the items are in spec section 16.3 and 16.2; the credentials, headers and API bases are in the
+table of section 16.5 (`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `HOIST_SEARCH_CONSOLE_TOKEN`,
+`HOIST_SEARCH_CONSOLE_BRIDGE`).
+
 ## Apply
 
 `hoist apply [--yes] [--prune] [--area ...]` plans, writes, then verifies like `check`.
