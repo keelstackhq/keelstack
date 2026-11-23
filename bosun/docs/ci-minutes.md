@@ -64,7 +64,7 @@ These are public today, so they cost nothing. The orchestrator has run data only
   runner starts there. The required aggregate (`ci-ok`, `bosun-ok`) is never skipped, since a
   skipped required check counts as passed: it fails in seconds on a draft. `ready_for_review`
   runs everything. risk, main-open and review skip drafts too (they post a status only when
-  ready). `bosun gate ci-minutes` fails a workflow that does not (and one without `ready_for_review`,
+  ready). `bosun gate ci-minutes` (a ready gate: a local pass stamps the tree and `bosun pr --ready` asks for it) fails a workflow that does not (and one without `ready_for_review`,
   without cancelling concurrency, or with a matrix or macOS or Windows job on every PR); a
   comment `# ci-minutes: allow concurrency <reason>` allows a release workflow that must not
   cancel itself.

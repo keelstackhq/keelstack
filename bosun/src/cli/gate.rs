@@ -108,7 +108,13 @@ pub fn run(dir: Option<&Path>, args: &GateArgs) -> CmdResult {
     }
     // Built in: the CI-minute rules over .github/workflows (docs/ci-minutes.md).
     if args.name == "ci-minutes" {
-        return crate::cli::ci_minutes::check(dir);
+        let out = crate::cli::ci_minutes::check(dir)?;
+        return Ok(stamped(
+            dir.unwrap_or(Path::new(".")),
+            &args.name,
+            args.base.is_some(),
+            out,
+        ));
     }
     // Not a profile gate: it reads GitHub, not the checkout.
     if args.name == "main-open" {

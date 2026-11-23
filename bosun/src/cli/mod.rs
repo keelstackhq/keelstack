@@ -990,9 +990,12 @@ pub struct ProgressArgs {
 
 #[derive(Debug, Args)]
 pub struct BudgetRecordArgs {
-    /// The task issue (leave out with --pr).
+    /// The task issue; leave out for the session ledger (work with no issue) or with --pr.
     #[arg(conflicts_with = "pr")]
     pub issue: Option<u64>,
+    /// The branch the spend was for, stored on the session ledger record (no issue, no --pr).
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["issue", "pr"])]
+    pub branch: Option<String>,
     /// A PR the session made (repeatable): the cost is split evenly over the PRs and recorded on each.
     #[arg(long, value_name = "N", conflicts_with = "issue")]
     pub pr: Vec<u64>,

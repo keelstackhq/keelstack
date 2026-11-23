@@ -101,7 +101,7 @@ fn ready_without_stamps_names_the_missing_gates_and_changes_nothing() {
     let fake = setup();
     let dir = repo("claude/t7");
     fake.pull_head_sha(20, &stamps::head_sha(dir.path()));
-    stamps::stamp(dir.path(), &["test-integrity", "fmt"]);
+    stamps::stamp(dir.path(), &["test-integrity", "ci-minutes", "fmt"]);
     let (code, v) = bosun_in(&fake, dir.path(), &["pr", "7", "--ready"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(

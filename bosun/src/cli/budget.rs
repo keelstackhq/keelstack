@@ -785,11 +785,12 @@ pub(super) fn record_with(
             at: at.to_string(),
             issue: None,
             model: None,
+            branch: a.branch.clone(),
         };
         let (registry_issue, _) = registry::ensure(gh)?;
         gh.add_comment(registry_issue, &spend.to_line())?;
         return Ok(Outcome::data(json!({
-            "issue": null, "ledger": true, "session": session, "usd": usd,
+            "issue": null, "ledger": true, "session": session, "usd": usd, "branch": a.branch,
             "session_total_usd": usd + previous, "provider": a.provider, "at": at.to_string(),
         })));
     };
@@ -805,6 +806,7 @@ pub(super) fn record_with(
         at: at.to_string(),
         issue: Some(n),
         model: None,
+        branch: None,
     };
     gh.add_comment(n, &spend.to_line())?;
     let (registry_issue, _) = registry::ensure(gh)?;

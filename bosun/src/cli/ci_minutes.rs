@@ -81,7 +81,13 @@ pub fn check(dir: Option<&Path>) -> CmdResult {
         ));
     }
     let (files, findings) = scan(&root);
-    let data = json!({"gate": "ci-minutes", "files": files, "findings": findings_json(&findings)});
+    judge(&files, &findings)
+}
+
+/// The gate's result for a scan: ok, or an error naming the first finding with its fix and every
+/// finding in data.findings. `bosun merge` judges the head's checkout the same way.
+pub fn judge(files: &[String], findings: &[Finding]) -> CmdResult {
+    let data = json!({"gate": "ci-minutes", "files": files, "findings": findings_json(findings)});
     if findings.is_empty() {
         return Ok(Outcome::data(data));
     }

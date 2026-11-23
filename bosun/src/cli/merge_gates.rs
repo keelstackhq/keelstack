@@ -116,9 +116,12 @@ fn snapshot(wt: &Path) -> Result<String, BosunError> {
 }
 
 fn non_empty(all: Vec<String>) -> Result<Vec<String>, BosunError> {
-    if all.iter().all(|g| g == "test-integrity") {
+    if all
+        .iter()
+        .all(|g| g == "test-integrity" || g == "ci-minutes")
+    {
         return Err(BosunError::needs_human(
-            "the default branch's profiles require no gate besides test-integrity, so nothing can vouch for the head",
+            "the default branch's profiles require no gate besides the built-in test-integrity and ci-minutes, so nothing can vouch for the head",
             "an owner fixes the stacks and profiles on the default branch",
         ));
     }
@@ -280,6 +283,8 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
             .flatten(),
     };
     let mut failed = Vec::new();
+    // A ci-minutes failure keeps its findings and fix for the merge's error.
+    let (mut ci_findings, mut ci_fix) = (None, None);
     let private = wt.parent().unwrap_or(wt);
     for (i, gate) in all.iter().enumerate() {
         overlay.apply(wt)?;
@@ -294,6 +299,15 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
                 &allow,
                 Some(&default_view),
             )
+        } else if gate == "ci-minutes" {
+            // Built in, reads the head's workflow files in the private checkout.
+            let (files, findings) = super::ci_minutes::scan(wt);
+            let res = super::ci_minutes::judge(&files, &findings);
+            if let Err(e) = &res {
+                ci_findings = e.data.as_ref().map(|d| d["findings"].clone());
+                ci_fix = Some(e.fix.clone());
+            }
+            res
         } else {
             gates::run(&Request {
                 root: wt,
@@ -320,11 +334,22 @@ fn run_gates(app: &App, pull: &Pull, wt: &Path) -> Result<Vec<String>, BosunErro
         return Ok(all);
     }
     let n = pull.number;
+    let rerun = format!(
+        "the author fixes them on the PR branch and reruns `bosun pr <task> --ready`, then rerun `bosun merge {n}`"
+    );
+    let mut data = json!({"pr": n, "head_sha": pull.head_sha, "failed_gates": failed});
+    if let Some(f) = ci_findings {
+        data["findings"] = f;
+    }
     Err(BosunError::needs_human(
-        format!("PR #{n} head {} fails its gates: {}", pull.head_sha, failed.join(", ")),
-        format!("the author fixes them on the PR branch and reruns `bosun pr <task> --ready`, then rerun `bosun merge {n}`"),
+        format!(
+            "PR #{n} head {} fails its gates: {}",
+            pull.head_sha,
+            failed.join(", ")
+        ),
+        ci_fix.map_or_else(|| rerun.clone(), |fix| format!("{fix}; then {rerun}")),
     )
-    .with_data(json!({"pr": n, "head_sha": pull.head_sha, "failed_gates": failed})))
+    .with_data(data))
 }
 
 #[cfg(test)]

@@ -134,6 +134,7 @@ pub fn run(dir: Option<&Path>, a: &BudgetRecordArgs) -> CmdResult {
             at: at.to_string(),
             issue: None,
             model: model.clone(),
+            branch: None,
         };
         gh.add_comment(pr, &spend.to_line())?;
     }

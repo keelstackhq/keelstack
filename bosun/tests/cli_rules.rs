@@ -34,7 +34,7 @@ fn write_renders_the_block_once_and_keeps_the_rest() {
     assert_eq!(rules(d, true).0, 0);
     let text = fs::read_to_string(d.join("CLAUDE.md")).unwrap();
     assert!(
-        text.contains(START) && text.contains("Spawn no sessions."),
+        text.contains(START) && text.contains("Spawn no sessions. The owner allows child sessions by setting `worker` in .bosun/session-rules.toml (owner-only)"),
         "{text}"
     );
     assert!(
@@ -54,7 +54,7 @@ fn write_renders_the_block_once_and_keeps_the_rest() {
     let text = fs::read_to_string(d.join("AGENTS.md")).unwrap();
     assert!(text.starts_with("# Agents\n\nmine\n"), "{text}");
     assert_eq!(text.matches(START).count(), 1, "{text}");
-    assert!(text.contains("W-RULE") && !text.contains("Spawn no sessions."));
+    assert!(text.contains("W-RULE") && !text.contains("Spawn no sessions"));
     // Idempotent.
     let (_, v) = rules(d, true);
     assert_eq!(v["data"]["changed"], false);
