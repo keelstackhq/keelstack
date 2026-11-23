@@ -1,0 +1,1 @@
+- The rust profile runs `cargo-fmt` and `cargo-deny` by PATH, not through cargo's subcommand lookup (aliases); the channel's base-config restore refuses a PR symlink that points a parent directory outside the checkout; the ci-minutes `ready_for_review` fix for a block-list `on:` names the list.

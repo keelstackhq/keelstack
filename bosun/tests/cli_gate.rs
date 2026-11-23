@@ -66,9 +66,17 @@ fn repo() -> Repo {
         root = root.display()
     );
     let path = bin.join("cargo");
-    fs::write(&path, script).unwrap();
+    fs::write(&path, &script).unwrap();
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    // The rust profile calls `cargo-fmt` and `cargo-deny` by name (#53): they log as `fmt ...`
+    // and `deny ...`, the calls `cargo fmt` and `cargo deny` made.
+    for (name, sub) in [("cargo-fmt", "fmt"), ("cargo-deny", "deny")] {
+        let own = script.replacen("\n", &format!("\nset -- {sub} \"$@\"\n"), 1);
+        let path = bin.join(name);
+        fs::write(&path, own).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+    }
     Repo {
         _tmp: tmp,
         root,
