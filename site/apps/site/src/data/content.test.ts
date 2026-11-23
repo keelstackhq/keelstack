@@ -56,6 +56,7 @@ test("agent rows and current cards", () => {
     "CLAUDE.md",
     "ready",
     "bosun",
+    "hoist",
     "--json --yes",
     "ci-ok",
     "update bot",

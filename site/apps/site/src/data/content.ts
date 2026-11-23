@@ -13,6 +13,7 @@ export interface HeroVariant {
 
 const bosunNpm = facts.tools.find((t) => t.name === "bosun")!.npm!;
 const bosunCrate = facts.tools.find((t) => t.name === "bosun")!.crate!;
+const keel = facts.tools.find((t) => t.name === "keel")!;
 
 export const hero = {
   eyebrow: "An AI-native monorepo, bootstrapped and kept current",
@@ -22,7 +23,7 @@ export const hero = {
     agent: { lead: "Your agent’s first commit is ", highlight: "product, not plumbing." },
   } satisfies Record<"seconds" | "skip" | "agent", HeroVariant>,
   active: "seconds" as "seconds" | "skip" | "agent",
-  body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app.",
+  body: "keelstack renders an opinionated monorepo from a template: stack, tool versions, CI and agent config included. It keeps all of that current as the template moves. You and your agent start on the app. One repo, one version for every tool.",
 };
 
 // The hero shows the default `splice new` command and what it renders. Both are generated: the
@@ -85,7 +86,11 @@ export const agentRows: { key: string; text: string; href?: string }[] = [
   },
   {
     key: "bosun",
-    text: "Claims, gates, risk checks and review verdicts on GitHub. Child sessions never merge or tag; the orchestrator or auto-merge merges on green, and owners approve high-risk changes on GitHub (their own review or a `/bosun approve <sha>` comment).",
+    text: "Claims, gates, risk checks and review verdicts on GitHub. Agents may open PRs, never merge, tag or release. One big PR is fine: bosun bundles many tasks and reviews it in chunks. Owner teams approve high-risk changes (their own review or a `/bosun approve <sha>` comment); each verdict is bound to its run.",
+  },
+  {
+    key: "hoist",
+    text: "Settings as code. A required check can pin the App that posts it. An org-wide control plane is coming.",
   },
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },
@@ -218,6 +223,7 @@ export const sections: Record<
   tools: {
     label: `02 · ${NUMBER_WORDS[tools.length] ?? String(tools.length)} tools`,
     heading: tools.map((t) => `${roles[t.name]!.verb}.`).join(" "),
+    body: `One repo, one version: every tool ships together from ${facts.repoSlug}. Actions are ${facts.repoSlug}/<tool>@vX. The old per-tool repos are archived.`,
   },
   agents: {
     label: "03 · Built for agents",
@@ -286,7 +292,10 @@ export const quickstart = {
   heading: "From your repo to the first plan in nine steps.",
   body: "For humans, on a computer, in a clean checkout of your repo’s default branch. You need Node, the gh CLI signed in, and admin on the repo.",
   steps: [
-    { cmd: `npm i -g ${bosunNpm}`, text: `Install bosun (or cargo install ${bosunCrate}).` },
+    {
+      cmd: `npm i -g ${bosunNpm}`,
+      text: `Install bosun (or cargo install ${bosunCrate}). To set up every tool in one go, run npx ${keel.npm} up (crate ${keel.crate}, binary keel).`,
+    },
     { cmd: "export GITHUB_TOKEN=$(gh auth token)", text: "A token with repo and workflow scopes." },
     {
       cmd: "bosun adopt --owner <you>",
