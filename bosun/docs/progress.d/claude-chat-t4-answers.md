@@ -1,1 +1,0 @@
-- Chat approvals T4: PostToolUse hook stores AskUserQuestion answers, holds skip re-asking.

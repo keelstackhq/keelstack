@@ -297,7 +297,7 @@ jobs:
           CC_aarch64_unknown_linux_musl: musl-gcc
         run: |
           set -euo pipefail
-          for pair in bosun:keel-bosun splice:keel-splice hoist:keel-hoist berth:keel-berth keel:keel-cli; do
+          for pair in bosun:keel-bosun splice:keel-splice hoist:keel-hoist berth:keel-berth keel:keelstack-cli; do
             cargo build -p "${pair#*:}" --bin "${pair%%:*}" --locked --release --target "$TARGET"
           done
       - name: Build hoard

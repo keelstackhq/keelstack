@@ -496,3 +496,31 @@ One line per landed task, oldest first. Agents never read this file; `docs/PROGR
 - 2026-11-18 · M9 review-loop · src/cli/review_loop.rs, src/core/review_loop.rs, [mode] review_rounds, spec §7 §18 · this PR
 - 2026-11-18 · verdict relay keeps the reviewer · src/core/verdict.rs, src/cli/verdict.rs, src/schema/data.rs, spec §7 · this PR
 - 2026-11-18 · Verify the gate poster in dual mode · src/github/gate.rs, spec §15 · this PR
+- 2026-11-19 · D-021 no gated cap · gated PRs have no line cap and may bundle: plan lint, wave, claim, `bosun pr --bundle` and risk-check (R-bundle) drop the 400-line, one-task, alone rule; chunked review stays · this PR
+- 2026-11-19 · Pin bosun 0.21.0 · .bosun/version and docs/setup-script.sh npm integrity hashes · chore PR
+- 2026-11-18 · chat-approval plan · plan file for the ported stack · this PR
+- 2026-11-18 · chat-approval T1 · chat record core + `[approvals] chat` · this PR
+- Chat approval T10: `bosun merge <pr>` for the orchestrator; spec D13 amended (D-019).
+- Chat approval T10b: run-time identity check for the identity-trusting commands (D-019).
+- Chat approval T13: no-CI verdict trust (reviewer-key signatures only; App records never count, also not for D-017), base-branch required gates, recomputed approve board, no signing of relayed verdicts; spec 04 states what is verified and advisory.
+- 2026-11-18 · chat-approval T2 · risk-check counts chat records (orchestrator, owner, unedited, head), no-owners fallback, no carry · this PR
+- 2026-11-18 · chat-approval T3 · approve --list: per-PR `ask` and the owner question in `next` (orchestrator-only) · this PR
+- Chat approvals T4: PostToolUse hook stores AskUserQuestion answers, holds skip re-asking.
+- Chat approvals T4b: answers hook verifies the transcript, small answers.json write guard; no hook-word lock.
+- 2026-11-18 · chat-approval T5 · `approve --chat` records the owner's chat approval; Claude Tag ask names question id and full head · this PR
+- Chat approvals T8: `[ci] provider` config, adopt detection, none skips CI-only commands, R-weaken flags it.
+- 2026-11-18 · chat-approval T9 · no-CI `pr --ready`, local risk, verdict and main-open · this PR
+- 2026-11-20 · D-023 monorepo scope · `[[folders]]` config, folder-rooted risk floor/rules/trust files, per-folder main-open via `ci-<folder>` checks · this PR
+- Approve list returns the owner comment, not a chat form (D-025); signer policy read at the PR base.
+- bosun#643 port: user-scope hooks via `setup-snippet --install-hooks`; un-adopted session-start detection.
+- bosun#672 port: `bosun merge` reruns the base's gates in a worktree of the head, tool-config files are owner-class, spec 04 names the control.
+- 2026-11-18 · bosun#676 port: settings-lock · PreToolUse guard denies edits of .claude/settings*.json, ~/.claude and disableAllHooks · this PR
+- bosun#678 port: gate helper git and cargo calls go through `gates::cmd`, spec 04 drops them from the known limits.
+- 2026-11-19 · bosun#679 port: adopted-check follow-up · src/hooks/session_start.rs, spec §11 · this PR
+- 2026-11-22 · bosun#702 port: bootstrap friction fixes (gate-neutral bootstrap, removable template tests, init/doctor/plan import/prereqs/pr --single without a token, one pins source) · this PR
+- 2026-11-22 · bosun#705 port: D-022 quorum approvals, with the bosun#706 review fixes · trust root re-rooted under the code roots, R-trust built in, relayer-aware quorum count, pin rule closed for unreleased bases, no implied quorum · this PR
+- 2026-11-22 · cloud orchestrator check: the child flag is no evidence in a cloud session; the registry decides · src/ctx.rs, src/cli/merge.rs, src/registry.rs, spec §4 · this PR
+- Retire chat approvals (D-025): removed `approve --chat`, the chat record and its risk-check counting; `[approvals] chat` kept as an ignored deprecated key; spec 04, 08, 14 updated.
+- 2026-11-22 · port review fixes: subagent-lock, cloud answer store, trust root meta/touch/time, spec 08 known limits · this PR
+- 2026-11-19 · tests scrub integrity allow env · tests/common clears BOSUN_INTEGRITY_ALLOW and BOSUN_PR_BODY (CI task-allow leak, seen on #693) · one-off PR
+- 2026-11-18 · Release 0.21.0 · version bump, CHANGELOG (#606, #622-#632, #645: autonomous self-mode, review-loop, verdict relay, gate sources, dual-mode readers, pnpm stack path) · release PR

@@ -1,1 +1,0 @@
-- Tests scrub `BOSUN_INTEGRITY_ALLOW` and `BOSUN_PR_BODY` from the environment, so a task allow exported by CI no longer leaks into test-integrity tests.

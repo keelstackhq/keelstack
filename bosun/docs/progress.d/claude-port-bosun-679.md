@@ -1,1 +1,0 @@
-- 2026-11-19 · bosun#679 port: adopted-check follow-up · src/hooks/session_start.rs, spec §11 · this PR

@@ -1,1 +1,0 @@
-- 2026-11-18 · chat-approval plan · plan file for the ported stack · this PR

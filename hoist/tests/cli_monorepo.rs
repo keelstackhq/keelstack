@@ -96,7 +96,7 @@ fn explain_models_the_github_side() {
 #[test]
 fn explain_lists_the_publishable_crates_and_launchers() {
     let r = run(&["explain"]);
-    for krate in ["keel-bosun", "keel-hoist", "keel-berth", "keel-cli"] {
+    for krate in ["keel-bosun", "keel-hoist", "keel-berth", "keelstack-cli"] {
         assert!(has(&r, "crates", "crate", krate), "crate {krate}");
         assert!(has(&r, "release", "package", krate), "package {krate}");
     }
@@ -144,7 +144,7 @@ fn plan_names_a_trusted_publisher_step_for_every_package() {
             "{title}"
         );
     }
-    for krate in ["keel-bosun", "keel-hoist", "keel-berth", "keel-cli"] {
+    for krate in ["keel-bosun", "keel-hoist", "keel-berth", "keelstack-cli"] {
         assert!(has_step(&r, &format!("crates-trust:{krate}")), "{krate}");
     }
     for krate in ["keel-hoard", "keel-splice"] {
