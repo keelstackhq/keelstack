@@ -83,6 +83,8 @@ with the full path instead, so the guard sees the target.
 
 A rail, not a sandbox. These stay open:
 
+- A token copied into another variable first (`t=$GITHUB_TOKEN; gh workflow run w.yml -f x=$t`):
+  only token-like names in the input value itself are refused.
 - Code in other languages (Python, Node, Ruby, Perl, PHP, awk, make files, `#!` scripts in those
   languages) and binaries: only checked for secret names and exec text, not run like a shell.
 - Programs that run other programs from their own config: `npm run`/`pnpm` scripts, `make`

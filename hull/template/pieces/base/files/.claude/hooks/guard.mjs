@@ -315,6 +315,26 @@ function subEnd(cmd, i) {
   return lex(cmd, i + 1, true).end;
 }
 
+/** Index of the `}` closing the `{` at `i` (`${...}`), following quotes, escapes, nested `${`
+ * and substitutions; the text's end when none does. */
+function braceEnd(cmd, i) {
+  let depth = 0;
+  for (let j = i; j < cmd.length; j++) {
+    const c = cmd[j];
+    if (c === "\\") j++;
+    else if (c === "'") {
+      j = cmd.indexOf("'", j + 1);
+      if (j < 0) return cmd.length;
+    } else if (c === '"') {
+      for (j++; j < cmd.length && cmd[j] !== '"'; j++) if (cmd[j] === "\\") j++;
+    } else if (c === "`" || (c === "$" && cmd[j + 1] === "("))
+      j = subEnd(cmd, c === "`" ? j : j + 1);
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return j;
+  }
+  return cmd.length;
+}
+
 /** Bodies of `$(...)`, `<(...)`, `>(...)` and backticks in heredoc text (quotes there are literal). */
 function docSubs(body) {
   const out = [];
@@ -345,8 +365,7 @@ function split(cmd) {
  * it reads the body of a `$(`/`<(`/`>(` from `from` (just after the `(`) and stops at the `)` that
  * closes it: `end` is that index, or the text's end when none does (`$((...))` is arithmetic: no
  * comments, no heredocs). Inside `case ... esac` a pattern's `)` does not close it. */
-const KEYWORD_PREFIX = new Set("then do else elif { ! time if while until".split(" "));
-function lex(cmd, from, nested) {
+function lex(cmd, from, nested, arithOk = true) {
   const segments = [];
   const subs = [];
   let tokens = [];
@@ -357,19 +376,24 @@ function lex(cmd, from, nested) {
   let docs = [];
   let expand = false; // a heredoc with an unquoted delimiter holds `$` or a backtick
   const comments = [];
-  const arith = nested && cmd[from] === "(";
+  // `$((` is arithmetic only when the inner `(` closes right before the outer `)` (`$((1+2))`);
+  // else bash reads it as `$( (cmd) ...)`, and so does the guard (lexed again, comments and all).
+  const arith = nested && arithOk && cmd[from] === "(";
   let depth = 1; // nested: the open `(`s, the substitution's own included
   let cases = 0; // nested: `case ... esac` depth
-  let cmdPos = true; // nested: the next word is in command position (`case`/`esac` keywords)
+  let sep = "\n"; // nested: the separator before this word (`;`/newline: `esac` can close a case)
   let tokStart = from;
+  // Nested, `case` counts wherever it stands (`time -p case`, `coproc case`, `function f case`):
+  // counting too many only makes the substitution run on, which the guard reads (fail closed).
+  // `esac` counts only after `;`/`;;` or a newline, never in a pattern (`x|esac)`).
   const endToken = (at) => {
     if (has) {
       tokens.push(cur);
       if (nested) {
-        const raw = cmd.slice(tokStart, at);
-        if (cmdPos && raw === "case") cases++;
-        else if (cmdPos && raw === "esac") cases = Math.max(0, cases - 1);
-        cmdPos = KEYWORD_PREFIX.has(raw) && cmdPos;
+        const raw = cmd.slice(tokStart, at).replaceAll("\\\n", "");
+        if (raw === "case") cases++;
+        else if (raw === "esac" && sep) cases = Math.max(0, cases - 1);
+        sep = "";
       }
     }
     cur = "";
@@ -377,7 +401,7 @@ function lex(cmd, from, nested) {
   };
   const endSegment = (at) => {
     endToken(at);
-    cmdPos = true;
+    sep = cmd[at] === ";" || cmd[at] === "\n" ? "\n" : "";
     if (tokens.length) {
       if (docs.length) tokens.docs = docs;
       if (expand) tokens.docExpand = true;
@@ -416,12 +440,22 @@ function lex(cmd, from, nested) {
       comments.push([i, nl < 0 ? cmd.length : nl]);
       if (nl < 0) break;
       i = nl - 1;
+    } else if (nested && !quote && c === "$" && cmd[i + 1] === "{") {
+      // `${x/)/}`, `${x:-)}`: a parameter expansion runs to its own `}`
+      const e = braceEnd(cmd, i + 1);
+      if (e >= cmd.length) return { segments, end: cmd.length };
+      cur += cmd.slice(i, e + 1);
+      has = true;
+      i = e;
     } else if (nested && !quote && (c === "(" || c === ")")) {
       endToken(i);
-      if (c === "(") cmdPos = true;
+      sep = "";
       if (cases) continue; // a case pattern's parens
       if (c === "(") depth++;
-      else if (--depth === 0) return { segments, end: i };
+      else if (--depth === 1 && arith) {
+        if (cmd[i + 1] === ")") return { segments, end: i + 1 };
+        return lex(cmd, from, true, false); // `$((cmd) ...)`: a subshell, not arithmetic
+      } else if (depth === 0) return { segments, end: i };
     } else if (open) {
       const at = c === "`" ? i : i + 1;
       const e = subEnd(cmd, at);
@@ -507,6 +541,19 @@ function lex(cmd, from, nested) {
   return { segments, end: cmd.length };
 }
 
+/** Words before a command that keep command position (`then case ...`, `time -p case ...`). */
+const CASE_PREFIX = new Set("if while until then do else elif ! { ( time coproc".split(" "));
+/** Index of a `case` keyword after keyword prefixes, or -1. */
+function caseAt(tokens) {
+  let k = 0;
+  while (
+    k < tokens.length &&
+    (CASE_PREFIX.has(tokens[k]) || (tokens[k] === "-p" && tokens[k - 1] === "time"))
+  )
+    k++;
+  return base(String(tokens[k] ?? "").replace(/^[({]+/, "")) === "case" ? k : -1;
+}
+
 /** Marks a token list as run through a wrapper (not enumerable: lists still compare as words). */
 const wrap = (t, on) =>
   Object.defineProperty(t, "wrapped", { value: !!on, writable: true, configurable: true });
@@ -539,6 +586,9 @@ function stripCore(tokens, inCase, st) {
   if (tokens[0] === "()") tokens = tokens.slice(1);
   // Inside `case`, a lone `pat)` on its own line is a pattern, not a command.
   if (inCase && tokens.length === 1 && /^[^()]*\)$/.test(tokens[0])) return [];
+  // `then case w in pat) cmd`, `{ case ...`: a keyword prefix before `case` is dropped first.
+  const k0 = caseAt(tokens);
+  if (k0 > 0) tokens = [tokens[k0].replace(/^[({]+/, ""), ...tokens.slice(k0 + 1)];
   // `case w in pat) cmd` and a later `pat) cmd` branch run `cmd`.
   const afterPattern = (x) => x.slice(x.indexOf(")") + 1); // `pat)cmd` runs cmd
   if (base(tokens[0] ?? "") === "case") {
@@ -833,7 +883,7 @@ export function commands(cmd) {
   for (const sub of segs.subs) for (const inner of commands(sub)) out.push(inner);
   let caseDepth = 0;
   for (const seg of segs) {
-    if (base(seg[0].replace(/^[({]+/, "")) === "case") caseDepth++;
+    if (caseAt(seg) >= 0) caseDepth++;
     const stripped = stripPrefixes(seg, caseDepth > 0);
     const t = stripped.flatMap(splitRedirect).map(unmark);
     wrap(t, stripped.wrapped);
@@ -902,6 +952,15 @@ export function commands(cmd) {
         (SHELLS.has(prog) || INTERPRETERS.test(prog)))
     )
       out.push(["@evade", text]);
+    // `sort --compress-program=P` runs P: only a known compressor passes.
+    if (prog === "sort")
+      for (let e = 1; e < t.length; e++) {
+        const m = /^--com[a-z-]*(?:=(.*))?$/s.exec(t[e]);
+        if (!m) continue;
+        const p = m[1] ?? t[e + 1] ?? "";
+        if (!/^(gzip|pigz|xz|zstd|lz4|bzip2|lzop)$/.test(p))
+          out.push(["@deny", "unscanned", segText]);
+      }
     if (prog === "find")
       for (let e = 0; e < t.length; e++) {
         if (!/^-(exec|execdir|ok|okdir)$/.test(t[e])) continue;
@@ -1349,6 +1408,7 @@ function ghApiParse(args) {
 function workflowInputs(args) {
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (/^--json(=|$)/.test(a)) return "ghField"; // inputs read from stdin (a file or a pipe)
     const m = /^(-F|--field|-f|--raw-field)(?:=?(.*))?$/s.exec(a);
     if (!m) {
       if (/[$`]/.test(a) && SECRET_VAR_RE.test(a)) return "secret";
