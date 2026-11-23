@@ -142,7 +142,7 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             return cx.push(
                 "ruleset",
                 name,
-                Action::Unknown,
+                Action::Pending,
                 free_plan_reason(d),
                 &source,
             );
@@ -274,7 +274,7 @@ fn tag_ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             return cx.push(
                 "tag_ruleset",
                 name,
-                Action::Unknown,
+                Action::Pending,
                 free_plan_tag_reason(&refs),
                 source,
             );
@@ -505,6 +505,32 @@ fn tag_deploy_key(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
 }
 
 /// The tag ruleset item's reason when the GitHub plan refuses rulesets (Free, private repo).
+/// The human step of a plan-limited ruleset (`plan-limit:rulesets`): the plan, not hoist, keeps
+/// branch protection off, so `check` and `apply` exit 2 instead of a silent 0.
+pub fn plan_limit_step(d: &Desired) -> HumanStep {
+    HumanStep {
+        id: "plan-limit:rulesets".to_string(),
+        title: "branch protection is not enforced: this GitHub plan gives a private repo no \
+                rulesets (required checks, tag rules); upgrade the plan (GitHub Pro for a \
+                personal repo, Team for an organization) or make the repo public, then run \
+                `hoist apply`"
+            .to_string(),
+        url: format!(
+            "https://github.com/{}/{}/settings/rules",
+            d.repo.owner, d.repo.name
+        ),
+        status: "pending".to_string(),
+    }
+}
+
+/// Add [`plan_limit_step`] once.
+pub fn add_plan_limit_step(steps: &mut Vec<HumanStep>, d: &Desired) {
+    let step = plan_limit_step(d);
+    if !steps.iter().any(|s| s.id == step.id) {
+        steps.push(step);
+    }
+}
+
 pub fn free_plan_tag_reason(refs: &[String]) -> String {
     format!(
         "NOT enforced: tags {}; GitHub Free: private repos get no rulesets; upgrade the plan \
@@ -1304,6 +1330,11 @@ pub fn diff_github(
         }
     }
 
+    if cx.items.iter().any(|i| {
+        matches!(i.kind.as_str(), "ruleset" | "tag_ruleset") && i.action == Action::Pending
+    }) {
+        add_plan_limit_step(&mut steps, d);
+    }
     cx.items
         .sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
     (cx.items, steps)

@@ -27,7 +27,11 @@ test("template-rust: scripts/release-pre.sh is a seed no-op bash hook run before
   const pub = steps.findIndex((s) => /hoist release publish --assets dist/.test(s.run ?? ""));
   assert.ok(hook >= 0 && pub === hook + 1, "hook runs right before hoist release publish");
   assert.match(steps[hook].run, /\[ -f scripts\/release-pre\.sh \]/);
-  assert.match(await readFile(`${base}files/docs/agents/project.md`, "utf8"), /release-pre\.sh/);
+  assert.match(
+    await readFile(`${base}files/docs/agents/project.md`, "utf8"),
+    /release-pre\.sh[^]*publish rights/,
+  );
+  assert.match(text, /publish rights/);
   assert.match(await readFile(`${base}files/README.md`, "utf8"), /release-pre\.sh/);
 });
 
@@ -40,7 +44,15 @@ test("template-rust: detect asks hoist (dry run) instead of reading crates", asy
   const detect = steps.find((s) => s.id === "detect");
   assert.match(detect.run, /hoist release publish --dry-run --json/);
   assert.match(detect.run, /-gt 2/);
-  assert.match(detect.run, /\.action != "ok"/);
+  // Only an unreleased version (an item hoist would create or update) is pending: a human step
+  // or an unreadable registry alone starts no release.
+  assert.match(detect.run, /\.action == "create" or \.action == "update"/);
+  assert.doesNotMatch(detect.run, /\.action != "ok"/);
+  // Before any build: no --assets.
+  assert.doesNotMatch(detect.run, /--assets/);
+  // The gate runs first; with releasing off nothing else in detect runs.
+  assert.equal(steps[0].id, "gate");
+  for (const s of steps.slice(1)) assert.equal(s.if, "steps.gate.outputs.enabled == 'true'");
   assert.equal(detect.env.GH_TOKEN, "${{ github.token }}");
   assert.doesNotMatch(raw, /release-pending\.mjs detect/);
 });

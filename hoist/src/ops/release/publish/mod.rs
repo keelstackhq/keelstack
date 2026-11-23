@@ -35,6 +35,9 @@ pub(super) struct Job<'a> {
     tag: String,
     body: String,
     assets: Vec<LocalAsset>,
+    /// `--dry-run` without `--assets` (release.yml `detect`, before any build): the number of
+    /// binaries the release will carry; they are neither read nor checked.
+    unbuilt: usize,
     /// A target in the package's directory has `[deploy] on = "release"`.
     deploy: bool,
     /// A launcher's binaries, one per platform package (same order).
@@ -192,7 +195,7 @@ fn launcher_jobs<'a>(
     dir: &Path,
     m: &'a ReleaseModel,
     krate: &Package,
-    assets: Option<&Path>,
+    assets: Assets,
 ) -> Result<Vec<Job<'a>>, HoistError> {
     let mut jobs = Vec::new();
     for pkg in &m.packages {
@@ -214,16 +217,20 @@ fn launcher_jobs<'a>(
         let text = std::fs::read_to_string(dir.join(&file))
             .map_err(|e| HoistError::Usage(format!("cannot read {file}: {e}")))?;
         verify_optional_deps(&file, &text, pkg, want)?;
-        let bins = l
-            .platforms
-            .iter()
-            .map(|p| asset_path(&pkg.name, assets, &l.bin, &p.target))
-            .collect::<Result<Vec<_>, _>>()?;
+        let bins = match assets {
+            Assets::Unbuilt => Vec::new(),
+            Assets::Dir(assets) => l
+                .platforms
+                .iter()
+                .map(|p| asset_path(&pkg.name, assets, &l.bin, &p.target))
+                .collect::<Result<Vec<_>, _>>()?,
+        };
         jobs.push(Job {
             pkg,
             tag: format!("{}@{}", pkg.name, pkg.version.value),
             body: String::new(),
             assets: Vec::new(),
+            unbuilt: 0,
             deploy: false,
             bins,
             built: std::cell::Cell::new(false),
@@ -280,6 +287,14 @@ fn deploys_on_release(dir: &Path, targets: &[Target], p: &Package) -> bool {
         .any(|t| t.config.deploy.as_ref().is_some_and(|d| d.on == "release") && t.dir == pkg_dir)
 }
 
+/// Where the binaries come from: `--assets DIR` (`None`: not given, an error once one is
+/// needed), or not built yet (`--dry-run` without `--assets`).
+#[derive(Clone, Copy)]
+enum Assets<'a> {
+    Dir(Option<&'a Path>),
+    Unbuilt,
+}
+
 /// Tag and release every package whose manifest version is not yet released.
 pub fn release_publish(
     dir: &Path,
@@ -316,10 +331,25 @@ pub fn release_publish(
         return Ok(report(vec![it], vec![], 0));
     }
     let (targets, _, _) = read_targets(dir)?;
+    let assets = match (assets, dry_run_only) {
+        (None, true) => Assets::Unbuilt,
+        (a, _) => Assets::Dir(a),
+    };
     let mut jobs = Vec::new();
     for (pkg, tag) in todo {
+        let (files, unbuilt) = match assets {
+            Assets::Unbuilt => (
+                Vec::new(),
+                pkg.publish
+                    .github_release
+                    .as_ref()
+                    .map_or(0, |g| g.targets.len()),
+            ),
+            Assets::Dir(a) => (asset_files(pkg, a)?, 0),
+        };
         jobs.push(Job {
-            assets: local_assets(&asset_files(pkg, assets)?)?,
+            assets: local_assets(&files)?,
+            unbuilt,
             body: release_body(dir, pkg, &tag),
             deploy: deploys_on_release(dir, &targets, pkg),
             pkg,

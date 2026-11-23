@@ -746,7 +746,11 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         .github
         .environments
         .iter()
-        .filter(|e| d.release_environment() != Some(e.value.as_str()) && d.env_managed(&e.value))
+        .filter(|e| {
+            let release = d.release_environment() == Some(e.value.as_str());
+            // The release environment's policies are read only for its tag policies.
+            (!release || !d.env_tags(&e.value).is_empty()) && d.env_managed(&e.value)
+        })
         .map(|e| e.value.clone())
         .collect();
     let env_branches = match &environments {

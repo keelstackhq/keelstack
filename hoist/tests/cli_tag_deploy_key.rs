@@ -619,7 +619,7 @@ fn disabled_deploy_keys_still_apply_repo_settings_and_actions_permissions() {
 const POLICY_422: &str = r#"{"message":"Validation Failed","errors":[{"resource":"PublicKey","code":"custom","message":"Deploy keys are disabled for this repository"}],"status":"422"}"#;
 
 #[test]
-fn a_plan_limited_tag_ruleset_stays_unknown_when_deploy_keys_are_disabled() {
+fn a_plan_limited_tag_ruleset_stays_pending_when_deploy_keys_are_disabled() {
     let (_sk, key) = keypair();
     let api = Routes::fresh(&key)
         .set(
@@ -633,7 +633,7 @@ fn a_plan_limited_tag_ruleset_stays_unknown_when_deploy_keys_are_disabled() {
     let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 2);
     assert_eq!(
         item(&out.report, "tag_ruleset", "hoist: tags")["action"],
-        "unknown"
+        "pending"
     );
     assert_eq!(
         item(&out.report, "tag_deploy_key", "hoist: release tags")["action"],

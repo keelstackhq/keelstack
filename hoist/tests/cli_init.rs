@@ -468,3 +468,32 @@ fn the_table_has_no_trailing_colon_for_a_step_without_a_url() {
     let line = text.lines().find(|l| l.contains("(ci-ok)")).unwrap();
     assert!(line.ends_with("(ci-ok)"), "{line:?}");
 }
+
+/// The race check skips the configured `[release] workflow` (not only `release.yml`) and a
+/// `--dry-run` publish, which publishes nothing.
+#[test]
+fn the_configured_release_workflow_and_dry_runs_are_no_race() {
+    let repo = fixture_repo("release-single", "https://github.com/acme/x.git");
+    let d = repo.path();
+    std::fs::write(d.join("hoist.toml"), "[release]\nworkflow = \"ship.yml\"\n").unwrap();
+    std::fs::create_dir_all(d.join(".github/workflows")).unwrap();
+    std::fs::write(
+        d.join(".github/workflows/ship.yml"),
+        "name: ship\njobs:\n  p:\n    environment: release\n    steps:\n      - run: cargo publish\n",
+    )
+    .unwrap();
+    std::fs::write(
+        d.join(".github/workflows/check.yml"),
+        "name: check\njobs:\n  p:\n    steps:\n      - run: cargo publish --dry-run\n      - run: npm publish --dry-run\n",
+    )
+    .unwrap();
+    let a = init(d, &["--sha", SHA]);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    let races: Vec<&Value> = v["human_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|s| s["id"] == "release-workflow-race")
+        .collect();
+    assert!(races.is_empty(), "{races:?}");
+}

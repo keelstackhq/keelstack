@@ -1,9 +1,9 @@
 name: release
 
 # Releases through hoist (keelstackhq/hoist), the way berth and bosun do it:
-# - detect: asks hoist (`hoist release publish --dry-run --json`, the source of truth for crates
-#   and npm packages): is any package not released yet? Is releasing switched on (repository
-#   variable HOIST_RELEASE = enabled)?
+# - detect: is releasing switched on (repository variable HOIST_RELEASE = enabled)? Only then it
+#   asks hoist (`hoist release publish --dry-run --json`, the source of truth for crates and npm
+#   packages): is any package not released yet?
 # - advisories: `node scripts/deny.mjs --locked check advisories` (pull request CI checks
 #   advisories too; advisories.yml scans main weekly).
 # - build: release binaries for 5 targets as dist/<bin>-<target>. Runs when a release is pending
@@ -37,20 +37,36 @@ jobs:
       pending: ${{ steps.detect.outputs.pending }}
       enabled: ${{ steps.gate.outputs.enabled }}
     steps:
+      # The gate first: with releasing off, nothing below runs (no hoist install, no API read).
+      - id: gate
+        env:
+          HOIST_RELEASE: ${{ vars.HOIST_RELEASE }}
+        run: |
+          if [ "$HOIST_RELEASE" = "enabled" ]; then enabled=true; else enabled=false; fi
+          echo "release gate (vars.HOIST_RELEASE): $enabled"
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        if: steps.gate.outputs.enabled == 'true'
         with:
           fetch-depth: 0
           persist-credentials: false
       - id: pins
+        if: steps.gate.outputs.enabled == 'true'
         run: node scripts/pins.mjs --github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        if: steps.gate.outputs.enabled == 'true'
         with:
           node-version: "24"
       - run: npm install -g --ignore-scripts "@keelstackhq/hoist@$HOIST_VERSION"
+        if: steps.gate.outputs.enabled == 'true'
         env:
           HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
-      # Read-only dry run: exit 0 and 2 are plans (2 = a human step pending), anything else fails.
+      # Read-only dry run, before any build (no --assets): exit 0 and 2 are plans (2 = a human
+      # step pending), anything else fails. Pending = a version not released yet: an item hoist
+      # would create or update. A human step (`pending`) or an unreadable registry (`unknown`)
+      # alone starts no release.
       - id: detect
+        if: steps.gate.outputs.enabled == 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -61,16 +77,9 @@ jobs:
           rc=$?
           set -e
           if [ "$rc" -gt 2 ]; then echo "hoist release publish --dry-run failed ($rc)" >&2; exit "$rc"; fi
-          pending=$(jq -r '[.items[] | select(.action != "ok")] | length > 0' <<< "$out")
+          pending=$(jq -r '[.items[] | select(.action == "create" or .action == "update")] | length > 0' <<< "$out")
           echo "pending: $pending"
           echo "pending=$pending" >> "$GITHUB_OUTPUT"
-      - id: gate
-        env:
-          HOIST_RELEASE: ${{ vars.HOIST_RELEASE }}
-        run: |
-          if [ "$HOIST_RELEASE" = "enabled" ]; then enabled=true; else enabled=false; fi
-          echo "release gate (vars.HOIST_RELEASE): $enabled"
-          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
 
   advisories:
     needs: detect
@@ -180,7 +189,9 @@ jobs:
           client-id: ${{ vars.HOIST_RELEASE_APP_CLIENT_ID }}
           private-key: ${{ secrets.HOIST_RELEASE_APP_KEY }}
           permission-contents: write
-      # Repo hook (seed): toolchain setup, builds; dist/ and Node 24 are ready.
+      # Repo hook (seed): toolchain setup, builds; dist/ and Node 24 are ready. It runs with this
+      # job's publish rights (environment release, id-token: write), so it is owner-only like this
+      # file; the App token is passed to the next step only.
       - name: scripts/release-pre.sh
         run: if [ -f scripts/release-pre.sh ]; then bash scripts/release-pre.sh; fi
       - run: hoist release publish --assets dist

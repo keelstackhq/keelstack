@@ -39,6 +39,10 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 - `[publish] npm = { build = "<cmd>" }`: `release publish` runs it in the package directory before
   publishing that npm package (not on `--dry-run`, not when the version is already on npm).
 - `apply --dry-run` does not exist: use `hoist plan`.
+- `plan-limit:rulesets` (exit 2): the GitHub plan gives this private repo no rulesets, so branch
+  protection is not enforced; only the owner can fix it (upgrade the plan or make the repo public).
+- `release publish --dry-run` without `--assets` plans the release before any build (binaries
+  counted, not checked); the real publish needs `--assets DIR`.
 - Item kinds you will see besides settings and secrets: `environment` (every workflow `environment:`,
   also `with: {environment: X}` on a reusable-workflow call, plus `[github.environments.<name>]`
   in `hoist.toml`: `branches = [..]` deployment branch policies, `manage = false` to leave one alone;

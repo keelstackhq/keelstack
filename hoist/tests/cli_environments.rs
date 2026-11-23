@@ -591,3 +591,71 @@ fn a_branch_policy_named_like_the_tag_does_not_satisfy_it() {
         serde_json::json!({"name": "v*", "type": "tag"})
     );
 }
+
+/// The `publish` fixture's live environments: only `release`, custom policies, one reviewer.
+fn release_live(policies: &str) -> Vec<(String, u16, String)> {
+    let envs = r#"{"total_count":1,"environments":[{"id":1,"name":"release","protection_rules":[{"type":"required_reviewers","reviewers":[{"type":"User","reviewer":{"id":42,"login":"owner"}}]}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}]}"#;
+    let mut r = routes(&[("GET /repos/acme/x/environments", 200, envs)]);
+    let base = "/repos/acme/x/environments/release";
+    r.push((
+        format!("GET {base}/deployment-branch-policies"),
+        200,
+        policies.into(),
+    ));
+    r.push((format!("PUT {base}"), 200, "empty.json".into()));
+    r.push((
+        format!("POST {base}/deployment-branch-policies"),
+        200,
+        "empty.json".into(),
+    ));
+    r
+}
+
+#[test]
+fn an_existing_release_environment_missing_its_tag_policy_is_an_update() {
+    let dir = fixture_repo("publish", SITE);
+    write_toml(
+        dir.path(),
+        "[github.environments.release]\ntags = [\"v*\"]\n",
+    );
+    let api = start(&release_live(&typed_rows(&[("main", "branch")])));
+    let report = run(&api, dir.path(), &["plan", "--json"], 0);
+    let it = item(&report, "environment", "release");
+    assert_eq!(it["area"], "release", "{it}");
+    assert_eq!(it["action"], "update", "{it}");
+    assert!(it["reason"].as_str().unwrap().contains("tag `v*`"), "{it}");
+    api.assert_only_get();
+    let _ = run(&api, dir.path(), &["apply", "--yes", "--json"], 1);
+    // Only the missing tag policy: no PUT, so the reviewers stay as they are.
+    let release: Vec<_> = api
+        .requests()
+        .into_iter()
+        .filter(|q| q.method != "GET" && q.path.contains("/environments/release/"))
+        .collect();
+    assert_eq!(release.len(), 1, "{:?}", writes(&api));
+    assert_eq!(
+        serde_json::from_str::<Value>(release[0].body.as_deref().unwrap()).unwrap(),
+        serde_json::json!({"name": "v*", "type": "tag"})
+    );
+    assert!(
+        !writes(&api).contains(&"PUT /repos/acme/x/environments/release".to_string()),
+        "{:?}",
+        writes(&api)
+    );
+}
+
+#[test]
+fn an_existing_release_environment_with_its_tag_policy_is_ok() {
+    let dir = repo();
+    write_toml(
+        dir.path(),
+        "[github.environments.release]\ntags = [\"v*\"]\n",
+    );
+    let api = start(&release_live(&typed_rows(&[
+        ("main", "branch"),
+        ("v*", "tag"),
+    ])));
+    let report = run(&api, dir.path(), &["plan", "--json"], 0);
+    let it = item(&report, "environment", "release");
+    assert_eq!(it["action"], "ok", "{it}");
+}

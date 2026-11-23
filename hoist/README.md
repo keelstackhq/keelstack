@@ -78,7 +78,8 @@ human step `first-publish:<name>` (exit 2); the others still publish. Finished s
 on a re-run, and every step is verified afterwards, registries by up to 10 reads over about 5
 minutes, since npm can take minutes to serve a new version (exit 1 on a failed step or
 verification; the table lists each failed check under `failed checks:`). The GitHub token needs
-Contents: write. `--dry-run` sends GET requests only and runs anywhere. npm, cargo and pnpm run without `GH_TOKEN`/`GITHUB_TOKEN`, and
+Contents: write. `--dry-run` sends GET requests only and runs anywhere; without `--assets` it plans
+the binaries without reading them (release.yml `detect` runs it before any build). npm, cargo and pnpm run without `GH_TOKEN`/`GITHUB_TOKEN`, and
 `cargo publish` output is shown with the crates.io token replaced by `***`. A launcher waits
 (`pending`) while one of its platform packages is not published yet.
 
@@ -235,7 +236,9 @@ manage = false                     # hoist leaves this one alone (an `ok` "not m
 
 `tags` also works for the `release` environment (a tag-triggered publish job cannot use a branch-only
 environment). Each pattern is a deployment policy of type `tag`; branch and tag policies are read
-and compared by type, so a branch policy named `v*` does not satisfy a wanted tag.
+and compared by type, so a branch policy named `v*` does not satisfy a wanted tag. An existing
+`release` environment that lacks a wanted tag is an `update` in the `release` area; `apply` adds
+only the missing tag policies (its reviewers stay).
 
 Unknown keys under `[github.environments.<name>]` are an error (exit 3).
 
@@ -269,10 +272,11 @@ nothing is written. The `release` environment is not read for branch policies.
    `applied`, `failed: <error>` or `not attempted`, plus the plan's other items. Run `apply` again
    to continue; changes already in place are `ok`. One exception: GitHub Free refuses rulesets
    on a private repo (a 403 "Upgrade to GitHub Pro or make this repository public"), and classic
-   branch protection and the merge queue too. Then the ruleset item is `unknown` ("NOT enforced:
-   required checks `ci-ok`; GitHub Free: …; upgrade the plan … or make the repo public"),
-   the other writes still run, and a plan limit alone does not make apply exit 1. `plan` and `check`
-   report the same `unknown` item when the ruleset read gets that 403 (exit 0 for it).
+   branch protection and the merge queue too. Then the ruleset item is `pending` ("NOT enforced:
+   required checks `ci-ok`; GitHub Free: …; upgrade the plan … or make the repo public") with the
+   human step `plan-limit:rulesets` (branch protection is not enforced on this plan), the other
+   writes still run, and a plan limit alone makes apply exit 2, not 1 and never a silent 0. `plan`
+   and `check` report the same item and step when the ruleset read gets that 403 (`check` exits 2).
    A required check the live ruleset pins to another GitHub App (`integration_id` not 15368) is
    verified as "posted by app <id>" without a workflow job.
 5. After the writes hoist re-reads the live state and runs the `check` logic; that is the final
@@ -463,8 +467,8 @@ repository is public.
 release commit of this binary; a file you edited is kept unless `--force`. For an npm launcher
 `init` writes no file and reports the human step `release-workflow-build` (build the binaries, then
 `hoist release publish --assets <dir>`; hull's `template-rust` release.yml does this). `init` also
-flags other workflows that run `npm publish`, `pnpm publish`, `yarn npm publish` or `cargo publish`
-(`release-workflow-race`): two publishers race.
+flags other workflows (not the `[release] workflow`) that run `npm publish`, `pnpm publish`,
+`yarn npm publish` or `cargo publish` without `--dry-run` (`release-workflow-race`): two publishers race.
 
 An npm package that needs a build first sets `[publish] npm = { build = "pnpm build" }` in its
 `hoist.toml`: `hoist release publish` runs it (`sh -c`, in the package directory, output on stderr)

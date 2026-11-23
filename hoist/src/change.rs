@@ -7,7 +7,7 @@ use crate::cloudflare::{CfToken, LiveCloudflare};
 use crate::config::Managed;
 use crate::desired::Desired;
 use crate::diff::{diff_cloudflare, diff_github};
-use crate::diff_release::release_env_item;
+use crate::diff_release::{release_env_item, release_reviewer_gap};
 use crate::github::{EnvBranches, Fetch, LiveGithub};
 use crate::report::{Action, Item};
 use crate::timeutil::parse_rfc3339;
@@ -256,6 +256,20 @@ fn env_write(
         {
             (
                 want.into_iter().filter(|b| !have.contains(b)).collect(),
+                want_tags
+                    .into_iter()
+                    .filter(|t| !have_tags.contains(t))
+                    .collect(),
+                false,
+            )
+        }
+        // The existing release environment: a tag policy gap alone only adds the missing tag
+        // policies (no PUT, its reviewers stay); a reviewer change PUTs it with every policy.
+        Some(Fetch::Got(EnvBranches::Custom(_, have_tags)))
+            if release && gh.is_some_and(|l| !release_reviewer_gap(d, l)) =>
+        {
+            (
+                Vec::new(),
                 want_tags
                     .into_iter()
                     .filter(|t| !have_tags.contains(t))

@@ -334,8 +334,9 @@ fn has_other_workflow(dir: &Path) -> bool {
     })
 }
 
-/// Workflow files other than release.yml with a step that publishes (sorted by name).
-fn publishing_workflows(dir: &Path) -> Vec<String> {
+/// Workflow files other than `release` (the configured `[release] workflow`, default
+/// release.yml) with a step that publishes; a `--dry-run` publish does not (sorted by name).
+fn publishing_workflows(dir: &Path, release: &str) -> Vec<String> {
     const PUBLISH: [&str; 4] = [
         "npm publish",
         "pnpm publish",
@@ -350,13 +351,15 @@ fn publishing_workflows(dir: &Path) -> Vec<String> {
         .filter_map(|e| {
             let n = e.file_name().to_string_lossy().into_owned();
             let yaml = n.ends_with(".yml") || n.ends_with(".yaml");
-            if !yaml || n == "release.yml" {
+            if !yaml || n == release {
                 return None;
             }
             let text = std::fs::read_to_string(e.path()).ok()?;
-            let publishes = text
-                .lines()
-                .any(|l| !l.trim_start().starts_with('#') && PUBLISH.iter().any(|p| l.contains(p)));
+            let publishes = text.lines().any(|l| {
+                !l.trim_start().starts_with('#')
+                    && !l.contains("--dry-run")
+                    && PUBLISH.iter().any(|p| l.contains(p))
+            });
             publishes.then(|| format!(".github/workflows/{n}"))
         })
         .collect();
@@ -401,6 +404,7 @@ pub fn init(
         ));
     };
     let has_launcher = r.packages.iter().any(|p| p.launcher.is_some());
+    let release_workflow = r.workflow_file().to_string();
     check_names(&d.default_branch, &r.environment.value)?;
     let item = |kind: &str, key: &str, action, reason: String, source: &str| Item {
         area: if kind == "workflow-file" {
@@ -549,7 +553,7 @@ pub fn init(
             }
         }
     }
-    for file in publishing_workflows(dir) {
+    for file in publishing_workflows(dir, &release_workflow) {
         human_steps.push(HumanStep {
             id: "release-workflow-race".into(),
             title: format!(

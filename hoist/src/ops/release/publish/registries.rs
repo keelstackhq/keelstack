@@ -348,8 +348,18 @@ pub(super) fn dry_run(
                 .npm
                 .as_ref()
                 .and_then(|n| n.build.as_deref());
+            // The build runs once, before the job's first npm step: a launcher's first
+            // platform package (its own npm step comes last), else the package's npm step.
+            let first = match step {
+                Step::Platform(i) => i == 0,
+                _ => job
+                    .pkg
+                    .launcher
+                    .as_ref()
+                    .is_none_or(|l| l.platforms.is_empty()),
+            };
             match build {
-                Some(b) if !matches!(step, Step::Platform(i) if i > 0) => {
+                Some(b) if first => {
                     format!("npm publish --access {} after build: {b}", access(pkg))
                 }
                 _ => format!("npm publish --access {}", access(pkg)),

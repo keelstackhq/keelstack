@@ -1798,3 +1798,37 @@ fn npm_build_dry_run_never_runs_and_is_named() {
         .to_string();
     assert!(reason.contains("build: touch"), "{reason}");
 }
+
+/// The release workflow's `detect` job runs the dry run before any build: no `--assets`. A
+/// pending crate with `github_release` targets is still a plan (exit 0), not exit 3.
+#[test]
+fn dry_run_without_assets_plans_the_release_of_binaries() {
+    let env = setup();
+    let api = FakeApi::start(&[(LIST, 200, "[]", &[])]);
+    let mut c = hoist();
+    for v in ACTIONS_VARS {
+        c.env_remove(v);
+    }
+    let output = c
+        .arg("-C")
+        .arg(env.repo.path())
+        .args(["release", "publish", "--dry-run", "--json"])
+        .env("HOIST_GITHUB_API", api.url())
+        .env("HOIST_NPM_REGISTRY", api.url())
+        .env("HOIST_CRATES_API", api.url())
+        .env("GITHUB_TOKEN", "test-token")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    api.assert_only_get();
+    assert_eq!(item(&v, "tag", "tool@0.3.0")["action"], "create");
+    let rel = item(&v, "github_release", "tool@0.3.0");
+    assert_eq!(rel["action"], "create", "{rel:#}");
+    let reason = rel["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("2 assets") && reason.contains("--assets"),
+        "{reason}"
+    );
+}
