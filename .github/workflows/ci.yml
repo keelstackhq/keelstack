@@ -426,13 +426,20 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
-      # One source for the rust tool versions: .bosun/pins.toml (plain `version = "x"` lines).
+      # One source for the rust tool versions: .bosun/pins.toml (plain `version = "x"` lines), read
+      # from the base commit.
       - name: Read the tool pins
         id: pins
         if: steps.rust.outputs.needed == 'true'
         working-directory: ${{ github.workspace }}
+        env:
+          BASE: ${{ needs.detect.outputs.base }}
         run: |
-          pin() { sed -n "/^\[$1\]/,/^\[/s/^version = \"\(.*\)\"\$/\1/p" .bosun/pins.toml | head -n1; }
+          # The base's copy, never the PR's (.bosun/pins.toml says so); with no base (push to
+          # main) the checked-out head is the base. An unreadable copy fails the step.
+          git show "${BASE:-HEAD}:.bosun/pins.toml" > "$RUNNER_TEMP/pins.toml" \
+            || { echo "::error::cannot read .bosun/pins.toml at ${BASE:-HEAD}"; exit 1; }
+          pin() { sed -n "/^\[$1\]/,/^\[/s/^version = \"\(.*\)\"\$/\1/p" "$RUNNER_TEMP/pins.toml" | head -n1; }
           nextest="$(pin nextest)"; deny="$(pin cargo-deny)"
           test -n "$nextest" && test -n "$deny" || { echo "::error::no nextest/cargo-deny version in .bosun/pins.toml"; exit 1; }
           echo "tools=cargo-nextest@$nextest,cargo-deny@$deny" >> "$GITHUB_OUTPUT"

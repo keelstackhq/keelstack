@@ -84,30 +84,32 @@ everything else goes through bosun, GitHub and CI. **Practice:** the orchestrato
 decisions and asks each as one short question with a recommended option, and makes each
 owner-only action as small as possible:
 
-- **Approve a pull request:** in the orchestrator's chat (a signed approval, below), or with a
-  comment `/bosun approve <head sha>` typed in the GitHub app or posted from the owner's own
-  machine. An unsigned comment from a Claude cloud session is re-attributed by the proxy and never
-  counts.
+- **Approve a pull request:** with the owner's own GitHub review of the head, or a comment
+  `/bosun approve <head sha>` typed in the GitHub app or posted from the owner's own machine
+  (D-025). A chat answer never counts, and agents do not ask for one. An unsigned comment from a
+  Claude cloud session is re-attributed by the proxy and never counts.
 - **Release:** one approval of the `release` environment.
 - **Repo settings:** in the GitHub settings, or `hoist apply`.
 - **Human-only steps** are listed under "Blocked" in `docs/PROGRESS.md`, each with the exact
   action.
 
-### Approvals by chat
+### Approvals
 
-Since bosun 0.2.1. Set up once: the orchestrator makes an ed25519 key
-in its own container, and the owner approves the pull request that enrolls its public key in
-`.bosun/approvers.toml` on GitHub (steps in [Risk and review](/docs/risk/)). Then, per pull request:
+Owner approvals are only the owner's own GitHub review or a `/bosun approve <sha>` comment. Chat
+approvals are retired (D-025). Since bosun 0.2.1 the orchestrator can also sign approvals itself
+(an ed25519 key in its own container, enrolled by a pull request the owner approves on GitHub in
+`.bosun/approvers.toml`; steps in [Risk and review](/docs/risk/)). Per pull request:
 
 1. **Practice:** a child finishes reviews and fixes, reports the final head SHA once, and freezes
    the head.
-2. The orchestrator runs `bosun approve --list` and shows the owner the ready pull requests (number,
-   title, risk, files, head).
-3. **Practice:** the owner answers in the chat, for example "approve 222".
-4. The orchestrator runs `bosun approve 222@<head> --sign-key <pem>`. It posts
-   `/bosun approve <head>` with a `bosun-sig ed25519 <key id> <signature>` line, and `risk-check`
-   turns green. If the head moved, nothing is signed; the child reports the new head and the owner
-   approves again.
+2. The orchestrator runs `bosun approve --list` and checks the ready pull requests (number, title,
+   risk, files, head).
+3. Where the owner must decide, the owner reviews or comments on GitHub. Where quorum applies
+   (D-022), the orchestrator signs after green checks and two approving verdicts from two
+   different reviewer sessions on the exact head.
+4. `bosun approve <pr>@<head> --sign-key <pem>` posts `/bosun approve <head>` with a
+   `bosun-sig ed25519 <key id> <signature>` line, and `risk-check` turns green. If the head
+   moved, nothing is signed.
 
 Pull requests that change `.bosun/approvers.toml`, `governance/owners.toml` or a `CODEOWNERS` file,
 and pull requests bosun cannot see whole, still need the owner's own GitHub approval.

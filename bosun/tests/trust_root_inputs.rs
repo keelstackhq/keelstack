@@ -743,7 +743,9 @@ fn privileged(file_text: &str, job: &str) -> bool {
 
 fn workflows() -> Vec<String> {
     walk(&|p| {
-        p.starts_with(".github/workflows/") && p.ends_with(".yml") && p.matches('/').count() == 2
+        p.starts_with(".github/workflows/")
+            && (p.ends_with(".yml") || p.ends_with(".yaml"))
+            && p.matches('/').count() == 2
     })
 }
 

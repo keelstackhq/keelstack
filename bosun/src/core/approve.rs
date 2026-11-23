@@ -553,7 +553,7 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// main-open check and the review; a signed PR that weakened one would have every later PR
 /// judged by the weakened copy. Dependency manifests (`Cargo.toml`, `Cargo.lock`) are no trust
 /// files: they are owner-approved under R-deps.
-pub const TRUST_FILES: [&str; 16] = [
+pub const TRUST_FILES: [&str; 21] = [
     APPROVERS_PATH,
     APPROVALS_CONFIG,
     "governance/owners.toml",
@@ -569,6 +569,11 @@ pub const TRUST_FILES: [&str; 16] = [
     ".github/workflows/signer.yml",
     ".github/workflows/main-open.yml",
     ".github/workflows/review.yml",
+    ".github/workflows/risk.yaml",
+    ".github/workflows/verdict.yaml",
+    ".github/workflows/signer.yaml",
+    ".github/workflows/main-open.yaml",
+    ".github/workflows/review.yaml",
     // What the judge is pinned by.
     ".bosun/pins.toml",
 ];
@@ -861,6 +866,11 @@ mod tests {
             ".github/workflows/signer.yml",
             ".github/workflows/main-open.yml",
             ".github/workflows/review.yml",
+            ".github/workflows/risk.yaml",
+            ".github/workflows/verdict.yaml",
+            ".github/workflows/signer.yaml",
+            ".github/workflows/main-open.yaml",
+            ".github/workflows/review.yaml",
         ] {
             assert_eq!(trust_files_changed_in([(p, None)], &[]), [p], "{p}");
             assert_eq!(trust_files_changed_in([(p, None)], &mono), [p], "{p}");
