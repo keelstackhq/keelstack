@@ -1,6 +1,7 @@
 //! `bosun digest` (spec §14, §18): the owner's daily digest as one D-012 chat form, and with
-//! `--answer` the owner's reply turned into `bosun approve` calls in `next`. It writes nothing
-//! and signs no approval: the orchestrator, the key holder, runs those calls. A raise counts only
+//! `--answer` the owner's reply parsed into signed budget raises. A chat reply approves nothing
+//! (D-025): the held heads come back with the `/bosun approve <sha>` comment the owner posts on
+//! the PR, and `next` is empty. It writes nothing and signs no approval. A raise counts only
 //! signed with an enrolled owner key (`--sign-key`), as `answer --chat`.
 
 use std::path::Path;
@@ -53,9 +54,6 @@ fn board(dir: Option<&Path>, app: &App) -> Result<Board, BosunError> {
         bootstrap: false,
         via_signer: false,
         requester: None,
-        chat: false,
-        question: None,
-        slack_user: None,
     };
     let data = super::approve::run(dir, &list)?.data;
     let strs = |v: &Value| -> Vec<String> {
@@ -167,7 +165,9 @@ pub fn run(dir: Option<&Path>, args: &DigestArgs) -> CmdResult {
         &warns,
         per_task,
     );
+    let summary = summary(&app, &items, &asks)?;
     let mut data = json!({
+        "summary": summary,
         "message_id": d.id,
         "message": d.text,
         "header": d.header,
@@ -197,6 +197,52 @@ pub fn run(dir: Option<&Path>, args: &DigestArgs) -> CmdResult {
     Ok(Outcome::data(data))
 }
 
+/// The once-a-day owner summary (D-022): what merged and what was released in the last 24 hours
+/// and what is blocked on the owner now (PRs and open asks). A PR or release listing that cannot
+/// be read is left out (stderr says so), never an error.
+fn summary(app: &App, items: &[Item], asks: &[(u64, String)]) -> Result<Value, BosunError> {
+    let now = app.ctx.now;
+    let since = now.minus_secs(24 * 3600);
+    let recent = |t: &Option<String>| {
+        t.as_deref()
+            .and_then(crate::time::parse_rfc3339)
+            .is_some_and(|t| t >= since && t <= now)
+    };
+    // Like the releases, an unreadable listing is left out, never an error (bosun#706).
+    let pulls = match app.gh.list_pulls_updated_since(&since.to_string()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("bosun: digest: cannot read the merged PRs: {}", e.message);
+            Vec::new()
+        }
+    };
+    let mut merged: Vec<_> = (pulls.into_iter())
+        .filter(|p| recent(&p.merged_at))
+        .collect();
+    merged.sort_by_key(|p| p.number);
+    let released = match app.gh.list_releases() {
+        Ok(list) => (list.iter())
+            .filter(|r| recent(&r.published_at))
+            .map(|r| json!({"tag": r.tag_name, "published_at": r.published_at}))
+            .collect(),
+        Err(e) => {
+            eprintln!("bosun: digest: cannot read the releases: {}", e.message);
+            Vec::new()
+        }
+    };
+    let mut blocked: Vec<Value> = (items.iter())
+        .map(|i| json!({"pr": i.pr, "title": i.title, "rules": i.rules}))
+        .collect();
+    blocked.extend(asks.iter().map(|(n, t)| json!({"issue": n, "title": t})));
+    Ok(json!({
+        "since": since.to_string(),
+        "merged": merged.iter().map(|p| json!({"pr": p.number, "title": p.title,
+            "merged_at": p.merged_at})).collect::<Vec<_>>(),
+        "released": released,
+        "blocked": blocked,
+    }))
+}
+
 fn answer(dir: Option<&Path>, app: &App, args: &DigestArgs) -> CmdResult {
     kill_switch(app.gh.as_ref())?;
     let text = read_text(&args.from)?;
@@ -218,7 +264,7 @@ fn answer(dir: Option<&Path>, app: &App, args: &DigestArgs) -> CmdResult {
     if reply.ids.is_empty() {
         return Err(BosunError::usage(
             "the owner's reply quotes no digest id",
-            "relay the owner's reply as typed from the form (`<id> approve ...`); ask the owner to reply with the id",
+            "relay the owner's reply as typed from the form (`<id> raise ...`); ask the owner to reply with the id",
         ));
     }
     if let Some(quoted) = reply.ids.iter().find(|q| **q != id) {
@@ -269,19 +315,16 @@ fn answer(dir: Option<&Path>, app: &App, args: &DigestArgs) -> CmdResult {
             Err(why) => refused.push(json!({"raise": {"epic": epic, "usd": usd}, "why": why})),
         }
     }
-    let mut out = Outcome::data(json!({
+    let out = Outcome::data(json!({
         "message_id": id,
-        "approve": approve.iter().map(|(pr, h)| json!({"pr": pr, "head_sha": h}))
-            .collect::<Vec<_>>(),
+        // D-025: chat approves nothing; the owner comments the line on the PR.
+        "approve": approve.iter().map(|(pr, h)| json!({"pr": pr, "head_sha": h,
+            "owner_comment": format!("/bosun approve {h}")})).collect::<Vec<_>>(),
         "dropped": dropped,
         "raises": raises,
         "refused": refused,
         "unknown": reply.unknown,
     }));
-    for (pr, h) in &approve {
-        let command = format!("bosun approve {pr}@{h} --sign-key <pem>");
-        out = out.with_next("Bash", json!({"command": command}));
-    }
     Ok(out)
 }
 

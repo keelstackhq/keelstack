@@ -148,17 +148,12 @@ fn relay_waves_and_the_cloud_environment_parse() {
 }
 
 #[test]
-fn approvals_chat_defaults_true() {
-    let c = Config::parse("", "b").unwrap();
-    assert_eq!(c.approvals.chat, None);
-    assert!(c.approvals.chat_enabled());
-}
-
-#[test]
-fn approvals_chat_false_parses() {
+fn approvals_chat_is_deprecated_but_still_parses() {
+    // D-025 retired chat approvals: the key stays accepted so an old config loads; it does nothing.
     let c = Config::parse("[approvals]\nchat = false\n", "b").unwrap();
     assert_eq!(c.approvals.chat, Some(false));
-    assert!(!c.approvals.chat_enabled());
+    let c = Config::parse("[approvals]\nchat = true\n", "b").unwrap();
+    assert_eq!(c.approvals.chat, Some(true));
 }
 
 #[test]

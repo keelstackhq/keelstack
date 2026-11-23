@@ -157,8 +157,8 @@ one `UC-<ID>-<n>` line that a test can check. Human steps a plan needs go in a
 5. **Optional, owner:** enroll an approval key: `bosun keygen --enroll` makes it and adds its public
    half to `.bosun/approvers.toml` (run it only on the machine that signs; if the orchestrator signs
    for you, its session runs it and opens a pull request with the file). The owner approves that
-   pull request on GitHub; after it, approvals come as chat forms
-   ([Risk and review](/docs/risk/#signed-approvals-from-chat)).
+   pull request on GitHub; after it, the orchestrator can sign approvals
+   ([Risk and review](/docs/risk/#signed-approvals)).
 6. **Verify:** `bosun doctor`, then `bosun doctor --remote` (owner); `ready` exits 0.
 
 Once the setup pull request is merged, agents turn on auto-merge when they open a pull request

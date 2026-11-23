@@ -76,9 +76,8 @@ by login so an owner's own halt issue is judged without the team.
 an owner:
 - GitHub reviews: a member's APPROVED review of the head approves; a member's CHANGES_REQUESTED
   or DISMISSED review withdraws (§8), so any member can block.
-- `/bosun approve <head>` comments (the fallback; the default is the chat form and the
-  orchestrator's signed comment, D-012): by a member, with the same tests (unedited, plain user
-  token, exact text).
+- `/bosun approve <head>` comments (D-025: the owner's way to approve; chat approvals are
+  retired): by a member, with the same tests (unedited, plain user token, exact text).
 - Signed approvals: keys stand for the owners; "no owners at base" means no listed user and no
   readable member.
 - `bosun approve` with `BOSUN_OWNER_TOKEN`: the PAT's login must be a user entry or a member

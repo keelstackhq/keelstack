@@ -10,15 +10,14 @@ use super::carry_over::{candidates, carry_approval, carry_verdict, has_verdict, 
 use super::verdict::{APPROVABLE, CONTEXT as VERDICT, apply as apply_verdict, neutral_refusal};
 use crate::app::{App, Result, default_branch, default_ref, halt_reason, task_meta, trusted_notes};
 use crate::config::{CONFIG_FILE, Config};
-use crate::core::approve;
 use crate::core::approve::{
     APPROVERS_PATH, ApproverKey, Form, OrchestratorCase, Policy, Role, orchestrator_counts,
     parse_approvers, signature_lines, signed_message, signed_message_autonomous,
     signed_message_bootstrap, signed_message_v2, trust_files_changed_in, verify_ed25519,
 };
-use crate::core::lease::{Member, leases_of};
+use crate::core::lease::leases_of;
 use crate::core::meta::{closing_issues_in, linked_issues_in};
-use crate::core::records::{Note, Record};
+use crate::core::records::Record;
 use crate::core::risk::{
     self, Approval, ChangedFile, FileView, Rules, VERDICTS_NEEDED, added_lines, apply_floor,
     capability_labels, clean_verdicts, comment_approves, evaluate, lease_sessions,
@@ -39,7 +38,7 @@ const RULES_PATH: &str = ".bosun/risk.toml";
 pub const OWNERS_PATH: &str = "governance/owners.toml";
 const CONTEXT: &str = "risk-check";
 /// A base with this file carries bosun's own approval code, which is then critical too.
-const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
+pub(crate) const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
 
 /// Owner logins from `governance/owners.toml` at `git_ref`; empty when the file is missing.
 pub fn owner_logins(gh: &dyn Github, git_ref: &str) -> Result<Vec<String>> {
@@ -641,6 +640,29 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             evidence,
         });
     }
+    // Key and owner changes need the owner's own GitHub approval, never a signature.
+    let trust = trust_files_changed_in(
+        files
+            .iter()
+            .map(|f| (f.path.as_str(), f.previous_path.as_deref())),
+        &roots,
+    );
+    // D-022: under the quorum policy (read at base) its trust root is the owner's too.
+    let (quorum_root, root_cause) = quorum_trust_root(gh, &pr_files, &roots, (base, head))?;
+    // Built in, whatever the repo's rules say (bosun#706): a trust-root change is high risk and
+    // the owner's, so a PR that rewrites the base rules cannot make itself normal risk.
+    let mut root_hits: Vec<String> = trust.iter().chain(&quorum_root).cloned().collect();
+    root_hits.sort();
+    root_hits.dedup();
+    if !root_hits.is_empty() {
+        matches.retain(|m| m.rule != TRUST_RULE);
+        matches.push(risk::Match {
+            rule: TRUST_RULE.into(),
+            why: "the PR changes the trust root (D-022): only the owner approves".into(),
+            approval: Approval::Owner,
+            evidence: root_hits,
+        });
+    }
     // The critical floor: a delegate never approves the approval system, secrets or prod.
     let critical = if matches.iter().any(|m| m.approval == Approval::Delegate) {
         risk::critical_in(&matches, &files, &roots)
@@ -679,13 +701,6 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     } else {
         Vec::new()
     };
-    // Key and owner changes need the owner's own GitHub approval, never a signature.
-    let trust = trust_files_changed_in(
-        files
-            .iter()
-            .map(|f| (f.path.as_str(), f.previous_path.as_deref())),
-        &roots,
-    );
     if !trust.is_empty() {
         eprintln!(
             "bosun: risk-check: the PR changes {}: signed approvals do not count",
@@ -699,16 +714,30 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "bosun: risk-check: bosun could not see the whole diff: signed approvals do not count"
         );
     }
-    let signed_ok = trust.is_empty() && !unseen;
+    // D-022: on the quorum trust root the owner's own review or `/bosun approve <sha>` comment
+    // is the only approval; a key's signature (owner role included) never stands for the owner.
+    if !quorum_root.is_empty() {
+        eprintln!(
+            "bosun: risk-check: the PR changes the quorum trust root ({}): signed approvals do not count",
+            quorum_root.join(", ")
+        );
+        if let Some(cause) = &root_cause {
+            eprintln!("bosun: risk-check: {cause}");
+        }
+    }
+    let signed_ok = trust.is_empty() && quorum_root.is_empty() && !unseen;
     let requirement = requirement(&matches);
     let (mut bootstrap, policy_source) = if high && signed_ok {
         let excluded = bootstrap_excluded(&pr_files, &matches, &roots);
         let today = ctx.now.to_string();
         let pr = (&pr_files[..], &matches[..], requirement);
-        orchestrator_window(gh, base, &today[..10], pr, (&excluded, &capabilities))?
+        let ctx = (&excluded[..], &capabilities[..], &quorum_root[..]);
+        orchestrator_window(gh, base, &today[..10], pr, ctx)?
     } else {
         (Err("signed approvals do not count on this PR".into()), None)
     };
+    let quorum = policy_source.is_some_and(|(p, _)| p == Policy::Quorum);
+    let policy_source = policy_source.map(|(_, s)| s);
     let repo = ctx.repo.to_string();
     let linked = linked_issues_in(&pull.body, &repo);
     // D-017: the signature counts only with a clean verdict and a task the author leased.
@@ -718,16 +747,46 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         None
     };
     if policy_source.is_some() && bootstrap.is_ok() && auto.is_none() {
-        bootstrap =
-            Err("autonomous mode (D-017) needs an open linked task leased by the author".into());
+        let rule = if quorum {
+            "quorum (D-022)"
+        } else {
+            "autonomous mode (D-017)"
+        };
+        bootstrap = Err(format!(
+            "{rule} needs an open linked task leased by the author"
+        ));
     }
     let autonomous = auto.is_some();
+    // D-022: a halted bosun (or one that cannot tell) counts no signature.
+    let mut halt_note: Option<&str> = None;
+    if quorum && bootstrap.is_ok() {
+        match halt_reason(gh) {
+            Ok(None) => {}
+            Ok(Some((why, _))) => {
+                eprintln!(
+                    "bosun: risk-check: bosun is halted ({why}): the quorum signature does not count"
+                );
+                halt_note = Some("bosun is halted");
+                bootstrap = Err(format!("bosun is halted: {why}"));
+            }
+            Err(e) => {
+                eprintln!(
+                    "bosun: risk-check: cannot tell whether bosun is halted ({}): the quorum signature does not count",
+                    e.message
+                );
+                halt_note = Some("cannot tell whether bosun is halted");
+                bootstrap = Err(format!(
+                    "cannot tell whether bosun is halted: {}",
+                    e.message
+                ));
+            }
+        }
+    }
+    // D-022: while halted (or unknown) no signature counts, a key of any role included.
+    let signed_ok = signed_ok && halt_note.is_none();
     let unlinked =
         linked.is_empty() && matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
     let models = review_models(gh, base)?;
-    // Chat records never count where signatures do not: trust-file and unseen-diff PRs keep the
-    // owner's own GitHub approval (or comment) as the only form.
-    let chat_on = high && signed_ok && chat_enabled(gh, base)?;
     let need = Need {
         repo: &ctx.repo,
         pr: n,
@@ -739,12 +798,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         linked: &linked,
         unlinked,
         autonomous: auto.as_ref(),
+        quorum,
         models: models.as_deref(),
         signer_on: signer_on(gh, base)?,
-        chat: chat_on.then_some(Chat {
-            author: pull.user.as_str(),
-            base,
-        }),
     };
     let found = if high {
         approval_on(gh, &need, head)?
@@ -760,14 +816,21 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         None
     } else {
         default_branch(gh).ok().and_then(|branch| {
-            // A chat record (D-018) is for the head it names: a new push makes it stale.
-            let approve = |h: &str| approval_on(gh, &need, h).ok().filter(|f| !f.by_chat);
+            // D-022: a quorum signature names the older head `h`; the clean verdicts are counted
+            // again on this head (`found`), so a carry never rests on the verdicts of `h` alone.
+            let approve = |h: &str| {
+                let f = approval_on(gh, &need, h).ok()?;
+                // Any key (owner role included) is a signature: it needs the recount.
+                let by_signature = need.quorum && matches!(f.kind, Some(Approver::Key { .. }));
+                let recounted = found.autonomous_verdicts.len() >= risk::QUORUM_VERDICTS;
+                (!by_signature || recounted).then_some(f)
+            };
             carry_approval(gh, &pull, &branch, &owners, &approve)
         })
     };
     let Found {
         mut approved_by,
-        owner_own,
+        kind,
         mut verdicts,
         mut delegate_verdicts,
         delegate_blocked,
@@ -797,6 +860,16 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "high risk ({}), approved by two verdicts: {}",
             ids.join(", "),
             verdicts.join(", ")
+        ),
+        (None, _) if halt_note.is_some() => format!(
+            "high risk, quorum (D-022): {}, no signature counts: {}",
+            halt_note.unwrap_or_default(),
+            ids.join(", ")
+        ),
+        (None, _) if autonomous && quorum => format!(
+            "high risk, quorum (D-022): {} clean verdicts and orchestrator signature needed: {}",
+            risk::QUORUM_VERDICTS,
+            ids.join(", ")
         ),
         (None, _) if autonomous => format!(
             "high risk, autonomous mode (D-017): clean verdict and orchestrator signature needed: {}",
@@ -836,23 +909,17 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     // A low-risk head reads the owners' approval only when an escalation waits for it.
     let signer = need.signer_on;
     let cleared = clear_escalation(gh, w, head, &|| match &approved_by {
-        Some(who) if high && passed_on_head && owner_own => Ok(Some(who.clone())),
+        Some(who) if high && passed_on_head && kind.is_some_and(|k| k.stands_for_owner(quorum)) => {
+            Ok(Some(who.clone()))
+        }
         _ if high => Ok(None),
         _ => {
             let owners = owner_logins(gh, base)?;
             let by = approver(gh, &ctx.repo, n, head, &owners, signed_ok, (None, signer))?;
-            if let Some(b) = by.filter(|b| b.1) {
-                return Ok(Some(b.0));
-            }
-            // A chat record (D-018) counts under every policy, low-risk heads included.
-            if !signed_ok || !chat_enabled(gh, base)? {
-                return Ok(None);
-            }
-            let chat = Chat {
-                author: pull.user.as_str(),
-                base,
-            };
-            chat_approver(gh, n, head, &owners, &chat)
+            // Low risk reads no policy above: under quorum (or a base config that does not
+            // parse) a key never stands for the owner.
+            let quorum = by.is_some() && quorum_policy_at(gh, base)?;
+            Ok(by.filter(|b| b.1.stands_for_owner(quorum)).map(|b| b.0))
         }
     });
 
@@ -879,25 +946,22 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             data["critical"] = json!(critical);
         }
         if autonomous {
-            data["policy"] = json!("autonomous");
+            data["policy"] = json!(if quorum { "quorum" } else { "autonomous" });
             data["policy_source"] = json!(policy_source);
             data["autonomous_verdicts"] = json!(autonomous_verdicts);
+            if quorum {
+                data["quorum_verdicts"] = json!(autonomous_verdicts);
+            }
         }
     }
     if passed {
         return Ok(Outcome::data(data));
     }
-    // A chat record that exists but does not count (the orchestrator left, or its join had
-    // expired) is the cause to name, not a missing approval.
-    let lapse = match &need.chat {
-        Some(chat) => chat_scan(gh, n, head, &owners, chat)?.1,
-        None => Lapse::NoRecord,
-    };
     let owner_fix = if owners.is_empty() {
         format!("fill {OWNERS_PATH} on the base branch, then an owner must approve head {head}")
     } else {
         format!(
-            "an owner in {OWNERS_PATH} must approve head {head}: the session asks the owner with a form in the Claude Code chat and the orchestrator posts the signed comment (`bosun approve {n}@{head} --sign-key <pem>`); fallback: an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or the owner's own PR comment `/bosun approve {head}`"
+            "an owner in {OWNERS_PATH} must approve head {head}: the owner's own PR comment `/bosun approve {head}`, an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or a signed approval (`bosun approve {n}@{head} --sign-key <pem>`); a chat approval does not count (D-025)"
         )
     };
     // A bootstrap-mode signature that does not count says why (D-012).
@@ -917,19 +981,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         ),
         _ => String::new(),
     };
-    let chat_note = match lapse {
-        Lapse::NoRecord => String::new(),
-        Lapse::Withdrawn => format!(
-            "a chat approval record for head {head} exists but does not count: it was withdrawn by the owner's review (changes requested, or dismissed); the owner must approve again, or: "
-        ),
-        Lapse::Orchestrator => format!(
-            "a chat approval record for head {head} exists but does not count: its orchestrator session left or expired (its join had expired when the record was written; the registry is read at check time); a live orchestrator must join and record the owner's chat approval again, or: "
-        ),
-        Lapse::Unsigned => format!(
-            "a chat approval record for head {head} exists but does not count: it is unsigned (no owner's unedited comment carries it); the orchestrator must post it again as the owner, or: "
-        ),
-    };
-    let fix = if autonomous {
+    let fix = if autonomous && quorum {
+        format!(
+            "get {} independent clean verdicts (approve, confidence >= {}, no major finding) on head {head} from {} different reviewer sessions (`bosun verdict comment --from -`; neither the author nor the signer), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap` (or `--via-signer`); or an owner approval: {owner_fix}",
+            risk::QUORUM_VERDICTS,
+            risk::VERDICT_MIN_CONFIDENCE,
+            risk::QUORUM_VERDICTS
+        )
+    } else if autonomous {
         format!(
             "get one independent clean verdict (approve, confidence >= {}, no major finding) on head {head} from a reviewer session (`bosun verdict comment --from -`; without CI add `--sign-key <reviewer.pem>`), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap`; or an owner approval: {owner_fix}",
             risk::VERDICT_MIN_CONFIDENCE
@@ -975,7 +1034,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             "{boot}PR #{n} is high risk ({}) and not approved on head {head}",
             ids.join(", ")
         ),
-        format!("{boot}{chat_note}{fix}{model_note}{author_note}"),
+        format!("{boot}{fix}{model_note}{author_note}"),
     )
     .with_data(data))
 }
@@ -1158,30 +1217,47 @@ struct Need<'a> {
     /// Autonomous policy (D-017), nothing excluded: the PR comments and the lease sessions the
     /// signature's clean verdict is judged by.
     autonomous: Option<&'a (Vec<Comment>, Vec<String>)>,
+    /// Quorum policy (D-022): the signature also needs [`risk::QUORUM_VERDICTS`] counting verdicts.
+    quorum: bool,
     /// `[approvals] review_models` at base: when set, only verdicts by these models count.
     models: Option<&'a [String]>,
     /// `[approvals] signer` at base: a signer key's signature counts only while it is true.
     signer_on: bool,
-    /// Set when chat records count (`[approvals] chat` at base): the PR author and the base ref
-    /// the owners file is read at (for the no-owners fallback).
-    chat: Option<Chat<'a>>,
 }
 
-/// What the chat-record counter needs besides the PR: the author and the base commit.
-#[derive(Clone, Copy)]
-struct Chat<'a> {
-    author: &'a str,
-    base: &'a str,
+/// Who approved a head (D-022). Only the owner's own GitHub review or `/bosun approve <sha>`
+/// comment is the owner; a key signature of any role is a key, never the owner under quorum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Approver {
+    /// The owner's own GitHub review or unedited `/bosun approve <sha>` comment.
+    Owner,
+    /// A key signature. `owner_form`: an owner-role v1/v2 approval, which stands for the owner
+    /// only outside quorum; bootstrap, autonomous and delegate signatures never do.
+    Key { role: Role, owner_form: bool },
+}
+
+impl Approver {
+    const OWNER_KEY: Approver = Approver::Key {
+        role: Role::Owner,
+        owner_form: true,
+    };
+
+    /// Whether this approval stands for the owner (it clears an escalated verdict): the owner's
+    /// own one always; an owner-role v1/v2 key only when the policy is not quorum.
+    pub(crate) fn stands_for_owner(self, quorum: bool) -> bool {
+        match self {
+            Approver::Owner => true,
+            Approver::Key { role, owner_form } => !quorum && owner_form && role == Role::Owner,
+        }
+    }
 }
 
 /// How a head is approved: by an owner or delegate (`approved_by`), or by two verdicts.
 #[derive(Default)]
 pub(crate) struct Found {
     pub(crate) approved_by: Option<String>,
-    /// `approved_by` is an owner's own approval of the head (review, comment, owner key).
-    pub(crate) owner_own: bool,
-    /// `approved_by` is a chat record (D-018): it belongs to this head only and never carries.
-    by_chat: bool,
+    /// What `approved_by` is: the owner's own approval or a key signature.
+    pub(crate) kind: Option<Approver>,
     pub(crate) verdicts: Vec<String>,
     delegate_verdicts: Vec<String>,
     delegate_blocked: Option<String>,
@@ -1211,11 +1287,26 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     } = *need;
     let mut found = Found::default();
     let mut bootstrap = need.bootstrap;
+    let mut signed_ok = need.signed_ok;
     if let Some((comments, excluded)) = need.autonomous {
-        found.autonomous_verdicts = autonomous_clean(comments, sha, excluded, need.models);
-        if found.autonomous_verdicts.is_empty() {
+        found.autonomous_verdicts = if need.quorum {
+            quorum_clean(comments, sha, excluded, need.models)
+        } else {
+            autonomous_clean(comments, sha, excluded, need.models)
+        };
+        let min = if need.quorum {
+            risk::QUORUM_VERDICTS
+        } else {
+            1
+        };
+        if found.autonomous_verdicts.len() < min {
             bootstrap = None;
         }
+    }
+    // D-022: under quorum an owner-role key signature (v1, v2) counts only together with the
+    // quorum of clean verdicts, never alone (also when no autonomous verdict can count at all).
+    if need.quorum && found.autonomous_verdicts.len() < risk::QUORUM_VERDICTS {
+        signed_ok = false;
     }
     // Under the autonomous policy only its own form counts, else only the bootstrap form.
     let form = if need.autonomous.is_some() {
@@ -1230,16 +1321,11 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         pr,
         sha,
         owners,
-        need.signed_ok,
+        signed_ok,
         (bootstrap, need.signer_on),
     )?;
-    found.owner_own = by.as_ref().is_some_and(|b| b.1);
+    found.kind = by.as_ref().map(|b| b.1);
     found.approved_by = by.map(|b| b.0);
-    if let (None, Some(chat)) = (&found.approved_by, &need.chat) {
-        found.approved_by = chat_approver(gh, pr, sha, owners, chat)?;
-        found.owner_own = found.approved_by.is_some();
-        found.by_chat = found.owner_own;
-    }
     let open = found.approved_by.is_none() && !need.unlinked;
     // Two verdicts only matter when the owner has not approved and the class allows them.
     if open && need.requirement == Approval::TwoVerdicts {
@@ -1254,7 +1340,8 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     // A delegate decides only with one clean independent verdict on the head (spec §8).
     if open && need.requirement == Approval::Delegate {
         found.delegate_blocked = delegation_blocked(gh, need.base_ref, need.linked)?;
-        if found.delegate_blocked.is_none() && need.signed_ok {
+        // The quorum-adjusted `signed_ok`: under quorum a delegate key also needs the quorum.
+        if found.delegate_blocked.is_none() && signed_ok {
             let (comments, excluded) = verdict_inputs(gh, pr, need.linked)?;
             found.delegate_verdicts = clean_verdicts(
                 comments.iter().map(|c| (c.user.as_str(), c.body.as_str())),
@@ -1266,6 +1353,12 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
                 let v1 = |f: Form| f == Form::V1;
                 let key =
                     signed_approver(gh, repo, pr, sha, &comments, (Role::Delegate, false), &v1)?;
+                if key.is_some() {
+                    found.kind = Some(Approver::Key {
+                        role: Role::Delegate,
+                        owner_form: false,
+                    });
+                }
                 found.approved_by = key.map(|id| format!("delegate {id}"));
             }
         }
@@ -1573,8 +1666,7 @@ pub fn decisive_review(reviews: &[Review], owner: &str, head: &str) -> Option<St
 
 /// The owner who approved `head`: by a GitHub review (their newest decisive review on `head` is
 /// an approval) or by an unedited PR comment `/bosun approve <head>`.
-/// The approver and whether it is the owner's own approval (not a bootstrap or autonomous
-/// signature).
+/// The approver and its kind: the owner's own approval, or a key signature (D-022).
 fn approver(
     gh: &dyn Github,
     repo: &RepoId,
@@ -1583,14 +1675,14 @@ fn approver(
     owners: &[String],
     signed_ok: bool,
     (bootstrap, signer_on): (Option<(&str, Form)>, bool),
-) -> Result<Option<(String, bool)>> {
+) -> Result<Option<(String, Approver)>> {
     let reviews = gh.list_reviews(pr)?;
     let state = |o: &str| decisive_review(&reviews, o, head);
     let by_review = owners
         .iter()
         .find(|o| state(o).as_deref() == Some("APPROVED"));
     if let Some(o) = by_review {
-        return Ok(Some((o.clone(), true)));
+        return Ok(Some((o.clone(), Approver::Owner)));
     }
     let comments = gh.list_comments(pr)?;
     // Only a comment written with a plain user token counts: agent sessions act as the same
@@ -1608,7 +1700,7 @@ fn approver(
         _ => owner_comment(&comments, o, head).is_some(),
     });
     if let Some(o) = by_comment {
-        return Ok(Some((o.clone(), true)));
+        return Ok(Some((o.clone(), Approver::Owner)));
     }
     // A signed approval stands for the owner: with no owners it counts for no one, and any
     // owner's request for changes withdraws it. A v1 signature carries no time, so a re-posted
@@ -1636,13 +1728,17 @@ fn approver(
     if ids.is_empty() {
         // Bootstrap and autonomous signatures are not owner approvals.
         if let Some(id) = sign(&|f| matches!(f, Form::V1 | Form::V2(_)))? {
-            return Ok(Some((format!("key {id}"), true)));
+            return Ok(Some((format!("key {id}"), Approver::OWNER_KEY)));
         }
         let Some((label, form)) = bootstrap else {
             return Ok(None);
         };
         let boot = sign(&|f| f == form)?;
-        return Ok(boot.map(|id| (format!("key {id} ({label})"), false)));
+        let kind = Approver::Key {
+            role: Role::Owner,
+            owner_form: false,
+        };
+        return Ok(boot.map(|id| (format!("key {id} ({label})"), kind)));
     }
     let mut by = None;
     for id in ids {
@@ -1658,187 +1754,7 @@ fn approver(
         };
         by.get_or_insert(key);
     }
-    Ok(by.map(|id| (format!("key {id}"), true)))
-}
-
-/// Whether a counted chat record approves the head of `p` (the board's no-CI check).
-pub(crate) fn chat_counted(gh: &dyn Github, p: &Pull) -> Result<bool> {
-    if !chat_enabled(gh, &p.base_sha)? {
-        return Ok(false);
-    }
-    let owners = owner_logins(gh, &p.base_sha)?;
-    let chat = Chat {
-        author: &p.user,
-        base: &p.base_sha,
-    };
-    Ok(chat_approver(gh, p.number, &p.head_sha, &owners, &chat)?.is_some())
-}
-
-/// The owner whose chat record (spec §8) approves `head`: written by an orchestrator session
-/// for the owner who authored the comment, unedited; an owner's withdrawal (changes requested,
-/// or a dismissal not followed by a newer record) stops it. With no owners file at all the repo
-/// owner (user repo) or the PR author with admin permission (org repo) stands in; an owners file
-/// that exists but names nobody does not (fail closed). The registry is read only when a record
-/// for `head` exists.
-fn chat_approver(
-    gh: &dyn Github,
-    pr: u64,
-    head: &str,
-    owners: &[String],
-    chat: &Chat,
-) -> Result<Option<String>> {
-    Ok(chat_scan(gh, pr, head, owners, chat)?.0)
-}
-
-/// Why a chat record for the head exists but does not count.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Lapse {
-    /// No record for this head.
-    NoRecord,
-    /// A record exists, but no owner's unedited comment carries it (nobody signed it).
-    Unsigned,
-    /// The owner's review withdrew it (changes requested, or dismissed with no newer record).
-    Withdrawn,
-    /// The orchestrator left, or its join had expired when the record was written.
-    Orchestrator,
-}
-
-/// [`chat_approver`], plus why a record that exists does not count, so a failing check can name
-/// the cause.
-fn chat_scan(
-    gh: &dyn Github,
-    pr: u64,
-    head: &str,
-    owners: &[String],
-    chat: &Chat,
-) -> Result<(Option<String>, Lapse)> {
-    let comments = gh.list_comments(pr)?;
-    if !(comments.iter()).any(|c| approve::parse_chat_record(&c.body, head, Some(pr)).is_some()) {
-        return Ok((None, Lapse::NoRecord));
-    }
-    let owners = if owners.is_empty() && gh.file_at(OWNERS_PATH, chat.base)?.is_none() {
-        fallback_owners(gh, chat.author)?
-    } else {
-        owners.to_vec()
-    };
-    let signed_by = |o: &String| {
-        comments.iter().any(|c| {
-            c.unedited()
-                && c.user.eq_ignore_ascii_case(o)
-                && approve::parse_chat_record(&c.body, head, Some(pr)).is_some()
-        })
-    };
-    let seen = owners.iter().any(signed_by);
-    let Some((_, notes)) = crate::registry::load(gh)? else {
-        return Ok((
-            None,
-            if seen {
-                Lapse::Orchestrator
-            } else {
-                Lapse::Unsigned
-            },
-        ));
-    };
-    let reviews = gh.list_reviews(pr)?;
-    let reg = Registry {
-        notes: &notes,
-        now: crate::core::lease::members(&notes),
-    };
-    let mut withdrawn_by_review = false;
-    let by = owners.iter().find(|o| {
-        let one = std::slice::from_ref(*o);
-        match decisive_review(&reviews, o, head).as_deref() {
-            Some("DISMISSED") => {
-                let newer = newer_than(&comments, dismissed_at(gh, pr, &reviews, o, head));
-                let ok = chat_comment_by(&newer, one, &reg, (pr, head)).is_some();
-                withdrawn_by_review |= !ok && signed_by(o);
-                ok
-            }
-            s if withdrawn(s) => {
-                withdrawn_by_review |= signed_by(o);
-                false
-            }
-            _ => chat_comment_by(&comments, one, &reg, (pr, head)).is_some(),
-        }
-    });
-    let lapse = if by.is_some() {
-        Lapse::NoRecord
-    } else if withdrawn_by_review {
-        Lapse::Withdrawn
-    } else if seen {
-        Lapse::Orchestrator
-    } else {
-        Lapse::Unsigned
-    };
-    Ok((by.cloned(), lapse))
-}
-
-/// The registry notes and the members standing now (a `leave` after the record removes one).
-struct Registry<'a> {
-    notes: &'a [Note],
-    now: Vec<Member>,
-}
-
-/// The owners a chat record counts for when the base has no owners file: the repo's owner for
-/// a user repo; for an org repo the PR author when an admin of the repo; else none.
-fn fallback_owners(gh: &dyn Github, author: &str) -> Result<Vec<String>> {
-    let Some(owner) = gh.repo_info()?.and_then(|r| r.owner) else {
-        return Ok(Vec::new());
-    };
-    if owner.kind == "User" {
-        return Ok(vec![owner.login]);
-    }
-    let admin = !author.is_empty() && gh.permission(author)?.as_deref() == Some("admin");
-    Ok(if admin {
-        vec![author.into()]
-    } else {
-        Vec::new()
-    })
-}
-
-/// `[approvals] chat` at base (unset: on). A config that does not parse turns chat off.
-pub(crate) fn chat_enabled(gh: &dyn Github, base: &str) -> Result<bool> {
-    Ok(match gh.file_at(CONFIG_FILE, base)? {
-        Some(t) => Config::parse(&t, CONFIG_FILE)
-            .map_err(|e| eprintln!("bosun: risk-check: chat records are off: {}", e.message))
-            .is_ok_and(|c| c.approvals.chat_enabled()),
-        None => true,
-    })
-}
-
-/// The chat record approving `head` of PR `pr`: unedited, by one of `owners`, through any app
-/// (the cloud posts as the owner via the Claude app), whose marker names an orchestrator
-/// session. The orchestrator is judged by the join in force when the record was written (the
-/// newest join older than the comment, not expired then), and must not have left since.
-fn chat_comment_by<'a>(
-    comments: &'a [Comment],
-    owners: &[String],
-    reg: &Registry,
-    (pr, head): (u64, &str),
-) -> Option<&'a Comment> {
-    comments.iter().find(|c| {
-        c.unedited()
-            && owners.iter().any(|o| c.user.eq_ignore_ascii_case(o))
-            && approve::parse_chat_record(&c.body, head, Some(pr)).is_some_and(|r| {
-                // An unreadable time is no orchestrator (fail closed).
-                let Some(at) = parse_rfc3339(&c.created_at) else {
-                    return false;
-                };
-                if !approve::question_fresh(r.question.as_deref(), at.0) {
-                    return false;
-                }
-                let before: Vec<Note> = (reg.notes.iter())
-                    .filter(|n| n.id < c.id)
-                    .cloned()
-                    .collect();
-                reg.now.iter().any(|m| m.session == r.session)
-                    && approve::is_orchestrator(
-                        &crate::core::lease::members(&before),
-                        &r.session,
-                        at,
-                    )
-            })
-    })
+    Ok(by.map(|id| (format!("key {id}"), Approver::OWNER_KEY)))
 }
 
 /// A decisive review in this state withdraws the owner's approvals (anyone with write access can
@@ -1986,8 +1902,86 @@ pub(crate) fn autonomous_clean(
     )
 }
 
-/// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
-/// base config that does not parse fails closed (an empty list: no verdict counts).
+/// D-022: the sessions that make up a quorum on `head` ([`risk::quorum_verdicts`]).
+pub(crate) fn quorum_clean(
+    comments: &[Comment],
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+) -> Vec<String> {
+    let c = comments.iter();
+    risk::quorum_verdicts(
+        c.map(|c| (c.user.as_str(), c.body.as_str(), c.unedited())),
+        head,
+        excluded,
+        models,
+    )
+}
+
+/// The built-in rule id of a trust-root change (D-022): owner only, whatever the rules say.
+pub const TRUST_RULE: &str = "R-trust";
+
+/// The quorum trust root (D-022) the PR changes, when `[approvals] policy = "quorum"` at base:
+/// [`risk::trust_root_changed`] under the code `roots` (workflows and actions in every `[checks]`
+/// mode: a workflow the PR adds runs as the verdict author, bosun#706), the pin rule
+/// ([`pin_trust_root`]), every CI file of [`risk::workflow_files`], and an added line with a
+/// strong secret ([`risk::strong_secret_files`]): a real credential never rides on a quorum.
+/// Empty under any other policy or with no base config. A base config that does not parse fails
+/// closed whatever its policy: every changed path is trust root. The list holds paths only; the
+/// second value is the cause in that case (for messages, never a path).
+pub(crate) fn quorum_trust_root(
+    gh: &dyn Github,
+    files: &[PrFile],
+    roots: &[String],
+    (base, head): (&str, &str),
+) -> Result<(Vec<String>, Option<String>)> {
+    let config = match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c,
+            // Fail closed: a base config that does not parse may be a quorum one, so every
+            // changed path is trust root (owner only).
+            Err(e) => {
+                let all = files.iter().flat_map(|f| {
+                    std::iter::once(f.filename.clone()).chain(f.previous_filename.clone())
+                });
+                let mut all: Vec<String> = all.collect();
+                all.sort();
+                all.dedup();
+                let cause = format!("base config does not parse: {}", e.message);
+                return Ok((all, Some(cause)));
+            }
+        },
+        None => return Ok((Vec::new(), None)),
+    };
+    if config.approvals.policy() != Policy::Quorum {
+        return Ok((Vec::new(), None));
+    }
+    let paths: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+        .collect();
+    let mut out = risk::quorum_trust_paths(&paths, roots);
+    out.extend(pin_trust_root(gh, &paths, (base, head)));
+    let patches: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.patch.as_deref()))
+        .collect();
+    out.extend(risk::strong_secret_files(&patches));
+    out.sort();
+    out.dedup();
+    Ok((out, None))
+}
+
+/// Whether `[approvals] policy` at base is quorum; a config that does not parse may be a quorum
+/// one, so it reads as quorum (fail closed).
+pub(crate) fn quorum_policy_at(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => match Config::parse(&t, CONFIG_FILE) {
+            Ok(c) => c.approvals.policy() == Policy::Quorum,
+            Err(_) => true,
+        },
+        None => false,
+    })
+}
+
 /// `[approvals] signer` at base; a config that does not parse turns it off (fail closed).
 fn signer_on(gh: &dyn Github, base: &str) -> Result<bool> {
     Ok(match gh.file_at(CONFIG_FILE, base)? {
@@ -2019,6 +2013,8 @@ pub(crate) fn oneoff_allow(gh: &dyn Github, base: &str) -> Result<Vec<crate::cor
         .collect())
 }
 
+/// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A
+/// base config that does not parse fails closed (an empty list: no verdict counts).
 pub(crate) fn review_models(gh: &dyn Github, base: &str) -> Result<Option<Vec<String>>> {
     Ok(match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {
@@ -2104,6 +2100,61 @@ fn signed_approver(
     Ok(None)
 }
 
+/// The trust-root entries a changed `.bosun/version` adds under quorum (D-022): one reason from
+/// [`risk::pin_change_trust_root`], or none when the pin is untouched or an upgrade to a released
+/// version. A pin names releases of bosun's upstream repo (`[approvals] bosun_repo` read at base,
+/// default keelstackhq/keelstack), whose `v{version}` ref is looked up there, whatever repo the PR is
+/// in. An unparsable base config, an invalid `bosun_repo` and any API error fail closed.
+pub(crate) fn pin_trust_root(
+    gh: &dyn Github,
+    paths: &[(&str, Option<&str>)],
+    (base, head): (&str, &str),
+) -> Vec<String> {
+    if !risk::pin_changed(paths) {
+        return Vec::new();
+    }
+    let (old, new) = match (
+        gh.file_at(risk::PIN_FILE, base),
+        gh.file_at(risk::PIN_FILE, head),
+    ) {
+        (Ok(o), Ok(n)) => (o, n),
+        (Err(e), _) | (_, Err(e)) => {
+            return vec![format!(".bosun/version unreadable: {}", e.message)];
+        }
+    };
+    let same = old.as_deref().map(str::trim) == new.as_deref().map(str::trim);
+    let released = same
+        || match new.as_deref().map(str::trim) {
+            Some(v) => match upstream_repo(gh, base) {
+                Ok((o, r)) => gh.tag_exists_in(&o, &r, &format!("v{v}")).unwrap_or(false),
+                Err(why) => return vec![why],
+            },
+            None => false,
+        };
+    (risk::pin_change_trust_root(old.as_deref(), new.as_deref(), released))
+        .into_iter()
+        .collect()
+}
+
+/// The bosun upstream repo from `[approvals] bosun_repo` at `base` (never the head).
+fn upstream_repo(gh: &dyn Github, base: &str) -> std::result::Result<(String, String), String> {
+    let approvals = match gh.file_at(CONFIG_FILE, base) {
+        Ok(Some(t)) => {
+            Config::parse(&t, CONFIG_FILE)
+                .map_err(|e| format!("{CONFIG_FILE} at base does not parse: {}", e.message))?
+                .approvals
+        }
+        Ok(None) => Default::default(),
+        Err(e) => return Err(format!("{CONFIG_FILE} unreadable: {}", e.message)),
+    };
+    approvals
+        .bosun_repo_pair()
+        .map_err(|v| format!("[approvals] bosun_repo {v:?} is not owner/name"))
+}
+
+/// The signing policy (autonomous or quorum) in force at base and who set it; `None` for the rest.
+type SignedPolicy = Option<(Policy, &'static str)>;
+
 /// The label of an orchestrator approval (a bootstrap-form signature) when it can count on this
 /// PR, else why not: `[approvals]` at base, read like the rules, decides with the window (D-012),
 /// `policy` (D-014) and the PR's rules, exclusions and workflow files.
@@ -2112,8 +2163,8 @@ fn orchestrator_window(
     base: &str,
     today: &str,
     pr: (&[PrFile], &[risk::Match], Approval),
-    (excluded, capabilities): (&[String], &[String]),
-) -> Result<(std::result::Result<String, String>, Option<&'static str>)> {
+    (excluded, capabilities, trust_root): (&[String], &[String], &[String]),
+) -> Result<(std::result::Result<String, String>, SignedPolicy)> {
     let (files, matches, requirement) = pr;
     let approvals = match gh.file_at(CONFIG_FILE, base)? {
         Some(t) => match Config::parse(&t, CONFIG_FILE) {
@@ -2142,10 +2193,12 @@ fn orchestrator_window(
         rules: &rules,
         workflows: &workflows,
         autonomous_excluded: &autonomous_excluded,
+        trust_root,
         capabilities,
     });
-    let autonomous = approvals.policy() == Policy::Autonomous;
-    Ok((counts, autonomous.then(|| approvals.policy_source())))
+    let p = approvals.policy();
+    let signed = matches!(p, Policy::Autonomous | Policy::Quorum);
+    Ok((counts, signed.then(|| (p, approvals.policy_source()))))
 }
 
 /// The paths and rules of the PR that a bootstrap-mode approval never covers.

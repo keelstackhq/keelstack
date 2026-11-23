@@ -1,14 +1,21 @@
 # Exactly the owner-only paths of .bosun/risk.toml: every owner-class rule (R-gov, R-ci,
 # R-secrets, R-deps), re-rooted under bosun's code root `bosun/` as risk-check does, and bosun's
 # critical floor (CRITICAL_PATHS and APPROVAL_CODE_PATHS in bosun/src/core/risk.rs), where no
-# delegate approves. bosun/tests/governance_owners.rs pins the parity both ways: every such glob
-# has a line here and every line maps to one. Code owner review is not required by the ruleset;
+# delegate approves, and bosun's quorum trust root (QUORUM_CODE_FILES, D-022).
+# bosun/tests/governance_owners.rs pins the parity both ways: every such glob has a line here
+# and every line maps to one. Code owner review is not required by the ruleset;
 # .bosun/risk.toml decides who approves, this file routes the review requests.
 #
 # CODEOWNERS is case-sensitive, risk-check matches in any case: a name the rules write in lower
 # case (`**/agents.md`) is listed in lower case and in its usual spelling (`AGENTS.md`).
-# Delegate or two-verdict paths are not listed: R-gate outside the floor and R-ci-review
-# (`bosun/channel/**`).
+# Every glob of the quorum trust root (TRUST_ROOT in bosun/src/core/risk.rs, a rule plus the
+# check bosun/tests/trust_root_inputs.rs: `.claude/**` and `.mcp.json` at any depth, and every file
+# a trust-root workflow, hook, SessionStart script or secret-holding job reads or executes) has a
+# line here, and bosun/tests/governance_owners.rs fails when one is missing or a line maps to none.
+# Delegate or two-verdict paths outside the floor are not listed: R-gate and R-ci-review. Under
+# quorum (D-022) bosun's quorum trust root is the owner's too (QUORUM_CODE_FILES in
+# bosun/src/core/approve.rs, TRUST_ROOT in bosun/src/core/risk.rs), so the folders it compiles in, `bosun/channel/` and `bosun/profiles/`,
+# and `bosun/build.rs` are listed here as well.
 
 # Anywhere in the repo (no leading or middle slash matches at any depth): the `**/` globs.
 CODEOWNERS               @urbanisierung
@@ -21,6 +28,11 @@ claude.md                @urbanisierung
 CLAUDE.local.md          @urbanisierung
 claude.local.md          @urbanisierung
 .claude/                 @urbanisierung
+.mcp.json                @urbanisierung
+**/docs/setup-script.sh  @urbanisierung
+**/workflows/risk.yml*   @urbanisierung
+Cargo.toml               @urbanisierung
+**/.cargo/config*        @urbanisierung
 plans/                   @urbanisierung
 action.yml               @urbanisierung
 action.yaml              @urbanisierung
@@ -35,6 +47,18 @@ deny.exceptions.toml     @urbanisierung
 .deny.exceptions.toml    @urbanisierung
 deny.local.toml          @urbanisierung
 .deny.local.toml         @urbanisierung
+# R-ci: files that steer how the gates build and run.
+rust-toolchain.toml      @urbanisierung
+rust-toolchain           @urbanisierung
+clippy.toml              @urbanisierung
+.clippy.toml             @urbanisierung
+rustfmt.toml             @urbanisierung
+.rustfmt.toml            @urbanisierung
+# R-ci: the tool pins. The rule `pins.toml` (hull's root pins file) at the root and re-rooted under
+# bosun/ (no such file today; governance_owners.rs requires the line); `.bosun/pins.toml` is covered
+# by /.bosun/ and /bosun/.bosun/.
+/pins.toml               @urbanisierung
+/bosun/pins.toml         @urbanisierung
 build.rs                 @urbanisierung
 # R-secrets.
 secrets.toml             @urbanisierung
@@ -47,6 +71,11 @@ access.toml              @urbanisierung
 .yarnrc                  @urbanisierung
 .yarnrc.yml              @urbanisierung
 .pnpmfile.cjs            @urbanisierung
+.pnpmfile.*              @urbanisierung
+package.json             @urbanisierung
+pnpm-workspace.yaml      @urbanisierung
+pnpm-workspace.yml       @urbanisierung
+.cargo/                  @urbanisierung
 bunfig.toml              @urbanisierung
 **/.yarn/plugins/        @urbanisierung
 **/.yarn/releases/       @urbanisierung
@@ -89,6 +118,22 @@ bunfig.toml              @urbanisierung
 /.cargo/                 @urbanisierung
 /src/                    @urbanisierung
 /npm/                    @urbanisierung
+/*/npm/                  @urbanisierung
+/bosun/*/npm/             @urbanisierung
+/hull/package.json       @urbanisierung
+/hull/pnpm-lock.yaml     @urbanisierung
+/hull/pnpm-workspace.yaml @urbanisierung
+/hull/.pnpmfile.*        @urbanisierung
+/hoard/src/              @urbanisierung
+/hoard/action/dist/      @urbanisierung
+/hoard/action/src/checksums.generated.ts @urbanisierung
+/hoard/tests/fixtures/   @urbanisierung
+/site/package.json       @urbanisierung
+/site/pnpm-lock.yaml     @urbanisierung
+/site/pnpm-workspace.yaml @urbanisierung
+/site/.node-version      @urbanisierung
+/site/.pnpmfile.*        @urbanisierung
+/site/packages/deploy/   @urbanisierung
 
 # Org decisions (R-gov `decisions/**`; D-022 names its own row as trust root).
 /decisions/              @urbanisierung
@@ -124,6 +169,9 @@ bunfig.toml              @urbanisierung
 /bosun/rust-toolchain    @urbanisierung
 /bosun/src/              @urbanisierung
 /bosun/npm/              @urbanisierung
+/bosun/channel/          @urbanisierung
+/bosun/profiles/         @urbanisierung
+/bosun/build.rs          @urbanisierung
 /bosun/Cargo.toml        @urbanisierung
 /bosun/Cargo.lock        @urbanisierung
 /bosun/.cargo/           @urbanisierung

@@ -1,8 +1,8 @@
-//! `bosun approve`: lists the PRs that wait for an owner. The default approval (D-012): the
-//! session asks the owner with a form in the Claude Code chat and the orchestrator records the
-//! answer with `--chat` (D-018; it uses the session's own token, and a signature with `--sign-key`
-//! stays optional). The fallback: the owner, on their own machine, posts the comment `/bosun approve <head>` (spec section 8).
-//! Apart from `--chat`, every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
+//! `bosun approve`: lists the PRs that wait for an owner. The owner approves with their own
+//! comment `/bosun approve <head>` (posted by this command on their machine, or by hand in the
+//! GitHub web or mobile app), a GitHub review, or a signed approval (`--sign-key`; spec section 8).
+//! Chat approvals are retired (D-025): the owner's answer in a chat form is never an approval.
+//! Every GitHub call uses `BOSUN_OWNER_TOKEN`, never `GITHUB_TOKEN`: the comment must come from
 //! a plain user token, which agent sessions do not have. `--list` only reads: without the owner
 //! token it reads with no token at all and lists what it can. The owner names the head sha of each
 //! PR (`<pr>@<sha>`, from `--list`), so a push after the listing is never approved unseen.
@@ -13,24 +13,24 @@ use serde_json::{Value, json};
 
 use super::ApproveArgs;
 use crate::app::App;
-use crate::app::{Result, default_ref, kill_switch, main_red};
+use crate::app::{Result, kill_switch, main_red};
+use crate::cli::pr_no_ci::provider_default;
 use crate::cli::risk_check::{
     autonomous_clean, autonomous_inputs, decisive_review, dismissed_review, enrolled_keys,
-    owner_comment, owner_logins, review_models,
+    owner_comment, owner_logins, quorum_clean, quorum_policy_at, review_models,
 };
-use crate::cli::{pr_no_ci::provider_default, risk_check::chat_counted};
 use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
-    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, Readiness, Role, Run, Stat,
-    TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line, ci_green,
-    in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness, signed_comment,
-    signed_message, signed_message_autonomous, signed_message_bootstrap, signed_message_v2,
-    summary_readiness,
+    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, QUORUM_LINE, Readiness, Role,
+    Run, Stat, TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line,
+    ci_green, in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness,
+    signed_comment, signed_message, signed_message_autonomous, signed_message_bootstrap,
+    signed_message_v2, summary_readiness,
 };
 use crate::core::ask;
 use crate::core::records::{PrHead, Record};
 use crate::core::risk;
-use crate::ctx::{Ctx, Origin};
+use crate::ctx::Ctx;
 use crate::gates::main_open::{is_mainfix, judge};
 use crate::github::{Github, IssueState, LiveGithub, Pull, b64};
 use crate::hooks::answers;
@@ -80,12 +80,12 @@ fn withdrawn(gh: &dyn Github, p: &Pull) -> Result<Option<(&'static str, bool)>> 
 }
 
 /// What to do instead in a Claude cloud session.
-const CLOUD_FIX: &str = "ask the owner with a form in the Claude Code chat; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs `bosun approve` on their own machine, or comments `/bosun approve <sha>` in the GitHub web or mobile app";
+const CLOUD_FIX: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR (GitHub web or mobile app) or a GitHub review, or runs `bosun approve` on their own machine; an orchestrator never records a chat answer as an approval (D-025)";
 
 /// Shown with every list: an approval comment counts only when posted with a plain user token, as
 /// this command does (an owner review counts too). The Claude GitHub tool posts through an app and
 /// adds a footer, so its comments never count.
-const LIST_HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; approve or hold; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs data.approve_command (bosun approve) on their own machine or approves in the GitHub UI; an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
+const LIST_HINT: &str = "the owner approves with their own `/bosun approve <sha>` comment on the PR or a GitHub review, or runs data.approve_command (bosun approve) on their own machine; chat is never an approval (D-025), and an unsigned /bosun approve comment posted through Claude's GitHub tool never counts";
 
 #[derive(Default)]
 pub(crate) struct Board {
@@ -192,7 +192,6 @@ fn board_of(gh: &dyn Github, ctx: &Ctx, pulls: Vec<Pull>) -> Result<Board> {
                 continue;
             };
             if let Readiness::Ready(risk) = no_ci_readiness(gh, ctx, &p)?
-                && !chat_counted(gh, &p)?
                 && !hold(gh, &p, &mut board)?
             {
                 board.ready.push(ready_of(gh, p, risk, verdict)?);
@@ -266,10 +265,6 @@ pub fn run(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
     }
     if args.via_signer {
         return via_signer(dir, args);
-    }
-    if args.chat {
-        crate::ctx::trusted_identity()?;
-        return super::approve_chat::run(dir, args);
     }
     if let Some(key) = &args.sign_key {
         return sign(dir, args, key);
@@ -375,7 +370,7 @@ fn exec(
         if !b.skipped.is_empty() {
             data["skipped_fix"] = json!(SKIPPED_FIX);
         }
-        return Ok(ask_next(ctx, &b.ready, data));
+        return Ok(ask_next(&b.ready, data));
     }
     kill_switch(gh)?;
     if let Some(n) = args.main_open {
@@ -461,67 +456,27 @@ fn approve_one(gh: &dyn Github, pr: u64, sha: &str, base: &str) -> Result<(u64, 
     ))
 }
 
-/// Each ready item gains its `ask`; `next` asks the owner: one AskUserQuestion, or a Claude Tag
-/// thread post. Nothing ready, no `next`.
-fn ask_next(ctx: &Ctx, ready: &[Ready], mut data: Value) -> Outcome {
-    let repo = ctx.repo.to_string();
-    let unix = ctx.now.0;
+/// Chat approvals are retired (D-025): no form, no `next`. Each ready item names the comment the
+/// owner posts, and `data.owner_step` says so. Nothing ready, no `owner_step`.
+fn ask_next(ready: &[Ready], mut data: Value) -> Outcome {
     let items: Vec<ask::Item> = (ready.iter())
         .map(|r| ask::Item {
             pr: r.pr,
-            title: &r.title,
             head: &r.head_sha,
-            risk: &r.risk,
-            verdict: &r.verdict,
         })
         .collect();
     for (i, item) in items.iter().enumerate() {
-        data["ready"][i]["ask"] = ask::ask(&repo, item, unix);
+        data["ready"][i]["owner_comment"] = json!(ask::owner_comment(item.head));
     }
-    // A spawned or routine session does not ask the owner: it hands the question up.
-    if matches!(ctx.origin, Origin::Spawned | Origin::Routine) {
-        data["handoff"] = json!(
-            "hand this question to the orchestrator: send data.ready[].ask (question id, text, options) to the orchestrator session, which asks the owner; a child session never asks"
-        );
-        return Outcome::data(data);
+    if let Some(t) = ask::owner_step(&items) {
+        data["owner_step"] = json!(t);
     }
-    let out = if ctx.origin == Origin::Slack {
-        // The asks this post issues are remembered: `--chat --slack-user` needs one of them.
-        let asks: Vec<(String, u64, String)> = (items.iter())
-            .map(|i| {
-                (
-                    crate::core::approve::question_id(i.pr, i.head, unix),
-                    i.pr,
-                    i.head.to_string(),
-                )
-            })
-            .collect();
-        if !asks.is_empty() {
-            let now = ctx.now.to_string();
-            answers::record_asks(&ctx.dir, &repo, &ctx.session, &now, &asks);
-        }
-        ask::slack_text(&repo, &items, unix).map(|text| {
-            let mut a = json!({"text": text});
-            let channel = ctx.config.slack.as_ref().map(|s| s.channel.trim());
-            if let Some(c) = channel.filter(|c| !c.is_empty()) {
-                a["channel"] = json!(c);
-            }
-            ("slack_post", a)
-        })
-    } else {
-        data["ask_more"] = json!(items.len().saturating_sub(ask::MAX_ASKED));
-        ask::ask_user_question(&repo, &items, unix).map(|a| ("AskUserQuestion", a))
-    };
-    let o = Outcome::data(data);
-    match out {
-        Some((tool, a)) => o.with_next(tool, a),
-        None => o,
-    }
+    Outcome::data(data)
 }
 
 fn ready_json(r: &Ready) -> Value {
     json!({"pr": r.pr, "title": r.title, "head_sha": r.head_sha,
-        "risk_from_status": r.risk, "files": r.files,
+        "risk_from_status": r.risk, "verdict": r.verdict, "files": r.files,
         "files_truncated": r.files.len() >= COMPARE_FILES_CAP})
 }
 
@@ -716,8 +671,8 @@ fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
     Ok((ci_green(&runs), seen))
 }
 
-/// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session, on the owner's
-/// word in chat) signs `signed_message` for the PR's current head and posts the comment with
+/// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session
+/// holding an enrolled key, or the owner's machine) signs `signed_message` for the PR's current head and posts the comment with
 /// the session's own token. It works in a Claude cloud session: the signature, not the author,
 /// is what risk-check checks. The key is never printed or logged.
 fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
@@ -730,7 +685,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     .ok_or_else(|| {
         BosunError::usage(
             "--sign-key takes one <pr>@<40-hex head sha>: the head the owner approved",
-            "run `bosun approve --list` (it works in the cloud), confirm the head with the owner, then `bosun approve <pr>@<head> --sign-key <pem>`",
+            "run `bosun approve --list` for the ready heads; the owner approves with a `/bosun approve <head_sha>` comment on the PR (D-025), and only an enrolled-key signer runs `bosun approve <pr>@<head> --sign-key <pem>` on the exact head",
         )
     })?;
     let api = crate::github::http::api_base();
@@ -781,49 +736,58 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     }
     if role == Role::Signer && !args.bootstrap {
         return Err(BosunError::usage(
-            "--as signer signs only the autonomous form (D-017): it needs --bootstrap",
-            "add --bootstrap (the policy at the default branch must be autonomous)",
+            "--as signer signs only under the quorum (D-022) or autonomous (D-017) policy: it needs --bootstrap",
+            "add --bootstrap (`[approvals] policy` at the PR's base must be \"quorum\" or \"autonomous\")",
         ));
     }
-    if role == Role::Signer {
-        let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
-        let config = match text {
-            Some(t) => Config::parse(&t, CONFIG_FILE)?,
-            None => Config::default(),
-        };
-        let policy = config.approvals.policy();
-        if policy != Policy::Autonomous {
+    if args.bootstrap && role == Role::Delegate {
+        return Err(BosunError::usage(
+            "--bootstrap signs with an owner key, not --as delegate",
+            "drop --as delegate, or drop --bootstrap",
+        ));
+    }
+    // D-022: a signature never counts on the quorum trust root (risk-check ignores it there), so
+    // none is posted, whatever its form: the owner's own review or comment is the approval.
+    let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
+    let files = gh.pull_files(pr)?;
+    let (root, cause) =
+        crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
+    if !root.is_empty() {
+        return Err(BosunError::error(
+            format!(
+                "quorum (D-022) never counts a signature on the trust root ({}{}): nothing was signed",
+                root.join(", "),
+                cause.map(|c| format!("; {c}")).unwrap_or_default()
+            ),
+            "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
+        ));
+    }
+    // D-022: a diff bosun cannot see may hide the trust root, as risk-check's R-unseen and the
+    // bootstrap signing path (`autonomous_ok`) judge it; plain signing under quorum needs the same.
+    if quorum_policy_at(gh, &pull.base_sha)? {
+        let views: Vec<risk::FileView> = (files.iter())
+            .map(|f| risk::FileView {
+                path: f.filename.clone(),
+                status: f.status.clone(),
+                has_patch: f.patch.is_some(),
+                changes: f.additions + f.deletions,
+                same_blob: false,
+            })
+            .collect();
+        if risk::unseen_diff(&views, pull.changed_files).is_some() {
             return Err(BosunError::error(
-                format!(
-                    "--as signer signs only under the autonomous policy (D-017); the default branch's policy is {}",
-                    policy.name()
-                ),
-                "set `[approvals] policy = \"autonomous\"` (or the booster mode) on the default branch with a PR the owner approves, or ask the owner",
-            ));
-        }
-        if !config.approvals.signer {
-            return Err(BosunError::error(
-                "the CI signer is off: `[approvals] signer` is not true on the default branch; nothing was signed",
-                "the owner decides: set `[approvals] signer = true` in .bosun/bosun.toml with a PR (R-weaken, owner-approved); the default is the orchestrator-held key (`--sign-key` as owner)",
-            ));
-        }
-        let gate_app = config.checks.mode == crate::config::CheckMode::Checks
-            && config.checks.app_id.is_some()
-            && crate::github::gate::trusted_app_id() == config.checks.app_id;
-        if !gate_app {
-            return Err(BosunError::error(
-                "the CI signer needs `[checks] mode = \"checks\"` with the gate App on the default branch (and in this checkout): in statuses mode any push workflow can post a ci-ok; nothing was signed",
-                "set `[checks] mode = \"checks\"`, `app_id` and `app_slug` (spec section 15), or sign with the orchestrator-held key",
+                "quorum (D-022) never counts a signature on a diff bosun cannot see (R-unseen): nothing was signed",
+                "the owner approves this PR with their own GitHub review or `/bosun approve <sha>` comment",
             ));
         }
     }
+
+    if role == Role::Signer {
+        // Fail closed: the default branch (now) and the PR's base must both allow the signer.
+        signer_allowed(gh, &crate::app::default_ref(gh)?, "the default branch")?;
+        signer_allowed(gh, &pull.base_sha, "the PR's base")?;
+    }
     let boot = match args.bootstrap {
-        true if role == Role::Delegate => {
-            return Err(BosunError::usage(
-                "--bootstrap signs with an owner key, not --as delegate",
-                "drop --as delegate, or drop --bootstrap",
-            ));
-        }
         true => Some(bootstrap_mode(
             &app,
             &app.ctx.now.to_string()[..10],
@@ -914,7 +878,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     for after in reviews {
         let (form, msg) = match (after, &boot) {
             (Some(r), _) => (Form::V2(r), signed_message_v2(owner, repo, pr, &head, r)),
-            (None, Some((_, _, Policy::Autonomous, _))) => (
+            (None, Some((_, _, Policy::Autonomous | Policy::Quorum, _))) => (
                 Form::Autonomous,
                 signed_message_autonomous(owner, repo, pr, &head),
             ),
@@ -955,24 +919,158 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     Ok(Outcome::data(json!({"approved": approved})))
 }
 
+/// Refuses unless `[approvals]` and `[checks]` at `git_ref` let the CI signer sign.
+fn signer_allowed(gh: &dyn Github, git_ref: &str, what: &str) -> Result<()> {
+    let config = match gh.file_at(CONFIG_FILE, git_ref)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)?,
+        None => Config::default(),
+    };
+    let policy = config.approvals.policy();
+    if !matches!(policy, Policy::Autonomous | Policy::Quorum) {
+        return Err(BosunError::error(
+            format!(
+                "--as signer signs only under the quorum (D-022) or autonomous (D-017) policy; the policy at {what} is {}",
+                policy.name()
+            ),
+            "set `[approvals] policy = \"quorum\"` or `\"autonomous\"` with a PR the owner approves (it counts once it is on the default branch and at the PR's base), or ask the owner",
+        ));
+    }
+    if !config.approvals.signer {
+        return Err(BosunError::error(
+            format!(
+                "the CI signer is off: `[approvals] signer` is not true at {what}; nothing was signed"
+            ),
+            "the owner decides: set `[approvals] signer = true` in .bosun/bosun.toml with a PR (R-weaken, owner-approved); the default is the orchestrator-held key (`--sign-key` as owner)",
+        ));
+    }
+    let gate_app = config.checks.mode == crate::config::CheckMode::Checks
+        && config.checks.app_id.is_some()
+        && crate::github::gate::trusted_app_id() == config.checks.app_id;
+    if !gate_app {
+        return Err(BosunError::error(
+            format!(
+                "the CI signer needs `[checks] mode = \"checks\"` with the gate App at {what} (and in this checkout): in statuses mode any push workflow can post a ci-ok; nothing was signed"
+            ),
+            "set `[checks] mode = \"checks\"`, `app_id` and `app_slug` (spec section 15), or sign with the orchestrator-held key",
+        ));
+    }
+    Ok(())
+}
+
 /// Bootstrap until, the signed line, the policy and who set it (`Approvals::policy_source`).
 type Boot = (Option<String>, String, Policy, &'static str);
 
+/// What a policy asks of a signature, one number per dimension, higher = stricter:
+/// 1. how much stays with the owner (owner 3, owner-gated 2, orchestrator 1, autonomous and
+///    quorum 0: they also sign gated PRs),
+/// 2. independent verdicts required on the head (quorum 2; owner 2 too, nobody signs; autonomous
+///    and owner-gated 1, an independent review; orchestrator 0),
+/// 3. whether R-weaken still applies (quorum ignores it: 0).
+///
+/// Policies are not totally ordered: quorum is stricter in 2, autonomous in 3.
+fn policy_dims(p: Policy) -> [u8; 3] {
+    match p {
+        Policy::Owner => [3, 2, 1],
+        Policy::OwnerGated => [2, 1, 1],
+        Policy::Orchestrator => [1, 0, 1],
+        Policy::Autonomous => [0, 1, 1],
+        Policy::Quorum => [0, 2, 0],
+    }
+}
+
+/// True when the default branch's policy is stricter than the PR's base in ANY dimension; the
+/// base policy then fails closed and may not sign.
+fn default_stricter(main: Policy, base: Policy) -> bool {
+    let (m, b) = (policy_dims(main), policy_dims(base));
+    m.iter().zip(b.iter()).any(|(m, b)| m > b)
+}
+
+/// True when the default branch's `review_models`, `autonomous_allow`, `verdict_bots` or
+/// `oneoff_allow` is stricter than the PR
+/// base's: a set on the default branch that the base left unset or widened (unset `review_models`
+/// counts any model; unset `autonomous_allow` is the built-in set). Compared as exact strings, so
+/// a base entry the default branch does not list reads as looser (fail closed).
+fn lists_stricter(main: &crate::config::Approvals, base: &crate::config::Approvals) -> bool {
+    let models = main.review_models.as_ref().is_some_and(|m| {
+        (base.review_models.as_ref()).is_none_or(|b| b.iter().any(|x| !m.contains(x)))
+    });
+    let builtin = || {
+        risk::AUTONOMOUS_ALLOWED
+            .iter()
+            .map(|g| g.to_string())
+            .collect()
+    };
+    let eff = |a: &crate::config::Approvals| -> Vec<String> {
+        a.autonomous_allow.clone().unwrap_or_else(builtin)
+    };
+    let (m, b) = (eff(main), eff(base));
+    // Lists where unset allows nothing: a base entry the default branch does not list is looser.
+    let wider = |m: &Option<Vec<String>>, b: &Option<Vec<String>>| {
+        (b.iter().flatten()).any(|g| !m.iter().flatten().any(|x| x == g))
+    };
+    models
+        || b.iter().any(|g| !m.contains(g))
+        || wider(&main.verdict_bots, &base.verdict_bots)
+        || wider(&main.oneoff_allow, &base.oneoff_allow)
+}
+
 /// How `--bootstrap` may sign for the PR at `head` today: the last day of the window (D-012)
 /// and its note line, or (after it) the note line of the approval policy (D-014) and no date. The
-/// setting is read on the default branch, which risk-check reads at the PR's base.
+/// setting is read at the PR's base, exactly as risk-check and the quorum trust root read it.
 fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) -> Result<Boot> {
     let gh = app.gh.as_ref();
     let (pr, head) = (pull.number, pull.head_sha.as_str());
-    let text = gh.file_at(CONFIG_FILE, &default_ref(gh)?)?;
+    let text = gh.file_at(CONFIG_FILE, &pull.base_sha)?;
     let approvals = match text {
         Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals,
         None => Default::default(),
     };
     let (policy, src) = (approvals.policy(), approvals.policy_source());
-    if policy == Policy::Autonomous {
-        autonomous_ok(app, pull, requester)?;
-        return Ok((None, AUTONOMOUS_LINE.into(), policy, src));
+    // Fail closed, for every policy: the default branch (now) must be at least as strict as the
+    // PR's base, and must not end the D-012 window the base still has open.
+    let main = match gh.file_at(CONFIG_FILE, &crate::app::default_ref(gh)?)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)?.approvals,
+        None => Default::default(),
+    };
+    let signs = |p: Policy| matches!(p, Policy::Autonomous | Policy::Quorum);
+    let end_of = |a: &crate::config::Approvals| {
+        (a.bootstrap_until.as_ref()).map(|u| u.clone().min(BOOTSTRAP_END.to_string()))
+    };
+    let kind = |p: Policy| {
+        if signs(p) {
+            "a signing policy"
+        } else {
+            p.name()
+        }
+    };
+    let stricter = default_stricter(main.policy(), policy)
+        || lists_stricter(&main, &approvals)
+        || (signs(policy) && !signs(main.policy()))
+        // A window the base has open today must not be shortened or dropped; one that already
+        // ended is not "open", so the default branch dropping its stale date is fine.
+        || (!signs(policy)
+            && end_of(&approvals).is_some_and(|b| today <= b.as_str())
+            && end_of(&main) < end_of(&approvals));
+    if stricter {
+        return Err(BosunError::error(
+            format!(
+                "the approvals at the PR's base ({}, bootstrap_until {}) are looser than on the default branch ({}, bootstrap_until {}); nothing was signed",
+                kind(policy),
+                end_of(&approvals).as_deref().unwrap_or("unset"),
+                kind(main.policy()),
+                end_of(&main).as_deref().unwrap_or("unset"),
+            ),
+            "the owner restores the settings on the default branch with a PR they approve, then run again",
+        ));
+    }
+    if signs(policy) {
+        autonomous_ok(app, pull, requester, policy)?;
+        let line = if policy == Policy::Quorum {
+            QUORUM_LINE
+        } else {
+            AUTONOMOUS_LINE
+        };
+        return Ok((None, line.into(), policy, src));
     }
     let end = approvals
         .bootstrap_until
@@ -983,13 +1081,13 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     let window = match &end {
         Some(d) => format!("bootstrap mode ended on {d} (D-012)"),
         None => format!(
-            "bootstrap mode is off: `[approvals] bootstrap_until` is not set in {CONFIG_FILE} on the default branch (D-012)"
+            "bootstrap mode is off: `[approvals] bootstrap_until` is not set in {CONFIG_FILE} at the PR's base (D-012)"
         ),
     };
-    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer (D-012)";
+    let fix = "nothing was signed: the owner approves with their own `/bosun approve <sha>` comment or a GitHub review, or runs `bosun approve` on their own machine (D-012)";
     let refuse = |why: String| Err(BosunError::error(format!("{why}; {window}"), fix));
     let ok = match policy {
-        Policy::Orchestrator | Policy::Autonomous => true,
+        Policy::Orchestrator | Policy::Autonomous | Policy::Quorum => true,
         Policy::Owner => return refuse("approval policy owner: only the owner approves".into()),
         Policy::OwnerGated => {
             let stats: Vec<Stat> = (crate::github::gate::gate_statuses(gh, head)?.into_iter())
@@ -1016,13 +1114,50 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
 /// D-017: signs only when no excluded path changed and a reviewer other than the task's leaseholders
 /// and this signer has a clean verdict on the head. risk-check cannot see the signer's session, so
 /// this is where signer != reviewer is enforced.
-fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> {
+fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy) -> Result<()> {
     let gh = app.gh.as_ref();
-    let fix = "nothing was signed: ask the owner with a form in the Claude Code chat and sign without --bootstrap on their answer";
+    let fix = "nothing was signed: get the clean verdicts this names and sign again, or the owner approves with their own `/bosun approve <sha>` comment or a GitHub review";
     let files = gh.pull_files(pull.number)?;
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))
         .collect();
+    let quorum = policy == Policy::Quorum;
+    if quorum {
+        // D-022: a diff bosun cannot see may hide the trust root (as risk-check's R-unseen).
+        let views: Vec<risk::FileView> = (files.iter())
+            .map(|f| risk::FileView {
+                path: f.filename.clone(),
+                status: f.status.clone(),
+                has_patch: f.patch.is_some(),
+                changes: f.additions + f.deletions,
+                same_blob: false,
+            })
+            .collect();
+        if risk::unseen_diff(&views, pull.changed_files).is_some() {
+            return Err(BosunError::error(
+                "quorum (D-022) never covers a diff bosun cannot see (R-unseen): the owner approves",
+                "nothing was signed: the owner approves this PR (their GitHub review or `/bosun approve <sha>` comment)",
+            ));
+        }
+        // D-022: the trust root is the owner's (a halt refused the signature at the top already).
+        let roots = crate::cli::risk_check::code_roots_at(gh, &pull.base_sha)?;
+        let (root, cause) = crate::cli::risk_check::quorum_trust_root(
+            gh,
+            &files,
+            &roots,
+            (&pull.base_sha, &pull.head_sha),
+        )?;
+        if !root.is_empty() {
+            return Err(BosunError::error(
+                format!(
+                    "quorum (D-022) never covers the trust root ({}{}): the owner approves",
+                    root.join(", "),
+                    cause.map(|c| format!("; {c}")).unwrap_or_default()
+                ),
+                "nothing was signed: the owner approves this PR (their GitHub review or `/bosun approve <sha>` comment)",
+            ));
+        }
+    }
     // The base rules, as risk-check reads them: a rule match in the deny set (R-gov) refuses too.
     let rules = match gh.file_at(".bosun/risk.toml", &pull.base_sha)? {
         Some(t) => risk::Rules::parse(&t)
@@ -1049,8 +1184,11 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         })
         .collect();
     // R-weaken and capabilities, as risk-check computes them: a weakening is the owner's.
-    let findings =
-        crate::cli::risk_check::weaken_findings(gh, &files, &pull.base_sha, &pull.head_sha)?;
+    let findings = if quorum {
+        Vec::new()
+    } else {
+        crate::cli::risk_check::weaken_findings(gh, &files, &pull.base_sha, &pull.head_sha)?
+    };
     if !findings.is_empty() {
         return Err(BosunError::error(
             format!(
@@ -1085,7 +1223,8 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         .map(|f| (&*f.filename, f.patch.as_deref()))
         .collect();
     hit.extend(risk::path_attributes(&patches));
-    if !hit.is_empty() {
+    // The quorum ignores every exclusion but the trust root (checked above).
+    if !quorum && !hit.is_empty() {
         return Err(BosunError::error(
             format!(
                 "autonomous mode (D-017) never covers {}: the owner approves",
@@ -1101,15 +1240,26 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>) -> Result<()> 
         excluded.push(app.ctx.session.clone());
         // The CI signer's own session is no reviewer's: the session that asked is excluded too.
         excluded.extend(requester.map(String::from));
-        autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        if quorum {
+            quorum_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        } else {
+            autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+        }
     });
-    if clean.is_empty() {
+    let min = if quorum { risk::QUORUM_VERDICTS } else { 1 };
+    if clean.len() < min {
+        let rule = if quorum {
+            "quorum (D-022)"
+        } else {
+            "autonomous mode (D-017)"
+        };
         return Err(BosunError::error(
             format!(
-                "autonomous mode (D-017) needs a clean verdict on head {} from a reviewer who is neither the author (a task lease holder) nor this session, and an open linked task (`Closes #N`) with a lease record by the PR author",
+                "{rule} needs {min} clean verdict(s) from different sessions ({} counted) on head {}, from reviewers who are neither the author (a task lease holder) nor this session, and an open linked task (`Closes #N`) with a lease record by the PR author",
+                clean.len(),
                 pull.head_sha
             ),
-            "get one independent clean verdict (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in a reviewer session (without CI add `--sign-key <reviewer.pem>`), then sign again",
+            "get independent clean verdicts (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in reviewer sessions (without CI add `--sign-key <reviewer.pem>`), then sign again",
         ));
     }
     Ok(())
@@ -1152,4 +1302,105 @@ pub(crate) fn read_key(path: &Path) -> Result<ring::signature::Ed25519KeyPair> {
         .collect();
     let der = b64::decode(&b64_body).ok_or_else(bad)?;
     ring::signature::Ed25519KeyPair::from_pkcs8_maybe_unchecked(&der).map_err(|_| bad())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Quorum and autonomous are each stricter in a different dimension (quorum: two verdicts;
+    /// autonomous: R-weaken still applies), so neither base may sign under the other default.
+    #[test]
+    fn default_stricter_in_any_dimension_refuses() {
+        use Policy::*;
+        for p in [Owner, OwnerGated, Orchestrator, Autonomous, Quorum] {
+            assert!(!default_stricter(p, p), "{p:?} vs itself signs");
+        }
+        // Base quorum, default autonomous: autonomous still applies R-weaken.
+        assert!(default_stricter(Autonomous, Quorum));
+        // Base autonomous, default quorum: quorum needs two verdicts.
+        assert!(default_stricter(Quorum, Autonomous));
+        // Orchestrator signs without a verdict; the autonomous default asks for one.
+        assert!(default_stricter(Autonomous, Orchestrator));
+        assert!(default_stricter(Quorum, Orchestrator));
+        // A base that signs nothing is never looser than the default.
+        for m in [Owner, OwnerGated, Orchestrator, Autonomous, Quorum] {
+            assert!(!default_stricter(m, Owner), "{m:?} vs owner base");
+        }
+        // The owner default keeps everything with the owner.
+        assert!(default_stricter(Owner, Quorum));
+        assert!(default_stricter(OwnerGated, Autonomous));
+        // Default looser or equal in every dimension.
+        assert!(!default_stricter(Orchestrator, OwnerGated));
+        assert!(!default_stricter(Orchestrator, Owner));
+        assert!(!default_stricter(OwnerGated, Owner));
+    }
+
+    fn lists(models: Option<&[&str]>, allow: Option<&[&str]>) -> crate::config::Approvals {
+        let v = |l: &[&str]| l.iter().map(|s| s.to_string()).collect();
+        crate::config::Approvals {
+            review_models: models.map(v),
+            autonomous_allow: allow.map(v),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn default_stricter_compares_review_models_and_autonomous_allow() {
+        let none = lists(None, None);
+        assert!(!lists_stricter(&none, &none));
+        // Default branch enrols models; a base that counts any model, or another one, is looser.
+        let m = lists(Some(&["opus"]), None);
+        assert!(lists_stricter(&m, &none));
+        assert!(lists_stricter(&m, &lists(Some(&["opus", "haiku"]), None)));
+        assert!(!lists_stricter(&m, &m));
+        // A base that narrows further, or a default branch that sets nothing, is not looser.
+        assert!(!lists_stricter(&lists(Some(&["opus", "sonnet"]), None), &m));
+        assert!(!lists_stricter(&none, &m));
+        // autonomous_allow: base widening beyond the default branch's set is looser.
+        let narrow = lists(None, Some(&["docs/**"]));
+        assert!(lists_stricter(&narrow, &none));
+        assert!(lists_stricter(
+            &narrow,
+            &lists(None, Some(&["docs/**", "src/**"]))
+        ));
+        assert!(!lists_stricter(&narrow, &narrow));
+        assert!(!lists_stricter(&none, &narrow));
+        assert!(!lists_stricter(&narrow, &lists(None, Some(&[]))));
+    }
+
+    #[test]
+    fn default_stricter_compares_verdict_bots_and_oneoff_allow() {
+        let v = |l: &[&str]| Some(l.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        let bots = |l: &[&str]| crate::config::Approvals {
+            verdict_bots: v(l),
+            ..Default::default()
+        };
+        let oneoff = |l: &[&str]| crate::config::Approvals {
+            oneoff_allow: v(l),
+            ..Default::default()
+        };
+        let none = crate::config::Approvals::default();
+        // Unset allows nothing: a base that adds a bot or glob is looser than the default branch.
+        assert!(lists_stricter(&none, &bots(&["claude[bot]"])));
+        assert!(lists_stricter(
+            &bots(&["a[bot]"]),
+            &bots(&["a[bot]", "b[bot]"])
+        ));
+        assert!(lists_stricter(&bots(&["a[bot]"]), &bots(&["b[bot]"])));
+        assert!(!lists_stricter(&bots(&["a[bot]"]), &bots(&["a[bot]"])));
+        assert!(!lists_stricter(
+            &bots(&["a[bot]", "b[bot]"]),
+            &bots(&["a[bot]"])
+        ));
+        assert!(!lists_stricter(&bots(&["a[bot]"]), &none));
+        assert!(!lists_stricter(&none, &bots(&[])));
+        assert!(lists_stricter(&none, &oneoff(&["README.md"])));
+        assert!(lists_stricter(
+            &oneoff(&["a/**"]),
+            &oneoff(&["a/**", "b/**"])
+        ));
+        assert!(!lists_stricter(&oneoff(&["a/**"]), &oneoff(&["a/**"])));
+        assert!(!lists_stricter(&oneoff(&["a/**"]), &none));
+    }
 }

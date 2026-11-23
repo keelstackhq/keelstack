@@ -1,0 +1,1 @@
+- The PreToolUse subagent-lock refuses `bosun merge` and signing `bosun approve` from a subagent (`agent_id` in the hook input); the PostToolUse answer store ignores the child flag in the cloud; quorum trust root adds `src/core/{meta,touch}.rs` and `src/time.rs`.

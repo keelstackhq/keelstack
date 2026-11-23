@@ -11,7 +11,8 @@ line), `verify:` (`owner`, `secret [ENV/]NAME`, `variable [ENV/]NAME`, `environm
 parser ignores the section; `core::prereqs::parse` reads it and every error has a line and a fix.
 Plan text that reaches the owner cannot hold `<!--`, `-->` or Unicode Cc, Cf, Zl or Zp characters.
 
-**The checklist.** `bosun prereqs <plan>... [--post] [--no-setup]` lists the items (computer
+**The checklist.** `bosun prereqs [<plan>...] [--post] [--no-setup]` (no plan named: `plans/*.md`, else
+`docs/superpowers/plans/*.md`, sorted; none found is a usage error) lists the items (computer
 steps first), the missing `bosun doctor` steps (`D<n>`), a delegate key (`K1`) when a task needs a
 delegate and none is enrolled, and the approvals at merge: per task an estimate from its touch
 paths, as risk-check would judge them (an owner rule, a delegate rule on the critical floor, a
@@ -39,6 +40,26 @@ the GitHub MCP issue tools) that carries one of bosun's markers (`bosun:prereq`,
 `bosun:epic`); best effort, with its bypasses listed in `core::guard`.
 
 **Gating.** A task an open item blocks does not start:
+- Without `--post` and without a GitHub token, `bosun prereqs` reads only the plan files: no API check
+  and no checklist issue is read, so every item is open (`data.warnings` says so). `--post` needs the token.
+- Every reader of the section takes the bullets leniently (`parse_lenient`, through `parse_read`):
+  `bosun prereqs`, `prereqs --post`, the checklist, the gate and `hold` never refuse a file that
+  `plan import` accepted. `plan import` and `plan check --fix` also normalize them: `* ` and `+ ` bullets, `- Hn - title`, and
+  `- H:` / `- H<n>:` with a missing, duplicate or out-of-order number become `- H<k>: title`. Only
+  bullets with a missing or duplicate id are renumbered (lowest unused H<n>, in file order); a unique valid id
+  stays, even out of order, so a strictly valid section is never changed. Import lists each
+  changed bullet in `data.prereqs_fixed: [{line, from, to}]` and builds the checklist from the
+  normalized text; with `--fix` it also rewrites the plan file (only the `## Prerequisites` section
+  changes) and reports `data.fixed_file`. Other prerequisite errors stay errors, on the same lines.
+  `plan check` without `--fix` never writes: fixable bullets are a warning in `data.warnings` with the
+  same `data.prereqs_fixed` rows (exit stays 0), and an unfixable prerequisite error is a warning too.
+- Inferred ids are not stable: a missing or duplicate id takes the lowest unused number, which shifts when a
+  bullet is inserted earlier. The lenient readers refuse nothing but warn (`plan check` and `bosun prereqs`: in
+  `data.warnings`, "prerequisite ids are inferred; run `bosun plan check <file> --fix` to make them stable"; the gate
+  and `hold`: on stderr). `plan import`/`amend` that writes (not `--dry-run`, with a token) therefore refuses such a
+  file (exit 1; fix: run `bosun plan import <file> --fix`, which rewrites the ids into the file, and commit it), so the
+  ids that reach GitHub are always written in the file. A formatting-only fix (`* ` bullets, `- Hn - title`) keeps
+  its id and is not refused.
 - `bosun plan import`/`amend` of a plan with prerequisites refreshes the checklist first (a dry run
   only reads), keeps such tasks `planned` (an epic too when its whole item is blocked) and lists
   them under `data.held`; the next import after the item is done promotes them.
@@ -58,44 +79,36 @@ updated checklist once and folds the step into the plan (`replaces: X1`, in an i
 the held task; `replaces` never releases another task's hold).
 
 **Approval batches.** `bosun approve --list` gives `data.message` (at most 10 ready PRs with inert
-titles and the reply `approve 12 15`), `data.message_id` (8 hex of the SHA-256 of the shown pairs'
-sorted `<pr>@<head>` lines) and `data.message_pairs`. Only the latest relayed message is
-answerable; PR numbers come only from the owner's chat; each (id, pr) is signed at most once (§8).
-Each `data.ready[]` item also has `ask` (`question_id` `<pr>-<short head>-<unix now>`, `question`
-naming repo, `#pr`, inert title, risk ids, short and full head, verdict, ending `[bosun:<id>]`;
-`options` `Approve <short>`, `Hold`). `next` is one `AskUserQuestion` (header `Approve`, options
-`Approve #<pr> <short>` per PR for the first 3 ready PRs plus `Hold`, multi-select when more
-than one; `data.ask_more` counts the rest) or, for origin `slack`, a `slack_post` ending
-`answer "approve <short>…"`. Nothing ready, no `next`. Only the orchestrator asks the owner (D-018):
-a spawned or routine session gets no `next`, only `data.handoff` (hand the question to the orchestrator) with `ask` kept.
-The PostToolUse hook (`bosun hook post-tool-use`, matcher `AskUserQuestion`, in
+titles, no reply line), `data.message_id` (8 hex of the SHA-256 of the shown pairs'
+sorted `<pr>@<head>` lines) and `data.message_pairs`. The message is display text only: since D-025 a chat reply approves nothing and agents do not relay it; the owner approves with a `/bosun approve <sha>` comment or review on GitHub (§8).
+Each `data.ready[]` item also has `owner_comment` (`/bosun approve <full head>`) and `verdict`; `data.owner_step` says "the owner comments /bosun approve <sha> on the PR" (D-025). `next` is empty for every origin: no `AskUserQuestion`, no `slack_post`, no "answer approve" text; agents never ask the owner for an approval.
+Legacy path: `approve --list` no longer asks, so it records no new hold; only an answer to a question from an older bosun (with its `[bosun:<id>]` marker) is still stored and read. The PostToolUse hook (`bosun hook post-tool-use`, matcher `AskUserQuestion`, in
 `.claude/settings.json` and the core channel piece) stores the answer to each marked PR in
-`<git common dir>/bosun/answers.json` (`question_id -> {answer, repo, pr, head, at, session, cli_session_id, tool_use_id}`; `session` is the bosun identity the hook resolves the way the CLI does (`BOSUN_SESSION`, else the remote session id), `cli_session_id` and `tool_use_id` come from the hook input, for audit; head read from the `head <short> = <full>)` that ends the line before the marker, as `approve --list` writes it, so no title or verdict text can swap it; the PR number is plain digits, no sign or leading zero). Answers come from `tool_response.answers` only: `tool_input.answers` is written by the model and never read. A write drops entries older than 14 days, entries dated more than 60 s after now and entries for another head of a stored PR (tmp file + rename); an answer dated after now is refused, and a reader ignores one, so a future-dated entry never outranks a later answer. The file is a local record, not proof (trust option A): it is a hint, and guards stop confused workers, not liars; the strong path is the signed record (`chat_signed`, T14). The file is a hint only: a gated approval where workers could forge it needs a signed record (`chat_signed`, T14). The hook verifies its own input: it stores nothing when `CLAUDE_CODE_CHILD_SESSION` is non-empty; `transcript_path` must be `$HOME/.claude/projects/<dir>/<session_id>.jsonl` (`session_id` from the hook input), a regular file, not a symlink, holding an assistant `AskUserQuestion` `tool_use` with the input's `tool_use_id` whose question carries the same `[bosun:<id>]` marker (id, PR, full head) and a `tool_result` for that id; the picked labels are read from that `tool_result` (real format: content `Your questions have been answered: "<q>"="<label>". You can now continue with these answers in mind.`, plus `toolUseResult.answers` `{q: label}`) and must equal `tool_response.answers`, else nothing is stored and it warns on stderr (fail closed). Only transcript lines whose `sessionId` equals the input's `session_id` count; a `tool_use` or `tool_result` line without it, or with another, is ignored. If the `tool_result` line is missing the hook warns "the transcript has no answer yet" and the answer is not stored; it is unverified whether Claude Code writes that line before PostToolUse runs. Both the child flag and `HOME` are controlled by the agent, so an unsigned `answers.json` stays forgeable by a lying agent: accepted residual, the opt-in `chat_signed` (T14) covers gated approvals. The pre-tool-use hook also denies edit tools and Bash writes under `~/.claude/projects/` (`$HOME/.claude/projects`, `/root/.claude/projects`), and lets a `git commit -m` or `gh pr create --body` text that only mentions `answers.json` through (a text holding `<` or `>` is not exempt: `-m "x">answers.json` is a redirect). The pre-tool-use hook denies edit tools on `bosun/answers.json` and any Bash command whose text names `answers.json` or the state dir `.git/bosun` (any case, path normalised, so `cp -t`, `tar -C`, `rsync`, `ln -s`, `python -c` all count; `cd` chains and `$d` paths count only when the text still names the file or `.git/bosun`, so they are misses otherwise) unless it is purely read-only (`cat`, `jq`, `less`, `head`, `tail`, `grep`, `rg`, `ls`, `wc`, `stat`, `test`, `[`, `cd`, `python3 -m json.tool` with one positional only) with no write redirect (`2>/dev/null`, `>&2` are not writes). Quoting can hide a name from a text match: these guards stop confused workers, not liars. `approve --chat` (T5) must also see the same session as the answer's `session`. Only a line's trailing `[bosun:<id>]` counts, matched exactly (case-sensitive): a look-alike in a title, or anything after the marker, is no marker and stores nothing. A picked `Approve #<pr> <short>` stores
+`<git common dir>/bosun/answers.json` (`question_id -> {answer, repo, pr, head, at, session, cli_session_id, tool_use_id}`; `session` is the bosun identity the hook resolves the way the CLI does (`BOSUN_SESSION`, else the remote session id), `cli_session_id` and `tool_use_id` come from the hook input, for audit; head read from the `head <short> = <full>)` that ends the line before the marker, as `approve --list` writes it, so no title or verdict text can swap it; the PR number is plain digits, no sign or leading zero). Answers come from `tool_response.answers` only: `tool_input.answers` is written by the model and never read. A write drops entries older than 14 days, entries dated more than 60 s after now and entries for another head of a stored PR (tmp file + rename); an answer dated after now is refused, and a reader ignores one, so a future-dated entry never outranks a later answer. The file is a local record, not proof (trust option A): it is a hint, and guards stop confused workers, not liars; the strong path is a signed approval or the owner's own comment. The file is a hint only (a forged hold only keeps a PR off the board). The hook verifies its own input: it stores nothing when `CLAUDE_CODE_CHILD_SESSION` is non-empty; `transcript_path` must be `$HOME/.claude/projects/<dir>/<session_id>.jsonl` (`session_id` from the hook input), a regular file, not a symlink, holding an assistant `AskUserQuestion` `tool_use` with the input's `tool_use_id` whose question carries the same `[bosun:<id>]` marker (id, PR, full head) and a `tool_result` for that id; the picked labels are read from that `tool_result` (real format: content `Your questions have been answered: "<q>"="<label>". You can now continue with these answers in mind.`, plus `toolUseResult.answers` `{q: label}`) and must equal `tool_response.answers`, else nothing is stored and it warns on stderr (fail closed). Only transcript lines whose `sessionId` equals the input's `session_id` count; a `tool_use` or `tool_result` line without it, or with another, is ignored. If the `tool_result` line is missing the hook warns "the transcript has no answer yet" and the answer is not stored; it is unverified whether Claude Code writes that line before PostToolUse runs. Both the child flag and `HOME` are controlled by the agent, so an unsigned `answers.json` stays forgeable by a lying agent: accepted residual: a forged answer approves nothing. The pre-tool-use hook also denies edit tools and Bash writes under `~/.claude/projects/` (`$HOME/.claude/projects`, `/root/.claude/projects`), and lets a `git commit -m` or `gh pr create --body` text that only mentions `answers.json` through (a text holding `<` or `>` is not exempt: `-m "x">answers.json` is a redirect). The pre-tool-use hook denies edit tools on `bosun/answers.json` and any Bash command whose text names `answers.json` or the state dir `.git/bosun` (any case, path normalised, so `cp -t`, `tar -C`, `rsync`, `ln -s`, `python -c` all count; `cd` chains and `$d` paths count only when the text still names the file or `.git/bosun`, so they are misses otherwise) unless it is purely read-only (`cat`, `jq`, `less`, `head`, `tail`, `grep`, `rg`, `ls`, `wc`, `stat`, `test`, `[`, `cd`, `python3 -m json.tool` with one positional only) with no write redirect (`2>/dev/null`, `>&2` are not writes). Quoting can hide a name from a text match: these guards stop confused workers, not liars. Only a line's trailing `[bosun:<id>]` counts, matched exactly (case-sensitive): a look-alike in a title, or anything after the marker, is no marker and stores nothing. A picked `Approve #<pr> <short>` stores
 `approve`; `Hold` stores `hold` for every PR of the question, even with approves picked (Hold
 wins; multi-select with Hold and Approve stores a hold and approves nothing); an unpicked or unknown label (matched exactly) stores nothing. It never denies and prints nothing. `--list` moves a PR
 whose newest answer (by `at`; a hold wins a tie) at its current head is a hold to `data.held[]` (`{pr, head_sha}`) and does not ask it again; a new
-head asks again. `approve --chat` (T5) needs a stored `approve` for the question and head. `answers.json` is a local hint, never proof: the trust anchor is the signed record (opt-in `chat_signed`, a later PR). Each answer stores the `repo` (a PostToolUse answer for another repo never counts) and a non-empty `session` and `cli_session_id` (an answer without one is refused and nothing is stored). A corrupt `answers.json` is warned about on stderr, not used (no hold, no approval) and never reset.
+head asks again. An `approve` answer approves nothing (chat approvals are retired, D-025); only a `hold` is read. `answers.json` is a local hint, never proof. Each answer stores the `repo` (a PostToolUse answer for another repo never counts) and a non-empty `session` and `cli_session_id` (an answer without one is refused and nothing is stored). A corrupt `answers.json` is warned about on stderr, not used (no hold, no approval) and never reset.
 This is the per-PR form; the daily digest below is the batch form
 and reads only `data`.
 
 **Daily digest (§18, `approvals_batch = "daily"`).** For Claude-Tag-first repos the Slack kind `digest` (§10, opt-in) posts the owner-waiting PRs with GitHub links and the comment to approve with; Slack itself approves nothing. `bosun digest` (the orchestrator, once a day)
 reads the `approve --list` board and the needs-human issues, and writes nothing. `data.message`
-is one D-012 chat form for the repo: its first line `Daily digest <owner>/<repo> <id>`, every
+is one chat-form text for the repo (legacy: since D-025 a reply to it approves nothing, the owner uses a `/bosun approve <sha>` comment or review): its first line `Daily digest <owner>/<repo> <id>`, every
 owner-waiting PR (`#<pr>@<short head>`, its `R-` rule ids, the inert title), the open asks
-(answered with `bosun answer <issue> --chat`), budget asks (under `budget_feature = ask`, each indexed epic at 100 % of its feature budget, with the reply line `<id> raise <epic> +<usd>`; they are not in the id; epics at 80 % or more that are not asks are listed as `Budget warnings`, also with no hint) and the reply
-`<id> approve 12 15`. While main is red, mainfix PRs are in `data.bypass`,
-not in the digest; release-environment taps never wait for it. What a tokenless listing could
+(answered with `bosun answer <issue> --chat`), budget asks (under `budget_feature = ask`, each indexed epic at 100 % of its feature budget, with the reply line `<id> raise <epic> +<usd>`; they are not in the id; epics at 80 % or more that are not asks are listed as `Budget warnings`, also with no hint) and, for each owner-waiting PR, the comment `- #<pr>: /bosun approve <full head>` after the line "A chat reply approves nothing (D-025)"; no chat approve line. While main is red, mainfix PRs are in `data.bypass`,
+not in the digest; release-environment taps never wait for it. `data.summary` (D-022) is the once-a-day owner summary: `merged` (PRs with `merged_at` in the last 24 hours before `BOSUN_NOW`), `released` (every release published in that window, from the first page of 30) and `blocked` (the owner-waiting PRs and open `needs-human` asks). A PR or release listing that cannot be read is left out with a line on stderr, never an error. What a tokenless listing could
 not read is in `data.skipped`. `data.header` is `/bosun digest <owner>/<repo> <day> <id>
 <pr>@<head>...` (`day`: the digest's UTC date; `id`: as `message_id` above over the pairs and a
 `day <day>` line, so each day's digest has its own id; an unkeyed checksum that catches copy errors, not
 forgery: the orchestrator relays the header of the message it showed). `bosun digest --answer`
 (after the kill switch) takes that header as the first line, then the owner's reply verbatim: a
 header that does not check or names another repo is exit 2. The owner quotes the id they saw
-(the form's last line, pasted as is, is a valid reply): a reply that quotes no id is exit 2, one
+(a form's `raise` line, pasted as is, is a valid reply): a reply that quotes no id is exit 2, one
 whose quoted ids are not all the header's id is exit 3, so a reply never pairs with another
 digest's heads. A PR the owner names counts only when the digest showed it and it still waits at that
-head, else it is in `data.dropped` (a moved head is listed in the next digest). Each approval is
-a `next` call `bosun approve <pr>@<head> --sign-key <pem>` for the key holder: the digest signs
+head, else it is in `data.dropped` (a moved head is listed in the next digest). A named PR approves nothing (D-025): `data.approve[]` lists `{pr, head_sha, owner_comment}` with
+`owner_comment` `/bosun approve <head>` for the owner to post on the PR, and `next` is empty; the digest signs
 no approval. A raise `<id> raise <epic> +<usd>` counts only with `--sign-key` and a key enrolled
 as owner on the default branch: `data.raises` carries the signature of `bosun-raise v1
 <owner>/<repo> digest <id> day <YYYY-MM-DD> reply <sha256 of the normalized reply> epic <n> usd

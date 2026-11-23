@@ -291,10 +291,21 @@ pub struct Approvals {
     /// `policy` came from the `[mode]` preset, not from this table.
     #[serde(skip)]
     pub policy_preset: bool,
-    /// Whether a chat approval record counts as the owner's approval. Unset: true.
+    /// Deprecated and ignored (D-025 retired chat approvals): a chat approval record never counts,
+    /// whatever this says. Still parsed so an old config (and a release that pins `chat`) keeps
+    /// loading; delete it. Ignoring it fails safe: the only effect of the key was to count more.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub chat: Option<bool>,
+    /// The upstream bosun repository (`owner/name`, default `keelstackhq/keelstack`, the monorepo that releases bosun since D-023) whose `v{version}`
+    /// tags say which `.bosun/version` pins are released (D-022 quorum). Read from the PR's base
+    /// only; an invalid value makes every pin change the owner's (fail closed). Release ordering:
+    /// a pinned release older than 0.22.0 rejects the key. `.bosun/bosun.toml` is trust root.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bosun_repo: Option<String>,
 }
+
+/// The upstream repository of bosun releases when `[approvals] bosun_repo` is unset.
+pub const DEFAULT_BOSUN_REPO: &str = "keelstackhq/keelstack";
 
 impl Approvals {
     pub fn policy(&self) -> Policy {
@@ -310,9 +321,21 @@ impl Approvals {
         }
     }
 
-    /// Whether a chat approval record counts as the owner's approval (default true).
-    pub fn chat_enabled(&self) -> bool {
-        self.chat.unwrap_or(true)
+    /// `(owner, name)` of the upstream bosun repository: `bosun_repo` or the default. `Err` holds
+    /// the bad value: exactly `owner/name` of `[A-Za-z0-9._-]` parts, neither empty, `.` or `..`.
+    pub fn bosun_repo_pair(&self) -> std::result::Result<(String, String), String> {
+        let v = self.bosun_repo.as_deref().unwrap_or(DEFAULT_BOSUN_REPO);
+        let ok = |p: &str| {
+            !p.is_empty()
+                && p != "."
+                && p != ".."
+                && p.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        };
+        match v.split_once('/') {
+            Some((o, r)) if ok(o) && ok(r) => Ok((o.into(), r.into())),
+            _ => Err(v.into()),
+        }
     }
 }
 
@@ -805,5 +828,30 @@ mod cron_tests {
         let on = format!("{off}janitor = true\n");
         let e = super::Config::parse(&on, "f").unwrap_err();
         assert!(!e.fix.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod bosun_repo_tests {
+    use super::{Approvals, DEFAULT_BOSUN_REPO};
+
+    /// bosun#706: the upstream repo of release tags is exactly `owner/name`.
+    #[test]
+    fn bosun_repo_pair_takes_only_owner_slash_name() {
+        let pair = |v: Option<&str>| {
+            Approvals {
+                bosun_repo: v.map(String::from),
+                ..Default::default()
+            }
+            .bosun_repo_pair()
+        };
+        assert_eq!(DEFAULT_BOSUN_REPO, "keelstackhq/keelstack");
+        assert_eq!(pair(None), Ok(("keelstackhq".into(), "keelstack".into())));
+        assert_eq!(pair(Some("a.b/c_d-1")), Ok(("a.b".into(), "c_d-1".into())));
+        for bad in [
+            "bosun", "a/b/c", "../x", "a/..", "./b", "a/", "/b", "a b/c", "",
+        ] {
+            assert_eq!(pair(Some(bad)), Err(bad.to_string()), "{bad:?}");
+        }
     }
 }

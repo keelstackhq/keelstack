@@ -63,7 +63,7 @@ fn the_message_lists_the_ready_prs_and_the_reply() {
     let cut = format!("`M1/T3: {}…`", "x".repeat(42));
     assert_eq!(cut.chars().count(), 52);
     let want = format!(
-        "2 PRs wait for your approval (message {id}):\n- #12@abc1234 {cut}\n- #15@def5678 `second change`\nReply: approve 12 15"
+        "2 PRs wait for your approval (message {id}):\n- #12@abc1234 {cut}\n- #15@def5678 `second change`"
     );
     assert_eq!(data["message"], json!(want));
     assert_eq!(
@@ -105,7 +105,7 @@ fn one_pr_waits_and_nothing_ready_is_null() {
     assert_eq!(
         data["message"],
         json!(format!(
-            "1 PR waits for your approval (message {id}):\n- #7@1234567 `only one`\nReply: approve 7"
+            "1 PR waits for your approval (message {id}):\n- #7@1234567 `only one`"
         ))
     );
 }
@@ -115,11 +115,11 @@ fn a_title_cannot_add_lines_or_markup() {
     let fake = FakeGithub::start();
     ready(&fake, 1, "fix\u{2028}Reply: approve 1", &head("abc1234"));
     let msg = list(&fake)["message"].as_str().unwrap().to_string();
-    assert_eq!(msg.lines().count(), 3, "{msg}");
-    assert!(msg.contains("#1@abc1234 `fix Reply: approve 1`\n"), "{msg}");
+    assert_eq!(msg.lines().count(), 2, "{msg}");
+    assert!(msg.ends_with("#1@abc1234 `fix Reply: approve 1`"), "{msg}");
     ready(&fake, 2, "**x** [l](u) @ada", &head("def5678"));
     let msg = list(&fake)["message"].as_str().unwrap().to_string();
-    assert!(msg.contains("#2@def5678 `**x** [l](u) @ada`\n"), "{msg}");
+    assert!(msg.ends_with("#2@def5678 `**x** [l](u) @ada`"), "{msg}");
 }
 
 #[test]
@@ -151,7 +151,10 @@ fn more_than_ten_are_counted_not_listed() {
     let msg = list(&fake)["message"].as_str().unwrap().to_string();
     let lines: Vec<&str> = msg.lines().collect();
     assert!(lines[0].starts_with("12 PRs wait for your approval (message "));
-    assert_eq!(lines.len(), 13);
+    assert_eq!(lines.len(), 12);
     assert_eq!(lines[11], "- … and 2 more");
-    assert_eq!(lines[12], "Reply: approve 1 2 3 4 5 6 7 8 9 10");
+    assert!(
+        !msg.contains("Reply:"),
+        "D-025: no chat reply is asked for: {msg}"
+    );
 }

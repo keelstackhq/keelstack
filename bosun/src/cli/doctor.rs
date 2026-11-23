@@ -17,6 +17,41 @@ const HOIST_FIX: &str = "run `hoist plan --area github && hoist apply --area git
 const NO_TOKEN_FIX: &str =
     "export GITHUB_TOKEN (repo and workflow scopes), then rerun `bosun doctor`";
 
+const REMOTE_FIX: &str = "run `gh auth login`, or export GITHUB_TOKEN (repo and workflow scopes), then rerun `bosun doctor --remote`";
+
+/// `splice check` and `hoist check` (`--all`): `{installed, ok, exit_code, output}` each; a tool
+/// that is not on PATH (or named by `BOSUN_SPLICE` / `BOSUN_HOIST`) is skipped with a reason.
+/// `output` is the parsed JSON of stdout when it is JSON, else its last lines.
+fn run_tools(root: &Path) -> Value {
+    let mut out = serde_json::Map::new();
+    for (name, var) in [("splice", "BOSUN_SPLICE"), ("hoist", "BOSUN_HOIST")] {
+        let bin = std::env::var(var)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or_else(|| name.into());
+        let v = match run_hoist(&bin, root, HOIST_TIMEOUT_SECS) {
+            Ok((code, stdout)) => {
+                let text = String::from_utf8_lossy(&stdout).trim().to_string();
+                let output = serde_json::from_str::<Value>(&text).unwrap_or_else(|_| {
+                    let lines: Vec<&str> = text.lines().collect();
+                    json!(lines[lines.len().saturating_sub(10)..].join("\n"))
+                });
+                json!({"installed": true, "ok": code == Some(0), "exit_code": code, "output": output})
+            }
+            Err(None) => json!({"installed": true, "ok": false, "exit_code": null,
+                "output": format!("{name} check timed out after {HOIST_TIMEOUT_SECS}s")}),
+            Err(Some(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                json!({"installed": false, "ok": null, "exit_code": null, "output": null,
+                    "reason": "not installed"})
+            }
+            Err(Some(e)) => json!({"installed": true, "ok": false, "exit_code": null,
+                "output": format!("cannot run {bin}: {e}")}),
+        };
+        out.insert(name.into(), v);
+    }
+    Value::Object(out)
+}
+
 /// A step that needs GitHub while no token is set: reported, not counted as missing.
 fn no_token(step: u8, name: &str) -> Value {
     skipped(
@@ -369,7 +404,7 @@ fn has_owner(v: &toml::Value) -> bool {
     }
 }
 
-fn app_user(login: &str) -> bool {
+pub(crate) fn app_user(login: &str) -> bool {
     login.to_lowercase().starts_with("claude")
 }
 
@@ -957,7 +992,7 @@ fn signer_item(root: &Path, remote: bool, enabled: bool) -> Value {
 }
 
 pub fn run(dir: Option<&Path>, remote: bool) -> CmdResult {
-    run_with(dir, remote, true)
+    run_with(dir, remote, true, false)
 }
 
 /// The default view (`full` false): only the steps that need action, and the Routines only
@@ -1003,7 +1038,7 @@ fn skew_hint(dir: Option<&Path>, e: BosunError) -> BosunError {
     }
 }
 
-pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
+pub fn run_with(dir: Option<&Path>, remote: bool, full: bool, all: bool) -> CmdResult {
     let ctx = Ctx::load(dir).map_err(|e| skew_hint(dir, e))?;
     // Without a token the GitHub steps are skipped; the local steps still run.
     check_api_url()?;
@@ -1438,7 +1473,10 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
     ));
 
     // Step 16: the keyless fast lane (D-017, spec section 8), only under the autonomous policy.
-    if ctx.config.approvals.policy() == crate::core::approve::Policy::Autonomous {
+    if matches!(
+        ctx.config.approvals.policy(),
+        crate::core::approve::Policy::Autonomous | crate::core::approve::Policy::Quorum
+    ) {
         items.push(signer_item(root, remote, ctx.config.approvals.signer));
     }
 
@@ -1502,6 +1540,30 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
         it["detail"] = json!(
             "a personal access token is in the environment; remove it: cloud and Claude Tag sessions reach GitHub through the Claude GitHub App proxy"
         );
+        items.push(it);
+    }
+
+    if root.join(".bosun/version").exists()
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        let file = std::path::PathBuf::from(home).join(".claude/settings.json");
+        let text = std::fs::read_to_string(&file).unwrap_or_default();
+        let doc = serde_json::from_str::<Value>(&text).unwrap_or_default();
+        let missing = super::setup_snippet::missing_events(&doc);
+        let mut it = item(
+            19,
+            "user-hooks",
+            None,
+            format!("{} has bosun's hooks", file.display()),
+            "run `bosun setup-snippet --install-hooks`",
+        );
+        if !missing.is_empty() {
+            it["status"] = json!("warn");
+            let (f, m) = (file.display(), missing.join(", "));
+            it["detail"] = json!(format!(
+                "{f} lacks bosun's hook(s) for {m}; the guards only run in this repo's own .claude/settings.json"
+            ));
+        }
         items.push(it);
     }
 
@@ -1592,6 +1654,11 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
         items.push(it);
     }
 
+    // Steps run in the order their data is ready, not their number: list them by step (spec
+    // section 11). The sort is stable, and hoist's findings below address steps 3, 5 and 10 by
+    // position, which this leaves alone.
+    items.sort_by_key(|i| i["step"].as_u64().unwrap_or(0));
+
     let hoist_data = remote.then(|| apply_hoist(&mut items, root, release_set, release_step));
     if let (true, Some(gh), Ok(Some(info))) = (remote, gh, &repo) {
         let warnings = pin_warnings(gh, ctx, &info.default_branch);
@@ -1602,18 +1669,37 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
     let envs = gh
         .filter(|_| remote)
         .map(|g| apply_environments(&mut items, g, &ctx.repo.to_string(), root));
+    let tools = all.then(|| run_tools(root));
     let missing = items.iter().filter(|i| i["status"] == "missing").count();
+    if offline && asked_remote {
+        // --remote must never be skipped silently: it fails, with how to get a token.
+        items.retain(|i| !(i["status"] == "skipped" && i["fix"] == NO_TOKEN_FIX));
+        items.push(json!({
+            "step": 0, "name": "remote checks", "status": "failed",
+            "detail": "--remote needs GitHub and no token was found (GITHUB_TOKEN, GH_TOKEN or `gh auth token`): the hoist check and the workflow environments did not run",
+            "fix": REMOTE_FIX,
+        }));
+        let mut data = json!({"items": items, "missing": missing, "offline": true, "routines": routines(slack_set, Some(&ctx.config.routines))});
+        if let Some(t) = tools {
+            data["tools"] = t;
+        }
+        if !full {
+            summarize(&mut data);
+        }
+        return Err(BosunError::needs_human(
+            "--remote could not run: no GitHub token (GITHUB_TOKEN, GH_TOKEN or `gh auth token`)",
+            REMOTE_FIX,
+        )
+        .with_data(data));
+    }
     if offline {
         // Nothing on GitHub was checked, so this can never be a full pass.
-        let mut names: Vec<String> = items
+        // `--remote` without a token returned above, so only the skipped steps are named here.
+        let names: Vec<String> = items
             .iter()
             .filter(|i| i["status"] == "skipped" && i["fix"] == NO_TOKEN_FIX)
             .filter_map(|i| i["name"].as_str().map(String::from))
             .collect();
-        if asked_remote {
-            names.push("hoist check".into());
-            names.push("workflow environments".into());
-        }
         // One line for all of them, not one item each.
         items.retain(|i| !(i["status"] == "skipped" && i["fix"] == NO_TOKEN_FIX));
         items.push(json!({
@@ -1628,6 +1714,9 @@ pub fn run_with(dir: Option<&Path>, remote: bool, full: bool) -> CmdResult {
     }
     if let Some(h) = hoist_data {
         data["hoist"] = h;
+    }
+    if let Some(t) = tools {
+        data["tools"] = t;
     }
     if let Some(e) = envs {
         data["environments"] = e;

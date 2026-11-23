@@ -1,7 +1,7 @@
 //! `bosun merge <pr>` (spec D13 as amended by org decision D-019, §4): the orchestrator re-checks
 //! every gate on the PR's current head, then merges with `sha = head`, so a push after the
 //! checks makes GitHub refuse (exit 3). Without CI the gates are the ready summary, risk-check,
-//! a clean verdict from another session (the owner's chat approval when gated) and main-open;
+//! a clean verdict from another session (the owner's approval when gated) and main-open;
 //! with CI they are the required checks. Every other agent merge path stays refused by the hook.
 
 use std::path::Path;
@@ -10,7 +10,6 @@ use serde_json::json;
 
 use crate::app::{App, default_branch, kill_switch, sync_merged};
 use crate::cli::MergeArgs;
-use crate::cli::stamps;
 use crate::config::CiProvider;
 use crate::core::approve::{is_orchestrator, parse_ready_summary};
 use crate::core::meta::linked_issues_in;
@@ -29,7 +28,8 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
     let members = crate::registry::load(gh)?
         .map(|(_, notes)| crate::core::lease::members(&notes))
         .unwrap_or_default();
-    let child = std::env::var("CLAUDE_CODE_CHILD_SESSION").is_ok_and(|v| !v.trim().is_empty());
+    // Outside the cloud the env flag marks a child; in the cloud the registry does (spawn record).
+    let child = crate::ctx::child_flag();
     if app.ctx.origin == Origin::Spawned
         || child
         || !is_orchestrator(&members, session, app.ctx.now)
@@ -79,6 +79,18 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
     } else {
         check_ci(gh, &pull, &base)?;
     }
+    // The gates ran the head's code for a while: a halt or a red main since the start of the
+    // command still stops the merge (exit 4).
+    kill_switch(gh)?;
+    let main = judge_local(gh, &pull, &crate::gates::main_open::main_state(gh)?)?;
+    if !main.pass {
+        return Err(BosunError::halted(
+            main.description,
+            format!(
+                "fix main with a bosun:kind/mainfix PR, or wait for main-red to close, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
     gh.merge_pull(pr, &head, &args.method)
         .map_err(|e| match e.exit {
             Exit::Conflict => e,
@@ -98,7 +110,7 @@ pub fn run(dir: Option<&Path>, args: &MergeArgs) -> CmdResult {
 }
 
 /// No CI: a writer's ready summary for this head, then the same local checks `pr --ready` ran,
-/// re-run now (the owner's chat answer may have come after the summary).
+/// re-run now (the owner's approval may have come after the summary).
 fn check_no_ci(app: &App, pull: &Pull) -> Result<(), BosunError> {
     let gh = app.gh.as_ref();
     let (pr, head) = (pull.number, pull.head_sha.as_str());
@@ -135,39 +147,37 @@ fn check_no_ci(app: &App, pull: &Pull) -> Result<(), BosunError> {
             )
         });
     }
-    // The summary only shows the head did not move; the gates are re-checked from the stamps
-    // in this checkout, on the head's own tree (a summary is a comment any session can post).
-    let dir = app.ctx.dir.as_path();
-    let tree = stamps::tree_of(dir, head).ok_or_else(|| {
-        BosunError::needs_human(
-            format!(
-                "PR #{pr} head {head} is not in this checkout, so its gate stamps cannot be read"
-            ),
-            format!("`git fetch origin pull/{pr}/head`, then rerun `bosun merge {pr}`"),
-        )
-    })?;
-    let all = stamps::ready_gates_at(gh)?;
-    let missing: Vec<String> = all
-        .iter()
-        .filter(|g| !stamps::has(dir, &tree, g))
-        .cloned()
-        .collect();
-    if !missing.is_empty() {
-        return Err(BosunError::needs_human(
-            format!("PR #{pr} head {head} has no local stamp for: {}", missing.join(", ")),
-            format!(
-                "`git worktree add --detach ../pr-{pr} {head} && cd ../pr-{pr} && {}`; rerun `bosun merge {pr}`",
-                crate::core::stamps::gate_loop(&missing)
-            ),
-        )
-        .with_data(json!({"pr": pr, "head_sha": head, "missing_gates": missing})));
-    }
+    // The summary only shows the head did not move (any writer can post one).
     super::risk_check::evaluate_local(app, pull)?;
     if super::pr_no_ci::clean_by_other(app, pull)?.is_empty() {
         return Err(BosunError::needs_human(
             format!("PR #{pr} has no clean verdict on head {head} from another session"),
             format!(
                 "a reviewer session runs `bosun review-pack {pr}` and posts `bosun verdict comment --from - --sign-key <reviewer.pem>`, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
+    let main = judge_local(gh, pull, &crate::gates::main_open::main_state(gh)?)?;
+    if !main.pass {
+        return Err(BosunError::halted(
+            main.description,
+            format!(
+                "fix main with a bosun:kind/mainfix PR, or wait for main-red to close, then rerun `bosun merge {pr}`"
+            ),
+        ));
+    }
+    // Last: running the gates executes the head's code, so only a head the owner's rules, a signed
+    // verdict and main-open already let through gets there. Stamp files are never trusted: the
+    // base's required gates run on a worktree of the exact head.
+    super::merge_gates::verify(app, pull)?;
+    // The gates took a while: an owner hold or a withdrawn approval that landed meanwhile, or a
+    // verdict that no longer counts, stops the merge. The same checks as above, judged afresh.
+    super::risk_check::evaluate_local(app, pull)?;
+    if super::pr_no_ci::clean_by_other(app, pull)?.is_empty() {
+        return Err(BosunError::needs_human(
+            format!("PR #{pr} has no clean verdict on head {head} from another session"),
+            format!(
+                "a reviewer session posts a fresh signed verdict, then rerun `bosun merge {pr}`"
             ),
         ));
     }

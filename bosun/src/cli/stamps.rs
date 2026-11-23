@@ -1,22 +1,16 @@
 //! Reading and writing local gate stamps: `<git common dir>/bosun/gates/<tree>/<gate>`, where
 //! `<tree>` is the tree of the working state (HEAD plus `git add -A`, built in a temporary index). The pure naming is in `core::stamps`.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
-
 use crate::config::Config;
 use crate::core::stamps::{rel_path, required_gates, safe_name};
+use crate::gates::cmd;
 use crate::gates::profile::Profile;
 use crate::output::BosunError;
+use std::path::{Path, PathBuf};
 
 /// Stdout of `git <args>` in `dir`, trimmed; `None` when git fails or prints nothing.
 fn git_out(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git")
-        .arg("-C")
-        .arg(dir)
-        .args(args)
-        .output()
-        .ok()?;
+    let out = cmd("git").arg("-C").arg(dir).args(args).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (out.status.success() && !text.is_empty()).then_some(text)
 }
@@ -52,7 +46,7 @@ pub fn working_tree(dir: &Path) -> Option<String> {
     )?);
     let index = git_dir.join(format!("bosun-stamp-index-{}", std::process::id()));
     let run = |args: &[&str]| {
-        Command::new("git")
+        cmd("git")
             .arg("-C")
             .arg(dir)
             .env("GIT_INDEX_FILE", &index)
@@ -152,34 +146,4 @@ pub fn ready_gates(root: &Path) -> Result<Vec<String>, BosunError> {
         per_stack.push(profile.gates.keys().cloned().collect::<Vec<_>>());
     }
     Ok(required_gates(&per_stack))
-}
-
-/// The gates a PR must pass, from the default branch's config and profiles at its current sha,
-/// never from a checkout (the PR cannot pick its own).
-pub fn ready_gates_at(gh: &dyn crate::github::Github) -> Result<Vec<String>, BosunError> {
-    let git_ref = crate::app::default_ref(gh)?;
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.subsec_nanos());
-    let tmp = std::env::temp_dir().join(format!("bosun-gates-{}-{nanos:x}", std::process::id()));
-    let io = |e: std::io::Error| {
-        BosunError::error(format!("temp dir: {e}"), "make the temp directory writable")
-    };
-    std::fs::create_dir_all(tmp.join(".bosun/profiles")).map_err(io)?;
-    let out = (|| {
-        let text = gh
-            .file_at(crate::config::CONFIG_FILE, &git_ref)?
-            .unwrap_or_default();
-        let config = Config::parse(&text, crate::config::CONFIG_FILE)?;
-        std::fs::write(tmp.join(crate::config::CONFIG_FILE), &text).map_err(io)?;
-        for stack in &config.stack {
-            let file = format!(".bosun/profiles/{}.toml", stack.profile);
-            if let Some(t) = gh.file_at(&file, &git_ref)? {
-                std::fs::write(tmp.join(&file), t).map_err(io)?;
-            }
-        }
-        ready_gates(&tmp)
-    })();
-    let _ = std::fs::remove_dir_all(&tmp);
-    out
 }

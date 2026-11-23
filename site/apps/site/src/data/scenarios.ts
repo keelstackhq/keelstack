@@ -131,11 +131,6 @@ export const NO_APPROVAL =
 export const OWNER_APPROVES =
   "The owner approves the exact head of a high-risk PR. That is any PR that touches governance paths (R-gov: `.bosun/**`, `governance/**`, `.claude/**`, `.splice/**`, `docs/setup-script.sh`, ...), loosens a gate (R-weaken) or adds a secret (R-secrets). R-ci, R-deps, R-prod-write, R-unseen, R-bundle, R-plan and R-revert are owner-class by default too. Exceptions: R-ci-review takes two independent verdicts, a delegate-class rule can be decided by a delegate, and under the autonomous policy allowlisted paths take the fast lane.";
 
-export const APPROVE_HOW = [
-  "Chat form: the owner tells the signing session (repo, PR, head SHA; approve or hold) and it posts the signed approval below.",
-  `GitHub: a plain ${APPROVE_COMMENT} comment counts only when posted with a plain user token (typed in the GitHub web or mobile app, or from the owner's own machine); comments posted by the Claude app or a cloud session never count. A new push needs a new comment. Agent PRs are opened under the owner's login and GitHub forbids self-review, so the owner uses a plain comment, a signed approval, or merges.`,
-] as const;
-
 // --- Scenario blocks (versions come from data/versions.ts) ---
 
 /** The one bosun install, shown once at the top of /docs/start; every scenario block assumes it. */

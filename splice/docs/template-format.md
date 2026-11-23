@@ -133,6 +133,8 @@ on-disk hash equals the lock hash; otherwise they are reported.
 Every command accepts `--json` and then prints exactly one JSON object to stdout:
 `{"ok": bool, "command": str, "changes": [{"path", "action": "create|update|merge|conflict|delete|skip", "class"}], "messages": [str]}`.
 Exit codes: 0 ok, 1 drift/conflict/update available (`check`), 2 usage error, 3 template error.
+`splice pieces --json` adds `"pieces": [{"id", "description", "base", "multiple", "default_name", "requires", "vars": [{"name", "prompt", "default"}]}]`
+and `"template": {"name", "version", "vars": [{"name", "prompt", "default"}]}`; other commands omit both keys.
 
 ## 9. Clarifications (binding, both repos)
 
@@ -149,7 +151,7 @@ Exit codes: 0 ok, 1 drift/conflict/update available (`check`), 2 usage error, 3 
 11. **Re-render on `add`.** `add` re-renders every existing piece instance with the new `pieces` list and applies the §5 rules (owned replaced, shared merged, seed skipped). Root files that depend on other pieces therefore live in `base` and use `{% if "id" in pieces %}`.
 12. **Undefined variables** are template errors (exit 3). Templates never rely on an undefined variable rendering as empty.
 13. **File modes are not carried.** Every file is written as a regular, non-executable file, and templates invoke scripts through their interpreter (`bash path`, `node path`). `or` stays forbidden: use `if/elif` branches with identical bodies.
-14. **Minimal CLI both repos rely on:** `splice new <source> [dest] --piece <id>[:<name>]… --data <key>=<value>… --yes --json`, `splice add <id> [--name <name>] --data <key>=<value>… --yes --json`, `splice update [--to <version>] --yes --json`, `splice check --json`.
+14. **Minimal CLI both repos rely on:** `splice new <source> [dest] --piece <id>[:<name>]… --data <key>=<value>… --yes --json`, `splice add <id> [--name <name>] --data <key>=<value>… --yes --json`, `splice update [--to <version>] --yes --json`, `splice check --json`, `splice pieces <source> [--ref <R>] [--pre] --json`.
 15. **Required and default keys.** `[[post]].when` is required (no default). A piece's `description` defaults to `""` and a var's `prompt` defaults to the var name.
 16. **Reserved names.** No template var or piece var may be named `pieces`, `piece` or `template`. Bare `{{ pieces }}`, `{{ piece }}` and `{{ template }}` are rejected (MiniJinja and Nunjucks print lists differently); use a dotted path (§9.3) or `for`.
 17. **Identifiers.** A var, loop variable or dotted segment is ASCII `[a-z_][a-z0-9_]*`. It may not be `true`, `false`, `none`, `not`, `and`, `or`, `in`, `is`, `loop`, `self`, `range` or `namespace`.

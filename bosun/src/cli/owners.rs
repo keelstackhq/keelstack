@@ -79,7 +79,9 @@ pub fn run(dir: Option<&Path>, a: &OwnersArgs) -> CmdResult {
     data["pr"] = json!({"number": n, "head_sha": pull.head_sha});
     data["then"] = json!([
         format!("bosun pr --pr {n} --ready (gates, ready, auto-merge)"),
-        format!("the owner approves PR #{n} at its head SHA (chat form)"),
+        format!(
+            "the owner approves PR #{n} at its head SHA (a `/bosun approve <sha>` comment or a GitHub review)"
+        ),
     ]);
     Ok(Outcome::data(data))
 }

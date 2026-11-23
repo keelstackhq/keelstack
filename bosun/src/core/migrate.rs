@@ -179,7 +179,7 @@ pub fn body(b: &BodyIn) -> String {
     for f in b.files {
         s += &format!("- `{f}`\n");
     }
-    s += "\n## Owner: one approval\n\nApprove this exact head through the chat form (repo, PR, head SHA). The PR is R-gov";
+    s += "\n## Owner: one approval\n\nApprove this exact head by commenting `/bosun approve <sha>` or by reviewing it on GitHub. The PR is R-gov";
     if lighter {
         s += ", and R-weaken because the mode gets lighter";
     }

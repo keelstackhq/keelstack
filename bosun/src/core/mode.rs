@@ -121,6 +121,8 @@ knobs!(
 
 /// The approval policy a mode implies; `Config::parse` fills it when `[approvals]` has none.
 pub fn preset_policy(m: ModeName) -> Option<Policy> {
+    // The quorum (D-022) is never implied: each repo sets `policy = "quorum"` in one
+    // owner-approved PR (bosun#706), so `autonomous` mode keeps the D-017 policy.
     (m >= ModeName::Booster).then_some(Policy::Autonomous)
 }
 

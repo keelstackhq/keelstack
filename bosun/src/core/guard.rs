@@ -14,7 +14,9 @@ use crate::core::meta::OPEN;
 mod interp;
 mod literals;
 mod prose;
+mod settings;
 pub use interp::{Script, script_rules};
+pub use settings::settings_rule;
 mod writes;
 pub use writes::bash_writes;
 
@@ -444,7 +446,7 @@ pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
 /// normalised, also inside `bash -c`, `python -c`, a `cd` chain or a `$d` path), unless it is
 /// purely read-only ([`answers_read_only`]). A hint, not a seal: it stops confused workers,
 /// not liars (quoting can hide a name). The PostToolUse hook checks the transcript; the strong
-/// path is the signed record (`chat_signed`).
+/// path is a signed approval or the owner's own comment.
 pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
     let hit = match tool {
         "Bash" => {
@@ -504,10 +506,12 @@ fn answers_read_only(command: &str) -> bool {
     })
 }
 
-/// `.../bosun/answers.json` or anything under `.../.claude/projects/` once lexically normalised.
+/// `.../bosun/answers.json`, the adopted-check cache `.../bosun/adopted`, or anything under `.../.claude/projects/` once lexically normalised.
 fn is_answers_path(path: &str) -> bool {
     let norm = format!("/{}", lexical(&path.replace('\\', "/")).to_lowercase());
-    norm.ends_with("/bosun/answers.json") || norm.contains("/.claude/projects/")
+    norm.ends_with("/bosun/answers.json")
+        || norm.ends_with("/bosun/adopted")
+        || norm.contains("/.claude/projects/")
 }
 
 /// Only a `git commit` or `gh pr|issue create|edit|comment` message, title or body names the file
@@ -546,6 +550,129 @@ fn names_answers(command: &str) -> bool {
             .any(|w| state(&lexical(w.trim_start_matches(['<', '>', '&']))))
 }
 
+/// Bosun-dir lock: `rm`, `shred`, `mv` (source paths) and `git rm|mv` (also `--cached`) on `.bosun` or
+/// under it are refused in a Bash command (also inside `bash -c` and `eval`): removing
+/// `.bosun/version` would switch the guards off. Best effort: a path built in a variable or glob is missed.
+pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
+    let c = (tool == "Bash").then(|| input.get("command").and_then(Value::as_str))??;
+    let why = "removing or moving `.bosun/` is refused: it holds the repo's bosun setup; change \
+        it in a PR the owner approves";
+    removes_bosun_dir(c, 0).then(|| why.to_string())
+}
+
+fn is_bosun_dir_path(w: &str) -> bool {
+    // Case-insensitive: a case-insensitive filesystem treats `.BOSUN` as the same directory.
+    let n = lexical(w.trim_end_matches('/')).to_lowercase();
+    n == ".bosun" || n.starts_with(".bosun/") || n.ends_with("/.bosun") || n.contains("/.bosun/")
+}
+
+fn removes_bosun_dir(command: &str, depth: usize) -> bool {
+    let words = shell_words(command);
+    // Whether a `cd`/`pushd` put the shell in `.bosun` (relative paths then name its files).
+    let mut in_bosun = false;
+    for seg in words.split(|w| w == SEP) {
+        let (name, args, runner_dirs) = writes::command_of(seg);
+        // `env -C .bosun rm x`, `sudo -D .bosun rm x`: the runner moves the command into `.bosun`.
+        let here = in_bosun || runner_dirs.iter().any(|d| is_bosun_dir_path(d));
+        let (kind, args) = match name {
+            "cd" | "pushd" => {
+                let to = args.iter().find(|a| !a.starts_with('-')).copied();
+                in_bosun = match to {
+                    Some(t) if is_bosun_dir_path(t) => true,
+                    Some(t) => in_bosun && !t.starts_with(['/', '~']),
+                    None => false,
+                };
+                continue;
+            }
+            "find" => {
+                let roots = args
+                    .iter()
+                    .skip_while(|a| matches!(**a, "-H" | "-L" | "-P"))
+                    .take_while(|a| !a.starts_with('-') && !matches!(**a, "(" | "!"));
+                let destructive = args.iter().any(|a| {
+                    matches!(
+                        *a,
+                        "-delete"
+                            | "-exec"
+                            | "-execdir"
+                            | "-ok"
+                            | "-okdir"
+                            | "rm"
+                            | "unlink"
+                            | "rmdir"
+                            | "mv"
+                            | "shred"
+                    )
+                });
+                if destructive && (here || roots.into_iter().any(|r| is_bosun_dir_path(r))) {
+                    return true;
+                }
+                continue;
+            }
+            "rm" | "unlink" | "rmdir" | "mv" | "shred" => (name, args),
+            "git" => match args.iter().position(|w| matches!(*w, "rm" | "mv")) {
+                Some(k) => {
+                    // `git -C .bosun rm x`: the directory git moves to, before the subcommand.
+                    let moved = args[..k]
+                        .windows(2)
+                        .any(|p| matches!(p[0], "-C" | "--work-tree") && is_bosun_dir_path(p[1]))
+                        || args[..k].iter().any(|a| {
+                            a.strip_prefix("--work-tree=")
+                                .is_some_and(is_bosun_dir_path)
+                        });
+                    if moved {
+                        return true;
+                    }
+                    (args[k], args[k + 1..].to_vec())
+                }
+                None => continue,
+            },
+            _ => continue,
+        };
+        // `mv a b`: the last path is the destination, the rest are sources.
+        // `mv -t DIR a b` / `--target-directory DIR`: the destination is the option's value, every
+        // other path is a source.
+        let mut by_option = false;
+        let mut paths: Vec<&&str> = Vec::new();
+        let mut skip_value = false;
+        for a in &args {
+            if std::mem::take(&mut skip_value) {
+                continue;
+            }
+            if kind == "mv" && a.starts_with("--") && a.len() > 2 {
+                if let Some(value) = writes::target_directory_option(a) {
+                    by_option = true;
+                    skip_value = value.is_none();
+                }
+            } else if kind == "mv" && a.starts_with('-') && !a.starts_with("--") && a.len() > 1 {
+                // Clustered short flags: `-ft DIR` takes the next word, `-tDIR` carries it.
+                if let Some(k) = a.find('t') {
+                    by_option = true;
+                    skip_value = k == a.len() - 1;
+                }
+            } else if !a.starts_with('-') {
+                paths.push(a);
+            }
+        }
+        let n = if by_option {
+            paths.len()
+        } else {
+            paths.len() - usize::from(kind == "mv" && paths.len() > 1)
+        };
+        let relative = |p: &str| here && !p.starts_with(['/', '~']);
+        if paths[..n]
+            .iter()
+            .any(|p| is_bosun_dir_path(p) || relative(p))
+        {
+            return true;
+        }
+    }
+    depth < 3
+        && word_scripts(command)
+            .iter()
+            .any(|s| removes_bosun_dir(s, depth + 1))
+}
+
 /// [`prereqs_lock`] for a caller that may write the `task` marker (`task_ok`: a registered child
 /// session, spec §4): the checklist and epic markers stay refused.
 pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<String> {
@@ -572,9 +699,77 @@ pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<Stri
     })
 }
 
-const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION or CLAUDE_CODE_REMOTE_SESSION_ID, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
-const IDENTITY: &str =
-    "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID";
+/// Subagent-lock (spec §4): a Claude Code subagent (the hook input carries an `agent_id`) runs
+/// inside its parent's session, with its session id and environment, so in the cloud (where the
+/// child flag is no evidence) only this tells it from the orchestrator itself. It may not run
+/// `bosun merge` or sign an approval (`bosun approve` with `--sign-key`, `--via-signer` or
+/// `--as`). Lexical and best effort, like the other locks: any `bosun` word followed in its
+/// segment by `merge`, or by `approve` and a signing flag, is refused.
+pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
+    if tool != "Bash" {
+        return None;
+    }
+    let command = input.get("command").and_then(Value::as_str)?;
+    let refuse = || {
+        Some(
+            "a subagent never merges or signs an approval (D-022: child sessions never merge): \
+             report the PR to the orchestrator, which runs `bosun merge` or `bosun approve` \
+             itself"
+                .to_string(),
+        )
+    };
+    // `merge`, or `approve` with a signing flag, among the words after `bosun`.
+    let refused = |rest: &[String]| {
+        let has = |w: &str| rest.iter().any(|r| r == w);
+        let signs = ["--sign-key", "--via-signer", "--as"].iter().any(|f| {
+            rest.iter()
+                .any(|r| r == f || r.starts_with(&format!("{f}=")))
+        });
+        has("merge") || (has("approve") && signs)
+    };
+    for seg in command.split(['\n', ';', '&', '|', '(', ')', '`']) {
+        let words = shell_words(seg);
+        // `cargo run -p keel-bosun -- merge`: the package or binary named, the words after `--`.
+        if words.iter().any(|w| base(w) == "cargo") {
+            let named = words.iter().enumerate().any(|(i, w)| {
+                let next = words.get(i + 1).map(String::as_str);
+                let bosun = |v: &str| matches!(v, "keel-bosun" | "bosun");
+                match w.as_str() {
+                    "-p" | "--package" | "--bin" => next.is_some_and(bosun),
+                    w => w
+                        .strip_prefix("--package=")
+                        .or_else(|| w.strip_prefix("--bin="))
+                        .or_else(|| w.strip_prefix("-p"))
+                        .is_some_and(bosun),
+                }
+            });
+            // Without `--` the words follow the package name directly (cargo rejects that, but
+            // refuse the intent): the whole segment is searched.
+            let from = words.iter().position(|w| w == "--").map_or(0, |d| d + 1);
+            if named && refused(&words[from..]) {
+                return refuse();
+            }
+        }
+        let Some(i) = words.iter().position(|w| base(w) == "bosun") else {
+            continue;
+        };
+        if refused(&words[i + 1..]) {
+            return refuse();
+        }
+    }
+    // Fail closed when the command name may be built at run time (`B=bosun; $B merge`,
+    // `"$(echo bosun)" merge`): a `bosun` text, an expansion, and the words anywhere. A text
+    // heuristic, not a parser: a name split at run time (`B=bo; ${B}sun merge`, `eval "bo""sun"`)
+    // passes it, and an unrelated command can be refused (`cd $R/bosun && git merge main`). The
+    // guard is a speed bump for subagents; the merge itself is judged by risk-check and the gates.
+    if command.contains("bosun") && command.contains(['$', '`']) && refused(&shell_words(command)) {
+        return refuse();
+    }
+    None
+}
+
+const IDENTITY_FIX: &str = "the identity environment must not be touched (D-019): no setting, unsetting, exporting or reading by name of BOSUN_SESSION, BOSUN_ORIGIN, CLAUDE_CODE_CHILD_SESSION, CLAUDE_CODE_REMOTE_SESSION_ID or CLAUDE_CODE_REMOTE, no `${!x}`, no `env -i`, `env -`, `exec -c`; only `BOSUN_SESSION=<your session>/<task>` and `BOSUN_ORIGIN=routine` on a command that is not bosun merge, approve, verdict or join --origin";
+const IDENTITY: &str = "BOSUN_SESSION BOSUN_ORIGIN CLAUDE_CODE_CHILD_SESSION CLAUDE_CODE_REMOTE_SESSION_ID CLAUDE_CODE_REMOTE";
 
 /// The `<task>` of a `BOSUN_SESSION` value `<own>/<task>` (`[A-Za-z0-9._-]+`).
 pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
@@ -584,7 +779,8 @@ pub fn task_of<'a>(value: &'a str, own: &str) -> Option<&'a str> {
 }
 
 /// D-019, everywhere (stops confused workers, not liars; spec 04): refuses `NAME=v`, or a name
-/// beside a verb (export, unset, env, read, ...), for the four identity names, any `${!`, and
+/// beside a verb (export, unset, env, read, ...), for the five identity names (`CLAUDE_CODE_REMOTE`
+/// too: in the cloud it makes the child flag no evidence), any `${!`, and
 /// `env -i`, `env -`, `exec -c`; git, gh, rg, grep, echo text passes. Allowed: `BOSUN_SESSION=
 /// <own>/<task>` and `BOSUN_ORIGIN=routine` (prefix or one `export`) when `own` is set and the
 /// text has no `$`, `--origin`, merge, approve or verdict.
@@ -7363,9 +7559,76 @@ mod tests {
         assert!(edit("/r/.git/bosun//answers.json"));
         assert!(edit("/r/.git/bosun/ANSWERS.json"));
         assert!(!edit("/r/.git/bosun/other.json"));
+        assert!(edit("/r/.git/bosun/adopted"));
+        assert!(edit("/r/.git/bosun/x/../ADOPTED"));
+        assert!(!edit("/r/src/adopted"));
         assert!(edit("/root/.claude/projects/p/s.jsonl"));
         assert!(edit("~/.claude/projects/p/../q/s.jsonl"));
         assert!(!edit("/r/.claude/settings.json"));
+    }
+
+    #[test]
+    fn subagent_lock_refuses_merge_and_signing_only() {
+        let hit = |c: &str| subagent_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "bosun merge 12",
+            "./target/debug/bosun merge 12",
+            "cd /r && bosun -C /r merge 12 2>&1 | jq .",
+            "bosun approve 1@abc --sign-key k.pem --bootstrap",
+            "bosun approve 1@abc --via-signer",
+            "bosun approve 1@abc --as=signer",
+            "cargo run -p keel-bosun -- merge 12",
+            "cargo run --package keel-bosun -- approve 1@abc --sign-key k.pem",
+            "cargo run --package=keel-bosun --locked -- merge 3",
+            "cargo run -pkeel-bosun -- merge 3",
+            "cargo run --bin bosun -- merge 3",
+            "cargo run --bin=bosun -- approve 1@a --via-signer",
+            "cd bosun && cargo run -q -p keel-bosun -- -C /r merge 12",
+            "cargo run -p keel-bosun merge 12",
+            "cargo run --bin bosun approve 1@abc --sign-key k.pem",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "cargo run -p keel-bosun -- status",
+            "cargo run -p keel-bosun -- approve --list",
+            "cargo run -p keel-splice -- merge 12",
+            "cargo run -p keel-splice merge 12",
+            "bosun approve --list",
+            "bosun pr 7 --ready",
+            "git merge-base a b",
+            "cargo test --test cli_merge",
+            "echo merge; bosun status",
+        ] {
+            assert!(!hit(c), "{c}");
+        }
+        assert!(subagent_lock("Edit", &json!({"command": "bosun merge 1"})).is_none());
+    }
+
+    #[test]
+    fn subagent_lock_sees_expanded_and_nested_bosun() {
+        let hit = |c: &str| subagent_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "echo $(bosun merge 12)",
+            "x=$(bosun -C /r merge 12)",
+            "echo `bosun merge 12`",
+            "B=bosun; $B merge 12",
+            "B=bosun && ${B} merge 12",
+            "B=./target/debug/bosun\n\"$B\" merge 12",
+            "$(echo bosun) merge 12",
+            "B=bosun; $B approve 1@abc --sign-key k.pem",
+            "B=bosun; $B approve 1@abc --as=signer",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "B=bosun; $B status",
+            "B=bosun; $B approve --list",
+            "echo $(bosun status)",
+            "echo $HOME merge",
+        ] {
+            assert!(!hit(c), "{c}");
+        }
     }
 
     #[test]
@@ -7386,6 +7649,9 @@ mod tests {
             "export CLAUDE_CODE_CHILD_SESSION= ; bosun merge 1",
             "unset CLAUDE_CODE_CHILD_SESSION && \\bosun merge 1",
             "CLAUDE_CODE_REMOTE_SESSION_ID=o command bosun merge 1",
+            "CLAUDE_CODE_REMOTE=true bosun merge 1",
+            "export CLAUDE_CODE_REMOTE=true; bosun merge 1",
+            "unset CLAUDE_CODE_REMOTE",
             "bash -c 'unset CLAUDE_\"CODE\"_CHILD_SESSION; bosun merge 1'",
             "env -u CLAUDE_CODE_CHILD_SESSION nice bosun merge 1",
             "n=BOSUN_SESSION; export ${!n}=x",
@@ -7424,7 +7690,7 @@ mod tests {
             "BOSUN_SESSION=session_o/ bosun claim 12",
             "BOSUN_SESSION=session_o bosun claim 12",
             "BOSUN_SESSION=session_o/12 bosun merge 12",
-            "BOSUN_SESSION=session_o/12 bosun approve --chat",
+            "BOSUN_SESSION=session_o/12 bosun approve 1@0123456789abcdef0123456789abcdef01234567 --sign-key k",
             "BOSUN_SESSION=session_o/12 bosun verdict post",
             "BOSUN_ORIGIN=routine bosun join --origin routine",
             "BOSUN_ORIGIN=local bosun join",
@@ -7470,6 +7736,83 @@ mod tests {
             "echo $DBUS_SESSION_BUS_ADDRESS $AWS_SESSION_TOKEN $TMUX_SESSION; bosun merge 1",
         ] {
             assert!(!hit(ok), "{ok}");
+        }
+    }
+
+    #[test]
+    fn bosun_dir_removal_is_refused() {
+        let hit = |c: &str| bosun_dir_lock("Bash", &json!({"command": c})).is_some();
+        for c in [
+            "rm .bosun/version",
+            "rm -rf .bosun",
+            "rm -rf ./.bosun/",
+            "rm -f /r/.bosun/version",
+            "git rm -r .bosun",
+            "git -C /r rm .bosun/version",
+            "mv .bosun /tmp/x",
+            "mv .bosun/version /tmp/x",
+            "mv ./x/../.bosun/version /tmp",
+            "cd /r && rm .bosun/version",
+            "bash -c 'rm .bosun/version'",
+            "unlink .bosun/version",
+            "git rm --cached .bosun/version",
+            "mv -t /tmp/x .bosun/version",
+            "mv --target-directory=/tmp/x .bosun",
+            "mv --target-directory /tmp/x .bosun/version",
+            "mv -t/tmp/x a .bosun",
+            "mv -ft /tmp/x .bosun/version",
+            "mv --target /tmp/x .bosun",
+            "mv --target=/tmp/x .bosun",
+            "mv --target-dir /tmp/x .bosun",
+            "git -C .bosun rm version",
+            "git -C /r/.bosun rm -r .",
+            "git -C .bosun mv version /tmp/x",
+            "cd .bosun && rm version",
+            "cd /r/.bosun; rm -rf .",
+            "cd .bosun && git rm version",
+            "find .bosun -delete",
+            "find /r/.bosun -type f -exec rm {} +",
+            "cd .bosun && find . -delete",
+            "rm -rf .BOSUN",
+            "env -C .bosun rm version",
+            "sudo -D .bosun rm -f version",
+            "env -C /r/.bosun git rm version",
+            "env -C .bosun find . -delete",
+            "shred -u .bosun/version",
+            "shred .bosun/approvers.toml",
+            "rm .Bosun/Version",
+            "mv .BOSUN /tmp/x",
+            "find .bosun -exec /bin/rm {} +",
+            "find .bosun -exec sh -c 'rm \"$1\"' _ {} \\;",
+            "find .bosun -execdir /usr/bin/unlink {} +",
+            "find .bosun -ok rm {} \\;",
+            "find .bosun -okdir mv {} /tmp \\;",
+            "cd .bosun && find . -exec /bin/rm {} +",
+            "git --work-tree=.bosun rm x",
+            "git --work-tree=/r/.bosun rm -r .",
+        ] {
+            assert!(hit(c), "{c}");
+        }
+        for c in [
+            "mv -t .bosun/ x",
+            "mv x .bosun/version",
+            "cp .bosun/version /tmp",
+            "cat .bosun/version",
+            "rm docs/x.md",
+            "git rm src/a.rs",
+            "echo rm .bosun",
+            "ls .bosun",
+            "git -C .bosun status",
+            "git -C /r rm src/a.rs",
+            "cd .bosun && cat version",
+            "cd .bosun && cd /tmp && rm x",
+            "find .bosun -name version",
+            "find src -delete",
+            "find . -name .bosun",
+            "find src -exec rm {} +",
+            "git --work-tree=src rm x",
+        ] {
+            assert!(!hit(c), "{c}");
         }
     }
 

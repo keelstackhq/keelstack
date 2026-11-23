@@ -2,7 +2,6 @@
 //! a deleted test, a new skip, fewer assertions, or a snapshot change without a reason.
 
 use std::path::Path;
-use std::process::Command;
 
 use serde_json::{Value, json};
 
@@ -13,6 +12,7 @@ use super::profile::Profile;
 use super::ts;
 use super::{git, stack_rel};
 use crate::config::Stack;
+use crate::core::glob::Glob;
 use crate::output::{BosunError, CmdResult, Outcome};
 
 pub struct Request<'a> {
@@ -24,6 +24,17 @@ pub struct Request<'a> {
     /// Finding kinds the task allows: `delete-test`, `skip`, `only`, `fewer-asserts`.
     /// `delete-test` also allows `fewer-tests`.
     pub allow: &'a [String],
+    /// The default branch's view, when the caller has one (`bosun merge`, which has only the PR's
+    /// head and base fetched): the template waivers are judged there, not at the base.
+    pub default: Option<&'a DefaultView>,
+}
+
+/// What the default branch says about the template waivers. An API error is `has_bosun_toml: true`
+/// and no `template_tests` (fail closed: no bootstrap, no listed test files).
+#[derive(Debug, Clone)]
+pub struct DefaultView {
+    pub has_bosun_toml: bool,
+    pub template_tests: Option<String>,
 }
 
 /// One changed path: `old` is its path at the base (none when added), `new` its path at head
@@ -87,7 +98,7 @@ fn untracked(root: &Path) -> Result<String, BosunError> {
 
 /// The text of `path` at `base`, or none when it did not exist there.
 fn base_text(root: &Path, base: &str, path: &str) -> Option<String> {
-    let out = Command::new("git")
+    let out = super::cmd("git")
         .arg("-C")
         .arg(root)
         .arg("show")
@@ -124,6 +135,17 @@ fn kind(path: &str) -> Kind {
         Kind::Other
     }
 }
+
+/// Render sources of template and channel repos, never tests of the repo itself (only when the
+/// top dir has a `splice.toml` or `template.toml`).
+/// The marker sits at the root of the folder that holds `pieces/` (the top dir of a template repo,
+/// `hull/template*` or `bosun/channel` in the monorepo).
+const TEMPLATE_SOURCES: [&str; 4] = [
+    "template*/pieces/*/files/**",
+    "channel/pieces/*/files/**",
+    "hull/template*/pieces/*/files/**",
+    "bosun/channel/pieces/*/files/**",
+];
 
 impl Kit {
     fn is_test_file(&self, path: &str, text: &str) -> bool {
@@ -251,6 +273,70 @@ fn finding(
     json!({"kind": kind, "file": file, "base": base, "head": head, "allowed": allowed})
 }
 
+/// Why `deleted-test` and `fewer-tests` are waived for a test file, besides the plan task's
+/// `allow`: the base is the bare template render (no `.bosun/`), or the base's own
+/// `.bosun/template-tests` lists the file. Read from the base only, never from head.
+/// The bootstrap waiver holds only when git answered that the base tip has no `.bosun`; a git
+/// error (`None`) grants nothing.
+fn bootstrap_waived(has_bosun: Option<bool>) -> bool {
+    has_bosun == Some(false)
+}
+
+/// The template-source exemption needs a marker git confirmed at the base tip; an error is none.
+fn marker_present(has_marker: Option<bool>) -> bool {
+    has_marker == Some(true)
+}
+
+fn template_waiver(
+    root: &Path,
+    base: &str,
+    default: Option<&DefaultView>,
+) -> impl Fn(&str) -> Option<&'static str> {
+    // Judged at the base tip (what the PR merges into), not the merge base. A git error is no
+    // bootstrap: no waiver is granted (fail closed). With a default-branch view (`bosun merge`) the
+    // bootstrap also needs the default branch to lack `.bosun/bosun.toml`, and the listed test
+    // files are read there, not at the base.
+    let bootstrap = bootstrap_waived(super::git_has(root, base, ".bosun"))
+        && default.is_none_or(|d| !d.has_bosun_toml);
+    let listed = match default {
+        Some(d) => d.template_tests.clone(),
+        None => base_text(root, base, ".bosun/template-tests"),
+    };
+    let globs: Vec<Glob> = listed
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| Glob::parse(l).ok())
+        .collect();
+    move |path: &str| {
+        if bootstrap {
+            Some("bootstrap: base has no .bosun")
+        } else if globs.iter().any(|g| g.matches(path)) {
+            Some("template-tests: listed in base .bosun/template-tests")
+        } else {
+            None
+        }
+    }
+}
+
+/// `finding` for a kind that `delete-test` or a template waiver allows; the reason is added when
+/// only the waiver allows it.
+fn deletion_finding(
+    kind: &str,
+    file: &str,
+    base: Option<usize>,
+    head: Option<usize>,
+    explicit: bool,
+    waiver: Option<&str>,
+) -> Value {
+    let mut f = finding(kind, file, base, head, explicit || waiver.is_some());
+    if let (false, Some(why)) = (explicit, waiver) {
+        f["reason"] = json!(why);
+    }
+    f
+}
+
 pub fn run(req: &Request) -> CmdResult {
     // Compare with the merge base: a branch behind its base must not look like it lost tests.
     // Four views are judged, and any finding refuses: the commits (merge base to HEAD), the
@@ -275,11 +361,29 @@ pub fn run(req: &Request) -> CmdResult {
     ];
     let kits = kits(req.root, req.stacks)?;
     // Each side is read with the kit of the innermost stack holding its own path.
-    let is_test_file = |p: &str, t: &str| kit_for(&kits, p).is_test_file(p, t);
+    // Template sources (render input of a template or channel repo) are not tests of this repo:
+    // moving one to `.jinja` or dropping a test there is no finding.
+    let sources: Vec<Glob> = TEMPLATE_SOURCES
+        .iter()
+        .map(|g| Glob::parse(g).expect("built-in glob"))
+        .collect();
+    // The exemption holds only in a template or channel repo: the path's top dir carries a
+    // `splice.toml` or `template.toml` at the base tip, never at HEAD, so a PR cannot add its own
+    // marker (a git error counts as none: fail closed).
+    let is_source = |p: &str| {
+        sources.iter().any(|g| g.matches(p))
+            && p.split_once("/pieces/").is_some_and(|(top, _)| {
+                ["splice.toml", "template.toml"].iter().any(|m| {
+                    marker_present(super::git_has(req.root, req.base, &format!("{top}/{m}")))
+                })
+            })
+    };
+    let is_test_file = |p: &str, t: &str| !is_source(p) && kit_for(&kits, p).is_test_file(p, t);
     let pending_markers = |p: &str, t: &str| kit_for(&kits, p).pending_markers(p, t);
     let test_count = |p: &str, t: &str| kit_for(&kits, p).test_count(p, t);
     let assertions = |p: &str, t: &str| kit_for(&kits, p).assertions(p, t);
     let only_count = |p: &str, t: &str| kit_for(&kits, p).only_count(p, t);
+    let waiver = template_waiver(req.root, req.base, req.default);
     let allows = |name: &str| req.allow.iter().any(|a| a == name);
     let mut findings: Vec<Value> = Vec::new();
     let mut checked: std::collections::BTreeSet<String> = Default::default();
@@ -334,13 +438,13 @@ pub fn run(req: &Request) -> CmdResult {
                 Some(h) if is_test => h,
                 _ => {
                     // Deleted, or no longer a test file: the base tests are gone.
-                    let allowed = allows("delete-test");
-                    findings.push(finding(
+                    findings.push(deletion_finding(
                         "deleted-test",
                         file,
                         Some(base_asserts),
                         None,
-                        allowed,
+                        allows("delete-test"),
+                        waiver(old_path),
                     ));
                     continue;
                 }
@@ -392,13 +496,13 @@ pub fn run(req: &Request) -> CmdResult {
             let base_tests = base_text.map_or(0, |t| test_count(old_path, t));
             let head_tests = test_count(new_path, head);
             if head_tests < base_tests {
-                let allowed = allows("delete-test");
-                findings.push(finding(
+                findings.push(deletion_finding(
                     "fewer-tests",
                     file,
                     Some(base_tests),
                     Some(head_tests),
-                    allowed,
+                    allows("delete-test"),
+                    waiver(old_path),
                 ));
             }
             let head_asserts = assertions(new_path, head);
@@ -453,6 +557,16 @@ pub fn run(req: &Request) -> CmdResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_git_error_grants_no_waiver_and_no_exemption() {
+        assert!(bootstrap_waived(Some(false)));
+        assert!(!bootstrap_waived(Some(true)));
+        assert!(!bootstrap_waived(None));
+        assert!(marker_present(Some(true)));
+        assert!(!marker_present(Some(false)));
+        assert!(!marker_present(None));
+    }
 
     #[test]
     fn name_status_lines_parse() {

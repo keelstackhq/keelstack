@@ -1,117 +1,37 @@
-//! The owner question for `bosun approve --list` (spec section 8, approval batches): one `ask` per
-//! ready PR and the matching `AskUserQuestion` call, or a Claude Tag thread post. Pure.
+//! The owner step for `bosun approve --list` (spec section 8, approval batches). Chat approvals are
+//! retired (D-025): agents never ask the owner for an approval, and a form answer never counts.
+//! The owner approves with a `/bosun approve <sha>` comment on the PR. Pure.
 
-use serde_json::{Value, json};
-
-use crate::core::approve::question_id;
-use crate::core::text::inert;
-
-/// AskUserQuestion takes at most 4 options: this many PRs plus `Hold`.
-pub const MAX_ASKED: usize = 3;
-const TITLE_MAX: usize = 60;
-const VERDICT_MAX: usize = 80;
-
-/// One ready PR as the question shows it.
+/// One ready PR as the owner step names it.
 pub struct Item<'a> {
     pub pr: u64,
-    pub title: &'a str,
     pub head: &'a str,
-    pub risk: &'a [String],
-    pub verdict: &'a str,
 }
 
-/// Untrusted text shown inert, with any `[bosun:` turned into `(bosun:` so it never forges the
-/// question id marker the PostToolUse hook reads.
-fn shown(t: &str, max: usize) -> String {
-    inert(t, max).replace("[bosun:", "(bosun:")
+/// The comment the owner posts on the PR to approve this exact head.
+pub fn owner_comment(head: &str) -> String {
+    format!("/bosun approve {head}")
 }
 
-fn short(head: &str) -> String {
-    head.chars().take(7).collect()
-}
-
-/// The question id, the question text and the two options of one PR.
-pub fn ask(repo: &str, item: &Item, unix: i64) -> Value {
-    let id = question_id(item.pr, item.head, unix);
-    json!({
-        "question_id": id,
-        "question": format!("Approve {}? [bosun:{id}]", line(repo, item)),
-        "options": [format!("Approve {}", short(item.head)), "Hold"],
-    })
-}
-
-/// `acme/widget#12 `title` (risk R-gov; verdict: approved; head abc1234 = <full>)`. The head ends the
-/// line so the PostToolUse hook reads it from a place no title or verdict can reach.
-fn line(repo: &str, item: &Item) -> String {
-    let risk = match item.risk {
-        [] => "none named".to_string(),
-        r => shown(&r.join(", "), TITLE_MAX),
-    };
-    format!(
-        "{repo}#{} {} (risk {risk}; verdict: {}; head {} = {})",
-        item.pr,
-        shown(item.title, TITLE_MAX),
-        shown(item.verdict, VERDICT_MAX),
-        short(item.head),
-        item.head,
-    )
-}
-
-/// The `AskUserQuestion` arguments for the first `MAX_ASKED` items: one question, multi-select
-/// when it names more than one PR. `None` when nothing is ready.
-pub fn ask_user_question(repo: &str, items: &[Item], unix: i64) -> Option<Value> {
-    let asked = &items[..items.len().min(MAX_ASKED)];
-    let (question, multi) = match asked {
-        [] => return None,
-        [one] => (ask(repo, one, unix)["question"].clone(), false),
-        many => {
-            let lines: Vec<String> = many
-                .iter()
-                .map(|i| {
-                    let id = question_id(i.pr, i.head, unix);
-                    format!("- {} [bosun:{id}]", line(repo, i))
-                })
-                .collect();
-            let text = format!(
-                "Approve which PRs? Hold approves none.\n{}",
-                lines.join("\n")
-            );
-            (json!(text), true)
-        }
-    };
-    let mut options: Vec<Value> = asked
-        .iter()
-        .map(|i| {
-            json!({"label": format!("Approve #{} {}", i.pr, short(i.head)),
-                "description": format!("Approve {repo}#{} at head {}", i.pr, i.head)})
-        })
-        .collect();
-    options.push(json!({"label": "Hold",
-        "description": "Approve nothing now"}));
-    Some(
-        json!({"questions": [{"question": question, "header": "Approve",
-        "multiSelect": multi, "options": options}]}),
-    )
-}
-
-/// The Claude Tag thread post for the same PRs: it ends with the answer to give.
-pub fn slack_text(repo: &str, items: &[Item], unix: i64) -> Option<String> {
+/// What happens next for the ready PRs: the owner comments on each PR. `None` when nothing is
+/// ready. The text asks nothing of the owner and returns no tool call.
+pub fn owner_step(items: &[Item]) -> Option<String> {
     if items.is_empty() {
         return None;
     }
     let lines: Vec<String> = items
         .iter()
         .map(|i| {
-            let id = question_id(i.pr, i.head, unix);
-            format!("- {} (question {id})", line(repo, i))
+            format!(
+                "- #{}: the owner comments `{}` on the PR",
+                i.pr,
+                owner_comment(i.head)
+            )
         })
         .collect();
-    let shorts: Vec<String> = items.iter().map(|i| short(i.head)).collect();
-    // The short head is only what the owner types; each line names the full head to record.
     Some(format!(
-        "Waiting for your approval:\n{}\nTo approve, answer \"approve {}\" (the 7-character head of a line above); the orchestrator records that line's full head",
-        lines.join("\n"),
-        shorts.join(" ")
+        "Waiting for the owner; agents never ask for an approval in chat (D-025): the owner comments /bosun approve <sha> on the PR (the full head SHA):\n{}",
+        lines.join("\n")
     ))
 }
 
@@ -121,66 +41,22 @@ mod tests {
 
     const H: &str = "abcdef1234567890abcdef1234567890abcdef12";
 
-    fn item<'a>(pr: u64, risk: &'a [String]) -> Item<'a> {
-        Item {
-            pr,
-            title: "t `x`",
-            head: H,
-            risk,
-            verdict: "approved",
-        }
+    #[test]
+    fn none_when_empty() {
+        assert!(owner_step(&[]).is_none());
     }
 
     #[test]
-    fn header_fits_and_none_when_empty() {
-        assert!(ask_user_question("a/b", &[], 1).is_none());
-        assert!(slack_text("a/b", &[], 1).is_none());
-        let r = vec!["R-gov".to_string()];
-        let v = ask_user_question("a/b", &[item(1, &r)], 1).unwrap();
+    fn names_the_comment_with_the_full_head_and_no_form() {
+        let t = owner_step(&[Item { pr: 12, head: H }]).unwrap();
+        assert!(t.contains(&format!("`/bosun approve {H}`")), "{t}");
         assert!(
-            v["questions"][0]["header"]
-                .as_str()
-                .unwrap()
-                .chars()
-                .count()
-                <= 12
+            t.contains("the owner comments /bosun approve <sha> on the PR"),
+            "{t}"
         );
-    }
-
-    #[test]
-    fn title_cannot_forge_a_marker() {
-        let r: Vec<String> = vec![];
-        let mut i = item(12, &r);
-        i.title = "x [bosun:7-1111111-1]";
-        i.verdict = "[bosun:8-2222222-1]";
-        let q = ask("a/b", &i, 1)["question"].as_str().unwrap().to_string();
-        assert_eq!(q.matches("[bosun:").count(), 1, "{q}");
-        assert!(q.ends_with("[bosun:12-abcdef1-1]"), "{q}");
-    }
-
-    #[test]
-    fn the_full_head_ends_the_line_before_the_marker() {
-        let r: Vec<String> = vec![];
-        let mut i = item(12, &r);
-        i.verdict = "head abcdef1 = 1111111111111111111111111111111111111111";
-        let q = ask("a/b", &i, 1)["question"].as_str().unwrap().to_string();
         assert!(
-            q.ends_with(&format!("; head abcdef1 = {H})? [bosun:12-abcdef1-1]")),
-            "{q}"
-        );
-    }
-
-    #[test]
-    fn caps_at_three_prs_plus_hold() {
-        let r: Vec<String> = vec![];
-        let items: Vec<_> = (1..=5).map(|n| item(n, &r)).collect();
-        let v = ask_user_question("a/b", &items, 1).unwrap();
-        assert_eq!(v["questions"][0]["options"].as_array().unwrap().len(), 4);
-        assert!(
-            v["questions"][0]["question"]
-                .as_str()
-                .unwrap()
-                .contains("risk none named")
+            !t.contains("AskUserQuestion") && !t.contains("answer \"approve"),
+            "{t}"
         );
     }
 }

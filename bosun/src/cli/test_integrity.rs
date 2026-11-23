@@ -15,7 +15,7 @@ use crate::gates::integrity::{self, Request};
 use crate::output::{BosunError, CmdResult};
 
 /// Split `BOSUN_INTEGRITY_ALLOW` into kinds.
-fn parse_allow(text: &str) -> Vec<String> {
+pub(crate) fn parse_allow(text: &str) -> Vec<String> {
     text.split(',')
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
@@ -43,7 +43,35 @@ fn from_pr(dir: Option<&Path>, base: Option<&str>, n: u64) -> CmdResult {
             "pass the number of an open PR",
         )
     })?;
-    let files = app.gh.pull_files(n)?;
+    let (task, allow, refused) = pr_allow(&app, &pull)?;
+    let add = |data: &mut serde_json::Value| {
+        data["task"] = json!(task);
+        data["allow"] = json!(allow);
+        if let Some(why) = &refused {
+            data["allow_refused"] = json!(why);
+        }
+    };
+    match check_with(dir, base, &pull.body, &allow, None) {
+        Ok(mut out) => {
+            add(&mut out.data);
+            Ok(out)
+        }
+        Err(mut e) => {
+            if let Some(data) = e.data.as_mut() {
+                add(data);
+            }
+            Err(e)
+        }
+    }
+}
+
+/// The linked task, its `allow` list and why none was lent.
+pub(crate) type PrAllow = (Option<u64>, Vec<String>, Option<String>);
+
+/// The linked task and `allow` list a PR may use (see [`from_pr`]), and why none was (`None` when
+/// a task lent its list or nothing was refused). Shared with `bosun merge`'s test-integrity gate.
+pub(crate) fn pr_allow(app: &App, pull: &crate::github::Pull) -> Result<PrAllow, BosunError> {
+    let files = app.gh.pull_files(pull.number)?;
     // Every path counts, added files and both names of a rename too: an add-only PR must not
     // borrow `skip` or `only` from a task whose touch it never edits. Checked as edits.
     let changed: Vec<Changed> = files
@@ -90,35 +118,23 @@ fn from_pr(dir: Option<&Path>, base: Option<&str>, n: u64) -> CmdResult {
         }
     }
     let refused = (task.is_none() && !refused.is_empty()).then(|| refused.join("; "));
-    let add = |data: &mut serde_json::Value| {
-        data["task"] = json!(task);
-        data["allow"] = json!(allow);
-        if let Some(why) = &refused {
-            data["allow_refused"] = json!(why);
-        }
-    };
-    match check_with(dir, base, &pull.body, &allow) {
-        Ok(mut out) => {
-            add(&mut out.data);
-            Ok(out)
-        }
-        Err(mut e) => {
-            if let Some(data) = e.data.as_mut() {
-                add(data);
-            }
-            Err(e)
-        }
-    }
+    Ok((task, allow, refused))
 }
 
 /// Shared by the command and the gate.
 pub fn check(dir: Option<&Path>, base: Option<&str>) -> CmdResult {
     let body = std::env::var("BOSUN_PR_BODY").unwrap_or_default();
     let allow = parse_allow(&std::env::var("BOSUN_INTEGRITY_ALLOW").unwrap_or_default());
-    check_with(dir, base, &body, &allow)
+    check_with(dir, base, &body, &allow, None)
 }
 
-fn check_with(dir: Option<&Path>, base: Option<&str>, body: &str, allow: &[String]) -> CmdResult {
+pub(crate) fn check_with(
+    dir: Option<&Path>,
+    base: Option<&str>,
+    body: &str,
+    allow: &[String],
+    default: Option<&integrity::DefaultView>,
+) -> CmdResult {
     let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| ".".into());
     let root = repo_root(&dir)?;
     let (base, _) = resolve_ci(&root, base)?;
@@ -129,6 +145,7 @@ fn check_with(dir: Option<&Path>, base: Option<&str>, body: &str, allow: &[Strin
         base: &base,
         body,
         allow,
+        default,
     })
 }
 

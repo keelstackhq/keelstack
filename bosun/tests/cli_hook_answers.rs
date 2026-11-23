@@ -28,6 +28,8 @@ fn git(dir: &Path, args: &[&str]) -> String {
 fn repo() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     git(tmp.path(), &["init", "-q", "-b", "main"]);
+    std::fs::create_dir_all(tmp.path().join(".bosun")).unwrap();
+    std::fs::write(tmp.path().join(".bosun/version"), "0.9.0\n").unwrap();
     git(
         tmp.path(),
         &[
@@ -540,9 +542,9 @@ fn held_pr_not_reasked_same_head() {
         v["data"]["approve_command"],
         json!(format!("bosun approve 13@{h13}"))
     );
-    let q = v["next"][0]["args"]["questions"][0].to_string();
-    assert!(!q.contains("#12"), "{q}");
-    // Only the held PR waits: nothing to ask.
+    let q = v["data"]["owner_step"].to_string();
+    assert!(!q.contains("#12") && q.contains("#13"), "{q}");
+    // Only the held PR waits: nothing for the owner step.
     let fake2 = FakeGithub::start();
     ready(&fake2, 12, &h12);
     let v = list(&fake2, r.path());
@@ -560,7 +562,12 @@ fn held_pr_reasked_new_head() {
     let v = list(&fake, r.path());
     assert_eq!(v["data"]["ready"][0]["pr"], json!(12), "{v}");
     assert_eq!(v["data"]["held"], json!([]));
-    assert_eq!(v["next"][0]["tool"], json!("AskUserQuestion"));
+    // D-025: no form; the new head is listed with the owner's comment.
+    assert_eq!(v["next"], json!([]), "{v}");
+    assert_eq!(
+        v["data"]["ready"][0]["owner_comment"],
+        json!(format!("/bosun approve {h_new}"))
+    );
 }
 
 #[test]
@@ -762,4 +769,28 @@ fn a_transcript_without_the_tool_result_line_says_no_answer_yet() {
         "{err}"
     );
     assert_eq!(stored(r.path()), json!({}));
+}
+
+#[test]
+fn in_the_cloud_the_stored_session_comes_from_the_remote_session_id() {
+    let r = repo();
+    let h = head("abc1234");
+    let mut input = question(&[(12, &h)], "Approve #12 abc1234");
+    input["session_id"] = json!("3f2c9a4e-1b7d-4c55-9a0e-5d6f7a8b9c0d");
+    let out = bosun()
+        .current_dir(r.path())
+        .env("BOSUN_NOW", NOW)
+        .env("CLAUDE_CODE_REMOTE", "true")
+        // every cloud session has the child flag; it must not stop the top-level session
+        .env("CLAUDE_CODE_CHILD_SESSION", "1")
+        .env_remove("BOSUN_SESSION")
+        .env("CLAUDE_CODE_REMOTE_SESSION_ID", "cse_orch")
+        .env("HOME", r.path().join(".home"))
+        .args(["hook", "post-tool-use"])
+        .write_stdin(with_transcript(r.path(), input).to_string())
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let a = &stored(r.path())["12-abc1234-1792663200"];
+    assert_eq!(a["session"], json!("session_orch"), "{a}");
 }

@@ -479,6 +479,7 @@ fn desired_release(
                     source: format!("hoist.toml:registry.{section}.\"{name}\""),
                 },
                 deps: Vec::new(),
+                edges: Vec::new(),
                 publish: PublishCfg::default(),
                 launcher: None,
             },
@@ -603,7 +604,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
     let workflows = read_workflows(dir)?;
     let (targets, packages, renovate) = read_targets(dir)?;
 
-    let required_checks = match &root.github.required_checks {
+    let required_checks: Vec<Sourced<String>> = match &root.github.required_checks {
         Some(list) => list
             .iter()
             .map(|c| Sourced {

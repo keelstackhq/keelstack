@@ -6,7 +6,6 @@ use clap::{Args, Parser, Subcommand};
 pub mod adopt;
 pub mod answer;
 pub mod approve;
-pub mod approve_chat;
 pub mod ask;
 pub mod budget;
 mod budget_pr;
@@ -31,6 +30,7 @@ pub mod lesson;
 pub mod lesson_triage;
 pub mod main_triage;
 pub mod merge;
+pub mod merge_gates;
 pub mod metrics;
 pub mod migrate;
 pub mod mode;
@@ -46,6 +46,7 @@ mod pr_bundle;
 pub mod pr_gov;
 pub mod pr_no_ci;
 pub mod pr_oneoff;
+pub mod pr_single;
 pub mod prereqs;
 pub mod prereqs_gate;
 pub mod progress;
@@ -247,7 +248,7 @@ pub enum Command {
     /// The repo owners: `set` opens an owner PR that rewrites governance/owners.toml.
     Owners(OwnersArgs),
     /// Print the bootstrap to paste once as a cloud environment's setup script.
-    SetupSnippet,
+    SetupSnippet(SetupSnippetArgs),
     /// The output contract as JSON Schema or TypeScript: the envelope and each command's `data`.
     Schema(SchemaArgs),
 }
@@ -378,7 +379,7 @@ impl Command {
             Command::Owners(a) => match a.cmd {
                 OwnersCmd::Set(_) => "owners set",
             },
-            Command::SetupSnippet => "setup-snippet",
+            Command::SetupSnippet(_) => "setup-snippet",
             Command::Revert(_) => "revert",
             Command::Trailers(_) => "trailers",
             Command::Intake(a) => match a.cmd {
@@ -710,16 +711,6 @@ pub struct ApproveArgs {
     /// the default branch; an owner key only.
     #[arg(long, requires = "sign_key")]
     pub bootstrap: bool,
-    /// Record the owner's chat answer for one `<pr>@<head>` as a chat approval comment (an
-    /// orchestrator only; spec section 8).
-    #[arg(long, conflicts_with_all = ["list", "main_open", "sign_key", "via_signer"])]
-    pub chat: bool,
-    /// With --chat (required): the question id the owner answered (`data.ready[].ask.question_id`).
-    #[arg(long, value_name = "ID", requires = "chat")]
-    pub question: Option<String>,
-    /// With --chat: the owner's Slack user ID who answered in the Claude Tag thread.
-    #[arg(long, value_name = "U...", requires = "chat")]
-    pub slack_user: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -775,8 +766,13 @@ pub struct FromArg {
 #[derive(Debug, Args)]
 pub struct PrArgs {
     /// The task issue number (or `--pr N` for a PR with no task).
-    #[arg(required_unless_present_any = ["pr", "one_off"])]
+    #[arg(required_unless_present_any = ["pr", "one_off", "single"])]
     pub issue: Option<u64>,
+    /// No task issue at all: find or open the PR of the current branch as a draft (title from
+    /// `--title`, else the last commit subject); with `--ready` mark it ready and turn on
+    /// auto-merge once the local gates passed on HEAD.
+    #[arg(long, conflicts_with_all = ["issue", "pr", "bundle", "one_off"])]
+    pub single: bool,
     /// A PR with no task (a governance PR such as `bosun migrate` opens): the same draft, gates
     /// and auto-merge flow, with no task state to move.
     #[arg(long = "pr", value_name = "N", conflicts_with_all = ["issue", "bundle"])]
@@ -818,6 +814,10 @@ pub struct DoctorArgs {
     /// unknown items and verify notes are listed in data.hoist
     #[arg(long)]
     pub remote: bool,
+    /// Also run `splice check` and `hoist check` when each is installed, and fold their exit
+    /// status and output into data.tools; independent of --remote
+    #[arg(long)]
+    pub all: bool,
     /// Print every checklist step and Routine; by default only the steps that need action.
     #[arg(long)]
     pub full: bool,
@@ -1061,8 +1061,8 @@ pub struct PlanAmendArgs {
 
 #[derive(Debug, Args)]
 pub struct PrereqsArgs {
-    /// The plan files, for example plans/bosun.md.
-    #[arg(required = true)]
+    /// The plan files, for example plans/bosun.md (default: plans/*.md, else
+    /// docs/superpowers/plans/*.md).
     pub files: Vec<String>,
     /// Create or update the checklist issue of each plan.
     #[arg(long)]
@@ -1076,6 +1076,9 @@ pub struct PrereqsArgs {
 pub struct PlanCheckArgs {
     /// The plan file, for example plans/bosun.md.
     pub file: String,
+    /// Rewrite the `## Prerequisites` section with its bullets normalized (as `plan import --fix`).
+    #[arg(long)]
+    pub fix: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1095,6 +1098,10 @@ pub struct PlanImportArgs {
     /// List every epic and task; by default only those that changed.
     #[arg(long)]
     pub full: bool,
+    /// Rewrite the `## Prerequisites` section of the plan file with its bullets normalized
+    /// (`- H1: title`, numbered in order); nothing else in the file changes.
+    #[arg(long)]
+    pub fix: bool,
 }
 
 /// `intake "<text>" --source ...` opens a plan issue; a text of exactly `check` is the subcommand.
@@ -1294,7 +1301,7 @@ pub struct AdoptArgs {
     #[arg(long, value_name = "X.Y.Z")]
     pub bosun_version: Option<String>,
     /// Write `[approvals] policy` into .bosun/bosun.toml (spec §8); the pinned release must know it.
-    #[arg(long, value_parser = ["owner", "owner-gated", "orchestrator", "autonomous"])]
+    #[arg(long, value_parser = ["owner", "owner-gated", "orchestrator", "autonomous", "quorum"])]
     pub policy: Option<String>,
     /// Write `[ci] provider` (spec §9). Default: `circleci` when the repo has `.circleci/` and no
     /// Actions workflows, else `github`. `none` installs no GitHub workflows. Needs pin 0.22.0+.
@@ -1389,6 +1396,16 @@ pub struct NotifyArgs {
 pub const RESULT_OUTCOMES: [&str; 4] = ["merged", "partial", "blocked", "needs-human"];
 /// Default `bosun wait --timeout` in seconds.
 pub const WAIT_TIMEOUT_SECS: u64 = 1800;
+
+#[derive(Debug, Args)]
+pub struct SetupSnippetArgs {
+    /// Merge bosun's hooks into the user-scope Claude Code settings instead of printing the bootstrap.
+    #[arg(long)]
+    pub install_hooks: bool,
+    /// The settings file for --install-hooks (default: $HOME/.claude/settings.json).
+    #[arg(long, value_name = "PATH", requires = "install_hooks")]
+    pub settings: Option<std::path::PathBuf>,
+}
 
 #[derive(Debug, Args)]
 pub struct PinArgs {

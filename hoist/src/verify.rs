@@ -15,6 +15,10 @@ const BOSUN_STATUSES: [&str; 3] = ["main-open", "review-verdict", "risk-check"];
 
 /// One `github/required_check` item per required check: it must be a job id or job `name` in a
 /// workflow under `.github/workflows/`.
+///
+/// Known limit: a commit status verifies when any one job has `statuses: write`; hoist does not
+/// know which job posts which status, so one such job lets every listed status verify, even when
+/// that job posts only some of them.
 pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
     d.github
         .ruleset
@@ -24,17 +28,35 @@ pub fn verify_required_checks(d: &Desired, w: &Workflows) -> Vec<Item> {
             let found = w.jobs.iter().any(|j| j.value == check.value);
             let status = BOSUN_STATUSES.contains(&check.value.as_str())
                 || d.github.statuses.contains(&check.value);
+            // A job without `permissions` gets the repo default, which apply sets.
+            let mut writers = w.status_writers.clone();
+            if d.github.actions_permissions.value == "write" {
+                writers.extend(w.default_permission_jobs.iter().cloned());
+            }
             let kept = check.source == crate::adopt::SOURCE;
             let (reason, ok) = if kept {
                 (
                     "kept from the live ruleset (--adopt); not a check hoist names".to_string(),
                     true,
                 )
+            } else if status && !found && !writers.is_empty() {
+                (
+                    format!(
+                        "a commit status (built-in bosun set or `[github] statuses`); \
+                         `statuses: write` in {}",
+                        writers.join(", ")
+                    ),
+                    true,
+                )
             } else if status && !found {
                 (
-                    "a commit status (built-in bosun set or `[github] statuses`), not a job"
-                        .to_string(),
-                    true,
+                    format!(
+                        "required check `{}` is a commit status (built-in bosun set or \
+                         `[github] statuses`), but no workflow job has `statuses: write` to \
+                         post it",
+                        check.value
+                    ),
+                    false,
                 )
             } else if found {
                 ("a job with this name exists in the workflows".to_string(), true)

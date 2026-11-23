@@ -54,11 +54,10 @@ never work around a refusal.
   (https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/prerequisites.md); the orchestrator runs
   `bosun prereqs <plan> --post` once. Never wait for a human: `bosun hold <issue> "<step>"` and
   take other work. Never tick, edit or close the `bosun:prereqs` issue.
-- Owner approvals (D-012): ask with a chat form (`AskUserQuestion`: repo, PR, head SHA; approve
-  or hold); a child sends the request to the orchestrator, which posts the signed
-  `bosun approve <pr>@<head> --sign-key <pem>`. Never ask the owner to write a GitHub comment
-  (their `/bosun approve <sha>` is only a fallback). Batch with `bosun approve --list`; only the
-  latest message (`data.message_pairs`) is answerable.
+- Owner approvals (D-025): never ask the owner for an approval, in chat or with a form; a chat
+  answer never counts. The owner comments `/bosun approve <sha>` (the full head SHA) on the PR, or
+  the repo uses the quorum policy. A session that has a PR ready runs `bosun approve --list` and
+  reports it; a child sends the request to the orchestrator.
 - The PreToolUse hook refuses destructive commands (`rm -rf /` or `~`, `mkfs`, `dd` to a device,
   `terraform destroy`, `DROP DATABASE`) and the same Bash command 5 times in a row: change approach.
 - bosun's rules and reasons: https://github.com/keelstackhq/keelstack/blob/main/bosun/docs/spec.md.

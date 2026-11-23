@@ -215,3 +215,37 @@ fn a_pin_error_does_not_hide_an_old_binary() {
     assert_eq!(it["status"], "warn", "{it}");
     assert_eq!(it["fix"], "npm i -g @keelstackhq/bosun@99.0.0");
 }
+
+/// The items come in step order (spec section 11): update (17) comes before session-rules (18)
+/// and user-hooks (19), whatever order the checks run in.
+#[test]
+fn the_items_are_listed_in_step_order() {
+    let d = repo();
+    let home = tempfile::tempdir().unwrap();
+    let reg = Registry::start(&BEHIND, None, None);
+    let fake = FakeGithub::start();
+    let out = bosun()
+        .env("BOSUN_NPM_REGISTRY", &reg.base)
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_NOW", "2026-11-03T10:00:00Z")
+        .env("BOSUN_ORIGIN", "slack")
+        .env("HOME", home.path())
+        .env_remove("BOSUN_PIN_CHECK")
+        .arg("-C")
+        .arg(d.path())
+        .args(["doctor", "--full"])
+        .output()
+        .unwrap();
+    let v = one_object(&out.stdout);
+    let steps: Vec<u64> = v["data"]["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|i| i["step"].as_u64())
+        .filter(|s| *s > 0)
+        .collect();
+    for s in [17, 18, 19] {
+        assert!(steps.contains(&s), "step {s} missing: {steps:?}");
+    }
+    assert!(steps.is_sorted(), "{steps:?}");
+}

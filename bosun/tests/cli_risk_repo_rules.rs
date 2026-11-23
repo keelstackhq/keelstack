@@ -183,3 +183,35 @@ fn every_cargo_deny_file_is_r_ci() {
         assert!(channel.contains(&format!("\"**/{f}\"")), "channel: {f}");
     }
 }
+
+/// The rust tool-config files the built-in R-ci names (nested rust-toolchain, clippy and rustfmt
+/// config) are named by the channel's R-ci too.
+#[test]
+fn the_channel_r_ci_names_the_rust_tool_config_files() {
+    let channel = include_str!("../channel/pieces/core/files/.bosun/risk.toml.jinja");
+    let ci = channel
+        .lines()
+        .skip_while(|l| *l != "id = \"R-ci\"")
+        .find(|l| l.starts_with("paths = "))
+        .unwrap();
+    let builtin =
+        bosun::core::risk::Rules::parse(include_str!("../src/core/risk_default.toml")).unwrap();
+    let builtin_ci = builtin.rules.iter().find(|r| r.id == "R-ci").unwrap();
+    for f in [
+        "rust-toolchain.toml",
+        "rust-toolchain",
+        "**/rust-toolchain.toml",
+        "**/rust-toolchain",
+        "**/clippy.toml",
+        "**/.clippy.toml",
+        "**/rustfmt.toml",
+        "**/.rustfmt.toml",
+    ] {
+        assert!(ci.contains(&format!("\"{f}\"")), "channel: {f}");
+        let sample = f.replace("**/", "crates/x/");
+        assert!(
+            builtin_ci.paths.iter().any(|g| g.matches(&sample)),
+            "{sample}"
+        );
+    }
+}

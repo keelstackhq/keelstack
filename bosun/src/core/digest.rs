@@ -96,11 +96,16 @@ pub fn digest_with(
             "\n- epic #{epic} ${spent:.2} of ${budget:.2} ({pct} %)"
         ));
     }
-    let nums: Vec<String> = items.iter().map(|i| i.pr.to_string()).collect();
-    if !nums.is_empty() {
-        text.push_str("\nReply with (drop the PRs you hold):");
-        text.push_str(&format!("\n{id} approve {}", nums.join(" ")));
-    } else if raises.iter().any(|r| r.3 > 0) {
+    // D-025: a chat reply approves nothing; each head is approved by the owner's PR comment.
+    if !items.is_empty() {
+        text.push_str(
+            "\nA chat reply approves nothing (D-025). Approve on each PR with a comment:",
+        );
+        for i in items {
+            text.push_str(&format!("\n- #{}: /bosun approve {}", i.pr, i.head));
+        }
+    }
+    if raises.iter().any(|r| r.3 > 0) {
         text.push_str("\nReply with:");
     }
     for (epic, spent, budget, room) in raises.iter().filter(|r| r.3 > 0) {
@@ -317,7 +322,9 @@ mod tests {
         );
         let id = &d.id;
         let want = format!(
-            "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@aaaaaaa R-gate: `change 12`\n- #15@bbbbbbb R-gov: `change 15`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nReply with (drop the PRs you hold):\n{id} approve 12 15"
+            "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@aaaaaaa R-gate: `change 12`\n- #15@bbbbbbb R-gov: `change 15`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nA chat reply approves nothing (D-025). Approve on each PR with a comment:\n- #12: /bosun approve {a}\n- #15: /bosun approve {b}",
+            a = sha('a'),
+            b = sha('b')
         );
         assert_eq!(d.text, want);
         let pairs = vec![(12, sha('a')), (15, sha('b'))];

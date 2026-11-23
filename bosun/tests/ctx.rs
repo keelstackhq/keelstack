@@ -49,6 +49,24 @@ fn origin_rules() {
     assert_eq!(Origin::resolve(None, None).unwrap(), Origin::Local);
     assert_eq!(Origin::resolve(None, Some("1")).unwrap(), Origin::Spawned);
     assert_eq!(Origin::resolve(None, Some("0")).unwrap(), Origin::Local);
+    // In a cloud session every session has the child flag: alone it is no child there.
+    let cloud = Some("true");
+    assert_eq!(
+        Origin::resolve_env(None, Some("1"), cloud).unwrap(),
+        Origin::Local
+    );
+    assert_eq!(
+        Origin::resolve_env(None, Some("1"), None).unwrap(),
+        Origin::Spawned
+    );
+    assert_eq!(
+        Origin::resolve_env(None, Some("1"), Some("false")).unwrap(),
+        Origin::Spawned
+    );
+    assert_eq!(
+        Origin::resolve_env(Some("spawned"), Some("1"), cloud).unwrap(),
+        Origin::Spawned
+    );
     assert_eq!(
         Origin::resolve(Some("slack"), Some("1")).unwrap(),
         Origin::Slack

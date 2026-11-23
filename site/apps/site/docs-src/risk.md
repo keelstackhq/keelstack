@@ -17,7 +17,7 @@ Long details live in bosun's
 
 How the owner approves:
 
-- Chat form: the owner tells the signing session (repo, PR, head SHA; approve or hold) and it posts the signed approval ([how](#signed-approvals-from-chat)).
+- Chat is no approval (D-025): a yes in a chat form or message counts for nothing, and agents never ask for one. Use a GitHub comment or review below, or a signed approval ([how](#signed-approvals)).
 - GitHub: a plain `/bosun approve <40-character head SHA>` comment counts only when posted with a plain user token (typed in the GitHub web or mobile app, or from the owner's own machine); comments posted by the Claude app or a cloud session never count. A new push needs a new comment. Agent PRs are opened under the owner's login and GitHub forbids self-review, so the owner uses a plain comment, a signed approval, or merges.
 
 ## Risk rules
@@ -194,13 +194,13 @@ bosun approve 199@<sha> 200@<sha>   # run exactly the `data.approve_command` tha
 unauthenticated, writes nothing, and lists what it could not read in `data.skipped`. An owner's
 answer relayed in chat moves a needs-human task to ready with `bosun answer --chat`, counted only
 with a verified signature of an owner key in `.bosun/approvers.toml` (`--chat --sign-key` makes
-the signed form). Without `--sign-key` the posting modes refuse in a cloud session (exit 5, since
+the signed form; this is an answer to a task ask, not a PR approval). Without `--sign-key` the posting modes refuse in a cloud session (exit 5, since
 0.2.1); `--list` still works there.
 
-### Signed approvals from chat
+### Signed approvals
 
-Since bosun 0.2.1 the owner can approve from a Claude chat: they tell the orchestrator session,
-and the orchestrator posts a signed approve comment. The signature is the proof, so the comment's
+Since bosun 0.2.1 the orchestrator session that holds an enrolled owner key can post a signed approve
+comment once the approval is decided on GitHub terms (never because of a chat reply, D-025). The signature is the proof, so the comment's
 author, its app attribution and later edits do not matter, and it works from a Claude cloud
 session.
 
@@ -338,4 +338,4 @@ The signer key verifies only the autonomous form, so a leaked key can sign at mo
 notify = ["owner-question", "main-red", "budget-halt", "halt", "thread-result", "digest"]
 ```
 
-Slack never approves: the owner approves by chat form or on GitHub; Slack only carries the links.
+Slack never approves: the owner approves on GitHub (a `/bosun approve <sha>` comment or review); Slack only carries the links.

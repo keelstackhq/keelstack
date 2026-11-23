@@ -80,7 +80,11 @@ pub struct State {
     pub check_runs: HashMap<String, Vec<Value>>,
     /// (slug, id) of the App the token belongs to, for check runs the client creates.
     pub token_app: (String, u64),
+    /// `<ref>:<path>` -> text; a pull's base sha falls back to the default branch for a path no
+    /// test wrote at that sha (`content`), unless `absent_at` marks the path absent there.
     pub contents: HashMap<String, String>,
+    /// `<ref>:<path>` keys that answer 404 even where the default branch has the file.
+    pub absent: std::collections::HashSet<String>,
     pub reviews: HashMap<u64, Vec<Value>>,
     pub timeline: HashMap<u64, Vec<Value>>,
     /// `base...head` -> files of the comparison.
@@ -102,6 +106,10 @@ pub struct State {
     pub repo: serde_json::Map<String, Value>,
     /// Tag of the latest release, if any.
     pub release: Option<String>,
+    /// `published_at` of the latest release, if set.
+    pub release_at: Option<String>,
+    /// Further releases `GET /releases` lists after the latest: `(tag, published_at)`.
+    pub more_releases: Vec<(String, String)>,
     /// (status, remaining) answered before any routing.
     pub fail: Option<(u16, u32)>,
     /// Repository permission by login; a login not listed has `write`.
@@ -134,6 +142,8 @@ pub struct State {
     pub parents: HashMap<String, String>,
     /// Branches `GET /branches/<name>` answers 404 for; every other branch exists.
     pub missing_branches: Vec<String>,
+    /// Git refs `GET /git/ref/tags/<name>` answers 200 for; every other one is 404.
+    pub release_refs: Vec<(String, String)>,
 }
 
 type Mutation = Box<dyn FnOnce(&mut State) + Send>;
@@ -612,10 +622,23 @@ impl FakeGithub {
         self.state.lock().unwrap().anonymous_reads = true;
     }
 
-    /// A file at a ref; the contents API serves it base64-encoded.
+    /// A file at a ref; the contents API serves it base64-encoded. Base reads are NOT isolated:
+    /// a read at a pull's base sha (`base0000`) of a path nobody wrote at that sha is served from
+    /// `refs/heads/main` (and a write to main stands for every base). Use [`Self::absent_at`] to
+    /// say the base lacks the path; `tests/fake_base_reads.rs` guards that this is the only
+    /// fallback (no other ref falls back to main).
     pub fn content(&self, path: &str, git_ref: &str, text: &str) {
         let mut s = self.state.lock().unwrap();
+        s.absent.remove(&format!("{git_ref}:{path}"));
         s.contents.insert(format!("{git_ref}:{path}"), text.into());
+    }
+
+    /// `path` does not exist at `git_ref` (404), even though the default branch has it: a file
+    /// a pull adds, read at its base sha.
+    pub fn absent_at(&self, path: &str, git_ref: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.contents.remove(&format!("{git_ref}:{path}"));
+        s.absent.insert(format!("{git_ref}:{path}"));
     }
 
     /// A workflow run of `sha` with one job and its log.
@@ -658,6 +681,18 @@ impl FakeGithub {
             .push(name.into());
     }
 
+    /// Publish the release ref `name` (such as `v0.22.0`) in bosun's upstream repo
+    /// `keelstackhq/keelstack`: `GET /repos/keelstackhq/keelstack/git/ref/tags/<name>` answers 200.
+    pub fn release_ref(&self, name: &str) {
+        self.release_ref_in("keelstackhq/keelstack", name);
+    }
+
+    /// Publish the release ref `name` in the repo `owner/name`; the same ref in another repo is 404.
+    pub fn release_ref_in(&self, repo: &str, name: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.release_refs.push((repo.into(), name.into()));
+    }
+
     pub fn graphql_status(&self, status: u16, message: &str) {
         self.state.lock().unwrap().graphql_status = Some((status, message.into()));
     }
@@ -679,6 +714,18 @@ impl FakeGithub {
     /// Set a field of the repository document, for example `allow_auto_merge`.
     pub fn repo_set(&self, key: &str, value: Value) {
         self.state.lock().unwrap().repo.insert(key.into(), value);
+    }
+
+    pub fn release_published(&self, tag: &str, at: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.release = Some(tag.into());
+        s.release_at = Some(at.into());
+    }
+
+    /// An additional release in the `GET /releases` list (the latest stays `release_published`).
+    pub fn release_also(&self, tag: &str, at: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.more_releases.push((tag.into(), at.into()));
     }
 
     pub fn release(&self, tag: &str) {
@@ -1077,9 +1124,10 @@ fn route(
             None => msg(404, "Not Found"),
         };
     }
-    let ["repos", _, _, rest @ ..] = seg.as_slice() else {
+    let ["repos", repo_owner, repo_name, rest @ ..] = seg.as_slice() else {
         return msg(404, "Not Found");
     };
+    let repo_full = format!("{repo_owner}/{repo_name}");
     let find = |s: &State, n: &str| {
         n.parse::<u64>()
             .ok()
@@ -1269,6 +1317,12 @@ fn route(
                 return msg(404, "Branch not found");
             }
             ok(json!({"name": name}))
+        }
+        ("GET", ["git", "ref", "tags", name]) => {
+            if (s.release_refs.iter()).any(|(r, t)| *r == repo_full && t == name) {
+                return ok(json!({"ref": format!("refs/tags/{name}")}));
+            }
+            msg(404, "Not Found")
         }
         ("GET", ["labels", name]) => match s.labels.iter().find(|l| l.0 == *name) {
             Some(l) => ok(json!({"name": l.0, "color": l.1})),
@@ -1557,18 +1611,36 @@ fn route(
         }
         ("GET", ["contents", file @ ..]) => {
             let file = file.join("/");
-            let git_ref = query.get("ref").map(String::as_str).unwrap_or("main");
-            if let Some(text) = s.contents.get(&format!("{git_ref}:{file}")) {
-                return ok(json!({"type": "file", "encoding": "base64", "name": file,
-                    "path": file, "size": text.len(), "content": b64_wrapped(text)}));
+            let asked = query.get("ref").map(String::as_str).unwrap_or("main");
+            // A pull's base sha stands for the default branch unless a test wrote that sha's
+            // path itself; resolved here, at read time, so write order never matters.
+            let is_base = s.pulls.iter().any(|p| p["base"]["sha"] == asked);
+            if s.absent.contains(&format!("{asked}:{file}")) {
+                return msg(404, "Not Found");
             }
-            let dir = format!("{git_ref}:{file}/");
-            let mut entries: Vec<Value> = s
-                .contents
-                .keys()
-                .filter(|k| k.starts_with(&dir))
-                .map(|k| json!({"type": "file", "path": &k[git_ref.len() + 1..]}))
-                .collect();
+            let mut candidates = vec![asked];
+            if is_base {
+                candidates.push("refs/heads/main");
+            }
+            for git_ref in &candidates {
+                if let Some(text) = s.contents.get(&format!("{git_ref}:{file}")) {
+                    return ok(json!({"type": "file", "encoding": "base64", "name": file,
+                        "path": file, "size": text.len(), "content": b64_wrapped(text)}));
+                }
+            }
+            let mut entries: Vec<Value> = Vec::new();
+            for git_ref in &candidates {
+                let dir = format!("{git_ref}:{file}/");
+                entries = s
+                    .contents
+                    .keys()
+                    .filter(|k| k.starts_with(&dir))
+                    .map(|k| json!({"type": "file", "path": &k[git_ref.len() + 1..]}))
+                    .collect();
+                if !entries.is_empty() {
+                    break;
+                }
+            }
             entries.sort_by_key(|e| e["path"].to_string());
             if entries.is_empty() {
                 msg(404, "Not Found")
@@ -1621,8 +1693,19 @@ fn route(
             }
             ok(v)
         }
+        ("GET", ["releases"]) => {
+            let mut v: Vec<Value> = (s.release.iter())
+                .map(|t| json!({"tag_name": t, "published_at": s.release_at}))
+                .collect();
+            v.extend(
+                s.more_releases
+                    .iter()
+                    .map(|(t, at)| json!({"tag_name": t, "published_at": at})),
+            );
+            ok(Value::Array(v))
+        }
         ("GET", ["releases", "latest"]) => match &s.release {
-            Some(t) => ok(json!({"tag_name": t})),
+            Some(t) => ok(json!({"tag_name": t, "published_at": s.release_at})),
             None => msg(404, "Not Found"),
         },
         ("GET", ["rules", "branches", _]) => ok(if s.ruleset_checks.is_empty() {

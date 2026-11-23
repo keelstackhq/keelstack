@@ -77,15 +77,16 @@ fn pr_that_weakens_the_rules_is_judged_by_the_base_rules() {
     let (code, v) = check(&fake);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["data"]["level"], "high");
-    // Deleting the rule is a weakening too (built-in R-weaken).
-    assert_eq!(rule_ids(&v), ["R-gov", "R-weaken"]);
+    // Deleting the rule is a weakening too (built-in R-weaken), and the rules are a trust file
+    // (built-in R-trust, whatever the base rules say).
+    assert_eq!(rule_ids(&v), ["R-gov", "R-weaken", "R-trust"]);
     let fix = v["error"]["fix"].as_str().unwrap();
     assert!(
-        fix.contains(HEAD) && fix.contains("form in the Claude Code chat"),
+        fix.contains(HEAD) && fix.contains("/bosun approve") && !fix.contains("--chat"),
         "{fix}"
     );
     assert!(
-        fix.contains("--sign-key") && fix.contains("fallback"),
+        fix.contains("--sign-key") && fix.contains("GitHub review"),
         "{fix}"
     );
     assert_eq!(last_status(&fake)["state"], "failure");

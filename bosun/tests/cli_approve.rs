@@ -4,8 +4,6 @@ use common::fake::FakeGithub;
 use common::{bosun, one_object, run};
 use serde_json::{Value, json};
 
-const HINT: &str = "ask the owner with the call in next (AskUserQuestion, or a Claude Tag thread post; each data.ready[].ask has the question id, text and options): repo, PR, head; only the orchestrator asks, a child session hands the question to the orchestrator; approve or hold; on approve the orchestrator records it with `bosun approve <pr>@<full head> --chat --question <id>` (from Claude Tag `--slack-user U...`; no signing key needed, D-018); fallback: the owner runs data.approve_command (bosun approve) on their own machine or approves in the GitHub UI; an unsigned /bosun approve comment posted through Claude's GitHub tool never counts; relay data.message and keep data.message_pairs: only the latest message is answerable";
-
 const OWNER_TOKEN: &str = "canary-owner-token-7f3a";
 const WAITING: &str = "high risk, owner approval needed: R-gov, R-ci";
 const MAIN_OPEN_YML: &str = ".github/workflows/main-open.yml";
@@ -119,7 +117,18 @@ fn list_shows_ready_and_waiting_sorted_with_the_command() {
     let (code, v) = approve(&fake, &["--list"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["command"], "approve");
-    assert_eq!(v["next"][0]["tool"], "AskUserQuestion");
+    // D-025: no form, no next step for a session; the owner comments on the PR.
+    assert_eq!(v["next"], json!([]));
+    assert!(
+        v["data"]["owner_step"]
+            .as_str()
+            .unwrap()
+            .contains("/bosun approve <sha> on the PR")
+    );
+    assert_eq!(
+        v["data"]["ready"][0]["owner_comment"],
+        format!("/bosun approve {}", sha(1))
+    );
     let ready = v["data"]["ready"].as_array().unwrap();
     assert_eq!(ready.len(), 2);
     assert_eq!(ready[0]["pr"], 1);
@@ -128,7 +137,22 @@ fn list_shows_ready_and_waiting_sorted_with_the_command() {
     assert_eq!(ready[0]["risk_from_status"], json!(["R-gov", "R-ci"]));
     assert_eq!(ready[0]["files"], json!(["governance/f1.toml"]));
     assert_eq!(ready[0]["files_truncated"], json!(false));
-    assert_eq!(v["data"]["hint"], HINT);
+    // Chat approvals are retired (D-025): the hint (the command's own output) names the owner's
+    // comment and never tells anyone to relay, ask or answer in chat.
+    let hint = v["data"]["hint"].as_str().unwrap();
+    assert!(
+        hint.contains("`/bosun approve <sha>`") && hint.contains("D-025"),
+        "{hint}"
+    );
+    for word in [
+        "relay",
+        "answer",
+        "Reply",
+        "AskUserQuestion",
+        "ask the owner",
+    ] {
+        assert!(!hint.contains(word), "{word} in {hint}");
+    }
     assert_eq!(ready[1]["pr"], 3);
     assert_eq!(
         v["data"]["approve_command"],
@@ -684,7 +708,9 @@ fn a_claude_cloud_session_cannot_post_an_approval() {
             assert!(v["error"]["message"].as_str().unwrap().contains("cloud"));
             let fix = v["error"]["fix"].as_str().unwrap();
             assert!(
-                fix.contains("own machine") && fix.contains("form in the Claude Code chat"),
+                fix.contains("own machine")
+                    && fix.contains("/bosun approve <sha>")
+                    && !fix.contains("--chat"),
                 "{fix}"
             );
         }

@@ -185,6 +185,7 @@ pub fn check(
         tree_h,
         tree_h2,
         trust_files: &trust,
+        roots: &roots,
         lock_texts: BTreeMap::new(),
     };
     // Rule 6 reads each lockfile both sides changed in place, at each commit by its sha. A text

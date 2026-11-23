@@ -1,0 +1,1 @@
+- 2026-11-22 · port review fixes: subagent-lock, cloud answer store, trust root meta/touch/time, spec 08 known limits · this PR

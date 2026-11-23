@@ -14,6 +14,8 @@ fn nv(to: &str, entries: Vec<ChangeEntry>, first: bool) -> NextVersion {
         reason: String::new(),
         entries,
         first_release: first,
+        changesets: vec![],
+        dep_updates: vec![],
     }
 }
 
@@ -199,4 +201,193 @@ fn changelog_section_is_the_body_of_that_version() {
     let crlf = "# Changelog\r\n\r\n## 2.0.0 (d)\r\n\r\n- b (1)\r\n\r\n## 1.0.0 (d)\r\n";
     assert_eq!(changelog_section(crlf, "2.0.0").as_deref(), Some("- b (1)"));
     assert_eq!(changelog_section("## 3.0.0 (d)\n\n", "3.0.0"), None);
+}
+
+#[test]
+fn changelog_section_ignores_headings_inside_fences() {
+    let text = "## 1.1.0 (d)\n\n```md\n## example\n```\n- a\n\n## 1.0.0 (d)\n\n- old\n";
+    assert_eq!(
+        changelog_section(text, "1.1.0").as_deref(),
+        Some("```md\n## example\n```\n- a")
+    );
+}
+
+#[test]
+fn changelog_section_bare_heading_is_exact() {
+    use hoist::release::edit::changelog_section;
+    assert_eq!(
+        changelog_section("## 1.1.0\n\n- a\n", "1.1.0").as_deref(),
+        Some("- a")
+    );
+    for other in ["## 1.1.00", "## 1.1.0-rc.1", "## 1.1.0x", "## 1.1.0.1"] {
+        let text = format!("{other}\n\n- a\n");
+        assert_eq!(changelog_section(&text, "1.1.0"), None, "{other}");
+    }
+}
+
+#[test]
+fn publish_reads_bare_heading() {
+    use hoist::release::edit::changelog_section;
+    let text = "# Changelog\n\n## 1.2.0\n\n### Minor Changes\n\n- x\n\n## 1.1.0\n\n- y\n";
+    let want = Some("### Minor Changes\n\n- x".to_string());
+    assert_eq!(changelog_section(text, "1.2.0"), want);
+    assert_eq!(
+        changelog_section("## 1.2.0 (2026-01-01)\n\n- z\n", "1.2.0").as_deref(),
+        Some("- z")
+    );
+    assert_eq!(changelog_section("## 1.2.01\n\n- no\n", "1.2.0"), None);
+    assert_eq!(changelog_section("## 1.2.0-rc.1\n\n- no\n", "1.2.0"), None);
+}
+
+#[test]
+fn changesets_rewrites_stay_in_their_section() {
+    use hoist::release::edit::{rewrite_cargo_dep, rewrite_package_json_dep};
+    let pkg = "{\n  \"peerDependencies\": {\"core\": \"^1.0.0\"},\n  \"devDependencies\": {\"core\": \"1.0.0\"}\n}\n";
+    let out =
+        rewrite_package_json_dep(pkg, "core", &["devDependencies"], |_| "1.0.1".into()).unwrap();
+    assert!(
+        out.contains("\"core\": \"^1.0.0\"") && out.contains("\"core\": \"1.0.1\""),
+        "{out}"
+    );
+    let toml = "[dependencies]\ncore = { path = \"../core\", version = \"0.4\" }\n\n[dev-dependencies]\nkit = { workspace = true }\n";
+    let f = |_: &str| "0.5.0".to_string();
+    let (out, inherits) = rewrite_cargo_dep(toml, "core", &["dependencies"], &f).unwrap();
+    assert!(out.contains("version = \"0.5.0\"") && !inherits, "{out}");
+    assert!(rewrite_cargo_dep(toml, "core", &["dev-dependencies"], &f).is_err());
+    assert!(
+        rewrite_cargo_dep(toml, "kit", &["dev-dependencies"], &f)
+            .unwrap()
+            .1
+    );
+}
+
+#[test]
+fn only_an_exact_unreleased_heading_moves() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text =
+        "# Changelog\n\nSee ## Unreleased below.\n\n## Unreleased\n\n- moved\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\nSee ## Unreleased below.\n\n## 1.1.0 (e)\n\n- x\n\n- moved\n\n## 1.0.0 (d)\n"
+    );
+    let text = "## Unreleased changes\n\n- kept\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n## Unreleased changes\n\n- kept\n"
+    );
+}
+
+#[test]
+fn unreleased_after_a_version_heading_stays_put() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "# Changelog\n\n## 1.0.0 (d)\n\n- old\n\n## Unreleased\n\n- stale\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n## 1.0.0 (d)\n\n- old\n\n## Unreleased\n\n- stale\n"
+    );
+}
+
+#[test]
+fn unreleased_inside_a_code_fence_is_ignored() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "# Changelog\n\n```md\n## Unreleased\n\n- example\n```\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n```md\n## Unreleased\n\n- example\n```\n\n## 1.1.0 (e)\n\n- x\n\n## 1.0.0 (d)\n"
+    );
+    // A fenced `## ` line does not end a real Unreleased section either.
+    let text = "## Unreleased\n\n```\n## not a heading\n```\n- moved\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n```\n## not a heading\n```\n- moved\n\n## 1.0.0 (d)\n"
+    );
+}
+
+#[test]
+fn changelog_section_heading_inside_a_fence_is_not_the_section() {
+    let text = "## 2.0.0 (d)\n\n```md\n## 1.0.0 (fake)\n- fake\n```\n\n## 1.0.0 (d)\n\n- real\n";
+    assert_eq!(changelog_section(text, "1.0.0").as_deref(), Some("- real"));
+    let only_fenced = "## 2.0.0 (d)\n\n~~~\n## 1.0.0 (x)\n- fake\n~~~\n";
+    assert_eq!(changelog_section(only_fenced, "1.0.0"), None);
+}
+
+#[test]
+fn rewrite_package_json_dep_sees_decoded_json_escapes() {
+    use hoist::release::edit::rewrite_package_json_dep;
+    let pkg = "{\n  \"dependencies\": {\"core\": \"\\u005e1.0.0\"}\n}\n";
+    let seen = std::cell::RefCell::new(String::new());
+    let out = rewrite_package_json_dep(pkg, "core", &["dependencies"], |old| {
+        *seen.borrow_mut() = old.to_string();
+        format!("{old}-x\"q")
+    })
+    .unwrap();
+    assert_eq!(*seen.borrow(), "^1.0.0");
+    assert!(out.contains("\"^1.0.0-x\\\"q\""), "{out}");
+}
+
+#[test]
+fn a_moved_unreleased_block_keeps_its_first_line_indent() {
+    use hoist::release::edit::prepend_section;
+    let b = ["- x\n".to_string()];
+    let text = "## Unreleased\n\n    indented code\n- item\n  - nested\n\n## 1.0.0 (d)\n";
+    let out = prepend_section(Some(text), "1.1.0", "e", &b, true);
+    assert_eq!(
+        out,
+        "# Changelog\n\n## 1.1.0 (e)\n\n- x\n\n    indented code\n- item\n  - nested\n\n## 1.0.0 (d)\n"
+    );
+}
+
+/// What `rewrite_package_json_dep` hands its callback for the raw JSON string `raw`.
+fn decoded(raw: &str) -> String {
+    use hoist::release::edit::rewrite_package_json_dep;
+    let pkg = format!("{{\"dependencies\": {{\"core\": \"{raw}\"}}}}\n");
+    let seen = std::cell::RefCell::new(String::new());
+    rewrite_package_json_dep(&pkg, "core", &["dependencies"], |old| {
+        *seen.borrow_mut() = old.to_string();
+        old.to_string()
+    })
+    .unwrap();
+    seen.into_inner()
+}
+
+#[test]
+fn json_surrogate_pair_decodes_to_one_char() {
+    assert_eq!(decoded(r"😀"), "\u{1F600}");
+    assert_eq!(decoded(r"a😀b"), "a\u{1F600}b");
+}
+
+#[test]
+fn json_lone_surrogates_become_replacement_chars() {
+    let fffd = '\u{FFFD}';
+    assert_eq!(decoded(r"\ud83dx"), format!("{fffd}x"));
+    assert_eq!(decoded(r"\ud83d"), fffd.to_string());
+    assert_eq!(decoded(r"\ude00"), fffd.to_string());
+    // A high surrogate followed by a non-low escape keeps that escape.
+    assert_eq!(decoded(r"\ud83dA"), format!("{fffd}A"));
+    assert_eq!(decoded(r"\ud83d\n"), format!("{fffd}\n"));
+    assert_eq!(decoded(r"\ud83d😀"), format!("{fffd}\u{1F600}"));
+}
+
+#[test]
+fn workspace_dep_rewrite_leaves_the_root_packages_own_dependencies() {
+    use hoist::release::edit::rewrite_workspace_dep;
+    let toml = "[package]\nname = \"root\"\n\n[dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n\n[workspace.dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n";
+    let out = rewrite_workspace_dep(toml, "core", &|_| "0.5.0".to_string()).unwrap();
+    assert_eq!(out.matches("version = \"0.5.0\"").count(), 1, "{out}");
+    let (own, ws) = out.split_once("[workspace.dependencies]").unwrap();
+    assert!(
+        own.contains("version = \"0.4\"") && ws.contains("0.5.0"),
+        "{out}"
+    );
+    // Only a root package's own dependency: no workspace entry, so an error.
+    let own_only = "[package]\nname = \"root\"\n\n[dependencies]\ncore = { path = \"core\", version = \"0.4\" }\n";
+    assert!(rewrite_workspace_dep(own_only, "core", &|_| "0.5.0".to_string()).is_err());
 }

@@ -45,7 +45,7 @@ creates the labels and the registry issue. It commits nothing; you commit and op
 ```bash
 bosun adopt --dry-run                          # see what would change; writes nothing
 bosun adopt --owner <your-github-login>        # stacks are detected; or --stack rust|ts-pnpm|other
-bosun adopt --owner <login> --policy autonomous   # also write [approvals] policy (section 9, item 4)
+bosun adopt --ci none --policy autonomous --owner <login>   # no CI, full autonomy (section 9, item 5)
 ```
 
 The JSON gives the exact commands in `data.commands`: `git switch bosun-setup 2>/dev/null || git switch -c bosun-setup`, a `git add`
@@ -94,13 +94,14 @@ A seed file that already exists is kept; init only adds the required checks (and
 | --- | --- | --- |
 | `.bosun/bosun.toml` | shared | project, stacks, review mode, `[approvals]`, optional `[slack]` |
 | `.bosun/limits.toml`, `.bosun/risk.toml`, `.bosun/session-rules.toml` | seed | caps and budget, risk rules, session rules |
+| `.bosun/pins.toml` | owned | the tool pins bosun.yml and `docs/setup-script.sh` read |
 | `.bosun/version` | owned | the bosun release your CI runs |
 | `.bosun/fold-fragments.sh` | owned | folds changelog fragments before a release |
 | `governance/owners.toml` | seed | owner GitHub logins (and Slack IDs) |
 | `.github/CODEOWNERS`, `hoist.toml` | seed | code owners; branch rules and required checks |
-| `.github/workflows/{bosun,risk,verdict,main-open,main-health}.yml` | owned | section 4 |
+| `.github/workflows/{bosun,risk,verdict,signer,main-open,main-health}.yml` | owned | section 4 (six workflows) |
 | `.github/workflows/splice.yml` | seed | weekly channel update |
-| `deny.toml`, `rust-toolchain.toml` (rust), `.npmrc` (ts-pnpm) | seed | stack config |
+| `deny.toml` (rust; not written when `.deny.toml` or `.cargo/deny.toml` exists), `rust-toolchain.toml` (rust), `.npmrc` (ts-pnpm) | seed | stack config |
 | `.claude/settings.json` | shared | bosun's hooks (skipped if another template owns the file) |
 | `docs/setup-script.sh` | owned | the cloud environment setup script |
 | `AGENTS.md`, `REVIEW.md`, `CLAUDE.md` | section | a bosun section in each (CLAUDE.md only if no template owns it) |
@@ -130,6 +131,7 @@ channel's `channel/pieces/core/files/.claude/settings.json`) there yourself.
 | `bosun.yml` | pull_request, push, merge_group | every gate (`bosun gate <name>`) in one job, check `ci-ok` (`bosun-ok` if the repo has its own `ci-ok`) |
 | `risk.yml` | pull_request_target, `/bosun approve` comments | `risk-check` status |
 | `verdict.yml` | PR comments with the verdict marker | `review-verdict` status |
+| `signer.yml` | dispatched by `bosun approve --via-signer` | the keyless CI signer (section 8, D-017) |
 | `main-open.yml` | pull_request_target | `main-open` status |
 | `main-health.yml` | CI runs on main, weekly | opens or closes the main-red issue |
 | `splice.yml` | weekly | channel update PRs |
@@ -275,7 +277,12 @@ Design: [spec.md](spec.md). Defaults: [defaults.md](defaults.md). Plans:
    Deployment branches → Selected branches, only the default branch (the real barrier: any other branch's copy of `signer.yml` could
    otherwise read the key). Verify there or with `gh api repos/<owner>/<repo>/environments/bosun-signer/deployment-branch-policies`;
    `bosun doctor --remote` checks it.
-5. **Permission checks (Claude Code behaviour, not bosun's).** Each cloud session asks for its
+5. **Fresh repo, no CI.** Paste `bosun setup-snippet` once, then
+   `bosun adopt --ci none --policy autonomous --owner <login>` (writes `[ci] provider = "none"` and
+   `[approvals] policy`), commit and merge the setup PR. With `none`, `bosun pr --ready` judges risk,
+   verdict and approval locally and the orchestrator merges with `bosun merge <pr>` (D-019); a moved
+   head is exit 3.
+6. **Permission checks (Claude Code behaviour, not bosun's).** Each cloud session asks for its
    own permissions. An orchestrator's go
    does not carry over to a child it spawns: a child that pushes or opens a PR can wait for your
    go in that child's own session. Open the child in the Claude app when it blocks.

@@ -1,0 +1,65 @@
+---
+source: splice/tests/cli_pieces.rs
+expression: v
+---
+{
+  "changes": [],
+  "command": "pieces",
+  "messages": [],
+  "ok": true,
+  "pieces": [
+    {
+      "base": false,
+      "default_name": "web",
+      "description": "App piece",
+      "id": "app",
+      "multiple": true,
+      "requires": [
+        "base"
+      ],
+      "vars": [
+        {
+          "default": "web",
+          "name": "name",
+          "prompt": "app name"
+        }
+      ]
+    },
+    {
+      "base": true,
+      "default_name": null,
+      "description": "Base piece",
+      "id": "base",
+      "multiple": false,
+      "requires": [],
+      "vars": []
+    },
+    {
+      "base": false,
+      "default_name": null,
+      "description": "Lib piece",
+      "id": "lib",
+      "multiple": false,
+      "requires": [
+        "app"
+      ],
+      "vars": []
+    }
+  ],
+  "template": {
+    "name": "fixture",
+    "vars": [
+      {
+        "default": null,
+        "name": "project",
+        "prompt": "project name"
+      },
+      {
+        "default": "acme",
+        "name": "scope",
+        "prompt": "npm scope without @"
+      }
+    ],
+    "version": "1.0.0"
+  }
+}

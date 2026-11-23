@@ -319,3 +319,109 @@ fn a_pr_changing_only_a_composite_action_is_high_risk() {
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["data"]["level"], "high");
 }
+
+/// `approve --bootstrap` for a file both configs allow, `base` at the PR's base and `default`
+/// on the default branch (the fake lets a default-branch write stand for every base: restore it).
+fn sign_with(base: &str, default: &str, now: &str) -> (i32, Value) {
+    let k = key();
+    let fake = pr(&k, "deny.toml", PLAIN, base);
+    fake.content(".bosun/bosun.toml", MAIN, default);
+    fake.content(".bosun/bosun.toml", BASE, base);
+    sign(&fake, &k, now)
+}
+
+/// Whatever the policy: a default branch whose `[approvals]` is stricter than the base's, or
+/// that ends the D-012 window, signs nothing (the base may be a stale or forged view).
+#[test]
+fn approve_refuses_when_the_default_branch_is_stricter_than_the_base() {
+    let tighter = [
+        // The policy fell from orchestrator or owner-gated to a stricter one.
+        (
+            config(Some("orchestrator"), None),
+            config(Some("owner"), None),
+            AFTER,
+        ),
+        (
+            config(Some("orchestrator"), None),
+            config(Some("owner-gated"), None),
+            AFTER,
+        ),
+        (
+            config(Some("owner-gated"), None),
+            config(Some("owner"), None),
+            AFTER,
+        ),
+        // The window ended, or was dropped, on the default branch.
+        (
+            config(Some("owner"), Some("2026-11-30")),
+            config(Some("owner"), Some("2026-11-01")),
+            IN,
+        ),
+        (
+            config(Some("orchestrator"), Some("2026-11-30")),
+            config(Some("orchestrator"), None),
+            IN,
+        ),
+        (
+            config(Some("owner"), Some("2026-11-30")),
+            config(None, None),
+            IN,
+        ),
+    ];
+    for (base, default, now) in tighter {
+        let (code, v) = sign_with(&base, &default, now);
+        assert_eq!(code, 1, "{base} / {default}: {v}");
+        assert!(v["data"]["body"].is_null(), "{base} / {default}: {v}");
+        let why = v["error"]["message"].as_str().unwrap();
+        assert!(why.contains("default branch"), "{base} / {default}: {v}");
+    }
+    // The same or a looser default branch signs as before.
+    for (base, default, now) in [
+        (
+            config(Some("orchestrator"), None),
+            config(Some("orchestrator"), None),
+            AFTER,
+        ),
+        (
+            config(Some("owner"), Some("2026-11-30")),
+            config(Some("orchestrator"), Some("2026-11-30")),
+            IN,
+        ),
+        (
+            config(Some("owner"), Some("2026-11-30")),
+            config(Some("owner"), Some("2026-11-30")),
+            IN,
+        ),
+        (
+            config(Some("owner"), Some("2026-11-15")),
+            config(Some("owner"), Some("2026-11-30")),
+            IN,
+        ),
+    ] {
+        let (code, v) = sign_with(&base, &default, now);
+        assert_eq!(code, 0, "{base} / {default} at {now}: {v}");
+    }
+}
+
+/// A base window that already ended is not one the default branch can end: dropping the stale
+/// date there is no "looser base" (spec 08: it ends the window the base has open). The refusal
+/// that remains is the ordinary "bootstrap mode ended", not the default-branch one; a signing
+/// base policy after the window still signs.
+#[test]
+fn a_stale_base_window_the_default_branch_dropped_is_not_a_stricter_default() {
+    let (code, v) = sign_with(
+        &config(Some("owner"), Some("2026-11-30")),
+        &config(Some("owner"), None),
+        AFTER,
+    );
+    assert_eq!(code, 1, "{v}");
+    let why = v["error"]["message"].as_str().unwrap();
+    assert!(!why.contains("default branch"), "{v}");
+    assert!(why.contains("ended on 2026-11-30"), "{v}");
+    let (code, v) = sign_with(
+        &config(Some("orchestrator"), Some("2026-11-30")),
+        &config(Some("orchestrator"), None),
+        AFTER,
+    );
+    assert_eq!(code, 0, "{v}");
+}

@@ -147,13 +147,24 @@ fn prepare_bumps_platform_packages_and_optional_deps() {
         .unwrap();
     let p = json(&plan);
     assert_eq!(plan.status.code(), Some(0), "{p:#}\n{}", stderr(&plan));
-    let keys: Vec<&str> = p["items"]
+    // Every item, not only the versions: an extra item of any kind is a regression.
+    let keys: Vec<String> = p["items"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|i| i["key"].as_str().unwrap())
+        .map(|i| {
+            format!(
+                "{}:{}",
+                i["kind"].as_str().unwrap(),
+                i["key"].as_str().unwrap()
+            )
+        })
         .collect();
-    assert_eq!(keys, ["@acme/tool", "tool"], "{p:#}");
+    assert_eq!(
+        keys,
+        ["source:commits", "version:@acme/tool", "version:tool"],
+        "{p:#}"
+    );
     let launcher = item(&p, "version", "@acme/tool");
     assert_eq!(launcher["action"], "create");
     assert!(

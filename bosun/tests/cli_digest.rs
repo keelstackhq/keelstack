@@ -74,7 +74,9 @@ fn the_digest_lists_owner_waiting_prs_and_open_asks_and_skips_mainfix() {
     let d = &v["data"];
     let id = d["message_id"].as_str().unwrap();
     let want = format!(
-        "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@abc1234 R-gov, R-ci: `first change`\n- #15@def5678 R-gov, R-ci: `second change`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nReply with (drop the PRs you hold):\n{id} approve 12 15"
+        "Daily digest acme/widget 2026-11-12 {id}\nApprovals (2):\n- #12@abc1234 R-gov, R-ci: `first change`\n- #15@def5678 R-gov, R-ci: `second change`\nOpen asks (1):\n- #30 `which db?`\nBudget asks (0):\nA chat reply approves nothing (D-025). Approve on each PR with a comment:\n- #12: /bosun approve {a}\n- #15: /bosun approve {b}",
+        a = head("abc1234"),
+        b = head("def5678")
     );
     assert_eq!(d["message"], json!(want));
     let pairs = format!("12@{} 15@{}", head("abc1234"), head("def5678"));
@@ -106,31 +108,32 @@ fn the_answer_returns_approve_calls_and_drops_a_moved_head() {
     let (_, v) = digest(&fake, &[], "");
     let header = v["data"]["header"].as_str().unwrap().to_string();
     let id = v["data"]["message_id"].as_str().unwrap().to_string();
-    // The form's reply line, pasted as is, parses.
-    let line = v["data"]["message"]
-        .as_str()
-        .unwrap()
-        .lines()
-        .last()
-        .unwrap()
-        .to_string();
-    let (code, v) = digest(&fake, &["--answer"], &format!("{header}\n{line}\n"));
+    // D-025: the form offers no chat approve line, only the PR comments.
+    let message = v["data"]["message"].as_str().unwrap().to_string();
+    assert!(!message.contains(&format!("{id} approve")), "{message}");
+    assert!(message.contains(&format!("- #12: /bosun approve {}", head("abc1234"))));
+    // A typed reply still parses, into comment lines only.
+    let (code, v) = digest(
+        &fake,
+        &["--answer"],
+        &format!("{header}\n{id} approve 12 15\n"),
+    );
     assert_eq!((code, v["data"]["unknown"].clone()), (0, json!([])), "{v}");
     assert_eq!(v["data"]["approve"].as_array().unwrap().len(), 2);
+    assert_eq!(v["next"], json!([]), "{v}");
     let moved = head("def9999");
     set_head(&fake, 15, &moved);
     let input = format!("{header}\n{id} Approve 12, 15, 20\nraise 7 +20\nthanks\n");
     let (code, v) = digest(&fake, &["--answer"], &input);
     assert_eq!(code, 0, "{v}");
     let d = &v["data"];
-    let cmd = format!("bosun approve 12@{} --sign-key <pem>", head("abc1234"));
-    assert_eq!(
-        v["next"],
-        json!([{"tool": "Bash", "args": {"command": cmd}}])
-    );
+    // D-025: a chat reply never becomes `bosun approve` next steps; the owner approves on GitHub.
+    assert_eq!(v["next"], json!([]), "{v}");
+    assert!(!v.to_string().contains("--sign-key <pem>"), "{v}");
     assert_eq!(
         d["approve"],
-        json!([{"pr": 12, "head_sha": head("abc1234")}])
+        json!([{"pr": 12, "head_sha": head("abc1234"),
+            "owner_comment": format!("/bosun approve {}", head("abc1234"))}])
     );
     let dropped: Vec<u64> = d["dropped"]
         .as_array()
@@ -177,4 +180,54 @@ fn an_answer_without_a_valid_header_is_a_usage_error() {
     // A halted repo signs nothing either.
     let (code, v) = digest(&fake, &["--answer", "--sign-key", "k.pem"], &fine);
     assert_eq!(code, 4, "{v}");
+}
+
+#[test]
+fn the_digest_summarizes_the_last_day_merged_released_and_blocked() {
+    let fake = setup();
+    // BOSUN_NOW is 2026-11-12T06:00:00Z: two merged PRs in the last 24h, one older, one open.
+    for (n, at) in [
+        (50, "2026-11-12T01:00:00Z"),
+        (51, "2026-11-11T07:00:00Z"),
+        (52, "2026-11-10T23:00:00Z"),
+    ] {
+        fake.pull(n, &format!("merged {n}"), &format!("m{n}"), "");
+        fake.pull_set(n, "state", json!("closed"));
+        fake.pull_set(n, "merged", json!(true));
+        fake.pull_set(n, "merged_at", json!(at));
+        fake.pull_set(n, "updated_at", json!(at));
+    }
+    fake.release_published("v0.22.0", "2026-11-12T02:00:00Z");
+    let (code, v) = digest(&fake, &[], "");
+    assert_eq!(code, 0, "{v}");
+    let s = &v["data"]["summary"];
+    let merged: Vec<u64> = s["merged"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["pr"].as_u64().unwrap())
+        .collect();
+    assert_eq!(merged, [50, 51], "{s}");
+    assert_eq!(s["released"][0]["tag"], "v0.22.0");
+    let blocked = s["blocked"].as_array().unwrap();
+    assert!(blocked.iter().any(|b| b["pr"] == 12), "{s}");
+    assert!(blocked.iter().any(|b| b["issue"] == 30), "{s}");
+    // Two releases the same day both count.
+    let fake = setup();
+    fake.release_published("v0.22.1", "2026-11-12T04:00:00Z");
+    fake.release_also("v0.22.0", "2026-11-12T02:00:00Z");
+    fake.release_also("v0.21.0", "2026-11-01T02:00:00Z");
+    let (_, v) = digest(&fake, &[], "");
+    let tags: Vec<&str> = v["data"]["summary"]["released"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["tag"].as_str().unwrap())
+        .collect();
+    assert_eq!(tags, ["v0.22.1", "v0.22.0"]);
+    // An old release is not news.
+    let fake = setup();
+    fake.release_published("v0.21.0", "2026-11-01T02:00:00Z");
+    let (_, v) = digest(&fake, &[], "");
+    assert_eq!(v["data"]["summary"]["released"], json!([]));
 }

@@ -263,8 +263,8 @@ Check: a `.md` file in either directory, or a `## Steps` list in `docs/agents/pr
 
 ### 11. Confirm how approvals work · phone · ready: auto · required
 
-D-012: owner approvals are asked as a Claude Code chat form naming repo, PR and head SHA; the
-orchestrator posts the signed bosun approval. Bootstrap mode until 2026-11-30 UTC: the
+D-025: a chat reply approves nothing. The owner approves a head with a `/bosun approve <sha>`
+PR comment or review; under quorum (D-022) the orchestrator signs after two reviewer verdicts. Bootstrap mode until 2026-11-30 UTC: the
 orchestrator may approve gated PRs itself after green checks and an independent review of that
 head; environments, tags, releases, decisions merges, branch rules and secrets still need the
 owner (release-environment taps on the phone).

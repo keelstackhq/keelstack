@@ -64,6 +64,9 @@ pub struct CarryFacts<'a> {
     pub tree_h2: RawTree,
     pub truncated: bool,
     pub trust_files: &'a [&'a str],
+    /// bosun's code roots at the base (`""` is the repo root): the quorum trust root
+    /// (`risk::trust_root_changed`) is read under them.
+    pub roots: &'a [String],
     /// The texts of each lockfile both the PR and main changed, at `H`, `M` and `H2`.
     pub lock_texts: BTreeMap<String, LockTexts>,
 }
@@ -84,6 +87,7 @@ pub enum Refusal {
     DuplicatePath { path: String },
     Truncated,
     TrustFile { path: String },
+    TrustRoot { path: String },
     LockNotMerged { path: String },
 }
 
@@ -115,6 +119,7 @@ impl Refusal {
             Self::DirFileClash { path } => ("file on one side, dir on the other:", Some(path)),
             Self::DuplicatePath { path } => ("appears twice in a tree:", Some(path)),
             Self::TrustFile { path } => ("the PR changes the trust file", Some(path)),
+            Self::TrustRoot { path } => ("the PR changes the quorum trust root", Some(path)),
             Self::LockNotMerged { path } => ("has an entry on neither side:", Some(path)),
         };
         path.map_or(text.to_string(), |p| format!("{text} `{}`", esc(p)))
@@ -210,8 +215,24 @@ pub fn check(f: &CarryFacts) -> Result<(), Refusal> {
         locks.insert(*path);
     }
     // Rule 4.
-    if let Some(path) = p.iter().find(|x| f.trust_files.contains(x)) {
+    if let Some(path) = p
+        .iter()
+        .find(|x| crate::core::approve::is_trust_path(f.trust_files, x))
+    {
         return Err(Refusal::TrustFile { path: s(path) });
+    }
+    // Rule 4, the quorum trust root itself (D-022): the same set risk-check refuses
+    // (`risk::quorum_trust_paths`), and any change of the pin file (a carry never judges a pin).
+    // Patches are not in a carry's facts, so the strong-secret check stays in risk-check.
+    let pairs: Vec<(&str, Option<&str>)> = (f.pr_files.iter())
+        .map(|c| (&*c.filename, c.previous_filename.as_deref()))
+        .collect();
+    let mut hits = crate::core::risk::quorum_trust_paths(&pairs, f.roots);
+    if crate::core::risk::pin_changed(&pairs) {
+        hits.push(crate::core::risk::PIN_FILE.to_string());
+    }
+    if let Some(path) = hits.into_iter().next() {
+        return Err(Refusal::TrustRoot { path });
     }
     // Rule 3.
     let (tb, tm, th, th2) = (
@@ -308,7 +329,7 @@ mod tests {
             pr_files: vec![fc("src/pr.rs", None)], main_files: vec![fc("src/main.rs", None)],
             tree_b: t("d0", "m1", "p0"), tree_m: t("d1", "m2", "p0"),
             tree_h: t("d2", "m1", "p1"), tree_h2: t("d3", "m2", "p1"),
-            truncated: false, trust_files: &["CODEOWNERS", ".github/CODEOWNERS"], lock_texts: BTreeMap::new(),
+            truncated: false, trust_files: &["CODEOWNERS", ".github/CODEOWNERS"], roots: &[], lock_texts: BTreeMap::new(),
         }
     }
     /// `honest()` where the PR and main both changed `Cargo.lock` and H2 holds a regenerated one.
@@ -482,6 +503,34 @@ mod tests {
             t.pr_files.push(pr);
             assert!(matches!(err(&t), Refusal::TrustFile { .. }));
         }
+    }
+    /// Rule 4 does not rely on risk-check: a path in the quorum trust root (`TRUST_ROOT`, a code
+    /// root's `src/`, the workflows, `.claude/**`) is refused by the carry itself.
+    #[test] fn quorum_trust_root_paths_are_refused() {
+        let roots = vec!["bosun".to_string()];
+        for p in [
+            ".circleci/config.yml", "splice/action/action.yml", ".bosun/version", ".gitlab-ci.yml",
+            ".github/workflows/x.yml", ".claude/agents/r.md", "hull/.claude/settings.json", ".mcp.json",
+            "hull/package.json", "pins.toml", "scripts/x.sh", "bosun/src/core/risk.rs", "a/AGENTS.md",
+        ] {
+            for prev in [None, Some("old/name")] {
+                let mut f = honest();
+                f.roots = &roots;
+                f.pr_files.push(fc(p, prev));
+                assert_eq!(err(&f), Refusal::TrustRoot { path: p.into() }, "{p}");
+            }
+            // A rename away from a trust-root path counts too.
+            let mut f = honest();
+            f.roots = &roots;
+            f.pr_files.push(fc("moved.txt", Some(p)));
+            assert!(matches!(err(&f), Refusal::TrustRoot { .. }), "{p}");
+        }
+        // An ordinary path under the same roots still carries.
+        let mut f = honest();
+        f.roots = &roots;
+        assert_eq!(check(&f), Ok(()));
+        f.pr_files.push(fc("bosun/docs/x.md", None));
+        assert!(!matches!(check(&f), Err(Refusal::TrustRoot { .. })));
     }
     #[test] fn empty_p_still_requires_the_tree_of_m() {
         let mut f = honest();

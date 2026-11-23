@@ -1,0 +1,1 @@
+- `bosun approve --list` no longer returns an AskUserQuestion or Claude Tag form (D-025): `data.owner_step` and `data.ready[].owner_comment` name the owner's `/bosun approve <sha>` PR comment; `--as signer` reads the policy at the PR base and names quorum (D-022) and autonomous.

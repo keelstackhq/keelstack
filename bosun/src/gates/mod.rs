@@ -12,6 +12,7 @@ pub mod ts;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Mutex;
 use std::time::Instant;
 
 use serde_json::{Value, json};
@@ -29,11 +30,57 @@ pub struct Request<'a> {
     pub all: bool,
 }
 
+/// Set by `bosun merge` (again before each gate): children and git calls then get exactly this environment.
+static ISOLATED: Mutex<Option<Vec<(&'static str, String)>>> = Mutex::new(None);
+
+/// A command that, once [`isolate`] ran, sees only the allow-listed environment.
+pub(crate) fn cmd(program: &str) -> Command {
+    let mut c = Command::new(program);
+    if let Some(env) = ISOLATED.lock().ok().and_then(|g| g.clone()) {
+        c.env_clear().envs(env);
+    }
+    c
+}
+
+/// From now on children get `PATH`, `LANG`, `TERM`, the proxy and CA variables, the rustup home, a
+/// new `HOME`, `CARGO_HOME` and `TMPDIR` under `private` (call again for new ones), no global git config.
+pub fn isolate(private: &Path) {
+    let env = isolated_env(private, |n| std::env::var(n).ok());
+    if let Ok(mut g) = ISOLATED.lock() {
+        *g = Some(env);
+    }
+}
+
+/// Variables copied from the parent into an isolated environment.
+const KEEP: &str = "PATH LANG LC_ALL TERM HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy ALL_PROXY all_proxy NODE_EXTRA_CA_CERTS CARGO_HTTP_CAINFO SSL_CERT_FILE SSL_CERT_DIR CURL_CA_BUNDLE GIT_SSL_CAINFO REQUESTS_CA_BUNDLE";
+
+/// The isolated environment; `get` reads the parent's variables.
+fn isolated_env(
+    private: &Path,
+    get: impl Fn(&str) -> Option<String>,
+) -> Vec<(&'static str, String)> {
+    let home = get("HOME").unwrap_or_default();
+    let rustup = get("RUSTUP_HOME").unwrap_or(format!("{home}/.rustup"));
+    let mut env = vec![("RUSTUP_HOME", rustup), ("GIT_CONFIG_NOSYSTEM", "1".into())];
+    env.push(("GIT_CONFIG_GLOBAL", "/dev/null".into()));
+    for n in KEEP.split(' ') {
+        env.extend(get(n).map(|v| (n, v)));
+    }
+    for (k, v) in [("HOME", "home"), ("CARGO_HOME", "cargo"), ("TMPDIR", "tmp")] {
+        let _ = std::fs::create_dir_all(private.join(v));
+        env.push((k, private.join(v).to_string_lossy().into_owned()));
+    }
+    env
+}
+
 /// Run `git <args>` in `root`; stdout on success.
 pub(crate) fn git(root: &Path, args: &[&str]) -> Result<String, BosunError> {
-    let out = Command::new("git")
+    let out = cmd("git")
         .arg("-C")
         .arg(root)
+        .args(["-c", "core.hooksPath=/dev/null"])
+        .args(["-c", "core.fsmonitor=false"])
+        .arg("--no-replace-objects")
         .args(args)
         .output()
         .map_err(|e| {
@@ -55,16 +102,18 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<String, BosunError> {
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// Whether `git cat-file -e <spec>` finds the object; any failure counts as "no".
-fn git_has(root: &Path, spec: &str) -> bool {
-    Command::new("git")
+/// Is `path` in the tree of `rev`? `Some(false)` only when git answered and the path is absent
+/// (`git ls-tree` exits 0 with no output); a bad rev or any other git error is `None`, so callers
+/// fail closed instead of mistaking a git failure for an absent file.
+pub(crate) fn git_has(root: &Path, rev: &str, path: &str) -> Option<bool> {
+    let out = cmd("git")
         .arg("-C")
         .arg(root)
-        .args(["cat-file", "-e", spec])
-        .stdout(Stdio::null())
+        .args(["ls-tree", "--name-only", rev, "--", path])
         .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|s| s.success())
+        .output()
+        .ok()?;
+    out.status.success().then_some(!out.stdout.is_empty())
 }
 
 /// Is `file` missing in the stack's working tree and at the base too? Also with `--all`: a
@@ -76,7 +125,32 @@ fn missing_file(req: &Request, stack: &Stack, file: &str) -> bool {
         return false;
     }
     let path = Path::new(rel).join(file);
-    !git_has(req.root, &format!("{}:{}", req.base, path.display()))
+    absent_at_base(git_has(req.root, req.base, &path.to_string_lossy()))
+}
+
+/// True only when git answered that the path is absent; an error (`None`) is not absence, so the
+/// gate runs instead of being skipped.
+fn absent_at_base(has: Option<bool>) -> bool {
+    has == Some(false)
+}
+
+/// Is none of `files` present at the base commit, in the stack directory or any parent up to the
+/// repo root? Only the base counts: a bootstrap PR that adds the config has it at head, and the
+/// gate stays neutral until the base has it.
+fn missing_in_base(req: &Request, stack: &Stack, files: &[String]) -> bool {
+    let mut dir = PathBuf::from(stack_rel(&stack.path));
+    loop {
+        for f in files {
+            // Present, or git failed: the gate runs (fail closed).
+            if !absent_at_base(git_has(req.root, req.base, &dir.join(f).to_string_lossy())) {
+                return false;
+            }
+        }
+        if !dir.pop() {
+            // A true bootstrap has no `.bosun/` in the base either; with one, the gate runs.
+            return absent_at_base(git_has(req.root, req.base, ".bosun"));
+        }
+    }
 }
 
 /// The profile's manifest when the stack has none, head or base: a stack that never had one has
@@ -172,17 +246,29 @@ pub fn run(req: &Request) -> CmdResult {
 
     let mut runs: Vec<Value> = Vec::new();
     let mut failed: Option<i64> = None;
+    let mut no_lock: Option<(String, String)> = None;
     for (stack, profile, files) in &plan {
         let gate = profile.gate(req.gate)?;
         let lacks = gate
             .requires
             .as_deref()
             .filter(|f| missing_file(req, stack, f));
+        let bootstrap = (!gate.base_requires.is_empty()
+            && missing_in_base(req, stack, &gate.base_requires))
+        .then(|| gate.base_requires.join(", "));
         let run = match missing_manifest(req, stack, profile) {
             Some(manifest) => json!({
                 "gate": req.gate, "stack": stack.path, "command": [], "packages": [],
                 "exit_status": 0, "secs": 0.0, "over_budget": false, "skipped": true,
                 "reason": format!("no {manifest} in {}", stack.path),
+            }),
+            None if bootstrap.is_some() => json!({
+                "gate": req.gate, "stack": stack.path, "command": [], "packages": [],
+                "exit_status": 0, "secs": 0.0, "over_budget": false, "skipped": true,
+                "reason": format!(
+                    "no {} in base: bootstrap PR, gate neutral",
+                    bootstrap.unwrap_or_default()
+                ),
             }),
             None => match lacks {
                 Some(file) => json!({
@@ -194,6 +280,26 @@ pub fn run(req: &Request) -> CmdResult {
             },
         };
         let status = run["exit_status"].as_i64().unwrap_or(0);
+        if status != 0
+            && gate.is_locked()
+            && let Some(lock) = profile.lockfile.as_deref()
+            && !lockfile_exists(req.root, stack_rel(&stack.path), lock)
+        {
+            let at = match stack_rel(&stack.path) {
+                "" => String::new(),
+                rel => format!(" in {rel}"),
+            };
+            no_lock = Some((
+                format!(
+                    "gate {} failed (exit {status}): no {lock}{at} or in a parent up to the repo root, and the gate runs with `--locked`",
+                    req.gate
+                ),
+                format!(
+                    "run `cargo generate-lockfile` and commit {lock}, then rerun `bosun gate {}`",
+                    req.gate
+                ),
+            ));
+        }
         runs.push(run);
         if status != 0 {
             failed = Some(status);
@@ -207,14 +313,32 @@ pub fn run(req: &Request) -> CmdResult {
     data["uncommitted"] = json!(dirty);
     match failed {
         None => Ok(Outcome::data(data)),
-        Some(code) => Err(BosunError::error(
-            format!("gate {} failed (exit {code})", req.gate),
-            format!(
-                "fix the failures above, then rerun `bosun gate {}`",
-                req.gate
-            ),
-        )
-        .with_data(data)),
+        Some(code) => {
+            let (message, fix) = no_lock.unwrap_or_else(|| {
+                (
+                    format!("gate {} failed (exit {code})", req.gate),
+                    format!(
+                        "fix the failures above, then rerun `bosun gate {}`",
+                        req.gate
+                    ),
+                )
+            });
+            Err(BosunError::error(message, fix).with_data(data))
+        }
+    }
+}
+
+/// Whether `lock` exists in the stack dir or a parent up to the repo root (a workspace member's
+/// lockfile sits at the workspace root).
+fn lockfile_exists(root: &Path, rel: &str, lock: &str) -> bool {
+    let mut dir = root.join(rel);
+    loop {
+        if dir.join(lock).exists() {
+            return true;
+        }
+        if dir == root || !dir.pop() {
+            return false;
+        }
     }
 }
 
@@ -266,7 +390,7 @@ fn execute(
         .split('\0')
         .filter(|f| !f.is_empty())
         {
-            let out = Command::new("git")
+            let out = cmd("git")
                 .arg("-C")
                 .arg(req.root)
                 .args(["diff", "--no-index", "--", "/dev/null", f])
@@ -344,7 +468,7 @@ fn execute(
 
 /// Workspace packages with a library target (`lib`, `rlib` or `proc-macro`).
 fn lib_packages(dir: &Path) -> Vec<String> {
-    let Ok(out) = Command::new("cargo")
+    let Ok(out) = cmd("cargo")
         .args(["metadata", "--no-deps", "--format-version", "1"])
         .current_dir(dir)
         .output()
@@ -375,7 +499,7 @@ fn lib_packages(dir: &Path) -> Vec<String> {
 /// Whether `cargo nextest` runs here (BOSUN_NO_NEXTEST=1 forces plain `cargo test`).
 fn nextest_installed() -> bool {
     std::env::var_os("BOSUN_NO_NEXTEST").is_none()
-        && Command::new("cargo")
+        && cmd("cargo")
             .args(["nextest", "--version"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
@@ -392,7 +516,7 @@ fn spawn(argv: &[String], dir: &Path) -> Result<(i64, f64), BosunError> {
         )
     })?;
     let start = Instant::now();
-    let status = Command::new(program)
+    let status = cmd(program)
         .args(&argv[1..])
         .current_dir(dir)
         // A repo's test command is repo code: it never sees the GitHub token.
@@ -423,5 +547,94 @@ mod tests {
         let changed = vec!["web/a.ts".to_string(), "src/b.rs".to_string()];
         assert_eq!(under_stack("web/", &changed), vec!["a.ts"]);
         assert_eq!(under_stack(".", &changed).len(), 2);
+    }
+
+    /// The helper calls must go through `cmd`, or `bosun merge`'s isolated environment misses them.
+    #[test]
+    fn helper_git_and_cargo_calls_use_the_isolated_cmd() {
+        let files = [
+            ("gates/mod.rs", include_str!("mod.rs")),
+            ("gates/integrity.rs", include_str!("integrity.rs")),
+            ("gates/packages.rs", include_str!("packages.rs")),
+            ("cli/stamps.rs", include_str!("../cli/stamps.rs")),
+            ("cli/gate.rs", include_str!("../cli/gate.rs")),
+        ];
+        for (name, src) in files {
+            let code = src.split("#[cfg(test)]").next().unwrap_or(src);
+            let plain = code.matches("Command::new(\"git\")").count()
+                + code.matches("Command::new(\"cargo\")").count();
+            // `cmd` itself is the one `Command::new(program)`.
+            assert_eq!(plain, 0, "{name} runs git or cargo outside gates::cmd");
+        }
+    }
+
+    #[test]
+    fn isolated_env_keeps_proxy_and_ca_variables_only() {
+        let tmp = tempfile::tempdir().unwrap();
+        let names = [
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "http_proxy",
+            "https_proxy",
+            "NO_PROXY",
+            "no_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NODE_EXTRA_CA_CERTS",
+            "CARGO_HTTP_CAINFO",
+            "SSL_CERT_FILE",
+        ];
+        let env = isolated_env(tmp.path(), |n| {
+            (names.contains(&n) || n == "SECRET_TOKEN").then(|| format!("v-{n}"))
+        });
+        for n in names {
+            assert!(env.contains(&(n, format!("v-{n}"))), "{n} is kept");
+        }
+        assert!(env.iter().all(|(k, _)| *k != "SECRET_TOKEN"));
+    }
+
+    #[test]
+    fn a_git_error_is_not_absence() {
+        assert!(absent_at_base(Some(false)));
+        assert!(!absent_at_base(Some(true)));
+        assert!(!absent_at_base(None));
+    }
+
+    #[test]
+    fn git_has_tells_absent_from_a_git_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let run = |args: &[&str]| {
+            let ok = Command::new("git")
+                .arg("-C")
+                .arg(tmp.path())
+                .args(args)
+                .stdout(Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        run(&["init", "-q", "-b", "main"]);
+        std::fs::create_dir(tmp.path().join(".bosun")).unwrap();
+        std::fs::write(tmp.path().join(".bosun/a"), "x").unwrap();
+        run(&["add", "."]);
+        run(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "c",
+        ]);
+        assert_eq!(git_has(tmp.path(), "HEAD", ".bosun"), Some(true));
+        assert_eq!(git_has(tmp.path(), "HEAD", ".bosun/a"), Some(true));
+        assert_eq!(git_has(tmp.path(), "HEAD", "nope"), Some(false));
+        // A bad rev is an error, never "absent".
+        assert_eq!(git_has(tmp.path(), "no-such-rev", ".bosun"), None);
+        // A directory that is no repository too.
+        let plain = tempfile::tempdir().unwrap();
+        assert_eq!(git_has(plain.path(), "HEAD", ".bosun"), None);
     }
 }

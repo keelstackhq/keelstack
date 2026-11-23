@@ -111,6 +111,29 @@ fn owner_globs() -> Vec<Glob> {
         .flat_map(|r| r.paths.clone())
         .collect();
     out.extend(critical_globs(&roots));
+    // Under quorum (D-022) bosun's own code root is trust root too, and a rule: everything under
+    // `src/**`, `profiles/**` and `channel/**` (compiled in), the manifest, build script, launchers.
+    let quorum = bosun::core::folders::under("bosun", &bosun::core::approve::QUORUM_CODE_FILES);
+    out.extend(quorum.iter().map(|g| Glob::parse(g).unwrap()));
+    // And the quorum trust root list itself (`risk::TRUST_ROOT`, D-022): every glob of it has a
+    // line, every line maps to a glob.
+    out.extend(
+        bosun::core::risk::TRUST_ROOT
+            .iter()
+            .map(|g| Glob::parse(g).unwrap()),
+    );
+    // `trust_root_changed` also reads the list and the trust files under each code root
+    // (`bosun/.bosun/**`, `bosun/scripts/**`, ...): the copies a folder's own file shadows are
+    // filtered by `other_folder_copy` where the globs are used.
+    let all: Vec<&str> = (bosun::core::risk::TRUST_ROOT.iter())
+        .chain(bosun::core::approve::TRUST_FILES.iter())
+        .copied()
+        .collect();
+    out.extend(
+        bosun::core::folders::under("bosun", &all)
+            .iter()
+            .map(|g| Glob::parse(g).unwrap()),
+    );
     out
 }
 

@@ -193,6 +193,22 @@ fn a_registered_child_cannot_rejoin_as_local_or_slack() {
     );
 }
 
+/// A plain re-join keeps a spawned record spawned: in the cloud (where every session has the
+/// child flag, so the env says `local`) the spawn record is what marks the child.
+#[test]
+fn a_plain_rejoin_keeps_a_spawned_record_spawned() {
+    let fake = FakeGithub::start();
+    run(
+        &fake,
+        "session_c",
+        T0,
+        &["join", "--origin", "spawned", "--parent", "session_a"],
+    );
+    let (code, v) = run(&fake, "session_c", T1, &["join"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["origin"], "spawned", "{v}");
+}
+
 // ---- Claude Tag seats (spec 10-slack) ----
 
 fn seat_run(

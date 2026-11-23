@@ -1,14 +1,23 @@
 //! The release commit's edits, computed in memory before anything is written: versions,
 //! internal dependents' requirements, the inherited workspace version, changelogs, PR body.
 
+pub(super) use crate::changeset::changelog::Shas;
+use crate::changeset::changelog::blocks;
+use crate::changeset::plan::Rewrite;
+use crate::changeset::range::rewrite;
+use crate::changeset::{Changeset, CsConfig, CsType};
 use crate::error::HoistError;
+use crate::release::edit::changelog_section as changelog_body;
+use crate::release::edit::fence_step;
 use crate::release::edit::{
-    prepend_changelog, set_cargo_dep_version, set_cargo_version, set_package_json_dep,
+    prepend_changelog, prepend_section, rewrite_cargo_dep, rewrite_package_json_dep,
+    rewrite_workspace_dep, set_cargo_dep_version, set_cargo_version, set_package_json_dep,
     set_package_json_version, today,
 };
 use crate::release::launcher::check_optional_deps;
 use crate::release::planner::NextVersion;
-use crate::release::{Package, PkgKind, ReleaseModel};
+use crate::release::semver::Version;
+use crate::release::{DepKind, Package, PkgKind, ReleaseModel};
 use crate::repo::targets::{config_err, crate_dirs, join_rel};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,10 +28,33 @@ pub(super) struct Prepared {
     pub files: BTreeMap<String, String>,
     /// Files that did not exist before (removed again when a run stops).
     pub created: Vec<String>,
+    /// Consumed changesets, deleted in the release commit (changesets spec §8).
+    pub deleted: Vec<String>,
     pub npm: bool,
     pub cargo: bool,
     pub title: String,
     pub body: String,
+}
+
+/// Changesets mode: the changesets, config, idle rewrites and the sha that added each file.
+pub(super) struct Cs {
+    pub cfg: CsConfig,
+    pub sets: Vec<Changeset>,
+    pub idle: Vec<Rewrite>,
+    pub shas: Shas,
+}
+
+impl Cs {
+    /// Every changeset whose packages (types above `none`) all release; empty ones too.
+    fn consumed(&self, next: &[NextVersion]) -> Vec<&Changeset> {
+        let releases = |n: &String| next.iter().any(|x| x.package == *n);
+        let all = |c: &&Changeset| {
+            c.releases
+                .iter()
+                .all(|(n, t)| *t == CsType::None || releases(n))
+        };
+        self.sets.iter().filter(all).collect()
+    }
 }
 
 /// Files read once from disk, then edited in memory.
@@ -174,17 +206,76 @@ fn workspace_dep(files: &mut Files, name: &str) -> bool {
         })
 }
 
-fn changelog_section(p: &Package, nv: &NextVersion, date: &str) -> String {
-    let text = prepend_changelog(None, nv, date);
-    let section = text.strip_prefix("# Changelog\n\n").unwrap_or(&text);
-    match section.strip_prefix("## ") {
-        Some(rest) => format!("### {} {rest}", p.name),
-        None => section.to_string(),
+/// The new CHANGELOG text of `nv` (commits or changesets layout).
+fn changelog(
+    existing: Option<&str>,
+    nv: &NextVersion,
+    next: &[NextVersion],
+    cs: Option<&Cs>,
+    date: &str,
+) -> String {
+    match cs {
+        Some(cs) => {
+            let b = blocks(nv, next, &cs.sets, &cs.shas);
+            prepend_section(existing, &nv.to.to_string(), date, &b, true)
+        }
+        None => prepend_changelog(existing, nv, date),
     }
-    .replace("\n### ", "\n#### ")
 }
 
-fn pr_body(model: &ReleaseModel, next: &[NextVersion], date: &str) -> String {
+/// The new section of `nv` for the PR body, including an `## Unreleased` body moved under it.
+fn changelog_section(
+    p: &Package,
+    nv: &NextVersion,
+    next: &[NextVersion],
+    cs: Option<&Cs>,
+    existing: Option<&str>,
+    date: &str,
+) -> String {
+    let text = changelog(existing, nv, next, cs, date);
+    let body = changelog_body(&text, &nv.to.to_string()).unwrap_or_default();
+    format!(
+        "### {} {} ({date})\n\n{}\n",
+        p.name,
+        nv.to,
+        demote_headings(&body)
+    )
+}
+
+/// `body` with CRLF as LF and each `### ` heading one level deeper, so it nests under the
+/// package heading; lines inside fenced code blocks stay as they are.
+fn demote_headings(body: &str) -> String {
+    let mut fence = None;
+    body.replace("\r\n", "\n")
+        .split_inclusive('\n')
+        .map(|l| {
+            let inside = fence_step(&mut fence, l);
+            match l.strip_prefix("### ") {
+                Some(rest) if !inside => format!("#### {rest}"),
+                _ => l.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// An id as a safe inline code span: backticks in it are replaced, whitespace runs (newlines)
+/// collapse to a space, so file names cannot inject markdown or mentions.
+pub(super) fn code_span(id: &str) -> String {
+    let clean: String = id
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('`', "'");
+    format!("`{clean}`")
+}
+
+fn pr_body(
+    model: &ReleaseModel,
+    next: &[NextVersion],
+    cs: Option<&Cs>,
+    existing: &BTreeMap<String, String>,
+    date: &str,
+) -> String {
     let mut body = String::from(
         "Prepared by `hoist release prepare`. Merging this PR releases the packages below; \
          `hoist release publish` then creates the tags.\n\n\
@@ -210,8 +301,29 @@ fn pr_body(model: &ReleaseModel, next: &[NextVersion], date: &str) -> String {
         }
         let tag = model.tag_for(p, &n.to.to_string());
         body.push_str(&format!("| `{}` | {version} | `{tag}` |\n", n.package));
-        sections.push_str(&format!("\n{}", changelog_section(p, n, date)));
+        sections.push_str(&format!(
+            "\n{}",
+            changelog_section(
+                p,
+                n,
+                next,
+                cs,
+                existing.get(&n.package).map(String::as_str),
+                date
+            )
+        ));
         tags.push_str(&format!("- `{tag}`\n"));
+    }
+    if let Some(cs) = cs {
+        body.push_str("\n## Changesets\n\n");
+        for n in next.iter().filter(|n| !n.changesets.is_empty()) {
+            let ids: Vec<String> = n.changesets.iter().map(|i| code_span(i)).collect();
+            let ids = ids.join(", ");
+            body.push_str(&format!("- `{}`: {}\n", n.package, ids));
+        }
+        for c in cs.consumed(next).iter().filter(|c| c.releases.is_empty()) {
+            body.push_str(&format!("- no package: {}\n", code_span(&c.id)));
+        }
     }
     format!("{body}\n## Changelog\n{sections}\n## Tags to create\n\n{tags}")
 }
@@ -221,6 +333,7 @@ pub(super) fn prepare_files(
     dir: &Path,
     model: &ReleaseModel,
     next: &[NextVersion],
+    cs: Option<&Cs>,
 ) -> Result<Prepared, HoistError> {
     let mut files = Files {
         root: dir,
@@ -252,8 +365,11 @@ pub(super) fn prepare_files(
             })?;
         }
     }
-    // Internal dependents' requirements.
-    for n in next.iter().filter(|n| n.from != n.to) {
+    if let Some(cs) = cs {
+        rewrite_ranges(&mut files, model, next, cs)?;
+    }
+    // Internal dependents' requirements (commits mode).
+    for n in next.iter().filter(|n| n.from != n.to && cs.is_none()) {
         let Some(dep) = find(&n.package) else {
             continue;
         };
@@ -278,9 +394,10 @@ pub(super) fn prepare_files(
     }
     let date = today();
     let mut created = Vec::new();
+    let mut old_logs = BTreeMap::new();
     for n in next {
         let Some(p) = find(&n.package) else { continue };
-        if p.launcher.is_some() {
+        if p.launcher.is_some() || cs.is_some_and(|c| !c.cfg.changelog) {
             continue; // a launcher has no changelog of its own
         }
         let rel = join_rel(&p.dir.to_string_lossy(), "CHANGELOG.md");
@@ -292,7 +409,10 @@ pub(super) fn prepare_files(
             }
             Err(e) => return Err(e),
         };
-        let text = prepend_changelog(existing.as_deref(), n, &date);
+        let text = changelog(existing.as_deref(), n, next, cs, &date);
+        if let Some(old) = existing {
+            old_logs.insert(n.package.clone(), old);
+        }
         files.map.insert(rel, text);
     }
     let kind_of = |n: &NextVersion| find(&n.package).map(|p| p.kind);
@@ -307,12 +427,94 @@ pub(super) fn prepare_files(
         .iter()
         .map(|n| format!("{}@{}", n.package, n.to))
         .collect();
+    let deleted = cs.map_or(vec![], |cs| {
+        let ids = cs.consumed(next).into_iter();
+        ids.map(|c| format!(".changeset/{}.md", c.id)).collect()
+    });
     Ok(Prepared {
         files: files.map,
         created,
+        deleted,
         npm,
         cargo,
         title: format!("release: {}", list.join(", ")),
-        body: pr_body(model, next, &date),
+        body: pr_body(model, next, cs, &old_logs, &date),
     })
+}
+
+/// Changesets mode: rewrite the planned ranges (spec §5.2) in their edge kind's tables, and
+/// root `[workspace.dependencies]` for `workspace = true` entries.
+fn rewrite_ranges(
+    files: &mut Files,
+    model: &ReleaseModel,
+    next: &[NextVersion],
+    cs: &Cs,
+) -> Result<(), HoistError> {
+    let updates = next.iter().flat_map(|n| {
+        let pkg = n.package.clone();
+        let each = n.dep_updates.iter();
+        each.map(move |(d, v, k)| (pkg.clone(), d.clone(), v.clone(), *k))
+    });
+    let mut root = Vec::new();
+    for (pkg, dep, v, kind) in updates.chain(cs.idle.iter().cloned()) {
+        let Some(p) = model.packages.iter().find(|p| p.name == pkg) else {
+            continue;
+        };
+        let ver = Version::parse(&v).map_err(|e| config_err(&manifest(p), e.to_string()))?;
+        let f = |old: &str| rewrite(old, &ver);
+        match p.kind {
+            PkgKind::Npm => {
+                let sections: &[&str] = match kind {
+                    DepKind::Normal | DepKind::Build => &["dependencies", "optionalDependencies"],
+                    DepKind::Peer => &["peerDependencies"],
+                    DepKind::Dev => &["devDependencies"],
+                };
+                files.edit(&manifest(p), |t| {
+                    rewrite_package_json_dep(t, &dep, sections, f)
+                })?
+            }
+            PkgKind::Crate => {
+                let table = match kind {
+                    DepKind::Normal | DepKind::Peer => "dependencies",
+                    DepKind::Build => "build-dependencies",
+                    DepKind::Dev => "dev-dependencies",
+                };
+                let mut inherits = false;
+                files.edit(&manifest(p), |t| {
+                    let (text, ws) = rewrite_cargo_dep(t, &dep, &[table], &f)?;
+                    inherits = ws;
+                    Ok(text)
+                })?;
+                if inherits && workspace_dep(files, &dep) && !root.contains(&dep) {
+                    files.edit("Cargo.toml", |t| rewrite_workspace_dep(t, &dep, &f))?;
+                    root.push(dep);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{code_span, demote_headings};
+
+    #[test]
+    fn headings_deepen_outside_fences_only_and_crlf_is_normalised() {
+        let body = "### Fixes\r\n\r\n- a\r\n```\r\n### not a heading\r\n```\r\n### More\r\n";
+        assert_eq!(
+            demote_headings(body),
+            "#### Fixes\n\n- a\n```\n### not a heading\n```\n#### More\n"
+        );
+        assert_eq!(demote_headings("~~~\n### x\n~~~\n"), "~~~\n### x\n~~~\n");
+    }
+
+    #[test]
+    fn ids_render_as_safe_code_spans_and_keep_pipes() {
+        assert_eq!(code_span("brave-fox"), "`brave-fox`");
+        let s = code_span("a`b <x>|@y\nz");
+        // Only used in list items: a backslash would show inside a code span.
+        assert_eq!(s, "`a'b <x>|@y z`");
+        assert!(!s.contains('\n'));
+    }
 }

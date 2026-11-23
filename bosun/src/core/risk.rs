@@ -285,7 +285,8 @@ fn lock_source_moved(path: &str, line: &str) -> bool {
 }
 
 /// Secret formats that are never exempt (R-secrets): age, PEM and PGP private keys, GitHub,
-/// Anthropic, OpenAI, Stripe, AWS and Slack tokens. They match even where the rule's own
+/// Anthropic, OpenAI, Stripe, AWS, Slack, npm, GitLab, Google API and Hugging Face tokens, and Slack
+/// webhook URLs. They match even where the rule's own
 /// `content` does not.
 const STRONG_SECRETS: &str = concat!(
     r"AGE-SECRET-KEY-[1]|-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----",
@@ -293,6 +294,8 @@ const STRONG_SECRETS: &str = concat!(
     r"|\bgh[pousr]_[A-Za-z0-9]{30,}|\bgithub_pat_[A-Za-z0-9_]{22,}",
     r"|\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{20,}|\b[sr]k_live_[A-Za-z0-9]{16,}",
     r"|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|\bxox[abprs]-[A-Za-z0-9-]{10,}",
+    r"|\bnpm_[A-Za-z0-9]{36}\b|\bglpat-[A-Za-z0-9_-]{20,}|\bAIza[0-9A-Za-z_-]{35}",
+    r"|\bhf_[A-Za-z0-9]{30,}|hooks\.slack\.com/services/[A-Za-z0-9]+/[A-Za-z0-9]+/[A-Za-z0-9]+",
 );
 
 fn strong_secret(line: &str) -> bool {
@@ -838,7 +841,7 @@ pub const CRITICAL_RULES: [&str; 3] = ["R-secrets", "R-prod-write", "R-unseen"];
 /// approving such a change: a same-repo PR's own `on: pull_request` copy can post a forged
 /// status on its head before anyone approves, so it is no owner gate (spec §8 residual; B2, a
 /// check run from a dedicated GitHub App pinned in the ruleset, closes it).
-pub const CRITICAL_PATHS: [&str; 21] = [
+pub const CRITICAL_PATHS: [&str; 22] = [
     ".bosun/**",
     "governance/**",
     "CODEOWNERS",
@@ -847,6 +850,7 @@ pub const CRITICAL_PATHS: [&str; 21] = [
     // The trust-root decisions (D-022): trust files, so on the floor too.
     "decisions/DECISIONS.md",
     "decisions/decisions/022-hands-off-approvals.md",
+    "decisions/decisions/025-chat-approvals-retired.md",
     // The required checks `hoist apply` puts in the ruleset: only the root file has `[github]`.
     "hoist.toml",
     ".github/workflows/**",
@@ -870,13 +874,15 @@ pub const CRITICAL_PATHS: [&str; 21] = [
 /// forks). All of `src/**`: the modules that judge approvals call most of the others, and any
 /// of them can do I/O with the workflow's token once released. Also what builds or installs
 /// the binary.
-pub const APPROVAL_CODE_PATHS: [&str; 7] = [
+pub const APPROVAL_CODE_PATHS: [&str; 9] = [
     "src/**",
     "Cargo.toml",
     "Cargo.lock",
     "build.rs",
     "**/build.rs",
     ".cargo/**",
+    "rust-toolchain.toml",
+    "rust-toolchain",
     "npm/**",
 ];
 
@@ -1127,6 +1133,292 @@ pub fn autonomous_excluded(
     why
 }
 
+/// The trust root of the quorum policy (D-022): paths a quorum signature never covers, always
+/// the owner's own approval. Whole-file match on purpose: a table-level diff of `bosun.toml`
+/// (only `[approvals]`) is not done, so any edit of the file needs the owner.
+///
+/// The list is compiled into the binary that judges the PR, and risk-check is built from the
+/// PR's base (or runs the base pin), so a single PR cannot widen or shrink it for itself.
+///
+/// The rule, not a file list: everything that builds or decides the judge is trust root, and
+/// `bosun/tests/trust_root_inputs.rs` walks the repo to prove it. Two parts:
+/// (a) every `.claude/**` file and every `.mcp.json` at any depth (`**/.claude/**`,
+/// `**/.mcp.json`): hooks, SessionStart commands, subagent prompts, rules, loop and memory files
+/// of the root and of every folder (splice, hoist, hull, hoard, berth);
+/// (b) every file that a trust-root workflow, hook, SessionStart command, setup script or
+/// secret-holding job reads or executes. The test extracts those inputs from
+/// `.github/workflows/*.yml`, every hook command, every `docs/setup-script.sh` and the channel
+/// templates (`scripts/*` and `*.sh` paths, `cd X` / `working-directory` / `pnpm --dir X` /
+/// `pnpm -C X` as `X/package.json`, `X/pnpm-lock.yaml`, `X/pnpm-workspace.yaml`,
+/// `X/.pnpmfile.cjs`, cargo as `Cargo.toml` / `build.rs`, files read at the base such as
+/// `pins.toml`) and fails when one is not listed here, so a new input needs a list edit in the
+/// same PR. `.github/CODEOWNERS` has a line for every glob (`governance_owners.rs`).
+///
+/// In every repo (and under each code root): the approval config and rules, the trust files of
+/// [`TRUST_FILES`](super::approve::TRUST_FILES) (keys, owners, CODEOWNERS, `.bosun/pins.toml`,
+/// the decisions index, D-022 and D-025), every `.github/workflows/**` and `.github/actions/**`
+/// file in every `[checks]` mode (a workflow the PR adds runs as the verdict author), the
+/// reviewers' prompts (`.claude/agents/**`, `REVIEW.md`, `docs/lessons.toml`) and the agent notes
+/// `AGENTS.md`, `CLAUDE.md` (in every folder), `CLAUDE.local.md`, and
+/// `.github/scripts/**`, `scripts/**`, `**/docs/setup-script.sh` and `.claude-plugin/**`.
+/// `hull/package.json`, `hull/pnpm-lock.yaml`, `hull/pnpm-workspace.yaml` and `hull/.pnpmfile.*`
+/// are what the root SessionStart hook installs (`cd hull && pnpm install`); `pins.toml` is read
+/// at the base by bosun's channel templates. The scripts that `release.yml` runs in jobs holding
+/// a secret or an id-token
+/// are listed by hand (`splice/scripts/**`, `hoard/scripts/**`, `*/npm/**`), and so is what the
+/// other jobs holding a secret or an id-token build or load: a compiled-in list reads no
+/// workflow, which is why the test is the check. The groups:
+/// - `**/Cargo.toml`, `**/build.rs`, `**/.cargo/config*`: `cargo publish` (id-token) builds every
+///   crate and runs its build script. A proc-macro crate's `src/` would also run at build: none
+///   exists today, add it here when one does.
+/// - `**/.npmrc`: `npm publish` and `npm pkg` load the project config.
+/// - `**/.cargo/**`, `**/rust-toolchain*`, `**/.pnpmfile.*`, `**/deny*.toml`,
+///   `**/package.json`, `**/pnpm-workspace.y*ml`: the files the gate jobs restore from the base
+///   (the `pat=` regexes), at any depth.
+/// - `hoard/src/**`, `hoard/action.yml`, `hoard/action/dist/**`, `hoard/tests/fixtures/**`: the
+///   hoard server that gets the R2 keys in hoard-self-test.yml, and fixture code run beside it.
+/// - `site/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`,
+///   `.pnpmfile.*` (pnpm 10+ also loads `.mjs`), `packages/deploy/**`: what the deploy-site.yml `wrangler` job loads to
+///   stage the wrangler that runs with the Cloudflare token.
+///
+/// Under each code root (where bosun's own code is, `bosun/`
+/// in the monorepo): [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES), so every file under
+/// its `src/` and `profiles/`, its manifest, build script and launchers; and at the repo root
+/// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) (`Cargo.toml`, `Cargo.lock`, the
+/// toolchain and cargo config) that build it.
+///
+/// `.bosun/version` (the release that judges every PR) is not listed: an upgrade to a released
+/// version stays under quorum. A change of it is trust root only when
+/// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
+/// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
+pub const TRUST_ROOT: [&str; 55] = [
+    // Every file of `.bosun/` (limits, registry, pins, rules, ...): CI restores all of it from the
+    // base (`^\.bosun(/|$)`), so a PR's change to one is judged by the base's copy. Only the root
+    // `.bosun/version` is left to [`pin_change_trust_root`].
+    ".bosun/**",
+    ".bosun/approvers.toml",
+    ".bosun/bosun.toml",
+    ".bosun/risk.toml",
+    "**/workflows/risk.yml*",
+    // Every workflow and local action, in every `[checks]` mode: verdicts are counted by the
+    // author `github-actions[bot]`, which any workflow the PR adds can post as.
+    ".github/workflows/**",
+    ".github/actions/**",
+    // Scripts the workflows run.
+    ".github/scripts/**",
+    // What sessions run or load: the setup script, repo scripts (`bump-version.sh`), the plugin
+    // and the rules.
+    "**/docs/setup-script.sh",
+    "scripts/**",
+    ".claude-plugin/**",
+    // Every `.claude/**` file (settings and hooks, agents, rules, loop, memory) and every MCP
+    // server config, at the repo root and in every folder: what a session starts and runs.
+    "**/.claude/**",
+    "**/.mcp.json",
+    // The root SessionStart hook runs `cd hull && pnpm install`: what pnpm loads there. Read at
+    // the base by bosun's channel templates (bosun.yml.jinja, the circleci bosun-ok job).
+    "hull/package.json",
+    "hull/pnpm-lock.yaml",
+    "hull/pnpm-workspace.yaml",
+    "hull/.pnpmfile.*",
+    "pins.toml",
+    // What `release.yml` runs in the jobs that hold the tag key or an OIDC token (`release`,
+    // `npm`, `crates`): listed by hand, because this list is compiled in and cannot read the
+    // workflow. Add a script here when a release job starts to run it.
+    "splice/scripts/**",
+    "hoard/scripts/**",
+    "*/npm/**",
+    // What `cargo publish` (job `crates`, id-token) builds and runs: every crate's manifest,
+    // build script and cargo config (`**/` also matches the repo root).
+    "**/Cargo.toml",
+    "**/build.rs",
+    "**/.cargo/config*",
+    // Project npm config, loaded by `npm publish` / `npm pkg` (jobs `npm`, cargo-deny-npm).
+    "**/.npmrc",
+    // The files the channel templates' gate jobs restore from the base before they run (the
+    // `pat=` regexes of bosun.yml.jinja, the circleci bosun-ok job and ci.yml), at any depth:
+    // a PR's change to one is judged by the base's copy, so no quorum may count it.
+    "**/.cargo/**",
+    "**/rust-toolchain",
+    "**/rust-toolchain.toml",
+    "**/.pnpmfile.*",
+    "**/deny.toml",
+    "**/.deny.toml",
+    "**/deny.exceptions.toml",
+    "**/.deny.exceptions.toml",
+    "**/package.json",
+    "**/pnpm-workspace.yaml",
+    "**/pnpm-workspace.yml",
+    // hoard-self-test.yml hands R2 keys to the server that `uses: ./hoard` starts (action.yml,
+    // action/dist built from src) and then runs the fixtures as the same user.
+    "hoard/src/**",
+    "hoard/action.yml",
+    "hoard/action/dist/**",
+    // Read and copied into the release bundle by the `release` job (tag key).
+    "hoard/action/src/checksums.generated.ts",
+    "hoard/tests/fixtures/**",
+    // deploy-site.yml job `wrangler` stages wrangler that `deploy` runs with the Cloudflare
+    // token: what pnpm loads there. `site/.npmrc` is covered by `**/.npmrc`.
+    "site/package.json",
+    "site/pnpm-lock.yaml",
+    "site/pnpm-workspace.yaml",
+    "site/.node-version",
+    "site/.pnpmfile.*",
+    "site/packages/deploy/**",
+    // Rules and templates that sessions and the guard load.
+    ".bosun/session-rules.toml",
+    ".bosun/template-tests",
+    ".bosun/template-tests/**",
+    // What the reviewers are taught (their prompts are `.claude/agents/**`, above): they decide
+    // what a verdict says.
+    "REVIEW.md",
+    "docs/lessons.toml",
+    // What every session is told, reviewers included: at the root and in every folder.
+    "**/AGENTS.md",
+    "**/CLAUDE.md",
+    // The memory files Claude Code loads besides `CLAUDE.md`.
+    "CLAUDE.local.md",
+];
+
+/// Counting verdicts from different sessions a quorum approval needs (D-022). One verdict's bar is
+/// [`VERDICT_MIN_CONFIDENCE`] (0.9), stricter than D-022's 0.85; it stays 0.9.
+pub const QUORUM_VERDICTS: usize = 2;
+
+/// The pin file whose change [`pin_change_trust_root`] judges.
+pub const PIN_FILE: &str = ".bosun/version";
+
+/// Whether any of `files` is (or was renamed from) [`PIN_FILE`].
+pub fn pin_changed(files: &[(&str, Option<&str>)]) -> bool {
+    files
+        .iter()
+        .any(|(f, prev)| *f == PIN_FILE || *prev == Some(PIN_FILE))
+}
+
+/// `x.y.z` of a plain pin (surrounding whitespace allowed; no `v`, suffix, or leading zeros).
+fn parse_pin(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.trim().split('.');
+    let mut next = || {
+        let p = parts.next()?;
+        let plain = !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit());
+        (plain && (p == "0" || !p.starts_with('0')))
+            .then(|| p.parse::<u64>().ok())
+            .flatten()
+    };
+    let v = (next()?, next()?, next()?);
+    parts.next().is_none().then_some(v)
+}
+
+/// Why a change of `.bosun/version` is trust root (owner only) under quorum (D-022), else `None`:
+/// the head pin is deleted or renamed away (`head` is `None`), not plain `x.y.z`, the base pin is
+/// absent or not a release (the owner sets the first pin), the head is lower than the base pin,
+/// or not a published release (`released`: the tag `v{head}` exists; unused when both pins are
+/// the same version). Only an upgrade between two release pins to a released version is fine.
+pub fn pin_change_trust_root(
+    base: Option<&str>,
+    head: Option<&str>,
+    released: bool,
+) -> Option<String> {
+    let Some(head) = head else {
+        return Some(".bosun/version deleted or renamed".into());
+    };
+    if base.map(str::trim) == Some(head.trim()) {
+        return None;
+    }
+    let Some(new) = parse_pin(head) else {
+        return Some(format!(
+            ".bosun/version is not a plain x.y.z version: {:?}",
+            head.trim()
+        ));
+    };
+    // A base that pins no release (`unreleased`, absent, not x.y.z) has no version to compare
+    // with: the owner picks the first released pin (fail closed, bosun#706).
+    let Some(old) = base.and_then(parse_pin) else {
+        return Some(format!(
+            ".bosun/version at base ({:?}) is not a release: the owner sets the first pin",
+            base.map_or("absent", str::trim)
+        ));
+    };
+    if old == new {
+        return None;
+    }
+    if new < old {
+        return Some(format!(
+            ".bosun/version downgrade {} -> {}",
+            base.unwrap_or("").trim(),
+            head.trim()
+        ));
+    }
+    (!released).then(|| {
+        format!(
+            ".bosun/version {} is not a published release (no tag v{0})",
+            head.trim()
+        )
+    })
+}
+
+/// The changed trust-root paths among `(path, previous path)` pairs: [`TRUST_ROOT`] and
+/// [`TRUST_FILES`](super::approve::TRUST_FILES) at the repo root and under each of `roots`,
+/// and [`QUORUM_CODE_FILES`](super::approve::QUORUM_CODE_FILES) under each of `roots` (the code
+/// roots, `""` is the repo root); with any code root also
+/// [`QUORUM_BUILD_FILES`](super::approve::QUORUM_BUILD_FILES) at the repo root. A
+/// rename counts on both sides, any case; a `..` segment counts as a hit. Empty: a quorum can
+/// count.
+pub fn trust_root_changed(files: &[(&str, Option<&str>)], roots: &[String]) -> Vec<String> {
+    let everywhere: Vec<&str> = (TRUST_ROOT.iter())
+        .chain(super::approve::TRUST_FILES.iter())
+        .copied()
+        .collect();
+    let mut texts: Vec<String> = everywhere.iter().map(|g| g.to_string()).collect();
+    if !roots.is_empty() {
+        // A repo with bosun's code: the manifest, lockfile, toolchain and cargo config at the
+        // root build the judge.
+        texts.extend(
+            (super::approve::TRUST_BUILD_FILES.iter())
+                .chain(&super::approve::QUORUM_BUILD_FILES)
+                .map(|g| g.to_string()),
+        );
+    }
+    for r in roots {
+        texts.extend(super::folders::under(r, &everywhere));
+        texts.extend(super::folders::under(r, &super::approve::QUORUM_CODE_FILES));
+    }
+    let globs: Vec<Glob> = (texts.iter())
+        .map(|g| Glob::parse(g).expect("built-in trust-root glob"))
+        .collect();
+    (files.iter())
+        .filter(|(path, prev)| {
+            (std::iter::once(path).chain(prev)).any(|p| {
+                p.split('/').any(|s| s == "..")
+                    || (*p != PIN_FILE && globs.iter().any(|g| matches_any_case(g, p)))
+            })
+        })
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
+/// The changed paths no quorum counts on (D-022), without the pin and secret judgements:
+/// [`trust_root_changed`] plus every CI file of [`workflow_files`], sorted and unique. One set
+/// for risk-check (`quorum_trust_root`) and the carry (rule 4).
+pub fn quorum_trust_paths(files: &[(&str, Option<&str>)], roots: &[String]) -> Vec<String> {
+    let mut out = trust_root_changed(files, roots);
+    out.extend(workflow_files(files));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The paths among `(path, patch)` pairs whose added lines hold a strong secret (PEM or PGP
+/// private key, age key, GitHub, Anthropic, OpenAI, Stripe, AWS, Slack, npm, GitLab, Google API or Hugging Face token, or a Slack webhook URL). Under quorum
+/// such a PR is the owner's: two reviewers must not be the only ones to see a real credential.
+pub fn strong_secret_files(files: &[(&str, Option<&str>)]) -> Vec<String> {
+    (files.iter())
+        .filter(|(_, patch)| {
+            (patch.map(added_lines).unwrap_or_default().iter()).any(|l| strong_secret(l))
+        })
+        .map(|(path, _)| path.to_string())
+        .collect()
+}
+
 /// The sessions whose clean verdict on `head` lets the orchestrator approve on its own (D-017):
 /// `(author, body, unedited)` comments oldest first. As [`clean_verdicts`], but an edited comment
 /// never counts, and any verdict by [`VERDICT_AUTHOR`] on `head` that would not count (edited too),
@@ -1205,7 +1497,7 @@ pub fn critical_in(matches: &[Match], files: &[ChangedFile], roots: &[String]) -
 /// A risk path also matches its lowercased form: on a case-insensitive filesystem (macOS,
 /// Windows) `Secrets.toml` or `.CircleCI/` is the same file, and a wider match only asks for
 /// more review. Patterns are written in lowercase where case can vary.
-fn matches_any_case(g: &Glob, path: &str) -> bool {
+pub(crate) fn matches_any_case(g: &Glob, path: &str) -> bool {
     let lower = path.to_lowercase();
     g.matches(path)
         || g.matches(&lower)
@@ -1328,7 +1620,7 @@ fn verdict_sessions<'a>(
             && !session.is_empty()
             && session != "unknown"
             && !is_bot_session(&session)
-            && !excluded.contains(&session)
+            && !excluded.iter().any(|e| same_session(e, &session))
         {
             let enrolled = models.is_none_or(|m| model.is_some_and(|x| m.contains(&x)));
             // A newest record relayed by an excluded session withdraws, never counts.
@@ -1350,8 +1642,71 @@ fn verdict_sessions<'a>(
 /// author). Wave agents share their orchestrator's session id (spec §4), so `S` and `S/task`
 /// are the same session here: fail closed.
 pub(crate) fn relayer_excluded(relayer: Option<&str>, excluded: &[String]) -> bool {
-    let root = |s: &str| s.split('/').next().unwrap_or_default().to_string();
-    relayer.is_some_and(|r| excluded.iter().any(|e| root(e) == root(r)))
+    relayer.is_some_and(|r| excluded.iter().any(|e| same_session(e, r)))
+}
+
+/// Whether two session ids share a root (`S` and `S/task` are one session, spec §4).
+fn same_session(a: &str, b: &str) -> bool {
+    a.split('/').next() == b.split('/').next()
+}
+
+/// One session id per root, the first seen: the quorum (D-022) counts sessions, and wave agents
+/// `S/r1`, `S/r2` are one session.
+pub fn distinct_roots(sessions: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for s in sessions {
+        if !out.iter().any(|o| same_session(o, &s)) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+/// The sessions that make up a quorum (D-022) on `head`: [`autonomous_verdicts`], then one per
+/// root, where a verdict also stands for the session that relayed it. A session may relay a
+/// verdict for another (`relayed_by`), so a relayer that posts records under two invented
+/// session ids counts once (bosun#706): two verdicts count only when their session roots and
+/// their carriers (the relayer, else the session) are all different.
+pub fn quorum_verdicts<'a>(
+    comments: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+) -> Vec<String> {
+    let all: Vec<_> = comments.into_iter().collect();
+    let counted = autonomous_verdicts(all.iter().copied(), head, excluded, models);
+    // The carrier of each session's newest unedited record on `head` (the one that counted).
+    let mut carrier: std::collections::BTreeMap<String, String> = Default::default();
+    for (author, body, unedited) in &all {
+        if *unedited
+            && author.eq_ignore_ascii_case(VERDICT_AUTHOR)
+            && let Some(Record::Verdict {
+                session,
+                head_sha,
+                relayed_by,
+                ..
+            }) = apply_record(body)
+            && head_sha == head
+        {
+            let by = relayed_by.unwrap_or_else(|| session.clone());
+            carrier.insert(session, by);
+        }
+    }
+    let mut seen: Vec<String> = Vec::new();
+    let mut out = Vec::new();
+    for s in counted {
+        let by = carrier.get(&s).cloned().unwrap_or_else(|| s.clone());
+        if seen
+            .iter()
+            .any(|x| same_session(x, &s) || same_session(x, &by))
+        {
+            continue;
+        }
+        seen.push(s.clone());
+        seen.push(by);
+        out.push(s);
+    }
+    out
 }
 
 const CARGO_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
@@ -2203,6 +2558,17 @@ mod tests {
             assert_eq!(ids(&eval(&[file(p, &[])])), ["R-ci"], "{p}");
         }
         assert!(eval(&[file("src/governance.rs", &[])]).is_empty());
+        // Files that steer how the gates build and run are the owner's.
+        for p in [
+            "clippy.toml",
+            ".clippy.toml",
+            "rustfmt.toml",
+            "x/.rustfmt.toml",
+            "a/rust-toolchain.toml",
+            "a/.cargo/config",
+        ] {
+            assert!(ids(&eval(&[file(p, &[])])).contains(&"R-ci"), "{p}");
+        }
     }
 
     #[test]
@@ -2722,9 +3088,13 @@ paths = ["channel/**", ".github/workflows/**", "deny.toml"]
             assert!(!critical(&[], &[f], false).is_empty(), "{t}");
         }
         // bosun's trust code is on the floor wherever bosun's code is.
-        for t in crate::core::approve::TRUST_CODE_FILES {
+        for t in crate::core::approve::TRUST_CODE_FILES
+            .iter()
+            .chain(&crate::core::approve::TRUST_BUILD_FILES)
+            .chain(&crate::core::approve::QUORUM_BUILD_FILES)
+        {
             let f = ChangedFile {
-                path: t.into(),
+                path: t.to_string(),
                 previous_path: None,
                 added_lines: Vec::new(),
             };
@@ -2847,5 +3217,428 @@ mod monorepo_tests {
         for p in paths {
             assert!(!critical_in(&[], &[file(p)], &roots()).is_empty(), "{p}");
         }
+    }
+
+    #[test]
+    fn pin_change_is_trust_root_for_downgrade_unreleased_garbage_and_deletion() {
+        let c = pin_change_trust_root;
+        let has = |r: Option<String>, w: &str| r.is_some_and(|r| r.contains(w));
+        assert!(has(
+            c(Some("0.21.0\n"), Some("0.20.9\n"), true),
+            "downgrade"
+        ));
+        assert!(has(c(Some("0.21.0"), Some("0.9.0"), true), "downgrade"));
+        assert_eq!(c(Some("0.21.0\n"), Some("0.22.0\n"), true), None);
+        assert_eq!(c(Some("0.9.0"), Some("0.10.0"), true), None);
+        assert!(has(
+            c(Some("0.21.0"), Some("0.22.0"), false),
+            "not a published"
+        ));
+        for bad in [
+            "",
+            "v0.22.0",
+            "0.22",
+            "0.22.0-rc1",
+            "0.22.0 # x",
+            "0.022.0",
+            "1.2.3.4",
+            "latest",
+        ] {
+            assert!(has(c(Some("0.21.0"), Some(bad), true), "plain"), "{bad:?}");
+        }
+        assert!(has(c(Some("0.21.0"), None, true), "deleted"));
+        assert_eq!(c(Some("0.21.0\n"), Some("0.21.0"), false), None);
+        // No release at base (absent, `unreleased`): the owner sets the first pin (bosun#706).
+        assert!(has(c(None, Some("0.22.0"), true), "not a release"));
+        assert!(has(
+            c(Some("unreleased\n"), Some("0.22.0"), true),
+            "not a release"
+        ));
+        assert!(has(
+            c(Some("unreleased"), Some("0.1.0"), true),
+            "not a release"
+        ));
+        assert_eq!(c(Some("unreleased\n"), Some("unreleased"), false), None);
+        assert!(pin_changed(&[(".bosun/version", None)]));
+        assert!(pin_changed(&[("x", Some(".bosun/version"))]));
+        assert!(!pin_changed(&[("src/a.rs", None)]));
+    }
+
+    /// Every file of `.bosun/` is trust root at the repo root and under each code root (CI restores
+    /// all of it from the base); only the root pin file is [`pin_change_trust_root`]'s.
+    #[test]
+    fn every_bosun_file_is_trust_root_but_the_root_pin() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for f in [
+                ".bosun/limits.toml",
+                ".bosun/registry/a.json",
+                ".bosun/registry/deep/b.toml",
+                ".bosun/session-rules.toml",
+                ".bosun/anything-new",
+                ".Bosun/Limits.toml",
+            ] {
+                assert_eq!(trust_root_changed(&[(f, None)], &roots), [f], "{f}");
+            }
+            assert!(trust_root_changed(&[(".bosun/version", None)], &roots).is_empty());
+            // Only the exact name is the pin; any other case is trust root (and no pin change).
+            for f in [".bosun/VERSION", ".Bosun/version", ".bosun/Version"] {
+                assert_eq!(trust_root_changed(&[(f, None)], &roots), [f], "{f}");
+                assert!(!pin_changed(&[(f, None)]), "{f}");
+                assert_eq!(
+                    trust_root_changed(&[("a.txt", Some(f))], &roots),
+                    ["a.txt"],
+                    "{f}"
+                );
+            }
+        }
+        let mono = vec!["bosun".to_string()];
+        for f in ["bosun/.bosun/limits.toml", "bosun/.bosun/registry/x"] {
+            assert_eq!(trust_root_changed(&[(f, None)], &mono), [f], "{f}");
+        }
+        // A rename into the folder counts on the previous path too.
+        assert_eq!(
+            trust_root_changed(&[("a.txt", Some(".bosun/limits.toml"))], &[]),
+            ["a.txt"]
+        );
+    }
+
+    #[test]
+    fn trust_root_counts_renames_case_and_dotdot() {
+        let t = |files: &[(&str, Option<&str>)], code: bool| {
+            let roots: Vec<String> = if code { vec![String::new()] } else { vec![] };
+            trust_root_changed(files, &roots)
+        };
+        assert!(t(&[("docs/x.md", None)], true).is_empty());
+        assert_eq!(t(&[(".bosun/approvers.toml", None)], false).len(), 1);
+        assert_eq!(t(&[(".bosun/bosun.toml", None)], false).len(), 1);
+        // Whole file: any edit of bosun.toml counts, not only `[approvals]`.
+        assert_eq!(t(&[(".bosun/bosun.toml", None)], true).len(), 1);
+        // A rename away from the file counts, and so does any case.
+        assert_eq!(
+            t(&[("docs/old.txt", Some(".bosun/approvers.toml"))], false),
+            ["docs/old.txt"]
+        );
+        assert_eq!(t(&[(".BOSUN/Approvers.TOML", None)], false).len(), 1);
+        assert_eq!(t(&[("a/../.bosun/bosun.toml", None)], false).len(), 1);
+        assert_eq!(t(&[("src/../x", None)], false).len(), 1);
+        // The code that judges counts only under a code root.
+        for f in ["src/core/risk.rs", "src/cli/claim.rs", "profiles/rust.toml"] {
+            assert!(t(&[(f, None)], false).is_empty(), "{f}");
+            assert_eq!(t(&[(f, None)], true), [f], "{f}");
+            assert_eq!(t(&[("docs/z.md", Some(f))], true).len(), 1, "{f}");
+            assert_eq!(t(&[(&f.to_uppercase(), None)], true).len(), 1, "{f}");
+        }
+        // The risk workflow and its channel template copies count in every repo, any case.
+        for f in [
+            ".github/workflows/risk.yml",
+            ".GITHUB/Workflows/RISK.yml",
+            "channel/pieces/core/files/.github/workflows/risk.yml.jinja",
+        ] {
+            assert_eq!(t(&[(f, None)], false), [f], "{f}");
+            assert_eq!(t(&[("docs/z.md", Some(f))], false).len(), 1, "{f}");
+        }
+    }
+
+    /// The rest of the trust root, by rule: what builds the judge at the repo root, the
+    /// workflows and actions in every mode, the pins, the decisions and the reviewer prompts.
+    #[test]
+    fn the_rest_of_the_trust_root_under_quorum() {
+        let roots = vec!["bosun".to_string()];
+        let t = |p: &str| trust_root_changed(&[(p, None)], &roots);
+        for f in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain",
+            "rust-toolchain.toml",
+            ".cargo/config",
+            ".cargo/config.toml",
+            "bosun/Cargo.toml",
+            "bosun/build.rs",
+            "bosun/npm/bosun/package.json",
+            ".bosun/pins.toml",
+            ".bosun/risk.toml",
+            ".claude/settings.json",
+            ".github/workflows/ci.yml",
+            ".github/workflows/x.yml",
+            ".github/actions/setup/action.yml",
+            "decisions/DECISIONS.md",
+            "decisions/decisions/022-hands-off-approvals.md",
+            "decisions/decisions/025-chat-approvals-retired.md",
+            ".claude/agents/reviewer.md",
+            "REVIEW.md",
+            "bosun/REVIEW.md",
+            "docs/lessons.toml",
+            "bosun/docs/lessons.toml",
+            // What the agents (reviewers included) are told, at the root and in the code root.
+            "AGENTS.md",
+            "CLAUDE.md",
+            "bosun/AGENTS.md",
+            "bosun/CLAUDE.md",
+            "CLAUDE.local.md",
+            "bosun/CLAUDE.local.md",
+            ".claude/CLAUDE.md",
+            "bosun/.claude/CLAUDE.md",
+            // Scripts the workflows run, and what bosun compiles in (`include_str!`).
+            ".github/scripts/verdict.sh",
+            ".github/scripts/lib/x.py",
+            // Scripts, plugin and rules that sessions or the release run; folder notes.
+            "docs/setup-script.sh",
+            "scripts/bump-version.sh",
+            "scripts/a/b.sh",
+            ".claude-plugin/plugin.json",
+            ".claude-plugin/skills/x/SKILL.md",
+            ".claude/rules/rust.md",
+            "hoist/AGENTS.md",
+            "hoist/CLAUDE.md",
+            "docs/AGENTS.md",
+            "a/b/c/CLAUDE.md",
+            // Executed by release.yml jobs that hold a secret or an id-token.
+            "splice/scripts/npm-stage.mjs",
+            "hoard/scripts/write-checksums.mjs",
+            "hoard/scripts/verify-build-shas.sh",
+            "splice/npm/splice/package.json",
+            "bosun/channel/bosun.toml.jinja",
+            "bosun/channel/pieces/core/files/x.md",
+            "bosun/profiles/rust.toml",
+        ] {
+            assert_eq!(t(f), [f], "{f}");
+        }
+        // Without a code root the lockfile and toolchain stay ordinary files (manifests and cargo
+        // config are trust root everywhere: `cargo publish` builds them); the workflows never do.
+        // The toolchain file too, at any depth: the gate jobs restore every `rust-toolchain(.toml)`
+        // from the base (the `pat=` regexes of the channel templates), so a PR's copy is never
+        // what ran and no quorum may count it.
+        for f in [
+            "Cargo.toml",
+            ".cargo/config.toml",
+            "rust-toolchain.toml",
+            "a/b/rust-toolchain",
+            "a/deny.toml",
+            "a/.pnpmfile.mjs",
+            "web/package.json",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+        assert!(trust_root_changed(&[("Cargo.lock", None)], &[]).is_empty());
+        for f in [
+            ".github/workflows/ci.yml",
+            ".github/actions/a/action.yml",
+            "REVIEW.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "CLAUDE.local.md",
+            ".claude/CLAUDE.md",
+            ".bosun/session-rules.toml",
+            ".bosun/template-tests/a.toml",
+            ".claude/loop.md",
+            ".claude/agents/explorer.md",
+            ".claude/agents/implementer.md",
+            ".github/scripts/x.sh",
+            "docs/setup-script.sh",
+            "scripts/bump-version.sh",
+            ".claude-plugin/plugin.json",
+            ".claude/rules/rust.md",
+            "hoist/CLAUDE.md",
+            "hoard/AGENTS.md",
+            "splice/scripts/npm-stage.mjs",
+            "hoard/scripts/write-checksums.mjs",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+        // A consumer repo's `src/` and another folder's files are no trust root.
+        for f in [
+            "src/core/risk.rs",
+            "hoist/src/core/risk.rs",
+            "bosun/tests/cli_quorum.rs",
+            "bosun/tests/x.rs",
+            "bosun/docs/spec/08-risk.md",
+            "hoist/src/lib.rs",
+            "docs/setup.md",
+            "hoist/scripts/x.sh",
+            "decisions/decisions/021-gated-prs-no-line-cap.md",
+        ] {
+            assert!(t(f).is_empty(), "{f}");
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
+        }
+    }
+
+    /// Every entry of the list is trust root, with and without a code root, and every script the
+    /// release jobs with a secret or id-token run (`release.yml`) is covered.
+    #[test]
+    fn every_trust_root_entry_and_release_script_is_trust_root() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for g in TRUST_ROOT {
+                let p = g.replace("**", "x/y").replace('*', "z");
+                assert_eq!(
+                    trust_root_changed(&[(p.as_str(), None)], &roots),
+                    [p.as_str()],
+                    "{g}"
+                );
+            }
+        }
+        for f in [
+            "scripts/bump-version.sh",
+            "splice/scripts/npm-stage.mjs",
+            "splice/scripts/smoke.sh",
+            "hoard/scripts/write-checksums.mjs",
+            "hoard/scripts/verify-build-shas.sh",
+            "hoard/scripts/release-complete.sh",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+        }
+    }
+
+    /// Jobs that hold a secret or an id-token load more than release scripts: cargo build scripts,
+    /// manifests and config, npm config, hoard's action and server, the site's wrangler staging.
+    #[test]
+    fn code_that_secret_holding_jobs_build_or_load_is_trust_root() {
+        for f in [
+            "hull/template-rust/Cargo.toml",
+            "keel/Cargo.toml",
+            "Cargo.toml",
+            "build.rs",
+            "x/build.rs",
+            "keel/.cargo/config.toml",
+            ".cargo/config",
+            ".cargo/config.toml",
+            ".npmrc",
+            "bosun/.npmrc",
+            "site/.npmrc",
+            "hoard/src/main.rs",
+            "hoard/action.yml",
+            "hoard/action/dist/main.js",
+            "hoard/tests/fixtures/turbo-repo/package.json",
+            "site/package.json",
+            "site/pnpm-lock.yaml",
+            "site/pnpm-workspace.yaml",
+            "site/.node-version",
+            "site/.pnpmfile.cjs",
+            "site/.pnpmfile.mjs",
+            "site/packages/deploy/package.json",
+        ] {
+            assert_eq!(trust_root_changed(&[(f, None)], &[]), [f], "{f}");
+            assert_eq!(
+                trust_root_changed(&[(f, None)], &["bosun".to_string()]),
+                [f],
+                "{f}"
+            );
+        }
+        for f in [
+            "site/apps/site/src/x.ts",
+            "hoard/docs/x.md",
+            "hoard/action/src/main.ts",
+            "keel/src/main.rs",
+        ] {
+            assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
+        }
+    }
+
+    #[test]
+    fn a_strong_secret_in_the_added_lines_is_named() {
+        let pem = "-----BEGIN RSA PRIVATE KEY-----";
+        let ghp = format!("token = \"ghp_{}\"", "a".repeat(36));
+        let files = [
+            ("a.txt", format!("@@ -0,0 +1,2 @@\n+ok\n+{pem}")),
+            ("b.txt", format!("@@ -0,0 +1,1 @@\n+{ghp}")),
+            ("c.txt", "@@ -0,0 +1,1 @@\n+password = \"x\"".to_string()),
+            ("d.txt", format!("@@ -1,1 +0,0 @@\n-{pem}")),
+        ];
+        let f: Vec<(&str, Option<&str>)> =
+            files.iter().map(|(p, b)| (*p, Some(b.as_str()))).collect();
+        assert_eq!(strong_secret_files(&f), ["a.txt", "b.txt"]);
+    }
+
+    #[test]
+    fn more_token_formats_are_strong_secrets() {
+        let hit = [
+            format!("NPM_TOKEN=npm_{}", "a1B2".repeat(9)),
+            format!("t: glpat-{}", "x".repeat(20)),
+            format!(
+                "key = \"AIza{}\"",
+                "Sy-_".repeat(9).chars().take(35).collect::<String>()
+            ),
+            format!("HF=hf_{}", "a".repeat(34)),
+            "url: https://hooks.slack.com/services/T0000/B0000/XXXXXXXXXXXXXXXX".to_string(),
+        ];
+        for (i, line) in hit.iter().enumerate() {
+            let patch = format!("@@ -0,0 +1,1 @@\n+{line}");
+            let f = [("a.txt", Some(patch.as_str()))];
+            assert_eq!(strong_secret_files(&f), ["a.txt"], "{i}: {line}");
+        }
+        for line in [
+            "use npm_config_cache",
+            "see npm_ packages",
+            "glpat-short",
+            "AIzaShort",
+            "hf_short",
+            "https://hooks.slack.com/docs",
+            "the AIza prefix",
+        ] {
+            let patch = format!("@@ -0,0 +1,1 @@\n+{line}");
+            assert!(
+                strong_secret_files(&[("a.txt", Some(&patch))]).is_empty(),
+                "{line}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_roots_count_once_and_exclude_by_root() {
+        assert_eq!(
+            distinct_roots(vec!["a/r1".into(), "a/r2".into(), "b".into(), "a".into()]),
+            ["a/r1", "b"]
+        );
+        let line = Record::Verdict {
+            session: "s/x".into(),
+            head_sha: "h".into(),
+            approved: true,
+            confidence: Some(0.95),
+            major: Some(0),
+            model: None,
+            relayed_by: None,
+        }
+        .to_line();
+        let body = format!("Review verdict: approve 0.95.\n\n{line}");
+        let c = [(VERDICT_AUTHOR, body.as_str(), true)];
+        let ex = |e: &str| vec![e.to_string()];
+        assert!(autonomous_verdicts(c, "h", &ex("s"), None).is_empty());
+        assert_eq!(autonomous_verdicts(c, "h", &ex("t"), None), ["s/x"]);
+    }
+
+    #[test]
+    fn a_relayer_counts_once_in_a_quorum() {
+        let h = "a".repeat(40);
+        let v = |s: &str, by: Option<&str>| {
+            let r = Record::Verdict {
+                session: s.into(),
+                head_sha: h.clone(),
+                approved: true,
+                confidence: Some(0.95),
+                major: Some(0),
+                model: None,
+                relayed_by: by.map(String::from),
+            }
+            .to_line();
+            format!("Review verdict: approve 0.95.\n\n{r}")
+        };
+        let bot = VERDICT_AUTHOR;
+        let q = |c: &[String]| {
+            quorum_verdicts(c.iter().map(|b| (bot, b.as_str(), true)), &h, &[], None)
+        };
+        // One session relays two invented reviewers: one carrier, one count (bosun#706).
+        assert_eq!(q(&[v("x", Some("r")), v("y", Some("r"))]).len(), 1);
+        assert_eq!(q(&[v("x", Some("r/1")), v("y", Some("r/2"))]).len(), 1);
+        // A reviewer that relays for another session is that carrier too.
+        assert_eq!(q(&[v("r", None), v("y", Some("r"))]).len(), 1);
+        // Two sessions of one root are one session.
+        assert_eq!(q(&[v("s/1", None), v("s/2", None)]).len(), 1);
+        // Two independent reviewers, and two relayed by two different relayers, count twice.
+        assert_eq!(q(&[v("a", None), v("b", None)]).len(), 2);
+        assert_eq!(q(&[v("x", Some("r")), v("y", Some("t"))]).len(), 2);
+    }
+
+    #[test]
+    fn quorum_needs_two_verdicts() {
+        assert_eq!(QUORUM_VERDICTS, 2);
     }
 }

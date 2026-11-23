@@ -118,8 +118,16 @@ grep -qF 'RELEASED_VERSION: ${{ needs.decide.outputs.released }}' <<<"$build_job
 grep -q '^# ci-minutes: allow concurrency [a-z]' "$ds" || bad "deploy-site.yml: no ci-minutes allow comment with a reason"
 # build installs and tests with no secrets and no environment; deploy holds the secrets and only
 # runs wrangler on a verified artifact: no checkout, no pnpm.
-grep -qF 'deploy --prod' <<<"$build_job" || bad "deploy-site.yml: build does not pack wrangler from the lockfile"
+wrangler_job="$(job_text "$ds" wrangler)"
+[ -n "$wrangler_job" ] || bad "deploy-site.yml: no wrangler job"
+grep -qF 'deploy --prod --ignore-scripts' <<<"$wrangler_job" || bad "deploy-site.yml: wrangler does not stage from the lockfile with --ignore-scripts"
+! grep -qE 'secrets\.|^    environment:' <<<"$wrangler_job" || bad "deploy-site.yml: wrangler job sees secrets or an environment"
+! grep -qE 'pnpm install|cache:|run ci' <<<"$wrangler_job" || bad "deploy-site.yml: wrangler job installs the workspace, restores a cache or runs a site script"
+! grep -qF 'deploy --prod' <<<"$build_job" || bad "deploy-site.yml: build stages wrangler (only the wrangler job may)"
 ! grep -qE 'secrets\.|^    environment:' <<<"$build_job" || bad "deploy-site.yml: build job sees secrets or an environment"
+grep -qF 'needs.wrangler.outputs.digest' <<<"$deploy" || bad "deploy-site.yml: deploy has no digest from wrangler"
+grep -qF 'tar -xzf artifact/site/site-dist.tgz dist' <<<"$deploy" || bad "deploy-site.yml: deploy does not extract only dist from the site archive"
+grep -qF -- '! -type f ! -type d' <<<"$deploy" || bad "deploy-site.yml: deploy does not reject anything but files and directories in dist"
 ! grep -qE 'pnpm|checkout|setup-node|npm install' <<<"$deploy" || bad "deploy-site.yml: deploy job installs or checks out code"
 grep -qF 'environment: site' <<<"$deploy" || bad "deploy-site.yml: deploy is not in environment site"
 grep -qF 'sha256sum -c' <<<"$deploy" || bad "deploy-site.yml: deploy does not verify the artifact's sha256"

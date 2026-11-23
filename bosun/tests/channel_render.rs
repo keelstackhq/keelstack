@@ -445,14 +445,12 @@ fn rust_gates_install_the_toolchain_file_once() {
         assert!(wf.contains("cache-bin: \"false\""), "{wf}");
         // Without a toolchain file in rust_path or a parent, the old pin, never `stable` (the
         // setup script has no fallback: it skips Rust).
-        let pin = "1.97";
         assert!(
-            wf.contains(&format!(
-                "rustup toolchain install {pin} --profile minimal -c rustfmt,clippy"
-            )),
+            wf.contains("rustup toolchain install \"$ch\" --profile minimal -c rustfmt,clippy"),
             "{wf}"
         );
-        assert!(wf.contains(&format!("rustup default {pin}")), "{wf}");
+        assert!(wf.contains("rustup default \"$ch\""), "{wf}");
+        assert!(wf.contains("ch=\"$PIN_RUST_FALLBACK\""), "{wf}");
         assert!(!wf.contains("install stable"), "{wf}");
     }
     let files = variant(&["ts-pnpm"], "");
@@ -966,6 +964,7 @@ fn toolchain_run(root: &std::path::Path, cwd: &std::path::Path) -> (bool, String
         .current_dir(cwd)
         .env("PATH", path)
         .env("GITHUB_WORKSPACE", root)
+        .env("PIN_RUST_FALLBACK", "1.97")
         .env("GITHUB_ENV", &env)
         .env("GITHUB_OUTPUT", bin.path().join("out"))
         .status()
@@ -1174,8 +1173,8 @@ fn the_plan_skips_gates_only_on_docs_and_drafts_fail() {
             .collect();
         assert_eq!(
             setup.len(),
-            4,
-            "toolchain, install-action (cargo-deny), setup-node, pnpm for the audit"
+            5,
+            "tool pins, toolchain, install-action (cargo-deny), setup-node, pnpm for the audit"
         );
         let gates = step(&steps, "name", "bosun gates");
         assert_eq!(gates["env"]["ONLY"], "${{ steps.plan.outputs.only }}");
@@ -1698,6 +1697,7 @@ fn the_required_check_installs_the_toolchain_bosun_trusted_checked() {
                 ("PATH", &path),
                 ("FILE", file_found),
                 ("CHANNEL", channel),
+                ("FALLBACK", "1.97"),
                 ("GITHUB_ENV", env.to_str().unwrap()),
             ],
         ));
@@ -2154,6 +2154,41 @@ fn an_explicit_pin_writes_the_policy_only_when_checked() {
     }
 }
 
+#[test]
+fn the_quorum_policy_renders_only_for_a_checked_pin_and_the_comment_names_its_release() {
+    for (pin, checked, written) in [("0.21.0", "", false), ("0.22.0", "1", true)] {
+        let vars: BTreeMap<&str, String> = [
+            ("project", "app"),
+            ("owner", ""),
+            ("bosun_version", pin),
+            ("template.version", "0.22.0"),
+            ("rust_path", "."),
+            ("ts_path", "."),
+            ("own_ci", ""),
+            ("intake", ""),
+            ("policy", "quorum"),
+            ("policy_pin_checked", checked),
+            ("ci_provider", ""),
+            ("ci_pin_checked", ""),
+            ("bosun_app", ""),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k, v.to_string()))
+        .collect();
+        let files = render_channel(&["core", "rust"], &vars);
+        let text = file(&files, ".bosun/bosun.toml");
+        let config: toml::Table = text.parse().unwrap();
+        let policy = config
+            .get("approvals")
+            .and_then(|a| a.get("policy"))
+            .and_then(|v| v.as_str());
+        assert_eq!(policy == Some("quorum"), written, "pin {pin}: {text}");
+        if !written {
+            assert!(text.contains("quorum: 0.22.0"), "{text}");
+        }
+    }
+}
+
 /// A sandbox for a full run of a setup script: stubs for every tool it calls log to `calls`.
 /// `node22` is first in PATH with a fake Node 22; `node24` holds a fake Node 24.
 struct SetupSandbox {
@@ -2168,6 +2203,13 @@ impl SetupSandbox {
         for d in ["bin", "node22", "node24", "repo"] {
             fs::create_dir(s.root.path().join(d)).unwrap();
         }
+        // The pins the setup scripts read (`.bosun/pins.toml` of the checkout).
+        fs::create_dir(s.root.path().join("repo/.bosun")).unwrap();
+        fs::copy(
+            channel().join("pieces/core/files/.bosun/pins.toml"),
+            s.root.path().join("repo/.bosun/pins.toml"),
+        )
+        .unwrap();
         let log = s.root.path().join("calls");
         let rec = format!("echo \"$(basename \"$0\") $*\" >> {}", log.display());
         for t in ["cargo", "curl", "apt-get", "bosun"] {
@@ -3065,5 +3107,78 @@ fn setup_scripts_assert_the_installed_bosun_is_the_pinned_one() {
         assert!(e.contains("not the pinned 5.5.5"), "{o}{e}");
         let (_, e) = run("0.1.0");
         assert!(!e.contains("WARNING"), "{e}");
+    }
+}
+
+/// The missing-pins warning is for Rust checkouts only (the pins are cargo tools), and no pins
+/// warning ever prints an empty version.
+#[test]
+fn setup_scripts_warn_about_missing_pins_only_for_rust_checkouts() {
+    let rust = variant(&["rust"], "");
+    let ts = variant(&["ts-pnpm"], "");
+    let own =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/setup-script.sh"))
+            .unwrap();
+    for (name, script) in [
+        ("channel-rust", file(&rust, "docs/setup-script.sh")),
+        ("channel-ts", file(&ts, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        let warns = |files: &[(&str, &str)]| {
+            let repo = tempfile::tempdir().unwrap();
+            for (rel, text) in files {
+                let p = repo.path().join(rel);
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(p, text).unwrap();
+            }
+            let (_, _, err) = setup_rust_version(script, repo.path());
+            assert!(!err.contains("()"), "{name}: {err}");
+            err.contains("is missing or incomplete")
+        };
+        let cargo = ("Cargo.toml", "[package]\n");
+        assert!(!warns(&[("package.json", "{}")]), "{name}: non-Rust warns");
+        assert_eq!(
+            warns(&[cargo]),
+            name != "channel-ts",
+            "{name}: Rust checkout"
+        );
+    }
+    // The hull-pins mismatch warnings are skipped when the .bosun pin is empty.
+    for (name, script) in [
+        ("channel", file(&rust, "docs/setup-script.sh")),
+        ("bosun", &own),
+    ] {
+        let start = script.find("# A repo with hull's pins.toml").expect(name);
+        let end = start + script[start..].find("\ncase \"$(uname -m)\"").unwrap();
+        let block = &script[start..end];
+        let repo = tempfile::tempdir().unwrap();
+        fs::write(repo.path().join("pins.toml"), "").unwrap();
+        fs::create_dir_all(repo.path().join("scripts")).unwrap();
+        fs::write(
+            repo.path().join("scripts/pins.mjs"),
+            "console.log(\"PIN_NEXTEST='0.9.1'\");console.log(\"PIN_CARGO_DENY='0.18.0'\");\n",
+        )
+        .unwrap();
+        let run = |n: &str, d: &str| {
+            let cmd = format!("NEXTEST_VERSION='{n}'\nCARGO_DENY_BIN_VERSION='{d}'\n{block}");
+            let out = Command::new("bash")
+                .args(["-c", &cmd])
+                .current_dir(repo.path())
+                .output()
+                .unwrap();
+            String::from_utf8_lossy(&out.stderr).into_owned()
+        };
+        let err = run("", "");
+        if Command::new("node").arg("--version").output().is_ok() {
+            assert!(
+                !err.contains("()") && !err.contains("differs"),
+                "{name}: {err}"
+            );
+            let err = run("0.9.0", "0.17.0");
+            assert!(
+                err.contains("(0.9.0)") && err.contains("(0.17.0)"),
+                "{name}: {err}"
+            );
+        }
     }
 }

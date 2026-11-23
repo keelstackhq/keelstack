@@ -32,6 +32,12 @@ pub struct Workflows {
     /// `file:job` of each job with a `secrets` use the scan cannot name (`toJSON(secrets)`,
     /// `secrets[matrix.n]`).
     pub unresolved_secrets: Vec<String>,
+    /// `file:job` of each job whose token may post commit statuses: `statuses: write` or
+    /// `write-all` in its own `permissions`, else in the workflow's.
+    pub status_writers: Vec<String>,
+    /// `file:job` of each job with no `permissions` (its own or the workflow's): its token
+    /// gets the repo's default workflow permissions.
+    pub default_permission_jobs: Vec<String>,
 }
 
 /// Secret references in YAML text: inside each `${{ … }}`, every `secrets.X` or
@@ -127,6 +133,15 @@ fn key(name: &str) -> Value {
     Value::String(name.to_string())
 }
 
+/// Whether a `permissions` value grants `statuses: write`.
+fn grants_statuses(permissions: &Value) -> bool {
+    match permissions {
+        Value::String(s) => s == "write-all",
+        Value::Mapping(m) => m.get(key("statuses")) == Some(&key("write")),
+        _ => false,
+    }
+}
+
 fn line_of(text: &str, offset: usize) -> usize {
     text[..offset].bytes().filter(|b| *b == b'\n').count() + 1
 }
@@ -137,6 +152,18 @@ fn job_line(text: &str, job: &str) -> usize {
     match text.find(&needle) {
         Some(i) => line_of(text, i + 1),
         None => 1,
+    }
+}
+
+/// Whether `on` names `workflow_call` and nothing else: the workflow only runs when another
+/// workflow calls it, and its token is capped by the caller's permissions.
+fn only_workflow_call(on: &Value) -> bool {
+    let call = |v: &Value| matches!(v, Value::String(s) if s == "workflow_call");
+    match on {
+        Value::String(_) => call(on),
+        Value::Sequence(items) => !items.is_empty() && items.iter().all(call),
+        Value::Mapping(map) => map.len() == 1 && map.contains_key(key("workflow_call")),
+        _ => false,
     }
 }
 
@@ -241,6 +268,12 @@ pub fn read_workflows(dir: &Path) -> Result<Workflows, HoistError> {
                 out.merge_group_source = Some(format!("{rel}:{line}"));
             }
         }
+        // Known limit: a `workflow_call`-only workflow is judged by its callers in this repo
+        // (their jobs count); callers in other repos are not seen.
+        let capped = [key("on"), Value::Bool(true)]
+            .iter()
+            .find_map(|k| top.get(k))
+            .is_some_and(only_workflow_call);
         let Some(jobs) = top.get(key("jobs")) else {
             continue;
         };
@@ -258,6 +291,15 @@ pub fn read_workflows(dir: &Path) -> Result<Workflows, HoistError> {
             let source = format!("{rel}:{line}");
             push_unique(&mut out.jobs, id.clone(), source.clone());
             let Value::Mapping(job) = job else { continue };
+            // A job's own `permissions` replace the workflow's entirely.
+            // `permissions: ~` is no override.
+            let set = |v: Option<&Value>| v.filter(|v| !v.is_null()).cloned();
+            match set(job.get(key("permissions"))).or(set(top.get(key("permissions")))) {
+                _ if capped => {}
+                Some(p) if grants_statuses(&p) => out.status_writers.push(format!("{name}:{id}")),
+                Some(_) => {}
+                None => out.default_permission_jobs.push(format!("{name}:{id}")),
+            }
             if let Some(Value::String(label)) = job.get(key("name")) {
                 push_unique(&mut out.jobs, label.clone(), source.clone());
             }

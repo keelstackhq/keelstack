@@ -163,8 +163,6 @@ pub fn batch_message(ready: &[(u64, String, String)]) -> Option<BatchMessage> {
     if ready.len() > shown.len() {
         text.push_str(&format!("\n- … and {} more", ready.len() - shown.len()));
     }
-    let nums: Vec<String> = shown.iter().map(|(pr, ..)| pr.to_string()).collect();
-    text.push_str(&format!("\nReply: approve {}", nums.join(" ")));
     Some(BatchMessage { id, text, pairs })
 }
 
@@ -366,6 +364,8 @@ pub fn bootstrap_line(until: &str) -> String {
 
 /// The note line of an autonomous-mode signature (D-017).
 pub const AUTONOMOUS_LINE: &str = "Signed in autonomous mode (D-017), not an owner answer";
+/// The note line of a quorum signature (D-022).
+pub const QUORUM_LINE: &str = "Signed under the quorum policy (D-022), not an owner answer";
 
 /// `[approvals] policy`: who may approve gated PRs once bootstrap mode (D-012) is over (D-014).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
@@ -381,6 +381,9 @@ pub enum Policy {
     /// As `Orchestrator`, gated PRs included, but only with a clean independent verdict on the
     /// head (D-017); releases, environments and secrets stay with the owner.
     Autonomous,
+    /// D-022: an autonomous signature plus two counting verdicts passes on every path except the
+    /// trust root (`risk::TRUST_ROOT`); needs a pin of 0.22.0 or later.
+    Quorum,
 }
 
 impl Policy {
@@ -390,6 +393,7 @@ impl Policy {
             Policy::OwnerGated => "owner-gated",
             Policy::Orchestrator => "orchestrator",
             Policy::Autonomous => "autonomous",
+            Policy::Quorum => "quorum",
         }
     }
 }
@@ -432,12 +436,25 @@ pub struct OrchestratorCase<'a> {
     pub workflows: &'a [String],
     /// `risk::autonomous_excluded` output: owner-only under [`Policy::Autonomous`].
     pub autonomous_excluded: &'a [String],
+    /// `risk::trust_root_changed` output: owner-only under [`Policy::Quorum`] (D-022).
+    pub trust_root: &'a [String],
     /// The PR's capabilities (labels and linked task metadata, plus `weaken` for findings).
     pub capabilities: &'a [String],
 }
 
 /// `Ok(label for the status)` when an orchestrator approval can count, else `Err(why)`.
 pub fn orchestrator_counts(c: &OrchestratorCase) -> Result<String, String> {
+    // D-022 decides before the R-weaken refusals: the quorum covers everything but the trust root.
+    // risk-check adds the verdict, signature and halt conditions.
+    if c.policy == Policy::Quorum {
+        if c.trust_root.is_empty() {
+            return Ok("quorum, D-022".into());
+        }
+        return Err(format!(
+            "quorum (D-022) never covers the trust root ({}): the owner approves",
+            c.trust_root.join(", ")
+        ));
+    }
     // A weakened gate is the owner's under every policy and in the window (owner decision).
     if c.rules.contains(&"R-weaken") {
         return Err("a PR that weakens a gate (R-weaken) always needs the owner".into());
@@ -496,7 +513,7 @@ pub fn orchestrator_counts(c: &OrchestratorCase) -> Result<String, String> {
     let label = |p: Policy| Ok(format!("policy {}, D-014", p.name()));
     match c.policy {
         Policy::Orchestrator => label(c.policy),
-        Policy::Autonomous => unreachable!("decided above"),
+        Policy::Autonomous | Policy::Quorum => unreachable!("decided above"),
         Policy::Owner => Err(format!(
             "approval policy owner: only the owner approves ({window})"
         )),
@@ -536,7 +553,7 @@ pub fn only_r_ci(statuses: &[Stat]) -> bool {
 /// main-open check and the review; a signed PR that weakened one would have every later PR
 /// judged by the weakened copy. Dependency manifests (`Cargo.toml`, `Cargo.lock`) are no trust
 /// files: they are owner-approved under R-deps.
-pub const TRUST_FILES: [&str; 14] = [
+pub const TRUST_FILES: [&str; 16] = [
     APPROVERS_PATH,
     APPROVALS_CONFIG,
     "governance/owners.toml",
@@ -545,13 +562,32 @@ pub const TRUST_FILES: [&str; 14] = [
     "docs/CODEOWNERS",
     DECISIONS_INDEX,
     DECISION_TRUST_ROOT,
+    DECISION_CHAT_APPROVALS,
     ".bosun/risk.toml",
     ".github/workflows/risk.yml",
     ".github/workflows/verdict.yml",
     ".github/workflows/signer.yml",
     ".github/workflows/main-open.yml",
     ".github/workflows/review.yml",
+    // What the judge is pinned by.
+    ".bosun/pins.toml",
 ];
+
+/// What bosun's own build reads at the repo root: the toolchain and cargo's config. Trust files
+/// only in a repo that has bosun's code (a code root), where they are on the critical floor
+/// through `APPROVAL_CODE_PATHS`; in any other repo they are ordinary R-ci tool files.
+pub const TRUST_BUILD_FILES: [&str; 4] = [
+    "rust-toolchain.toml",
+    "rust-toolchain",
+    ".cargo/config",
+    ".cargo/config.toml",
+];
+
+/// What the quorum adds to [`TRUST_BUILD_FILES`] at the repo root when there is a code root: the
+/// workspace manifest and lockfile that build the judge. Quorum trust root only
+/// (`risk::trust_root_changed`), not trust files of every policy: a signed approval may still
+/// cover a dependency bump where the policy is not quorum (R-deps).
+pub const QUORUM_BUILD_FILES: [&str; 2] = ["Cargo.toml", "Cargo.lock"];
 
 /// The bosun config that holds `[approvals]` (D-022 trust root).
 pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
@@ -564,8 +600,8 @@ pub const APPROVALS_CONFIG: &str = ".bosun/bosun.toml";
 /// and applies them (`src/cli/verdict.rs`) and the approval carry-over (`src/core/carry.rs`,
 /// `src/cli/carry_over.rs`). Trust files only under a code root (where bosun's code is: the repo
 /// root of bosun itself, `bosun/` in the monorepo), so another repo's `src/core/risk.rs` is no
-/// trust file.
-pub const TRUST_CODE_FILES: [&str; 9] = [
+/// trust file. Entries are globs (`**` for a folder), matched by [`is_trust_path`].
+pub const TRUST_CODE_FILES: [&str; 30] = [
     "src/core/risk.rs",
     "src/core/approve.rs",
     "src/cli/risk_check.rs",
@@ -575,12 +611,53 @@ pub const TRUST_CODE_FILES: [&str; 9] = [
     "src/cli/verdict.rs",
     "src/core/carry.rs",
     "src/cli/carry_over.rs",
+    // Every other file that judges or gates a merge: the default rules, the lease check, the
+    // output envelope, `bosun merge` and its gates, the gate and hook code and the guard.
+    "src/core/risk_default.toml",
+    "src/core/lease.rs",
+    "src/output.rs",
+    "src/cli/pr_no_ci.rs",
+    "src/cli/merge.rs",
+    "src/cli/merge_gates.rs",
+    "src/gates/**",
+    "src/hooks/**",
+    "src/core/guard.rs",
+    "src/core/guard/**",
+    // What those call to judge: the PR gates and stamps, test integrity, the review packs, the
+    // budget and local risk checks, the lockfile merge (carry rule 6), state and plan parsing.
+    "src/cli/pr.rs",
+    "src/cli/stamps.rs",
+    "src/cli/test_integrity.rs",
+    "src/cli/review_ci.rs",
+    "src/cli/review_pack.rs",
+    "src/cli/budget.rs",
+    "src/cli/risk_local.rs",
+    "src/core/lockmerge.rs",
+    "src/core/state.rs",
+    "src/core/plan.rs",
+    "src/core/shape.rs",
+];
+
+/// bosun's own code under quorum, as a rule and not a list of files: everything that builds or
+/// decides the judge. Every file under a code root's `src/` and `profiles/` (the gate profiles),
+/// its manifest, build script and launchers, so a new file needs no list edit. A superset of
+/// [`TRUST_CODE_FILES`] (the trust files of every policy); `risk::trust_root_changed` uses it.
+pub const QUORUM_CODE_FILES: [&str; 6] = [
+    "src/**",
+    "profiles/**",
+    // Compiled into the binary with `include_str!` (adopt.rs).
+    "channel/**",
+    "Cargo.toml",
+    "build.rs",
+    "npm/**",
 ];
 
 /// The org decisions index (D-002), read in place in the monorepo.
 pub const DECISIONS_INDEX: &str = "decisions/DECISIONS.md";
 /// D-022, whose row and file set the trust root and the merge quorum.
 pub const DECISION_TRUST_ROOT: &str = "decisions/decisions/022-hands-off-approvals.md";
+/// D-025, which retired chat approvals: the approval channels are part of the trust root.
+pub const DECISION_CHAT_APPROVALS: &str = "decisions/decisions/025-chat-approvals-retired.md";
 
 /// The changed trust files among `(path, previous path)` pairs.
 pub fn trust_files_changed<'a>(
@@ -590,9 +667,13 @@ pub fn trust_files_changed<'a>(
 }
 
 /// [`TRUST_FILES`] at the root and under each of `roots` (bosun's folder in a monorepo), and
+/// [`TRUST_BUILD_FILES`] at the root when there is a code root, and
 /// [`TRUST_CODE_FILES`] under each of `roots` (`""` is the repo root).
 pub fn trust_files_in(roots: &[String]) -> Vec<String> {
     let mut out: Vec<String> = TRUST_FILES.iter().map(|t| t.to_string()).collect();
+    if !roots.is_empty() {
+        out.extend(TRUST_BUILD_FILES.iter().map(|t| t.to_string()));
+    }
     for r in roots {
         out.extend(super::folders::under(r, &TRUST_FILES));
         out.extend(super::folders::under(r, &TRUST_CODE_FILES));
@@ -600,6 +681,17 @@ pub fn trust_files_in(roots: &[String]) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Whether `path` is one of `trust` (entries of [`trust_files_in`]: exact paths or globs).
+pub fn is_trust_path<S: AsRef<str>>(trust: &[S], path: &str) -> bool {
+    trust.iter().any(|t| {
+        let t = t.as_ref();
+        // As the quorum check (`risk::trust_root_changed`): any case, and `..` is a hit.
+        t == path
+            || path.split('/').any(|s| s == "..")
+            || super::glob::Glob::parse(t).is_ok_and(|g| super::risk::matches_any_case(&g, path))
+    })
 }
 
 /// [`trust_files_changed`] with the trust files also under each of `roots`.
@@ -613,7 +705,7 @@ pub fn trust_files_changed_in<'a>(
         .filter(|(p, prev)| {
             std::iter::once(*p)
                 .chain(*prev)
-                .any(|x| trust.iter().any(|t| t == x))
+                .any(|x| is_trust_path(&trust, x))
         })
         .map(|(p, _)| p.to_string())
         .collect()
@@ -637,78 +729,6 @@ pub fn signed_comment(
     format!("/bosun approve {head}{tail}\n{note}bosun-sig ed25519 {key_id} {sig_b64}")
 }
 
-/// The marker that tags a chat approval record (spec section 8).
-pub const CHAT_MARKER: &str = "bosun:chat-approval";
-
-/// A chat approval record: the orchestrator wrote down the owner's chat yes for `head`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatRecord {
-    pub head: String,
-    pub session: String,
-    pub question: Option<String>,
-}
-
-/// The PR comment that records the owner's chat approval of `head`.
-pub fn chat_comment(head: &str, session: &str, at: &str, question: Option<&str>) -> String {
-    let q = question
-        .map(|q| format!(" question={q}"))
-        .unwrap_or_default();
-    format!(
-        "/bosun approve {head} chat\nApproved by the owner in chat (session {session}, {at}).\n<!-- {CHAT_MARKER} v1 session={session} head={head}{q} -->"
-    )
-}
-
-/// The chat record in `body` for `head`: the first line is exactly `/bosun approve <head> chat`,
-/// `head` is 40 lowercase hex, and exactly one line mentions the marker, which reads exactly
-/// `<!-- bosun:chat-approval v1 session=<id> head=<head>[ question=<id>] -->` (keys in this
-/// order, none unknown or repeated). The risk-check counter and the hook guard share this rule.
-pub fn parse_chat_record(body: &str, head: &str, pr: Option<u64>) -> Option<ChatRecord> {
-    let hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
-    if head.len() != 40 || !head.bytes().all(hex) {
-        return None;
-    }
-    // Untrimmed at the start: an indented line renders as code, not as the command.
-    let first = body.lines().find(|l| !l.trim().is_empty())?.trim_end();
-    if first != format!("/bosun approve {head} chat") {
-        return None;
-    }
-    let mut marked = body.lines().filter(|l| l.contains(CHAT_MARKER));
-    let (Some(line), None) = (marked.next(), marked.next()) else {
-        return None;
-    };
-    let rest = line
-        .trim()
-        .strip_prefix(&format!("<!-- {CHAT_MARKER} v1 "))?
-        .strip_suffix(" -->")?;
-    let mut kv = rest.split(' ');
-    let session = kv
-        .next()?
-        .strip_prefix("session=")
-        .filter(|s| !s.is_empty())?;
-    (kv.next()?.strip_prefix("head=")? == head).then_some(())?;
-    let question = match kv.next() {
-        None => None,
-        Some(q) => Some(q.strip_prefix("question=").filter(|q| !q.is_empty())?),
-    };
-    if kv.next().is_some() {
-        return None;
-    }
-    if let Some(q) = question {
-        // `<pr>-<short head>-<unix secs>`: it must name this head, and this PR when known.
-        let mut parts = q.splitn(3, '-');
-        let (q_pr, q_short) = (parts.next()?, parts.next()?);
-        if q_short != &head[..7] || pr.is_some_and(|n| q_pr != n.to_string()) {
-            return None;
-        }
-        question_unix(q)?;
-    }
-    Some(ChatRecord {
-        head: head.into(),
-        session: session.into(),
-        question: question.map(Into::into),
-    })
-}
-
 /// Whether `session`'s newest registry record is an orchestrator: it has no parent and is a
 /// root (depth 1) or origin `local` or `slack`, never origin `spawned` or `routine` (parent and
 /// depth are self-declared, the origin is not a claim of authority), and it has not expired at `now` (the registry
@@ -728,21 +748,6 @@ pub fn is_orchestrator(members: &[Member], session: &str, now: Timestamp) -> boo
                 && !matches!(m.origin.as_str(), "spawned" | "routine")
                 && (m.depth == 1 || matches!(m.origin.as_str(), "local" | "slack"))
         })
-}
-
-/// The unix part of a question id: all digits and an `i64`.
-pub fn question_unix(q: &str) -> Option<i64> {
-    let u = q.splitn(3, '-').nth(2)?;
-    if u.is_empty() || !u.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
-    }
-    u.parse().ok()
-}
-
-/// Whether a question id's time suits a comment created at `at` (unix secs): at most 60 s
-/// later, at most 14 days earlier. A record without a question has no time to check.
-pub fn question_fresh(q: Option<&str>, at: i64) -> bool {
-    q.is_none_or(|q| question_unix(q).is_some_and(|u| u <= at + 60 && u >= at - 14 * 86_400))
 }
 
 /// The id bosun puts in an approval question: `<pr>-<short head>-<unix secs>`.
@@ -804,11 +809,6 @@ pub fn summary_readiness(summary: Option<&str>) -> (Readiness, String) {
 mod tests {
 
     const H: &str = "abcdef1234567890abcdef1234567890abcdef12";
-    const H2: &str = "1111111111111111111111111111111111111111";
-
-    fn parse_chat_record(body: &str, head: &str) -> Option<ChatRecord> {
-        super::parse_chat_record(body, head, None)
-    }
 
     fn member(session: &str, origin: &str, parent: Option<&str>, depth: u32, id: u64) -> Member {
         Member {
@@ -889,67 +889,77 @@ mod tests {
         }
     }
 
+    /// Every file the judge reads is a trust file: the build inputs at the repo root, the pins, and
+    /// the gate, hook, guard and merge code (under each code root), by glob.
     #[test]
-    fn chat_comment_round_trips() {
-        let body = chat_comment(H, "session_o", "2026-11-10T00:00:00Z", Some("12-abcdef1-1"));
-        let lines: Vec<&str> = body.lines().collect();
-        assert_eq!(lines.len(), 3);
-        assert_eq!(lines[0], format!("/bosun approve {H} chat"));
+    fn trust_root_is_re_rooted_under_each_code_root() {
+        let mono = vec!["bosun".to_string()];
+        let at_root = vec![String::new()];
         assert_eq!(
-            lines[1],
-            "Approved by the owner in chat (session session_o, 2026-11-10T00:00:00Z)."
+            trust_files_changed_in([(".bosun/pins.toml", None)], &[]),
+            [".bosun/pins.toml"]
         );
         assert_eq!(
-            lines[2],
-            format!(
-                "<!-- bosun:chat-approval v1 session=session_o head={H} question=12-abcdef1-1 -->"
-            )
+            trust_files_changed_in([(".bosun/pins.toml", None)], &mono),
+            [".bosun/pins.toml"]
         );
+        // Any case, as the quorum check: a case-insensitive filesystem has one file.
         assert_eq!(
-            parse_chat_record(&body, H),
-            Some(ChatRecord {
-                head: H.into(),
-                session: "session_o".into(),
-                question: Some("12-abcdef1-1".into()),
-            })
+            trust_files_changed_in([(".Bosun/Pins.toml", None)], &mono),
+            [".Bosun/Pins.toml"]
         );
-        let none = chat_comment(H, "session_o", "t", None);
-        assert_eq!(parse_chat_record(&none, H).unwrap().question, None);
-    }
-
-    #[test]
-    fn parse_rejects_other_head() {
-        let body = chat_comment(H, "s", "t", None);
-        assert_eq!(parse_chat_record(&body, H2), None);
-        // Marker names another head than the first line.
-        let mixed = body.replacen(&format!("head={H}"), &format!("head={H2}"), 1);
-        assert_eq!(parse_chat_record(&mixed, H), None);
-    }
-
-    #[test]
-    fn parse_rejects_missing_marker() {
-        let body = format!("/bosun approve {H} chat\nApproved by the owner in chat.");
-        assert_eq!(parse_chat_record(&body, H), None);
-        let empty = chat_comment(H, "", "t", None);
-        assert_eq!(parse_chat_record(&empty, H), None);
-    }
-
-    #[test]
-    fn parse_rejects_duplicate_marker_or_key() {
-        let body = chat_comment(H, "s", "t", None);
-        assert_eq!(
-            parse_chat_record(&format!("{body}\n{}", body.lines().nth(2).unwrap()), H),
-            None
+        assert!(is_trust_path(&["src/gates/**"], "src/Gates/mod.rs"));
+        // The build inputs at the repo root: trust files where bosun's code is, in a monorepo too;
+        // in any other repo they are plain tool files.
+        for p in TRUST_BUILD_FILES {
+            assert_eq!(trust_files_changed_in([(p, None)], &mono), [p], "{p}");
+            assert_eq!(trust_files_changed_in([(p, None)], &at_root), [p], "{p}");
+            assert!(trust_files_changed_in([(p, None)], &[]).is_empty(), "{p}");
+        }
+        for p in [
+            "src/core/risk_default.toml",
+            "src/core/lease.rs",
+            "src/output.rs",
+            "src/cli/pr_no_ci.rs",
+            "src/cli/merge.rs",
+            "src/cli/merge_gates.rs",
+            "src/gates/ts.rs",
+            "src/gates/sub/deep.rs",
+            "src/hooks/pre_tool_use.rs",
+            "src/core/guard.rs",
+            "src/core/guard/writes.rs",
+        ] {
+            let at_root = trust_files_changed_in([(p, None)], &[String::new()]);
+            assert_eq!(at_root, [p], "{p}");
+            let q = format!("bosun/{p}");
+            assert_eq!(
+                trust_files_changed_in([(q.as_str(), None)], &mono),
+                [q.as_str()],
+                "{q}"
+            );
+            assert!(trust_files_changed_in([(p, None)], &[]).is_empty(), "{p}");
+            let other = format!("splice/{p}");
+            assert!(trust_files_changed_in([(other.as_str(), None)], &mono).is_empty());
+        }
+        // A near miss is no trust file.
+        assert!(
+            trust_files_changed_in([("src/core/guarded.rs", None)], &[String::new()]).is_empty()
         );
-        let dup = body.replace(" -->", " session=other -->");
-        assert_eq!(parse_chat_record(&dup, H), None);
     }
-
+    /// The trust files of every policy are a subset of the quorum trust root: a path a signed
+    /// approval may not cover is never one a quorum may cover.
     #[test]
-    fn parse_rejects_plain_approve() {
-        assert_eq!(parse_chat_record(&format!("/bosun approve {H}"), H), None);
-        let quoted = format!("> {}", chat_comment(H, "s", "t", None));
-        assert_eq!(parse_chat_record(&quoted, H), None);
+    fn every_trust_file_is_quorum_trust_root() {
+        for roots in [vec![], vec![String::new()], vec!["bosun".to_string()]] {
+            for t in trust_files_in(&roots) {
+                let p = t.replace("**", "x/y").replace('*', "z");
+                assert_eq!(
+                    super::super::risk::trust_root_changed(&[(p.as_str(), None)], &roots),
+                    [p.as_str()],
+                    "{t}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1001,83 +1011,6 @@ mod tests {
     }
 
     #[test]
-    fn question_binds_the_pr_and_the_head() {
-        let q = question_id(12, H, 1_700_000_000);
-        let body = chat_comment(H, "s", "t", Some(&q));
-        assert!(super::parse_chat_record(&body, H, Some(12)).is_some());
-        assert!(super::parse_chat_record(&body, H, None).is_some());
-        assert_eq!(super::parse_chat_record(&body, H, Some(13)), None);
-        let other = question_id(12, H2, 1);
-        let body = chat_comment(H, "s", "t", Some(&other));
-        assert_eq!(super::parse_chat_record(&body, H, Some(12)), None);
-        assert_eq!(super::parse_chat_record(&body, H, None), None);
-        let junk = chat_comment(H, "s", "t", Some("q"));
-        assert_eq!(super::parse_chat_record(&junk, H, None), None);
-        let none = chat_comment(H, "s", "t", None);
-        assert!(super::parse_chat_record(&none, H, Some(12)).is_some());
-    }
-
-    #[test]
-    fn parse_is_strict() {
-        let ok = chat_comment(H, "s", "t", Some("1-abcdef1-2"));
-        let m = |marker: &str| ok.replacen("session=s head=", marker, 1);
-        // Keys out of order, unknown, duplicated.
-        assert_eq!(parse_chat_record(&m("head=x session=s head="), H), None);
-        assert_eq!(parse_chat_record(&m("session=s x=1 head="), H), None);
-        assert_eq!(parse_chat_record(&m("session=s session=s head="), H), None);
-        let swapped = ok.replacen(
-            &format!("head={H} question=1-abcdef1-2"),
-            &format!("question=1-abcdef1-2 head={H}"),
-            1,
-        );
-        assert_eq!(parse_chat_record(&swapped, H), None);
-        let dup_q = ok.replacen("question=1-abcdef1-2", "question=1-abcdef1-2 question=r", 1);
-        assert_eq!(parse_chat_record(&dup_q, H), None);
-        // Head must be 40 lowercase hex.
-        let short = chat_comment("abc", "s", "t", None);
-        assert_eq!(parse_chat_record(&short, "abc"), None);
-        let upper = H.to_uppercase();
-        assert_eq!(
-            parse_chat_record(&chat_comment(&upper, "s", "t", None), &upper),
-            None
-        );
-        // Exactly one marker line, and nothing after the marker but `-->`.
-        let twice = format!("{ok}\n<!-- bosun:chat-approval v1 session=s head={H} -->");
-        assert_eq!(parse_chat_record(&twice, H), None);
-        let mention = format!("{ok}\nsee bosun:chat-approval");
-        assert_eq!(parse_chat_record(&mention, H), None);
-        let indented = format!("    {ok}");
-        assert_eq!(parse_chat_record(&indented, H), None);
-        assert!(parse_chat_record(&ok, H).is_some());
-    }
-
-    #[test]
-    fn question_unix_part_is_checked() {
-        let rec = |q: &str| {
-            let body = format!(
-                "/bosun approve {H} chat\n<!-- bosun:chat-approval v1 session=s head={H} question={q} -->"
-            );
-            parse_chat_record(&body, H)
-        };
-        assert!(rec("12-abcdef1-1700000000").is_some());
-        for bad in [
-            "12-abcdef1",
-            "12-abcdef1-",
-            "12-abcdef1-17x",
-            "12-abcdef1--5",
-            "12-abcdef1-99999999999999999999",
-        ] {
-            assert!(rec(bad).is_none(), "{bad}");
-        }
-        let q = Some("12-abcdef1-1000");
-        assert!(question_fresh(q, 1000) && question_fresh(q, 1000 - 60));
-        assert!(!question_fresh(q, 1000 - 61));
-        assert!(question_fresh(q, 1000 + 14 * 86_400));
-        assert!(!question_fresh(q, 1000 + 14 * 86_400 + 1));
-        assert!(question_fresh(None, 5));
-    }
-
-    #[test]
     fn question_id_format() {
         assert_eq!(question_id(12, H, 1_700_000_000), "12-abcdef1-1700000000");
     }
@@ -1092,8 +1025,52 @@ mod tests {
             rules: &["R-ci"],
             workflows: &[],
             autonomous_excluded: &[],
+            trust_root: &[],
             capabilities: &[],
         }
+    }
+
+    #[test]
+    fn quorum_decides_before_weaken_and_ignores_every_exclusion_but_the_trust_root() {
+        let w = vec![".github/workflows/ci.yml".to_string()];
+        let x = vec!["hoist.toml".to_string(), "R-secrets".to_string()];
+        let caps = vec!["weaken".to_string()];
+        let mut c = case(Policy::Quorum, None, "2027-01-01");
+        c.requirement = "owner";
+        c.rules = &["R-weaken", "R-gate", "R-gov", "R-ci", "R-secrets", "R-deps"];
+        c.excluded = &w;
+        c.workflows = &w;
+        c.autonomous_excluded = &x;
+        c.capabilities = &caps;
+        assert_eq!(orchestrator_counts(&c).unwrap(), "quorum, D-022");
+        let t = vec![".bosun/approvers.toml".to_string()];
+        c.trust_root = &t;
+        let why = orchestrator_counts(&c).unwrap_err();
+        assert!(
+            why.contains("D-022") && why.contains(".bosun/approvers.toml") && why.contains("owner"),
+            "{why}"
+        );
+        assert_eq!(Policy::Quorum.name(), "quorum");
+    }
+
+    #[test]
+    fn autonomous_still_refuses_weaken_and_ignores_the_trust_root_field() {
+        let t = vec![".bosun/approvers.toml".to_string()];
+        let mut c = case(Policy::Autonomous, None, "2027-01-01");
+        c.trust_root = &t;
+        assert_eq!(orchestrator_counts(&c).unwrap(), "autonomous mode, D-017");
+        c.rules = &["R-weaken"];
+        assert!(orchestrator_counts(&c).unwrap_err().contains("R-weaken"));
+    }
+
+    #[test]
+    fn a_quorum_waiting_status_is_not_an_owner_wait() {
+        let mut s = base();
+        s[0].description =
+            "high risk, quorum (D-022): 2 clean verdicts and orchestrator signature needed: R-ci"
+                .into();
+        assert_eq!(readiness(&s, &[]), Readiness::NotWaiting);
+        assert!(!s[0].description.starts_with(WAITING_PREFIX));
     }
 
     #[test]
@@ -1438,15 +1415,14 @@ mod tests {
         let m = batch_message(&[item(1, &h, "`**x**`"), item(2, &h, " ")]).unwrap();
         assert_eq!(m.pairs, vec![format!("1@{h}"), format!("2@{h}")]);
         assert_eq!(m.id, message_id(&m.pairs));
-        assert!(
-            m.text
-                .contains("\n- #1@abcdef0 `ˋ**x**ˋ`\n- #2@abcdef0\nReply")
-        );
+        assert!(m.text.ends_with("\n- #1@abcdef0 `ˋ**x**ˋ`\n- #2@abcdef0"));
+        // D-025: no chat reply is asked for.
+        assert!(!m.text.contains("Reply") && !m.text.contains("approve 1 2"));
         let many: Vec<_> = (1..=11).map(|n| item(n, &h, "t")).collect();
         let m = batch_message(&many).unwrap();
         assert_eq!(m.pairs.len(), 10);
-        assert!(m.text.contains("- … and 1 more\n"));
-        assert!(m.text.ends_with("Reply: approve 1 2 3 4 5 6 7 8 9 10"));
+        assert!(m.text.ends_with("\n- … and 1 more"));
+        assert!(!m.text.contains("Reply"));
     }
 
     #[test]

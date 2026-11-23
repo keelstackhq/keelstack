@@ -409,7 +409,7 @@ fn approval(lighter: bool, pr: Option<(u64, &str)>) -> String {
         ""
     };
     format!(
-        "Owner: approve {what} through the chat form (repo, PR, head SHA). The PR is R-gov{weaken}; one approval covers the whole migration."
+        "Owner: approve {what} by commenting `/bosun approve <sha>` on this PR (the head SHA) or by reviewing it on GitHub. The PR is R-gov{weaken}; one approval covers the whole migration."
     )
 }
 

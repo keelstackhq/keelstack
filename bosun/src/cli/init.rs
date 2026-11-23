@@ -38,14 +38,21 @@ const PR_TITLE: &str = "chore: set up bosun";
 /// Files `bosun init` never seeds: the intake file only exists with `--intake` (bosun copies it),
 /// and the session rules are the built-in text until the owner writes a file (P1-7, P1-8).
 const NOT_SEEDED: [&str; 2] = [".bosun/intake.toml", ".bosun/session-rules.toml"];
+/// The agent identities that are never an owner (exact, case-insensitive: `claudia-x` is a person).
+const AGENT_LOGINS: [&str; 3] = ["claude", "claude-agent", "claude-code"];
+/// A `[bot]` login or an exact known agent login: never an owner.
+fn is_agent_login(l: &str) -> bool {
+    let l = l.to_lowercase();
+    l.ends_with("[bot]") || AGENT_LOGINS.contains(&l.as_str())
+}
 const STEP_OWNERS: &str =
     "Fill governance/owners.toml with the owners' GitHub logins (pass --owner to seed it).";
 const STEP_HOIST: &str = "Run `hoist apply` once: branch protection, auto-merge and the required checks ci-ok, risk-check, review-verdict, main-open (hoist.toml).";
 const STEP_HALT: &str =
     "Create the kill-switch label: `gh label create bosun:halt --color B60205`.";
 const STEP_ENV: &str = "Create the environment splice-bot (deployment branches: main only), then add the secret SPLICE_BOT_TOKEN (a fine-grained or app token) to it, never as a repository secret, so the splice update bot's PRs run CI.";
-const STEP_APPROVE: &str = "Review this setup PR; it is R-gov, so approve its head SHA: the session asks you with a form in the Claude Code chat and the orchestrator posts the signed `bosun approve` comment once its key is in .bosun/approvers.toml (fallback: comment `/bosun approve <sha>` yourself). While main has no bosun workflows, risk-check, review-verdict and main-open cannot run on it: merge it yourself, then apply the required checks.";
-const STEP_UPDATES: &str = "Each weekly splice update PR touches .splice/** and is R-gov: approve its head SHA the same way (a form in the Claude Code chat; the orchestrator posts the signed comment).";
+const STEP_APPROVE: &str = "Review this setup PR; it is R-gov, so approve its head SHA by commenting `/bosun approve <sha>` (the full 40-character head) on the PR as one of the owners (D-025: agents never ask you for an approval in chat). While main has no bosun workflows, risk-check, review-verdict and main-open cannot run on it: merge it yourself, then apply the required checks.";
+const STEP_UPDATES: &str = "Each weekly splice update PR touches .splice/** and is R-gov: approve its head SHA the same way (comment `/bosun approve <sha>` on the PR).";
 const BOOTSTRAP_STEP: &str = "For each new package that publishes, run `hoist release bootstrap` once on a computer after `npm login` and `cargo login`, then set up the crates.io trusted publisher; every release then needs a tap on the `release` environment.";
 
 /// The `create_trigger` call of one Routine from `doctor::routines`. Each firing starts a fresh
@@ -570,7 +577,7 @@ fn pr_body(pieces: &[String], changes: &Value, kept: &[String], warnings: &[Stri
     if !kept.is_empty() {
         s += &format!("\nKept the repo's own `{}`.\n", kept.join("`, `"));
     }
-    s += "\nRisk: high (R-gov). It needs the owner's approval on the head SHA (a form in the Claude Code chat). The other owner steps are in the session's `owner_steps`, not repeated here.\n";
+    s += "\nRisk: high (R-gov). It needs the owner's `/bosun approve <sha>` comment on the head SHA (D-025). The other owner steps are in the session's `owner_steps`, not repeated here.\n";
     if !warnings.is_empty() {
         s += "\nWarnings:\n";
         for w in warnings {
@@ -665,6 +672,40 @@ fn rollback(root: &Path, start: &str, detached: bool, branch: &str) -> bool {
     .all(|args| git(root, args).is_ok())
 }
 
+/// The default branch git records: `origin/HEAD`.
+fn origin_head_branch(root: &Path) -> Option<String> {
+    let r = git(
+        root,
+        &["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"],
+    )
+    .ok()?;
+    r.strip_prefix("origin/").map(String::from)
+}
+
+/// The default branch as far as git knows: `origin/HEAD`, else `main` or `master` when it exists.
+/// The second is a guess, never a known default (see `origin_head_branch`).
+fn local_default_branch(root: &Path) -> Option<String> {
+    if let Some(b) = origin_head_branch(root) {
+        return Some(b);
+    }
+    ["main", "master"]
+        .into_iter()
+        .find(|b| {
+            git(
+                root,
+                &["rev-parse", "--verify", "-q", &format!("refs/heads/{b}")],
+            )
+            .is_ok()
+        })
+        .map(String::from)
+}
+
+/// The number at the end of the `.../pull/N` URL `gh pr create` prints.
+fn pr_number(out: &str) -> Option<u64> {
+    let url = out.lines().rev().find(|l| l.contains("/pull/"))?;
+    url.trim().rsplit('/').next()?.parse().ok()
+}
+
 pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     // The schema check and the flags it derives come first: nothing is written before they pass.
     let mut intake = None;
@@ -678,11 +719,12 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
         }
         None => args,
     };
-    let branch = args.branch.clone().unwrap_or_else(|| {
-        let cloud = std::env::var("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE")
-            .is_ok_and(|v| v.starts_with("cloud"));
-        (if cloud { CLOUD_BRANCH } else { BRANCH }).to_string()
-    });
+    let cloud =
+        std::env::var("CLAUDE_CODE_REMOTE_ENVIRONMENT_TYPE").is_ok_and(|v| v.starts_with("cloud"));
+    let branch = args
+        .branch
+        .clone()
+        .unwrap_or_else(|| (if cloud { CLOUD_BRANCH } else { BRANCH }).to_string());
     let branch = branch.as_str();
     if branch.starts_with('-') || !valid_branch(branch) {
         return Err(BosunError::usage(
@@ -708,6 +750,12 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
         return Err(BosunError::usage(
             format!("plan file {} does not exist", p.display()),
             "pass --plan with the path of an existing file",
+        ));
+    }
+    if let Some(o) = args.owner.as_deref().filter(|o| is_agent_login(o)) {
+        return Err(BosunError::usage(
+            format!("--owner {o} is a bot or agent identity, not a person"),
+            "pass the human owner's GitHub login: `--owner <login>`",
         ));
     }
     if let Some(o) = args
@@ -740,7 +788,21 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             "commit or stash your changes, then rerun `bosun init`",
         ));
     }
-    if git(
+    // A cloud session works on its own `claude/...` branch: with no --branch, that branch is the
+    // one to use. An existing branch is reused only when it is the current one.
+    let current = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
+    let local_default = local_default_branch(&root);
+    let branch = if args.branch.is_none()
+        && cloud
+        && !current.is_empty()
+        && current != "HEAD"
+        && local_default.as_deref() != Some(current.as_str())
+    {
+        current.as_str()
+    } else {
+        branch
+    };
+    let exists = git(
         &root,
         &[
             "rev-parse",
@@ -749,8 +811,19 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             &format!("refs/heads/{branch}"),
         ],
     )
-    .is_ok()
-    {
+    .is_ok();
+    let reuse = exists && branch == current && local_default.as_deref() != Some(branch);
+    // With no origin/HEAD and no main or master the default branch is unknown: the branch may be
+    // it, so no branch is reused, an explicit --branch included (fail closed).
+    if reuse && local_default.is_none() {
+        return Err(BosunError::conflict(
+            format!(
+                "cannot tell whether the current branch {branch} is the default branch (no origin/HEAD, no main or master)"
+            ),
+            "run `git remote set-head origin -a`, or pass `--branch <new-branch>` (a branch that does not exist yet)",
+        ));
+    }
+    if exists && !reuse {
         return Err(BosunError::conflict(
             format!("branch {branch} already exists"),
             format!(
@@ -848,9 +921,91 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             }
         }
     }
-    let owner_given = args.owner.is_some() || root.join("governance/owners.toml").exists();
-    // No token: bosun cannot make the labels, so the kill-switch label stays an owner step.
-    let make_labels = !args.no_pr;
+    // No token and no logged-in gh: bosun cannot make the labels, so the kill-switch label stays
+    // an owner step (`labels_todo` lists the commands).
+    let have_token = !args.no_pr && crate::github::http::token().is_some();
+    let have_gh = !args.no_pr && !have_token && crate::github::ghcli::authenticated();
+    let make_labels = have_token || have_gh;
+    // Read the token and the base branch before changing anything, so a missing token fails
+    // before the branch exists. No kill-switch check: a fresh repo has no labels yet.
+    let github = if have_token {
+        let app = App::load(Some(&root))?;
+        let base = default_branch(app.gh.as_ref())?;
+        Some((app, base))
+    } else {
+        None
+    };
+    // Without a token the repo comes from BOSUN_REPO or the origin remote.
+    let repo_id = match &github {
+        Some((app, _)) => (app.ctx.repo.owner.clone(), app.ctx.repo.name.clone()),
+        None if args.no_pr => (String::new(), String::new()),
+        None => {
+            let c = crate::ctx::Ctx::load(Some(&root))?;
+            (c.repo.owner, c.repo.name)
+        }
+    };
+    // The base is only compared when known: reuse needs a known local default (refused above),
+    // so there is never a literal fallback to compare against.
+    let known_base: Option<String> = match &github {
+        Some((_, b)) => Some(b.clone()),
+        None => origin_head_branch(&root),
+    };
+    // A guessed `main`/`master` is no proof: with neither a token nor origin/HEAD the default
+    // branch is unknown, so the branch may be it (fail closed).
+    if reuse && known_base.is_none() {
+        return Err(BosunError::conflict(
+            format!(
+                "cannot tell whether the current branch {branch} is the default branch (no origin/HEAD and no token)"
+            ),
+            "run `git remote set-head origin -a`, set GITHUB_TOKEN, or pass `--branch <new-branch>` (a branch that does not exist yet)",
+        ));
+    }
+    let base = known_base.clone().unwrap_or_else(|| "main".into());
+    if reuse && known_base.as_deref() == Some(branch) {
+        return Err(BosunError::conflict(
+            format!("{branch} is the default branch: init will not commit on it"),
+            "switch to a work branch (or pass --branch NAME for a new one) and rerun",
+        ));
+    }
+    let owner_flag = args.owner.is_some();
+    let owner = args.owner.clone();
+    let mut owner_source = owner_flag.then_some("flag");
+    let mut owner_skipped: Option<String> = None;
+    // A login read from the API or `gh` is only a suggestion: it may be a machine user, so it is
+    // never written to owners.toml. Only the human's `--owner` is.
+    let mut owner_suggested: Option<String> = None;
+    if owner.is_none() && !root.join("governance/owners.toml").exists() {
+        let is_agent = is_agent_login;
+        let valid = |l: &String| {
+            !l.is_empty()
+                && !is_agent(l)
+                && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        };
+        let mut skip = |l: &str| {
+            if is_agent(l) {
+                owner_skipped = Some(format!(
+                    "the signed-in login `{l}` is a bot or agent identity, not a person: pass `--owner <login>`"
+                ));
+            }
+        };
+        let api = github
+            .as_ref()
+            .and_then(|(app, _)| app.gh.current_user().ok().flatten());
+        if let Some(l) = api.filter(|l| {
+            skip(l);
+            valid(l)
+        }) {
+            owner_suggested = Some(l);
+            owner_source = Some("api");
+        } else if let Some(l) = crate::github::ghcli::login().filter(|l| {
+            skip(l);
+            valid(l)
+        }) {
+            owner_suggested = Some(l);
+            owner_source = Some("gh");
+        }
+    }
+    let owner_given = owner.is_some() || root.join("governance/owners.toml").exists();
     let mut steps: Vec<String> = match &intake {
         Some((i, _)) => {
             let mut keep: Vec<String> = vec![STEP_APPROVE.into(), STEP_UPDATES.into()];
@@ -862,7 +1017,10 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
         None => {
             let mut v: Vec<String> = Vec::new();
             if !owner_given {
-                v.push(STEP_OWNERS.into());
+                v.push(match owner_suggested.as_deref() {
+                    Some(l) => format!("Fill governance/owners.toml with your GitHub login (suggested: {l}), or rerun `bosun init --owner {l}`"),
+                    None => STEP_OWNERS.into(),
+                });
             }
             v.push(STEP_HOIST.into());
             if !make_labels {
@@ -898,7 +1056,7 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     if own_ci {
         data.push("own_ci=1".into());
     }
-    data.extend(args.owner.as_ref().map(|o| format!("owner={o}")));
+    data.extend(owner.as_ref().map(|o| format!("owner={o}")));
     // splice versions a branch or sha ref as 0.0.0+g<sha>, which is no valid pin: name one.
     let release_ref = git_ref.strip_prefix('v').is_some_and(is_semver);
     if args.bosun_version.is_some() || !release_ref {
@@ -919,24 +1077,14 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
     argv.extend(["--yes", "--json", "-C"].map(String::from));
     argv.push(root.display().to_string());
 
-    // Read the token and the base branch before changing anything, so a missing token fails
-    // before the branch exists. No kill-switch check: a fresh repo has no labels yet.
-    let github = if args.no_pr {
-        None
-    } else {
-        let app = App::load(Some(&root))?;
-        let base = default_branch(app.gh.as_ref())?;
-        Some((app, base))
-    };
     let start = git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])?;
     let detached = start == "HEAD";
-    let start = if detached {
-        git(&root, &["rev-parse", "HEAD"])?
-    } else {
-        start
-    };
+    let start_sha = git(&root, &["rev-parse", "HEAD"])?;
+    let start = if detached { start_sha.clone() } else { start };
 
-    git(&root, &["switch", "-q", "-c", branch])?;
+    if !reuse {
+        git(&root, &["switch", "-q", "-c", branch])?;
+    }
     let local = setup(
         &root,
         args,
@@ -945,13 +1093,26 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
         intake.as_ref().map(|(_, t)| t.as_str()),
     )
     .and_then(|(changes, plan, added)| {
-        if github.is_some() {
+        if !args.no_pr {
             git(&root, &["push", "-q", "-u", "origin", branch])?;
         }
         Ok((changes, plan, added))
     });
     let (changes, plan, added) = match local {
         Ok(v) => v,
+        Err(e) if reuse => {
+            let back = git(&root, &["reset", "-q", "--hard", &start_sha]).is_ok()
+                && git(&root, &["clean", "-q", "-fd"]).is_ok();
+            let fix = if back {
+                format!("bosun init reset {branch} to {start_sha}; {}", e.fix)
+            } else {
+                format!(
+                    "bosun init could not reset {branch}: check `git status` and `git reset --hard {start_sha}`; then: {}",
+                    e.fix
+                )
+            };
+            return Err(BosunError { fix, ..e });
+        }
         Err(e) => {
             let fix = if rollback(&root, &start, detached, branch) {
                 format!("bosun init rolled back to {start}; {}", e.fix)
@@ -969,6 +1130,8 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
 
     let body = pr_body(&pieces, &changes, &kept, &warnings);
     let mut pr = None;
+    let mut pr_call = None;
+    let mut via_gh = false;
     if let Some((app, base)) = &github {
         let pull = app
             .gh
@@ -981,11 +1144,77 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
                 ..e
             })?;
         pr = Some(json!({"number": pull.number, "head_sha": pull.head_sha}));
+    } else if !args.no_pr {
+        // No API token: `gh pr create` when gh is logged in, else the MCP call in `next`.
+        let slug = format!("{}/{}", repo_id.0, repo_id.1);
+        if have_gh {
+            let made = crate::github::ghcli::run(&[
+                "pr", "create", "--repo", &slug, "--head", branch, "--base", &base, "--title",
+                PR_TITLE, "--body", &body,
+            ])
+            .filter(|(ok, _)| *ok)
+            .and_then(|(_, out)| pr_number(&out));
+            match made {
+                Some(n) => {
+                    pr = Some(json!({"number": n, "head_sha": commit}));
+                    via_gh = true;
+                }
+                None => warnings
+                    .push("`gh pr create` failed; open the PR with the call in `next`".into()),
+            }
+        }
+        if pr.is_none() {
+            pr_call = Some(json!({
+                "owner": repo_id.0, "repo": repo_id.1, "title": PR_TITLE,
+                "head": branch, "base": base, "body": body, "draft": false,
+            }));
+        }
     }
 
     // With a token the labels (kill switch, registry, task states) are made now; a failure is a
-    // warning, since the branch and the PR already exist.
+    // warning, since the branch and the PR already exist. After `gh pr create` they are made with
+    // `gh label create`; with neither, the commands are listed in `labels_todo`.
     let mut labels: Vec<String> = Vec::new();
+    let mut labels_todo: Vec<String> = Vec::new();
+    if !args.no_pr && github.is_none() {
+        let slug = format!("{}/{}", repo_id.0, repo_id.1);
+        // Labels that exist stay as they are: `gh label create --force` would overwrite them.
+        let have: Vec<String> = if via_gh {
+            crate::github::ghcli::run(&[
+                "label", "list", "--repo", &slug, "--limit", "500", "--json", "name", "--jq",
+                ".[].name",
+            ])
+            .filter(|(ok, _)| *ok)
+            .map(|(_, out)| out.lines().map(|l| l.trim().to_string()).collect())
+            .unwrap_or_default()
+        } else {
+            vec![]
+        };
+        for (name, color, desc) in super::adopt::labels_wanted() {
+            if have.contains(&name) {
+                continue;
+            }
+            let cmd = format!("gh label create {name} --color {color} --description \"{desc}\"");
+            let made = via_gh
+                && crate::github::ghcli::run(&[
+                    "label",
+                    "create",
+                    &name,
+                    "--repo",
+                    &slug,
+                    "--color",
+                    color,
+                    "--description",
+                    desc,
+                ])
+                .is_some_and(|(ok, _)| ok);
+            if made {
+                labels.push(name);
+            } else {
+                labels_todo.push(cmd);
+            }
+        }
+    }
     if let (true, Some((app, _))) = (make_labels, &github) {
         for (name, color, desc) in super::adopt::labels_wanted() {
             match app.gh.label_exists(&name).and_then(|have| {
@@ -1008,6 +1237,18 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
             }
         }
     }
+    // A label that could not be made leaves the kill switch an owner step, whatever `make_labels` said.
+    let halt_missing = !labels_todo.is_empty()
+        || warnings
+            .iter()
+            .any(|w| w.starts_with("cannot create the label "));
+    if intake.is_none() && halt_missing && !steps.iter().any(|s| s == STEP_HALT) {
+        let at = steps
+            .iter()
+            .position(|s| s == STEP_HOIST)
+            .map_or(0, |i| i + 1);
+        steps.insert(at, STEP_HALT.into());
+    }
     let mut out = json!({
         "labels_created": labels,
         "channel": "bosun", "source": args.source, "ref": git_ref, "pieces": pieces,
@@ -1015,13 +1256,18 @@ pub fn run(dir: Option<&Path>, args: &InitArgs) -> CmdResult {
         "commit": commit, "pr": pr, "risk": "high", "owner_steps": steps,
         "own_ci": own_ci, "claude_md": claude_md, "hoist_checks_added": added,
         "hoist_merge_queue": hoist.as_ref().map(|(_, _, mq)| mq.label()),
-        "warnings": warnings,
+        "warnings": warnings, "branch_reused": reuse, "labels_todo": labels_todo,
+        "owner": owner, "owner_source": owner_source, "owner_skipped": owner_skipped,
+        "owner_suggested": owner_suggested,
     });
     if args.no_pr {
         out["pr_title"] = json!(PR_TITLE);
         out["pr_body"] = json!(body);
     }
     let mut outcome = Outcome::data(out);
+    if let Some(call) = pr_call {
+        outcome = outcome.with_next("mcp__github__create_pull_request", call);
+    }
     if let Some((i, _)) = &intake {
         let cfg = match crate::config::Config::load(&root) {
             Ok(c) => c,

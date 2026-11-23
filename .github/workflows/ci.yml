@@ -426,10 +426,20 @@ jobs:
         with:
           toolchain: stable
           components: clippy, rustfmt
+      # One source for the rust tool versions: .bosun/pins.toml (plain `version = "x"` lines).
+      - name: Read the tool pins
+        id: pins
+        if: steps.rust.outputs.needed == 'true'
+        working-directory: ${{ github.workspace }}
+        run: |
+          pin() { sed -n "/^\[$1\]/,/^\[/s/^version = \"\(.*\)\"\$/\1/p" .bosun/pins.toml | head -n1; }
+          nextest="$(pin nextest)"; deny="$(pin cargo-deny)"
+          test -n "$nextest" && test -n "$deny" || { echo "::error::no nextest/cargo-deny version in .bosun/pins.toml"; exit 1; }
+          echo "tools=cargo-nextest@$nextest,cargo-deny@$deny" >> "$GITHUB_OUTPUT"
       - uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         if: steps.rust.outputs.needed == 'true'
         with:
-          tool: cargo-nextest@0.9.148,cargo-deny@0.20.2
+          tool: ${{ steps.pins.outputs.tools }}
       # The workspace's hoard action (hoard/action.yml). It runs the hoard binary baked into
       # hoard/action/src/checksums.generated.ts: 0.6.1 from keelstackhq/hoard until the first
       # monorepo release rewrites it (binary.ts: <= 0.21.0 comes from the old repo).
@@ -692,6 +702,17 @@ jobs:
         run: pnpm install --frozen-lockfile --prefer-offline
       - name: Check (build, lint, format, typecheck, tests incl. facts and link checks)
         run: pnpm run ci
+      # The staging deploy-site.yml's `wrangler` job does (no secrets), so a PR that breaks it
+      # fails here and not after the merge. As there: a fresh copy of the committed tree (no
+      # node_modules or build output from the steps above) and a fresh pnpm store (no cache).
+      - name: Stage wrangler (as deploy-site.yml does)
+        working-directory: ${{ runner.temp }}
+        run: |
+          rm -rf wrangler-src wrangler-store stage
+          mkdir wrangler-src stage
+          git -C "$GITHUB_WORKSPACE" archive --format=tar HEAD site | tar -x -C wrangler-src
+          pnpm --dir wrangler-src/site --filter ./packages/deploy deploy --prod --ignore-scripts --store-dir "$PWD/wrangler-store" "$PWD/stage/wrangler"
+          stage/wrangler/node_modules/.bin/wrangler --version
 
   # The one required check. Skipped folder jobs are fine; failed or cancelled ones are not.
   ci-ok:
