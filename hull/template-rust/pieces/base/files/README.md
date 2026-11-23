@@ -33,7 +33,8 @@ CircleCI pipeline (budget there: 75 s on a typical PR, 30 s docs-only).
 ## Releasing
 
 `release.yml` runs hoist on every push to `main`. It does nothing until the repository variable
-`HOIST_RELEASE` is `enabled`. One-time human steps are in `docs/agents/project.md` (Blocked).
+`HOIST_RELEASE` is `enabled`. A repo-specific step before publishing (toolchain setup, an npm build) goes in the seed
+`scripts/release-pre.sh`; the publish job runs it right before `hoist release publish`. One-time human steps are in `docs/agents/project.md` (Blocked).
 
 ## Secrets
 

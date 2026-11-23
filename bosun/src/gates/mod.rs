@@ -106,14 +106,8 @@ pub(crate) fn git(root: &Path, args: &[&str]) -> Result<String, BosunError> {
 /// (`git ls-tree` exits 0 with no output); a bad rev or any other git error is `None`, so callers
 /// fail closed instead of mistaking a git failure for an absent file.
 pub(crate) fn git_has(root: &Path, rev: &str, path: &str) -> Option<bool> {
-    let out = cmd("git")
-        .arg("-C")
-        .arg(root)
-        .args(["ls-tree", "--name-only", rev, "--", path])
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
-    out.status.success().then_some(!out.stdout.is_empty())
+    let out = git(root, &["ls-tree", "--name-only", rev, "--", path]).ok()?;
+    Some(!out.is_empty())
 }
 
 /// Is `file` missing in the stack's working tree and at the base too? Also with `--all`: a
@@ -547,6 +541,37 @@ mod tests {
         let changed = vec!["web/a.ts".to_string(), "src/b.rs".to_string()];
         assert_eq!(under_stack("web/", &changed), vec!["a.ts"]);
         assert_eq!(under_stack(".", &changed).len(), 2);
+    }
+
+    /// A `refs/replace` object must not change what `git_has` sees at a rev.
+    #[test]
+    fn git_has_ignores_replace_objects() {
+        let dir = tempfile::tempdir().unwrap();
+        let r = dir.path();
+        let run = |args: &[&str]| {
+            let o = Command::new("git")
+                .arg("-C")
+                .arg(r)
+                .args(["-c", "user.name=t", "-c", "user.email=t@t"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(o.status.success(), "{args:?}: {o:?}");
+            String::from_utf8(o.stdout).unwrap().trim().to_string()
+        };
+        run(&["init", "-q"]);
+        std::fs::write(r.join("a"), "1").unwrap();
+        run(&["add", "a"]);
+        run(&["commit", "-qm", "one"]);
+        let one = run(&["rev-parse", "HEAD"]);
+        std::fs::write(r.join("b"), "2").unwrap();
+        run(&["add", "b"]);
+        run(&["commit", "-qm", "two"]);
+        let two = run(&["rev-parse", "HEAD"]);
+        run(&["replace", &one, &two]);
+        // With replacement honoured, `one` would show `b` too.
+        assert_eq!(git_has(r, &one, "b"), Some(false));
+        assert_eq!(git_has(r, &one, "a"), Some(true));
     }
 
     /// The helper calls must go through `cmd`, or `bosun merge`'s isolated environment misses them.

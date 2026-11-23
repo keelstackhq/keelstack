@@ -58,7 +58,7 @@ test("package.json: no publish-time metadata, four scripts, bin and crate wiring
   assert.equal(pkg.type, "module");
   assert.deepEqual(pkg.bin, { mytool: "bin/launcher.js" });
   assert.deepEqual(pkg.files, ["bin"]);
-  assert.equal(pkg.publishConfig.provenance, true);
+  assert.equal(pkg.publishConfig.provenance, undefined);
   assert.equal(pkg.publishConfig.access, "public");
   assert.equal(pkg.hull.release, "npm-cli");
   assert.equal(pkg.devDependencies["@acme/mytool-crate"], "workspace:*");

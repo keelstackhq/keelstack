@@ -654,7 +654,7 @@ fn other_rulesets_are_never_touched_by_the_tag_ruleset() {
 }
 
 #[test]
-fn a_tag_ruleset_on_github_free_is_drift_not_an_error() {
+fn a_tag_ruleset_on_github_free_is_a_human_step_not_an_error() {
     let repo = git_repo();
     write(repo.path(), "hoist.toml", TAGS_TOML);
     let api = start(&[
@@ -669,7 +669,18 @@ fn a_tag_ruleset_on_github_free_is_drift_not_an_error() {
         ("GET /repos/acme/x/environments", 200, ENVS_NONE, &[]),
     ]);
     let plan = run(Some(&api), repo.path(), &["plan", "--area", "github"], 0);
-    assert_eq!(item(&plan, "tag_ruleset", "hoist: tags")["action"], "drift");
+    assert_eq!(
+        item(&plan, "tag_ruleset", "hoist: tags")["action"],
+        "pending"
+    );
+    assert!(
+        plan["human_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "plan-limit:rulesets"),
+        "{plan}"
+    );
 }
 
 #[test]

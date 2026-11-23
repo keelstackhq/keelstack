@@ -128,7 +128,7 @@ through); the settings deny rules remain as the second layer.
 
 | Rule | Tools | Match | Decision |
 |---|---|---|---|
-| publish | Bash | `npm\|pnpm\|yarn\|bun publish`, `npm unpublish\|dist-tag`, `cargo publish`, `changeset publish`, `gh release create\|upload` | deny: "Releases run in CI from a tag a human pushes (release.yml)." |
+| publish | Bash | `npm\|pnpm\|yarn\|bun publish`, `npm unpublish\|dist-tag`, `cargo publish`, `changeset publish`, `gh release create\|upload` | deny: "Releases run in CI (release.yml), as AGENTS.md says." |
 | force push | Bash | `git [global opts] push` with `-f`, `--force`, `--force-with-lease`, `--force-if-includes`, or a `+refspec` | deny |
 | tag push | Bash | `git push` with `--tags`, `--follow-tags`, or a ref matching `*-v<digit>*` / `refs/tags/*` | deny: "a tag push publishes" |
 | delete default branch | Bash | `git push` with `:main`/`:master` (also `refs/heads/…`), or `--delete`/`-d` naming `main` or `master` | deny: "never delete the default branch on the remote" |

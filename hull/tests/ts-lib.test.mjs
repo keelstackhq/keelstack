@@ -44,7 +44,7 @@ test("package.json: name, exports, publish settings, release marker", async () =
   assert.equal(pkg.exports["./package.json"], "./package.json");
   assert.deepEqual(pkg.files, ["dist"]);
   assert.equal(pkg.sideEffects, false);
-  assert.deepEqual(pkg.publishConfig, { access: "public", provenance: true });
+  assert.deepEqual(pkg.publishConfig, { access: "public" });
   assert.equal(pkg.hull.release, "ts-lib");
   assert.equal(pkg.private, undefined);
 });

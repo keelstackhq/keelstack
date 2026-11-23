@@ -1,7 +1,8 @@
 name: release
 
 # A human pushes `<instance>-v<version>` (e.g. `cli-v1.2.0`); release-plan.mjs decides what it
-# publishes. npm uses trusted publishing (OIDC) with provenance: no npm token exists anywhere.
+# publishes. npm uses trusted publishing (OIDC): no npm token exists anywhere. No `--provenance`
+# flag: with id-token: write npm adds provenance itself in a public repo; a private repo refuses it.
 on:
   push:
     tags: ["*-v[0-9]*"]
@@ -210,7 +211,7 @@ jobs:
               if npm view "$name@$ver" version >/dev/null 2>&1; then
                 echo "skip $name@$ver: already published"
               else
-                npm publish "$pkg" --provenance --access public --tag "$dist_tag"
+                npm publish "$pkg" --access public --tag "$dist_tag"
               fi
             done < "$RUNNER_TEMP/staged.txt"
           done < <(jq -r '.[]' <<< "$NPM_DIRS")
@@ -237,4 +238,4 @@ jobs:
           mkdir -p "$RUNNER_TEMP/pack"
           pnpm pack --pack-destination "$RUNNER_TEMP/pack"
           tgz=$(ls "$RUNNER_TEMP"/pack/*.tgz)
-          npm publish "$tgz" --provenance --access public --tag "$dist_tag"
+          npm publish "$tgz" --access public --tag "$dist_tag"

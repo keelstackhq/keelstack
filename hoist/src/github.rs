@@ -47,6 +47,8 @@ pub struct Ruleset {
     pub include: Vec<String>,
     /// `required_status_checks` contexts
     pub required_checks: Vec<String>,
+    /// `(context, integration_id)` of each required check pinned to a source App.
+    pub check_pins: Vec<(String, u64)>,
     pub merge_queue: bool,
     /// `active`, `evaluate` or `disabled`; `None` when the detail omits it.
     pub enforcement: Option<String>,
@@ -87,8 +89,8 @@ pub enum EnvBranches {
     Unrestricted,
     /// Only branches with protection rules (not what hoist writes).
     Protected,
-    /// Custom policies: the branch (or tag) name patterns.
-    Custom(Vec<String>),
+    /// Custom policies: the branch name patterns, then the tag name patterns.
+    Custom(Vec<String>, Vec<String>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -241,7 +243,19 @@ fn read_env_branches(
                 crate::http::seg(name)
             );
             match list(http, &what, &path, Some("branch_policies"))? {
-                Fetch::Got(rows) => Fetch::Got(EnvBranches::Custom(names(rows, "name"))),
+                Fetch::Got(rows) => {
+                    let of = |kind: &str| -> Vec<String> {
+                        let picked = rows
+                            .iter()
+                            .filter(|r| {
+                                r.get("type").and_then(Value::as_str).unwrap_or("branch") == kind
+                            })
+                            .cloned()
+                            .collect();
+                        names(picked, "name")
+                    };
+                    Fetch::Got(EnvBranches::Custom(of("branch"), of("tag")))
+                }
                 Fetch::Unknown(why) => Fetch::Unknown(why),
             }
         } else {
@@ -375,6 +389,7 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
         .map(Vec::as_slice)
         .unwrap_or_default();
     let mut required_checks = Vec::new();
+    let mut check_pins = Vec::new();
     let mut merge_queue = false;
     let mut unmodelled = Vec::new();
     for rule in rules {
@@ -387,6 +402,14 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
                     .unwrap_or_default();
                 // Its strict policy and pinned check sources survive an update (read-merge-write).
                 required_checks.extend(names(checks.to_vec(), "context"));
+                for c in checks {
+                    if let (Some(ctx), Some(id)) = (
+                        c.get("context").and_then(Value::as_str),
+                        c.get("integration_id").and_then(Value::as_u64),
+                    ) {
+                        check_pins.push((ctx.to_string(), id));
+                    }
+                }
             }
             // Its live settings survive an update.
             Some("merge_queue") => merge_queue = true,
@@ -440,6 +463,7 @@ fn parse_ruleset(v: &Value, id: u64) -> Ruleset {
             .to_string(),
         include,
         required_checks,
+        check_pins,
         merge_queue,
         unmodelled,
         enforcement: v
@@ -722,7 +746,11 @@ pub fn read_github(http: &Http, d: &Desired) -> Result<LiveGithub, HoistError> {
         .github
         .environments
         .iter()
-        .filter(|e| d.release_environment() != Some(e.value.as_str()) && d.env_managed(&e.value))
+        .filter(|e| {
+            let release = d.release_environment() == Some(e.value.as_str());
+            // The release environment's policies are read only for its tag policies.
+            (!release || !d.env_tags(&e.value).is_empty()) && d.env_managed(&e.value)
+        })
         .map(|e| e.value.clone())
         .collect();
     let env_branches = match &environments {

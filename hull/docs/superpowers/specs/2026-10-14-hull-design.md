@@ -426,7 +426,7 @@ The root `AGENTS.md` is seed since 2026-10-18 (§14); everything else listed her
   together ≤ 80 for every combo (`lineCount`, like `wc -l`). `AGENTS.md`: what the repo is,
   commands (`pnpm install`, `check`, `run ci`, `format`, `agents:index`; `pnpm ci` is pnpm's
   built-in clean install), rules (test first, verify before claiming, small files, catalog pins,
-  never read `.env*`/`.dev.vars`, releases are tag pushes by a human, at most 2-3 parallel
+  never read `.env*`/`.dev.vars`, releases differ per template (`template`: a human pushes a `*-v*` tag; `template-rust`: `release.yml` runs hoist on push to `main` after the release PR merges), at most 2-3 parallel
   agents, a hook `ask` becomes a denial in `-p`/unattended runs), a `## Pieces` section
   (rendered only when a piece is present, via a `same-branches` chain) with one bullet per present
   piece kind pointing to `<dir>/AGENTS.md`, and `## Where to look` (plain pointers to
@@ -615,7 +615,7 @@ over the five JavaScript files, with devDependencies `typescript` and `@types/no
 with `hull.release = "ts-lib"` (read by the release workflow). `vite.config.ts` [owned] packs
 `src/index.ts` as `format: ["esm"]` with `dts: true` into `dist/index.mjs` and `dist/index.d.mts`;
 `exports` has `types` first plus `./package.json`; `files: ["dist"]`, `sideEffects: false`,
-`publishConfig: { access: "public", provenance: true }`. `tsconfig.json` [owned] sets
+`publishConfig: { access: "public" }` (no forced provenance: private repos refuse it, trusted publishing adds it in public ones). `tsconfig.json` [owned] sets
 `declaration` (TS5069 requires it) and `isolatedDeclarations`, and includes only `src`: TypeScript 7
 rejects the default export of `vite.config.ts` under `isolatedDeclarations` (TS9037).
 `build` is `vp pack && publint && attw --pack . --profile esm-only`; the checks run on the built
@@ -835,7 +835,7 @@ publishing jobs.
   last. ts-lib: `pnpm install --frozen-lockfile`, `pnpm turbo run build test --filter <name>`,
   `npm pkg set repository.type=git repository.url=git+https://github.com/$GITHUB_REPOSITORY.git`,
   `pnpm pack` (rewrites `catalog:`/`workspace:`). Every publish is
-  `npm publish <dir|tgz> --provenance --access public --tag <dist-tag>` (`next` for a version with a
+  `npm publish <dir|tgz> --access public --tag <dist-tag>` (`next` for a version with a
   `-` prerelease suffix, else `latest`; npm refuses or would mark a prerelease `latest` otherwise),
   skipped when `npm view <name>@<version>` already answers.
 
@@ -849,7 +849,7 @@ ts-lib `AGENTS.md`): the `release` environment with a tag rule; the first publis
 name by hand; an npm trusted publisher (repo, `release.yml`, environment `release`) on each
 package (launcher and five platform packages, or the library), which must see its first publish
 within 2 days. Unverified until the first real release (hull PROGRESS Blocked): `npm publish` of a
-`pnpm pack` tarball with `--provenance`, private repos (npm makes no provenance for them;
+`pnpm pack` tarball, private repos (npm makes no provenance for them;
 attestations need a public repo or GitHub Enterprise Cloud), `ubuntu-24.04-arm`, and
 `macos-latest` building `x86_64-apple-darwin`.
 
@@ -999,7 +999,7 @@ heading fails the run. `scripts/release-tag.mjs` decides (`changelogRelease`, `r
 - Module tests for the hull-tested template scripts: `guard.mjs` (`decide()` table, one spawn
   test), `agents-index.mjs` (exact output, determinism, `--check`, budget) and `release-plan.mjs`
   (`plan()` on fixtures); `release.yml` shape (tag trigger, `contents: read`, `id-token: write`
-  only on publishing jobs, `--provenance`, no npm token).
+  only on publishing jobs, no npm token).
 - Skeleton pieces: `rust-cli` (exact `=x.y.z` pins, no OpenSSL, `deny.toml`, debug `--locked`
   build), `npm-cli` (no `optionalDependencies` or install scripts, `bin` = crate), `ts-lib`
   (`exports` shape, publint and attw in `build`).
@@ -1208,14 +1208,22 @@ sha256-pinned downloads (a checksum belongs to one version); a hull test keeps t
 5. `Job duration` against the budget (45 s typical PR, 15 s docs-only).
 
 **Release** (`release.yml`, owned; the berth/bosun flow through hoist 0.5.0 from npm): on push
-to `main` + `workflow_dispatch`; `detect` runs `.github/scripts/release-pending.mjs` (Node
-built-ins, exported for hull's tests): a crate is a package when it has a `version` and
-`publish` is not `false`. Its tag is `[release] tag_format` from the root `hoist.toml`, or
-`{name}@{version}` in a workspace. It is pending when that tag is missing or on HEAD. The gate is
+to `main` + `workflow_dispatch`; `detect` installs the pinned hoist (`pins.toml` `hoist`) and,
+from hoist 0.22.0, runs `hoist release publish --dry-run --json` (exit 0 and 2 are plans, any
+other exit fails): pending is any item hoist would `create` or `update`, so npm packages count, not
+only crates. A pin older than 0.22.0 (it exits 3 on that dry run without `--assets` and does not
+know npm packages there) falls back to `.github/scripts/release-pending.mjs detect` (crate tags
+`{name}@{version}` or hoist.toml `tag_format`, missing or on HEAD = pending); the step compares
+the versions (`sort -V`), so a rendered repo works with the pin it has at any time. The pin is a
+version on npm: `scripts/bump-version.sh` does not move it (it runs before the release exists); a
+reviewed PR moves it once the release is on npm. `release-pending.mjs` also has `stage`. The gate is
 `vars.HOIST_RELEASE == 'enabled'`, so nothing releases until a person turns it on. `build` is
 the bosun target matrix (`cargo build --release --locked --target <t>`; each binary is copied to
 `dist/<bin>-<t>`). `publish` (environment `release`, `contents: write`, `id-token: write`) runs
-`hoist release publish --assets dist`. `prepare` runs `hoist release prepare`. Node is set up
+`hoist release publish --assets dist`, right after the seed hook `scripts/release-pre.sh` (`bash
+scripts/release-pre.sh` if present; no-op by default; dist/ and Node 24 are ready; for toolchain setup
+and builds, since agents cannot edit the owned `release.yml`; an npm package's own build is hoist's
+`[publish] npm = { build = "..." }`). `prepare` runs `hoist release prepare`. Node is set up
 only in the release jobs that run hoist. The update bot `splice.yml` (owned) is the one splice's
 README gives. Token order for the bot and for `prepare`: a GitHub App token
 (`actions/create-github-app-token`, SHA-pinned, scoped to the repo; `vars.SPLICE_APP_CLIENT_ID` /

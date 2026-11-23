@@ -27,8 +27,9 @@ Also: `cargo fmt --all` (format), `cargo nextest run -p <crate>` (one crate),
 - Dependencies are exact pins (`=x.y.z`); `--locked` everywhere; no `unsafe` (workspace lint).
 - Template-owned files (configs, workflows, `.claude/`) change via `splice update --all`; local changes go
   in seed files, `docs/agents/project.md` or a crate's `AGENTS.md`.
-- Never print, read or commit secrets (`.env*`, keys). Releases are tag pushes by a human: never publish,
+- Never print, read or commit secrets (`.env*`, keys). Releases run from `release.yml` after the release PR merges: never publish,
   push tags or push the default branch; open a PR and `gh pr merge --auto`.
+- `scripts/release-pre.sh` runs with publish rights in the release job: owner-only, like `release.yml`.
 - Guard hook: a rail, not a sandbox; real fix: a server-side branch ruleset. See `docs/agents/guard.md`.
 - A hook `ask` is a denial in unattended runs: use the alternative its reason names.
 - At most 2-3 parallel agents on barely overlapping files; note next steps in `docs/agents/project.md`

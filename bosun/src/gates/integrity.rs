@@ -98,16 +98,7 @@ fn untracked(root: &Path) -> Result<String, BosunError> {
 
 /// The text of `path` at `base`, or none when it did not exist there.
 fn base_text(root: &Path, base: &str, path: &str) -> Option<String> {
-    let out = super::cmd("git")
-        .arg("-C")
-        .arg(root)
-        .arg("show")
-        .arg(format!("{base}:{path}"))
-        .output()
-        .ok()?;
-    out.status
-        .success()
-        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
+    super::git(root, &["show", &format!("{base}:{path}")]).ok()
 }
 
 /// The adapters of one stack: the built-in ones (chosen by file extension: rust for `.rs`, ts for

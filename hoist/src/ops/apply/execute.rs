@@ -113,23 +113,25 @@ pub(super) fn write_all(
     })
 }
 
-/// The ruleset write the plan refused: its item is `drift` naming what is not enforced, never
-/// `applied` or a re-read's `create`.
+/// The ruleset write the plan refused: its item is `pending` naming what is not enforced, with
+/// the human step `plan-limit:rulesets` (a plan limit is no drift hoist can fix, but nothing
+/// protects the branch: exit 2, never a silent 0), never `applied` or a re-read's `create`.
 pub(super) fn mark_plan_limited(report: &mut Report, d: &Desired) {
     for item in report.items.iter_mut().filter(|i| i.kind == "ruleset") {
-        item.action = Action::Drift;
+        item.action = Action::Pending;
         item.reason = crate::diff::free_plan_reason(d);
         item.verify = None;
     }
     if let Some(t) = &d.github.tag_ruleset {
         for item in report.items.iter_mut().filter(|i| i.kind == "tag_ruleset") {
-            item.action = Action::Drift;
+            item.action = Action::Pending;
             item.reason = crate::diff::free_plan_tag_reason(&t.refs());
             item.verify = None;
         }
     }
-    // Drift exits 1, before a pending human step (2).
-    report.exit_code = 1;
+    crate::diff::add_plan_limit_step(&mut report.human_steps, d);
+    // The refused item is a human step: 2 unless another item failed (1).
+    report.exit_code = crate::ops::check::exit_code(&report.items);
 }
 
 /// The release environment written without a reviewer: `drift` naming the missing reviewer.

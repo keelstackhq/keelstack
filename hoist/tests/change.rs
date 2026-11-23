@@ -101,6 +101,7 @@ fn gh_in_sync() -> LiveGithub {
             name: "hoist: default branch".into(),
             include: vec!["~DEFAULT_BRANCH".into()],
             required_checks: vec!["ci-ok".into()],
+            check_pins: Vec::new(),
             merge_queue: false,
             enforcement: Some("active".into()),
             unmodelled: Vec::new(),
