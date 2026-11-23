@@ -148,12 +148,11 @@ const DENY = [
 ];
 
 const ALLOW = [
-  "gh api -X POST repos/o/r/actions/workflows/ci.yml/dispatches -f ref=main --jq .x",
-  "gh api -X POST /repos/o/r/actions/runs/1/rerun",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "gh api repos/o/r/pulls --jq '.[].title'",
   "gh api -X GET repos/o/r/issues -f q=x",
   "gh api -X GET repos/o/r/issues -F per_page=100",
-  "gh api -X POST repos/o/r/actions/workflows/bench.yml/dispatches -f ref=feat -f 'inputs[x]=@notes'",
   "gh workflow run bench.yml --ref feat",
   `bash ${S}/ok.sh`,
   `bash ${S}/comment-ok.sh`,

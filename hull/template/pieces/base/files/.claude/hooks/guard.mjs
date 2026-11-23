@@ -46,6 +46,10 @@
 // value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch piped in (refused) or made by a
 // producer other than `git diff|show|format-patch -- <paths>` (refused), and a default branch
 // that origin/HEAD does not name. Node built-ins only.
+// No regression (`decide`): a call is also denied when the legacy judge (guard-legacy.mjs, main's
+// guard verbatim) denies it, unless the Bash command is exactly an enumerated literal allow
+// (`intendedAllow`: `gh api -X POST repos/<o>/<r>/pulls ...`); so the gh api dispatch and re-run
+// routes above are refused (main refuses them). docs/agents/guard.md lists the allows.
 // An internal error denies when the call mentions push, publish, release, gh, secret or sops (retry),
 // else allows and prints one stderr line. Settings deny rules only cover force pushes and publish
 // commands: the guard is the one layer for default-branch pushes and secrets.
@@ -63,6 +67,10 @@ import nodeFs from "node:fs"; // `globSync` (Node 22+), looked up at run time
 import { homedir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+/** The legacy judge (main's guard, verbatim): loaded here so a missing or broken copy fails
+ * closed (a risky call is denied) instead of the hook crashing open. */
+const LEGACY = await import("./guard-legacy.mjs").catch(() => null);
 
 const SECRET_SAFE = new Set([".env.example", ".env.sample", ".env.template", ".dev.vars.example"]);
 const MANAGERS = new Set(["npm", "pnpm", "yarn", "bun"]);
@@ -245,6 +253,10 @@ const REASON = {
   lock: "only splice writes the lock (.splice/lock.toml): run `splice update` or `splice add` instead.",
   protected:
     "Guard rails (.claude/hooks, .claude/settings*.json, release workflows, .bosun/, pins.toml, .git/hooks, .git/config, git hooksPath and aliases) belong to the human: ask the human; put local rules in docs/agents/project.md. Use paths from the repo root (no cd, -C, --chdir or --work-tree into guarded dirs) and apply patches from a file in the repo.",
+  ghReview:
+    "gh pr review --approve is an owner step: comment with `gh pr review --comment -b <text>` and ask the human (or the review process) to approve.",
+  legacy:
+    "main's guard denies this call and it is not on guard.mjs's enumerated allow list (docs/agents/guard.md, No regression): write it another way that both allow, or ask the human.",
   failClosed:
     "The guard hit an internal error on a push, publish, release or secret call: retry the call; if it keeps failing, ask the human.",
 };
@@ -1595,7 +1607,7 @@ function prCreate(args) {
 
 /** File names that hold credentials or configuration a body must not carry. */
 const CRED_NAME_RE =
-  /^(environ|.*credential.*|.*secret.*|.*token.*|.*netrc|.*npmrc|.*pypirc|.*yarnrc.*|config(\.json)?|.*\.(pem|key|p12|pfx|kdbx)|id_\w+|keys\.txt)$/i;
+  /^(environ|.*credential.*|.*secret.*|.*token.*|.*netrc|.*npmrc|.*pypirc|.*yarnrc.*|config(\.json)?|.*\.(pem|key|p12|pfx|kdbx)|id_\w+|keys\.txt|.*service[-_.]?account.*|.*\.tfstate(\..*)?|.*\.tfvars(\.json)?|auth\.json|\.?dev\.vars(\..*)?)$/i;
 
 /** A body file the PR / issue routes may read: written literally as a relative path with no
  * dotfile, `..`, credential or config segment; on disk a regular file inside the repo reached
@@ -1618,11 +1630,20 @@ function repoFile(p, projectDir, cwd, chain) {
 }
 
 /** Env prefixes that point gh at another host or token (`GH_HOST=x gh api ...`). */
-const GH_ENV_RE = /^(GH_\w*|GITHUB_\w*|\w*TOKEN\w*)=/;
+const GH_ENV_RE =
+  /^(GH_\w*|GITHUB_\w*|\w*TOKEN\w*|HTTPS?_PROXY|https?_proxy|ALL_PROXY|all_proxy|NO_PROXY|no_proxy|SSL_CERT_(FILE|DIR)|CURL_CA_BUNDLE|XDG_CONFIG_HOME)=/;
 
-/** Text that may point gh at another host, repo, config or token anywhere in the command
- * (`export GH_HOST=x; gh ...`, `declare -x`, `read GH_REPO`, `MY_TOKEN=x`). */
-const GH_TAINT_RE = /\b(?:GH|GITHUB)_\w+|\w*TOKEN\w*=/;
+/** Text that may point gh at another host, repo, proxy, CA, config or token anywhere in the
+ * command (`export GH_HOST=x; gh ...`, `declare -x`, `read GH_REPO`, `MY_TOKEN=x`,
+ * `HTTPS_PROXY=x`), or set a variable whose name is built at run time
+ * (`declare -x ${G}_HOST=x`, `export "$G"_TOKEN=x`, `printf -v "$N" ...`). */
+const GH_TAINT_RE = new RegExp(
+  [
+    String.raw`\b(?:GH|GITHUB)_\w+|\w*TOKEN\w*=`,
+    String.raw`\b(?:HTTPS?_PROXY|https?_proxy|ALL_PROXY|all_proxy|NO_PROXY|no_proxy|SSL_CERT_(?:FILE|DIR)|CURL_CA_BUNDLE|XDG_CONFIG_HOME)\b`,
+    String.raw`\b(?:export|declare|typeset|readonly|local|read|env|printf\s+-v)\b[^\n;&|]*?\s["']?[$\x60\\]`,
+  ].join("|"),
+);
 
 /** The gh write routes the guard opens (a PR, a workflow dispatch or re-run, an issue) apply only
  * to a command the guard read in full: every word literal (no `$VAR`, `"$@"`, `${...}`, `$(...)`
@@ -1819,7 +1840,8 @@ function bashRule(
         if (!files.every((f) => repoFile(f, projectDir, cwd, chain))) return "ghLiteral";
       } else if (api.input !== undefined) return "ghField";
     }
-    if (["pr", "issue"].includes(a0) && a1 === "create") {
+    // `new` is gh's alias of `create` (`gh pr new`, `gh issue new`, `gh release new`).
+    if (["pr", "issue"].includes(a0) && ["create", "new"].includes(a1)) {
       if (!ghLiteral(t, chain)) return "ghLiteral";
       if (!bodyFiles(args.slice(2)).every((f) => repoFile(f, projectDir, cwd, chain)))
         return "ghLiteral";
@@ -1828,7 +1850,14 @@ function bashRule(
       if (args.includes("--admin")) return "ghMerge";
       if (!args.includes("--auto") && !args.includes("--disable-auto")) return "ghMerge";
     }
-    if (a0 === "release" && ["create", "upload"].includes(a1)) return "publish";
+    if (a0 === "release" && ["create", "new", "upload"].includes(a1)) return "publish";
+    // Approving a PR is the owner's (or bosun's reviewers') step, never this session's.
+    if (
+      a0 === "pr" &&
+      a1 === "review" &&
+      args.some((x) => /^(--approve|-[a-zA-Z]*a[a-zA-Z]*)$/.test(x))
+    )
+      return "ghReview";
     if (a0 === "release" && !["list", "view", "download", undefined].includes(a1)) return "ghAdmin";
     if (a0 === "workflow" && ["run", "enable", "disable"].includes(a1)) {
       if (args.slice(2).some(releaseWorkflow)) return "publish";
@@ -2672,7 +2701,7 @@ function runScript(t, projectDir, dirs, chain, seen) {
  * @param {{ lockText?: string, projectDir: string }} ctx
  * @returns {null | { decision: "deny" | "ask", reason: string }}
  */
-export function decide(input, ctx) {
+function decideHead(input, ctx) {
   const name = input?.tool_name;
   const ti = input?.tool_input ?? {};
   const deny = (key, hit) => {
@@ -2710,6 +2739,89 @@ export function decide(input, ctx) {
     return { decision: "ask", reason: ownedReason(rel) };
   }
   return null;
+}
+
+/** A word of an enumerated allow: letters, digits and `-_./:=@,+%` only (no quote, `$`, backquote,
+ * glob, redirect, separator, escape or newline). */
+const PLAIN_WORD_RE = /^[A-Za-z0-9\-_./:=@,+%]+$/;
+
+/** `gh api -X POST repos/<o>/<r>/pulls -f k=v ... [-F body=@<file>]`: the documented PR-create
+ * route. Only -X/--method POST, -f/--raw-field `k=v`, -F/--field `body=@<file>` and the one
+ * endpoint; guard.mjs's own checks (literal, taint, repo body file) ran before. */
+function ghApiPullsShape(w) {
+  if (w[0] !== "gh" || w[1] !== "api") return false;
+  let post = 0;
+  const ends = [];
+  for (let i = 2; i < w.length; i++) {
+    const x = w[i];
+    if (x === "-X" || x === "--method") {
+      if (w[++i] !== "POST") return false;
+      post++;
+    } else if (x === "-XPOST" || x === "--method=POST") post++;
+    else if (x === "-f" || x === "--raw-field") {
+      if (!/^[a-z_]+=/.test(w[++i] ?? "")) return false;
+    } else if (x === "-F" || x === "--field") {
+      if (!/^body=@[A-Za-z0-9_][\w./-]*$/.test(w[++i] ?? "")) return false;
+    } else if (x.startsWith("-")) return false;
+    else ends.push(x);
+  }
+  return (
+    post === 1 &&
+    ends.length === 1 &&
+    /^\/?repos\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+\/pulls$/.test(ends[0])
+  );
+}
+
+/** The enumerated intended allows: the only Bash commands guard.mjs lets through although the
+ * legacy judge (guard-legacy.mjs, main's guard) denies them. Each is a literal shape with its own
+ * test (tests/guard-no-regress.test.mjs); adding one needs evidence that it is intended. Shapes
+ * legacy already allows (`gh pr|issue create|new`, `gh workflow run <non-release file>`) need no
+ * entry. */
+const INTENDED_ALLOWS = [{ name: "gh-api-pulls", shape: ghApiPullsShape }];
+
+/** The name of the enumerated allow `command` is exactly, or null. */
+export function intendedAllow(command) {
+  const s = String(command ?? "");
+  if (/[\n\r]/.test(s)) return null;
+  const w = s.split(/[ \t]+/).filter(Boolean);
+  if (!w.length || !w.every((x) => PLAIN_WORD_RE.test(x))) return null;
+  return INTENDED_ALLOWS.find((a) => a.shape(w))?.name ?? null;
+}
+
+/** The legacy judge's decision, as main's hook made it: an internal error (or a missing judge)
+ * denies a call that looks like push, publish, release, gh or secrets. */
+function legacyDecision(input, ctx) {
+  try {
+    if (!LEGACY) throw new Error("guard-legacy.mjs did not load");
+    return LEGACY.decideLegacy(input, ctx);
+  } catch {
+    const raw = JSON.stringify(input ?? null);
+    return (LEGACY?.failClosedLegacy ?? failClosed)(raw)
+      ? { decision: "deny", reason: `${REASON.failClosed} (rule failClosed, legacy judge)` }
+      : null;
+  }
+}
+
+/**
+ * The hook's decision, with the no-regression rule: deny when guard.mjs's rules deny or when the
+ * legacy judge (main's guard) denies, unless the Bash command is exactly an enumerated intended
+ * allow (`intendedAllow`). guard.mjs runs first, so its credential and taint rules apply inside
+ * the allow shapes too.
+ * @param {{ tool_name: string, tool_input: Record<string, unknown> }} input
+ * @param {{ lockText?: string, projectDir: string }} ctx
+ * @returns {null | { decision: "deny" | "ask", reason: string }}
+ */
+export function decide(input, ctx) {
+  const head = decideHead(input, ctx);
+  if (head?.decision === "deny") return head;
+  const old = legacyDecision(input, ctx);
+  if (old?.decision === "deny") {
+    const bashCmd = input?.tool_name === "Bash" ? String(input?.tool_input?.command ?? "") : null;
+    if (bashCmd === null || intendedAllow(bashCmd) === null)
+      return { decision: "deny", reason: `${REASON.legacy} Main's guard says: ${old.reason}` };
+    return head; // an enumerated allow
+  }
+  return head ?? old ?? null; // an `ask` from either
 }
 
 /** True when a git path argument could name a protected file or a dir that holds one. */

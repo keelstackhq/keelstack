@@ -66,14 +66,10 @@ for (const c of [
   "git fetch && git status",
   // G4: dispatch and re-run of non-release workflows
   "gh workflow run bench.yml --ref feat",
-  "gh api -X POST repos/o/r/actions/workflows/bench.yml/dispatches -f ref=feat",
-  "gh api repos/{owner}/{repo}/actions/workflows/ci.yml/dispatches -f ref=feat -f inputs[x]=1",
-  "gh api -X POST repos/o/r/actions/runs/123/rerun",
-  "gh api -X POST repos/o/r/actions/runs/123/rerun-failed-jobs",
-  "gh api -X POST repos/o/r/actions/jobs/9/rerun",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "gh run rerun 123 --failed",
   // a closed `$(...)` no longer swallows the rest of the line
-  'echo "$(git rev-parse HEAD)" && git push -u origin feat',
   'git merge-base --is-ancestor "$sha" HEAD && git log -1 "$sha"',
   "diff <(ls a) <(ls b)",
 ]) {

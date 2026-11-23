@@ -416,7 +416,11 @@ test("guard imports only node: built-ins", () => {
   const src = readFileSync(GUARD, "utf8");
   const specs = [...src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1]);
   assert.ok(specs.length > 0);
-  for (const s of specs) assert.match(s, /^node:/);
+  // the one local import: the legacy judge next to it (the no-regression rule)
+  for (const s of specs) assert.match(s, /^node:|^\.\/guard-legacy\.mjs$/);
+  const legacy = readFileSync(GUARD.replace(/guard\.mjs$/, "guard-legacy.mjs"), "utf8");
+  for (const m of legacy.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g))
+    assert.match(m[1], /^node:/);
 });
 
 test("rendered base tree contains .github/workflows/release.yml, the file the guard's publish reason names", async () => {

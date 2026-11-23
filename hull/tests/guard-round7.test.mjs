@@ -61,7 +61,8 @@ const ALLOW = [
   "gh workflow run ci.yml --ref feat",
   'echo "$(./s.sh)"',
   "git push -u origin feat",
-  "git commit -m \"$(cat <<'EOF'\nfix: push and release notes\nEOF\n)\"",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "echo {a,b}",
   "git log --format='{a,b}'",
 ];

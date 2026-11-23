@@ -112,7 +112,8 @@ const ALLOW = [
   "env /bin/bash -c 'echo hi'",
   "echo a | xargs -tI X echo X",
   'eval "$(ssh-agent -s)"',
-  "gh api -X POST repos/o/r/actions/runs/1/rerun",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
 ];
 
 for (const copy of COPIES) {

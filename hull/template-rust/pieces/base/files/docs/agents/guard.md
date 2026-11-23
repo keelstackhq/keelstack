@@ -24,7 +24,7 @@ rule and the allowed alternative. Use the patterns below; they pass.
 | Check script syntax         | `bash -n scripts/x.sh`, `for f in scripts/*.sh; do bash -n "$f"; done` (`-n` only parses)                                                                                                                          |
 | A script another step makes | run the step (`curl -o`, `tar x`, `pnpm build`, ...) first, then the script in a separate Bash call                                                                                                                |
 | Push the current branch     | `git push -u origin HEAD` or the literal name (`git push -u origin my-feature`), never `"$B"`                                                                                                                      |
-| Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (or their `gh api` POST, values with `-f`)                                                                                               |
+| Start or re-run a workflow  | `gh workflow run ci.yml --ref <branch>`, `gh run rerun <run-id> --failed` (their `gh api` POST routes are refused: main's guard refuses them)                                                                      |
 | Open a PR                   | `gh pr create --title t --body-file f`, or (cloud: `gh api` only) `gh api -X POST repos/<o>/<r>/pulls -f title=t -f head=<branch> -f base=main -F body=@f` (every word literal; `f` a non-secret file in the repo) |
 
 A script does not hide a command: the guard reads a shell script before it runs (any shell by
@@ -76,22 +76,46 @@ with the full path instead, so the guard sees the target.
 - No edits of `.claude/hooks/`, `.claude/settings*.json`, release workflows, `.bosun/`,
   `.git/hooks/`, `.git/config`,
   `pins.toml` (release workflows install its versions), `.splice/lock.toml`; template-owned files ask first (change them with `splice update`).
-- No `gh api` writes but opening a PR (`POST repos/<o>/<r>/pulls`) and starting or re-running a
-  workflow: no merge, auto-merge, review, tag, release or repo settings (owner steps).
+- No `gh api` writes but opening a PR (`gh api -X POST repos/<o>/<r>/pulls`, every word plain):
+  no merge, auto-merge, review, dispatch, re-run, tag, release or repo settings through `gh api`
+  (owner steps). Outside `gh api`, the one merge path is `gh pr merge --auto` (it merges once the
+  required checks pass); `gh pr review --approve` is refused (approving is an owner step),
+  `gh pr review --comment` passes.
 - A target the guard cannot read (`cd "$D"`, `eval`) is refused when it could hide one of the
   above; a pipe into `sh` is always refused: spell the command out.
 - A push, publish, merge, tag, release or secrets command with a word the shell changes when it
   runs is refused: `$(...)`, backticks, `${...}`, `$'...'`, `$"..."`, a brace expansion
   (`HEAD:{main,x}`) or a line continuation inside a word, a `gh` title or body value too. Write
   the word plainly. `gh workflow run <id>` is refused: name the workflow file.
-- Opening a PR or issue (`gh pr|issue create`, `gh api` POST `repos/<o>/<r>/pulls`) and a
-  `gh api` workflow dispatch or re-run pass only with every word literal: no `$VAR`, `"$@"`,
-  `${...}`, `$(...)` or backticks anywhere, no `GH_*`, `GITHUB_*` or `*TOKEN*` variable set
-  anywhere in the command (prefix, `export`, `declare`), no `cd`/`pushd` before it, no
+- Opening a PR or issue (`gh pr|issue create`, or the alias `new`; `gh api -X POST
+  repos/<o>/<r>/pulls`) passes only with every word literal: no `$VAR`, `"$@"`,
+  `${...}`, `$(...)` or backticks anywhere, no `GH_*`, `GITHUB_*` or `*TOKEN*` variable, proxy
+  or CA variable (`HTTPS_PROXY`, `ALL_PROXY`, `SSL_CERT_FILE`, `CURL_CA_BUNDLE`) or
+  `XDG_CONFIG_HOME` set anywhere in the command (prefix, `export`, `declare`), no variable whose
+  name is built at run time (`declare -x ${G}_HOST=x`), no `cd`/`pushd` before it, no
   `--hostname` or `-R`/`--repo`. Put the body in a regular file in the repo, named from the repo
   root: `--body-file pr.md` or `-F body=@pr.md` (no `~`, `/`, `..`, stdin, dotfile, symlink or
-  credential/config name; not written by the same command).
+  credential/config name such as `.npmrc`, `auth.json`, `service-account.json`, `*.tfstate`,
+  `*.tfvars`, `dev.vars`; not written by the same command).
   A `$(...)` runs after the `cd` and `PATH=` before it (`cd d && x=$(./s.sh)` reads `d/s.sh`).
+
+## No regression
+
+`.claude/hooks/guard-legacy.mjs` is the guard as it was before this rewrite (main at d90f917),
+kept verbatim. A call is refused when `guard.mjs`'s rules refuse it or when the legacy judge
+refuses it; the reason then starts with "main's guard denies this call". The only exception is
+a Bash command that is exactly one of the enumerated allows, each a literal shape (every word
+plain: letters, digits, `-_./:=@,+%`; no quotes, `$`, backquotes, globs, redirects, `;`/`&&`/`|`
+or newlines), and `guard.mjs`'s own rules (credential files, tainted env, literal words) still
+apply inside it:
+
+| Allow          | Shape                                                                                         |
+| -------------- | --------------------------------------------------------------------------------------------- |
+| `gh-api-pulls` | `gh api -X POST repos/<o>/<r>/pulls -f <key>=<value> ... [-F body=@<file>]` (`--method POST`) |
+
+`gh pr|issue create|new` and `gh workflow run <file>` need no entry: the legacy judge allows them.
+Adding an entry needs evidence that it is intended and a test (`tests/guard-no-regress.test.mjs`
+in hull); hull's differential test checks every probe of its guard tests against both judges.
 
 ## Gaps that stay open
 

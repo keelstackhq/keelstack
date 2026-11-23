@@ -102,8 +102,8 @@ const ALLOW = [
   "gh pr create --title x --body-file pr.md",
   "gh pr create --title 'fix: x' -F pr.md",
   "gh issue create --title x --body-file pr.md",
-  "gh api -X POST repos/o/r/actions/workflows/ci.yml/dispatches -f ref=feat",
-  "gh api -X POST repos/o/r/actions/runs/123/rerun",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "gh pr list --author $USER",
 ];
 

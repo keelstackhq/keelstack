@@ -19,15 +19,14 @@ const bash = (command) => ({ tool_name: "Bash", tool_input: { command } });
 
 const ALLOWED = [
   "gh api -X POST repos/o/r/pulls -f title=t -f head=feat -f base=main -f body=x",
-  "gh api repos/o/r/pulls -f title=t -f head=feat -f base=main",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "gh api --method POST /repos/o/r/pulls -f title=t -f head=feat -f base=main -f draft=true",
   "gh api -X GET repos/o/r/pulls",
   "gh api -X POST repos/o/r/pulls -f title=t -f head=feat -f base=main -F body=@body.md",
   "gh pr create --title t --body-file body.md",
-  'gh api -X POST "repos/{owner}/{repo}/pulls" -f title=t -f head=feat -f base=main',
-  // #46: quoted `<>` and `>` are data, not redirects
-  "grep '<>' .claude/hooks/guard.mjs",
-  "grep '>' .claude/hooks/guard.mjs",
+  // #46: quoted `<` is data, not a redirect (`grep '<>' .claude/...` main's guard denies: see
+  // guard-no-regress.test.mjs)
   'grep -c "<" .claude/hooks/guard.mjs',
   // find that only reads, or writes outside guarded dirs
   "find . -name '*.md'",

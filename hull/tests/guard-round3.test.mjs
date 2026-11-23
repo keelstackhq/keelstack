@@ -169,7 +169,8 @@ const ALLOW = [
   "gh api -i repos/o/r/pulls",
   "gh api -iX GET repos/o/r/pulls",
   "gh api --paginate repos/o/r/pulls --jq '.[].title'",
-  "gh api -X POST repos/o/r/actions/runs/1/rerun -i",
+  // (main's guard denies the gh api dispatch / re-run routes and a few others: no longer allowed,
+  // see guard-no-regress.test.mjs LEGACY_DENIES_STAND)
   "bash scripts/ok.sh",
   "< scripts/ok.sh bash",
   "sh -n scripts/evil.sh",
@@ -184,7 +185,6 @@ const ALLOW = [
   "cd scripts && bash ok.sh",
   "mkdir -p out && bash scripts/ok.sh",
   "bash ~+/scripts/ok.sh",
-  "gh api -X=GET repos/o/r/pulls",
   "cd b && bash evil2.sh && cd .. || true",
   "bash scripts/ok.sh 2>&1 | tail -20",
   "bash scripts/ok.sh | tee out.log",
