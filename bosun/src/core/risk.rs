@@ -890,7 +890,7 @@ pub const APPROVAL_CODE_PATHS: [&str; 9] = [
 /// the required checks and the jobs with an environment; in bosun also every
 /// [`APPROVAL_CODE_PATHS`] entry (the code that checks it and verifies signatures). Apart from
 /// [`CRITICAL_PATHS`], so the window is never widened or reopened from inside it.
-pub const BOOTSTRAP_EXCLUDED: [&str; 14] = [
+pub const BOOTSTRAP_EXCLUDED: [&str; 20] = [
     // `.bosun/version` pins the gate release that runs the check.
     ".bosun/**",
     "governance/**",
@@ -900,14 +900,20 @@ pub const BOOTSTRAP_EXCLUDED: [&str; 14] = [
     "**/hoist.toml",
     "channel/pieces/core/files/.bosun/**",
     ".github/workflows/release.yml",
+    ".github/workflows/release.yaml",
     // The repo hook release.yml's publish job runs (environment `release`, id-token: write).
     "scripts/release-pre.sh",
     "**/workflows/splice.yml",
+    "**/workflows/splice.yaml",
     // They run the approval check (root and channel copies).
     "**/workflows/risk.yml",
     "**/workflows/verdict.yml",
     "**/workflows/risk.yml.jinja",
     "**/workflows/verdict.yml.jinja",
+    "**/workflows/risk.yaml",
+    "**/workflows/verdict.yaml",
+    "**/workflows/risk.yaml.jinja",
+    "**/workflows/verdict.yaml.jinja",
 ];
 
 /// Why a bootstrap-mode approval cannot count: the excluded paths among `(path, previous path,
@@ -1193,7 +1199,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 55] = [
+pub const TRUST_ROOT: [&str; 56] = [
     // Every file of `.bosun/` (limits, registry, pins, rules, ...): CI restores all of it from the
     // base (`^\.bosun(/|$)`), so a PR's change to one is judged by the base's copy. Only the root
     // `.bosun/version` is left to [`pin_change_trust_root`].
@@ -1202,6 +1208,7 @@ pub const TRUST_ROOT: [&str; 55] = [
     ".bosun/bosun.toml",
     ".bosun/risk.toml",
     "**/workflows/risk.yml*",
+    "**/workflows/risk.yaml*",
     // Every workflow and local action, in every `[checks]` mode: verdicts are counted by the
     // author `github-actions[bot]`, which any workflow the PR adds can post as.
     ".github/workflows/**",
@@ -3346,6 +3353,14 @@ mod monorepo_tests {
             ".github/workflows/risk.yml",
             ".GITHUB/Workflows/RISK.yml",
             "channel/pieces/core/files/.github/workflows/risk.yml.jinja",
+            ".github/workflows/risk.yaml",
+            ".GITHUB/Workflows/RISK.yaml",
+            "channel/pieces/core/files/.github/workflows/risk.yaml.jinja",
+            ".github/workflows/verdict.yaml",
+            ".github/workflows/release.yaml",
+            ".github/workflows/signer.yaml",
+            ".github/workflows/main-open.yaml",
+            ".github/workflows/review.yaml",
         ] {
             assert_eq!(t(&[(f, None)], false), [f], "{f}");
             assert_eq!(t(&[("docs/z.md", Some(f))], false).len(), 1, "{f}");

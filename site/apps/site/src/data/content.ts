@@ -85,7 +85,7 @@ export const agentRows: { key: string; text: string; href?: string }[] = [
   },
   {
     key: "bosun",
-    text: "Claims, gates, risk checks and review verdicts on GitHub. Child sessions never merge or tag; the orchestrator or auto-merge merges on green, and owners approve high-risk changes, also by chat.",
+    text: "Claims, gates, risk checks and review verdicts on GitHub. Child sessions never merge or tag; the orchestrator or auto-merge merges on green, and owners approve high-risk changes on GitHub (their own review or a `/bosun approve <sha>` comment).",
   },
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },
