@@ -130,3 +130,45 @@ fn a_bundled_task_leased_by_someone_else_sends_it_to_the_owner() {
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
 }
+
+/// PR 1 closes #7 (leased by the author) and #8 (no lease record at all); the marker names `lead`.
+fn unleased_second(k: &Key, lead: u64) -> FakeGithub {
+    let fake = quorum(k);
+    fake.pull_set(
+        1,
+        "body",
+        json!(format!(
+            "Closes #7\nCloses #8\n<!-- bosun:task-pr {lead} -->"
+        )),
+    );
+    fake.issue(8, "task 2", &[], "task\n<!-- bosun:task {} -->");
+    fake
+}
+
+#[test]
+fn an_unleased_bundled_task_is_covered_by_the_authors_lease_on_an_open_lead() {
+    let k = key();
+    let fake = unleased_second(&k, 7);
+    let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
+    assert_eq!(code, 0, "{v}");
+}
+
+#[test]
+fn a_closed_lead_covers_nothing() {
+    let k = key();
+    let fake = unleased_second(&k, 7);
+    fake.close_issue(7, "2026-12-05T09:00:00Z");
+    let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}
+
+#[test]
+fn a_lead_without_the_authors_lease_covers_nothing() {
+    let k = key();
+    // The marker names #8, which nobody leased; the author's lease is on #7 only.
+    let fake = unleased_second(&k, 8);
+    let (code, v) = with(&fake, &k, &["session_r", "session_s"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["data"]["approved_by"], Value::Null, "{v}");
+}

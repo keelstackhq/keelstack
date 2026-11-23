@@ -50,7 +50,7 @@ const SKELETON_NOTE: &str = " Start from `verdict_skeleton` (pr and head_sha fil
 Its fail-safe values (request-changes, confidence 0) never approve.";
 
 /// Pack fields whose text comes from people or agents (never from the base branch).
-const UNTRUSTED: [&str; 16] = [
+const UNTRUSTED: [&str; 17] = [
     "title",
     "task.title",
     "task.body",
@@ -67,6 +67,7 @@ const UNTRUSTED: [&str; 16] = [
     "bundle_tasks[].meta",
     "delta_not_in_pr",
     "tasks[].title",
+    "tasks[].touch",
 ];
 
 /// The most `delta_not_in_pr` names the pack lists (the count is always full).

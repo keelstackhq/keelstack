@@ -782,6 +782,8 @@ jobs:
             exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
             if [ "$exists" = 404 ]; then
               echo "::notice::skip $c $VERSION: $c is not on crates.io yet and trusted publishing cannot create a crate. Its first publish is the owner's local step: run \`hoist release bootstrap\` (publishes it and adds its trusted publisher: keelstackhq/keelstack, release.yml, environment release), then re-run this workflow"
+              echo "::warning::skipped $c $VERSION: not on crates.io yet (run \`hoist release bootstrap\`)"
+              [ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "- skipped $c $VERSION: not on crates.io yet (run \`hoist release bootstrap\`)" >>"$GITHUB_STEP_SUMMARY"
               new+=("$c")
               continue
             elif [ "$exists" != 200 ]; then
@@ -942,6 +944,8 @@ jobs:
               :
             elif grep -q E404 <<<"$out"; then
               echo "::notice::skip $name@$VERSION: $name is not on npm yet and trusted publishing cannot create a package. Its first publish is the owner's local step: run \`hoist release bootstrap\`, then re-run this workflow"
+              echo "::warning::skipped $name@$VERSION: not on npm yet (run \`hoist release bootstrap\`)"
+              [ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "- skipped $name@$VERSION: not on npm yet (run \`hoist release bootstrap\`)" >>"$GITHUB_STEP_SUMMARY"
               new+=("$name")
               continue
             else

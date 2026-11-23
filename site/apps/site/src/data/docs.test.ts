@@ -4,7 +4,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docHref, docs, readyDocs, sourceUrl } from "./docs";
 import { facts, findRoot, releasedVersionInput } from "./facts";
-import { bare, versions } from "./versions";
+import { versions } from "./versions";
 
 const bosunVersion = versions.bosun;
 const num = (v: string): [number, number, number] => {
@@ -198,9 +198,9 @@ describe("Greenfield repo with bosun page", () => {
     expect(page).not.toMatch(/^\.bosun\/(intake|session-rules)\.toml /m);
     expect(page).toContain("apps/api/tests/notes_create.test.ts");
     expect(page).toContain('"warnings": []');
-    expect(page).toContain(
-      `\`bosun plan check\` (${bare(versions.bosun)}) accepts with no warnings`,
-    );
+    expect(page).toContain("`bosun plan check` accepted with no warnings in that run");
+    expect(page).toContain("not re-run against the current release");
+    expect(page).toContain("//hull/template-rust");
     // Steps checked against the current bosun --help and docs.
     expect(page).toContain("`bosun pr <task> --ready`");
     expect(page).toContain("`bosun keygen --enroll`");

@@ -288,7 +288,7 @@ case "$1" in
  {"name":"keel-splice","publish":null,"dependencies":[]},
  {"name":"keel-bosun","publish":null,"dependencies":[{"name":"keel-splice","path":"/s"}]},
  {"name":"keel-newlib","publish":null,"dependencies":[]},
- {"name":"keel-cli","publish":null,"dependencies":[{"name":"keel-newlib","path":"/n"},{"name":"keel-bosun","path":"/b"}]},
+ {"name":"keelstack-cli","publish":null,"dependencies":[{"name":"keel-newlib","path":"/n"},{"name":"keel-bosun","path":"/b"}]},
  {"name":"keel-private","publish":[],"dependencies":[]}]}
 J
   ;;
@@ -336,9 +336,9 @@ if out="$(cd "$d" && PATH="$fb:$PATH" FAKE_LOG="$d.log" VERSION=0.22.0 GITHUB_RE
   GITHUB_OUTPUT="$d.out" bash -e -c "$crates" 2>&1)"; then
   [ "$(cat "$d.log")" = keel-bosun ] || bad "crates: published '$(tr '\n' ' ' <"$d.log")', want only keel-bosun: $out"
   grep -q '^::notice::skip keel-newlib 0.22.0: .*`hoist release bootstrap`' <<<"$out" || bad "crates: no notice for the new crate: $out"
-  grep -q '^::notice::skip keel-cli 0.22.0: it depends on keel-newlib' <<<"$out" || bad "crates: a dependent of a new crate is not skipped: $out"
+  grep -q '^::notice::skip keelstack-cli 0.22.0: it depends on keel-newlib' <<<"$out" || bad "crates: a dependent of a new crate is not skipped: $out"
   grep -q 'hoist release bootstrap' "$d.sum" || bad "crates: no step summary for the new crates"
-  grep -qx 'skipped=keel-newlib keel-cli' "$d.out" || bad "crates: skipped output is '$(cat "$d.out")'"
+  grep -qx 'skipped=keel-newlib keelstack-cli' "$d.out" || bad "crates: skipped output is '$(cat "$d.out")'"
 else
   bad "crates: a new crate failed the job: $out"
 fi

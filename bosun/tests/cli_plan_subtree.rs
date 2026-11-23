@@ -85,6 +85,9 @@ fn an_unreadable_or_truncated_tree_is_a_warning_and_the_task_stays_gated() {
         let (code, v) = plan(&fake, tmp.path(), cmd);
         assert_eq!(code, 0, "{cmd}: {v}");
         assert!(v["data"]["warnings"].to_string().contains("M1/T1"), "{v}");
+        let gated = (fake.state.lock().unwrap().issues.iter())
+            .any(|i| i.body.contains(r#""task":"T1""#) && i.body.contains(r#""gated":true"#));
+        assert!(gated, "{cmd}: no main tree fails closed: the task is gated");
     }
 }
 

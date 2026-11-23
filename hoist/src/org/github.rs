@@ -504,7 +504,11 @@ pub(crate) fn apply(
                 Err(HttpError::Rejected { status: 303, .. }) => continue_ok(),
                 r => r,
             };
-            failed.extend(rejected("github", &label, post)?);
+            if let Some(f) = rejected("github", &label, post)? {
+                // Never delete the old policies when the new one was not created.
+                failed.push(f);
+                continue;
+            }
         }
         for (id, name, ty) in &w.policies {
             if *name == w.branch && ty == "branch" {

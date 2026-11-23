@@ -56,7 +56,7 @@ pub fn merge_chunk_verdicts(
     };
     for k in 1..=total {
         match results.iter().find(|(n, _)| *n == k).map(|(_, r)| r) {
-            Some(Ok(v)) => {
+            Some(Ok(v)) if v.pr == pr && v.head_sha == head_sha => {
                 merged.chunks_reviewed.push(k);
                 let serious = v
                     .findings
@@ -80,6 +80,7 @@ pub fn merge_chunk_verdicts(
             other => {
                 let why = match other {
                     Some(Err(e)) => e.as_str(),
+                    Some(Ok(_)) => "verdict is for a different pr or head",
                     _ => "no review result",
                 };
                 merged.verdict = "request-changes".into();
@@ -182,6 +183,20 @@ mod tests {
         assert_eq!(claims.len(), 2, "{claims:?}");
         assert!(m.findings.iter().all(|f| f.severity == "major"));
         assert!(merge_chunk_verdicts(1, "h", 0, &[]).verdict == "request-changes");
+    }
+
+    #[test]
+    fn merge_rejects_a_chunk_verdict_for_another_pr_or_head() {
+        let mut other_head = ver("approve", 0.95, &[]);
+        other_head.head_sha = "old".into();
+        let mut other_pr = ver("approve", 0.95, &[]);
+        other_pr.pr = 2;
+        for bad in [other_head, other_pr] {
+            let r = [(1, Ok(ver("approve", 0.95, &[]))), (2, Ok(bad))];
+            let m = merge_chunk_verdicts(1, "h", 2, &r);
+            assert_eq!((m.verdict.as_str(), m.confidence), ("request-changes", 0.0));
+            assert_eq!(m.chunks_reviewed, [1]);
+        }
     }
 
     fn f(v: &[(&str, usize)]) -> Vec<(String, usize)> {

@@ -309,28 +309,13 @@ pub(crate) fn read(
             };
             let same_type: Vec<&Live> = live.iter().filter(|l| l.ty == r.ty).collect();
             let exact = same_type.iter().find(|l| unquote(&l.content) == r.content);
-            // Only a live record that no declared record matches exactly may be rewritten.
-            let spare = same_type.iter().find(|l| {
-                !z.records
-                    .iter()
-                    .any(|d| d.ty == l.ty && d.name == r.name && d.content == unquote(&l.content))
-            });
-            let (action, reason, op) = match (exact, spare) {
-                (Some(l), _) if r.ty == "TXT" || l.proxied == r.proxied => {
+            let (action, reason, op) = match exact {
+                Some(l) if r.ty == "TXT" || l.proxied == r.proxied => {
                     (Action::Ok, "present".to_string(), None)
                 }
-                (Some(l), _) => (
+                Some(l) => (
                     Action::Update,
                     format!("proxied: live {}, want {}", l.proxied, r.proxied),
-                    Some(Op::Patch {
-                        zone_id: zid.clone(),
-                        id: l.id.clone(),
-                        rec: r.clone(),
-                    }),
-                ),
-                (None, Some(l)) if r.ty != "TXT" => (
-                    Action::Update,
-                    format!("content: live `{}`, want `{}`", l.content, r.content),
                     Some(Op::Patch {
                         zone_id: zid.clone(),
                         id: l.id.clone(),

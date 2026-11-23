@@ -1129,3 +1129,67 @@ fn a_plain_http_bridge_is_exit_3_naming_the_key_but_loopback_is_fine() {
         .assert()
         .code(3);
 }
+
+#[test]
+fn undeclared_live_a_record_is_never_patched_the_declared_one_is_created() {
+    let api = cf_two_a_api(&["9.9.9.9"]);
+    let d = dir(CF_TWO_A);
+    let r = run(&["plan"], &d, &cf_env(&api), 0);
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 1.1.1.1")["action"],
+        "create"
+    );
+    run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    let reqs = api.requests();
+    assert_eq!(reqs.iter().filter(|q| q.method == "POST").count(), 2);
+    assert!(reqs.iter().all(|q| q.method != "PATCH"));
+}
+
+#[test]
+fn crates_trust_match_accepts_a_workflow_path_prefix() {
+    let good = r#"{"github_configs":[{"repository_owner":"acme","repository_name":"tool","workflow_filename":"release.yml","environment":"release"}]}"#;
+    let owners = r#"{"users":[{"login":"someone"},{"login":"github:acme:owners"}]}"#;
+    let toml = CRATES_TOML.replace(
+        "workflow = \"release.yml\"",
+        "workflow = \".github/workflows/release.yml\"",
+    );
+    let d = dir(&toml);
+    let api = start(&[
+        (&format!("GET {OWNERS}"), 200, owners),
+        (&format!("GET {CFG}"), 200, good),
+    ]);
+    let mut envs = crates_env(&api);
+    envs.push(("CARGO_REGISTRY_TOKEN", "cio-secret-tok".into()));
+    let r = run(&["check"], &d, &envs, 0);
+    assert_eq!(item(&r, "trusted_publisher", "acme-tool")["action"], "ok");
+}
+
+#[test]
+fn failed_policy_post_does_not_delete_the_other_policies() {
+    let mut routes = gh_routes(200);
+    for r in routes.iter_mut() {
+        if r.0 == format!("GET {ENV}/deployment-branch-policies") {
+            r.2 = r#"{"total_count":1,"branch_policies":[{"id":7,"name":"old","type":"branch"}]}"#
+                .into();
+        }
+    }
+    routes.push((format!("PUT {ENV}"), 200, "{}".into()));
+    routes.push((
+        format!("POST {ENV}/deployment-branch-policies"),
+        422,
+        r#"{"message":"no"}"#.into(),
+    ));
+    routes.push((
+        format!("DELETE {ENV}/deployment-branch-policies/7"),
+        204,
+        String::new(),
+    ));
+    let api = gh_api(routes);
+    let d = dir(GH_TOML);
+    let mut envs = gh_env(&api, "ghs_x");
+    envs.push(("GITHUB_ACTIONS", "true".into()));
+    run(&["apply", "--yes", "--area", "github"], &d, &envs, 1);
+    let reqs = api.requests();
+    assert!(reqs.iter().any(|q| q.method == "POST"), "{reqs:?}");
+    assert!(reqs.iter().all(|q| q.method != "DELETE"), "{reqs:?}");
+}

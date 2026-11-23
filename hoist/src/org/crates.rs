@@ -30,9 +30,13 @@ pub(super) fn client(verbose: bool) -> Option<Http> {
 fn config_matches(c: &Value, t: &TrustedPublisher) -> bool {
     let s = |k: &str| c.get(k).and_then(Value::as_str);
     let (owner, name) = t.repository.split_once('/').unwrap_or((&t.repository, ""));
+    let workflow = t
+        .workflow
+        .strip_prefix(".github/workflows/")
+        .unwrap_or(&t.workflow);
     s("repository_owner").is_some_and(|o| o.eq_ignore_ascii_case(owner))
         && s("repository_name").is_some_and(|n| n.eq_ignore_ascii_case(name))
-        && s("workflow_filename").is_some_and(|f| f == t.workflow)
+        && s("workflow_filename").is_some_and(|f| f == workflow)
         && t.environment
             .as_deref()
             .is_none_or(|e| s("environment") == Some(e))

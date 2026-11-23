@@ -69,25 +69,88 @@ pub(super) fn unavailable(cfg: &SearchConsoleCfg) -> Option<String> {
 }
 
 /// The bridge carries a bearer token: https, or plain http only on loopback.
+/// Userinfo (`user@host`) is always rejected and never echoed.
 pub(super) fn check_bridge(cfg: &SearchConsoleCfg) -> Result<(), String> {
     let Some(url) = bridge_url(cfg) else {
         return Ok(());
     };
-    if url.starts_with("https://") {
+    check_bridge_url(&url)
+}
+
+fn check_bridge_url(url: &str) -> Result<(), String> {
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => (String::new(), ""),
+    };
+    let auth = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if (scheme != "http" && scheme != "https")
+        || auth.is_empty()
+        || auth.contains(['@', '\\'])
+        || url.chars().any(|c| c.is_whitespace() || c.is_control())
+    {
+        return Err("search_console.bridge (or HOIST_SEARCH_CONSOLE_BRIDGE) must be an https:// URL without credentials (http:// only for 127.0.0.1, localhost or [::1])".into());
+    }
+    if scheme == "https" {
         return Ok(());
     }
-    let host = url.strip_prefix("http://").map(|r| {
-        let auth = r.split(['/', '?', '#']).next().unwrap_or("");
-        match auth.strip_prefix('[') {
-            Some(v6) => format!("[{}", v6.split(']').next().unwrap_or("")) + "]",
-            None => auth.split(':').next().unwrap_or("").to_string(),
-        }
-    });
-    match host.as_deref() {
-        Some("127.0.0.1" | "localhost" | "[::1]") => Ok(()),
+    let (host, port) = match auth.strip_prefix('[') {
+        Some(v6) => match v6.split_once(']') {
+            Some((h, p)) => (
+                format!("[{h}]"),
+                p.strip_prefix(':').or(p.is_empty().then_some("")),
+            ),
+            None => (String::new(), None),
+        },
+        None => match auth.split_once(':') {
+            Some((h, p)) => (h.to_string(), Some(p)),
+            None => (auth.to_string(), Some("")),
+        },
+    };
+    let port_ok = port.is_some_and(|p| p.chars().all(|c| c.is_ascii_digit()));
+    match host.to_ascii_lowercase().as_str() {
+        "127.0.0.1" | "localhost" | "[::1]" if port_ok => Ok(()),
         _ => Err(format!(
-            "search_console.bridge (or HOIST_SEARCH_CONSOLE_BRIDGE) must be an https:// URL (http:// only for 127.0.0.1, localhost or [::1]); got `{url}`"
+            "search_console.bridge (or HOIST_SEARCH_CONSOLE_BRIDGE) must be an https:// URL (http:// only for 127.0.0.1, localhost or [::1]); got host `{host}`"
         )),
+    }
+}
+
+#[cfg(test)]
+mod bridge_tests {
+    use super::check_bridge_url as c;
+
+    #[test]
+    fn userinfo_is_rejected_and_not_echoed() {
+        for u in [
+            "http://localhost:1@evil.example/",
+            "http://user:secret@127.0.0.1/",
+            "https://user:secret@example.com/",
+        ] {
+            let e = c(u).unwrap_err();
+            assert!(
+                !e.contains("secret") && !e.contains("evil") && !e.contains("user"),
+                "{e}"
+            );
+        }
+    }
+
+    #[test]
+    fn loopback_and_https_ok() {
+        for u in [
+            "https://bridge.example/x",
+            "http://127.0.0.1:8080/x",
+            "http://localhost",
+            "http://[::1]:9/",
+        ] {
+            assert!(c(u).is_ok(), "{u}");
+        }
+        for u in [
+            "http://evil.example/",
+            "http://localhost.evil.example/",
+            "ftp://localhost/",
+        ] {
+            assert!(c(u).is_err(), "{u}");
+        }
     }
 }
 
