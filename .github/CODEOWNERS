@@ -31,6 +31,7 @@ claude.local.md          @urbanisierung
 .mcp.json                @urbanisierung
 **/docs/setup-script.sh  @urbanisierung
 **/workflows/risk.yml*   @urbanisierung
+**/workflows/risk.yaml*  @urbanisierung
 Cargo.toml               @urbanisierung
 **/.cargo/config*        @urbanisierung
 plans/                   @urbanisierung

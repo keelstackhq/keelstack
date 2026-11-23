@@ -196,7 +196,7 @@ export const docs: DocPage[] = [
     slug: "risk",
     title: "Risk and review",
     summary:
-      "Risk rules and approval classes, review verdicts, owner approvals on GitHub or signed from chat, delegated decisions, asking the owner, and the kill switch.",
+      "Risk rules and approval classes, review verdicts, owner approvals on GitHub (own review or `/bosun approve <sha>`), delegated decisions, asking the owner, and the kill switch.",
     sources: [
       ".bosun/approvers.toml",
       "bosun/docs/spec",

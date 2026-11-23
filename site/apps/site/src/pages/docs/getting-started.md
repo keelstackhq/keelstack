@@ -272,7 +272,7 @@ bounded output (docspack needs Node 22.5 or later):
 ```bash
 pnpm add -D docspack@1.5.0 @keelstackhq/docspack
 pnpm exec docspack sync
-pnpm exec docspack ask "how do I approve a pull request from chat" --json
+pnpm exec docspack ask "how do I approve a pull request" --json
 ```
 
 `sync` indexes the docs packages the repo depends on and makes no network requests; `ask` returns

@@ -150,8 +150,11 @@ fn json_strings(text: &str) -> Result<Vec<StrMember>, String> {
 fn json_unescape(raw: &str) -> String {
     let chars: Vec<char> = raw.chars().collect();
     let hex4 = |at: usize| -> Option<u32> {
-        let h: String = chars.get(at..at + 4)?.iter().collect();
-        u32::from_str_radix(&h, 16).ok().filter(|_| h.len() == 4)
+        let h = chars.get(at..at + 4)?;
+        if !h.iter().all(char::is_ascii_hexdigit) {
+            return None;
+        }
+        u32::from_str_radix(&h.iter().collect::<String>(), 16).ok()
     };
     let mut out = String::with_capacity(raw.len());
     let mut i = 0;
@@ -582,4 +585,33 @@ pub fn changelog_section(text: &str, version: &str) -> Option<String> {
         .collect();
     let body = body.trim_matches(['\r', '\n']);
     (!body.trim().is_empty()).then(|| body.to_string())
+}
+
+#[cfg(test)]
+mod unescape_tests {
+    use super::json_unescape;
+
+    #[test]
+    fn four_hex_digits_decode() {
+        assert_eq!(json_unescape(r"\u0041\u00e9"), "Aé");
+        assert_eq!(json_unescape(r"\uD83D\uDE00"), "\u{1F600}");
+    }
+
+    #[test]
+    fn sign_and_non_hex_are_malformed() {
+        assert_eq!(json_unescape(r"\u+041"), "\u{FFFD}");
+        assert_eq!(json_unescape(r"\u-041"), "\u{FFFD}");
+        assert_eq!(json_unescape(r"\u00G1x"), "\u{FFFD}x");
+        assert_eq!(json_unescape(r"\u12"), "\u{FFFD}");
+    }
+
+    #[test]
+    fn non_ascii_digit_is_malformed() {
+        assert_eq!(json_unescape("\\u\u{0661}041"), "\u{FFFD}");
+    }
+
+    #[test]
+    fn plus_in_low_surrogate_is_not_a_pair() {
+        assert_eq!(json_unescape(r"\uD83D\u+E00"), "\u{FFFD}\u{FFFD}");
+    }
 }

@@ -239,7 +239,7 @@ High-risk PRs:
   `orchestrator` counts (`policy orchestrator, D-014`), `owner` never, `owner-gated` only when
   every matched rule is `R-ci` (`policy owner-gated, D-014`). A refusal names the policy and,
   where `bootstrap_until` is set or missing, D-012 and its end date. `bosun approve --bootstrap`
-  reads the setting at the PR's base, and fails closed (exit 1, nothing signed), whatever the policy, when the default branch's `[approvals]` is stricter than the base's (a policy stricter in any dimension of `default_stricter` over `policy_dims` in `src/cli/approve.rs`: how much stays with the owner, independent verdicts required on the head, whether R-weaken still applies, so quorum and autonomous each fail closed against the other; a `review_models` the base left unset or widened; an `autonomous_allow` the base widened; or a signing policy gone) or ends the D-012 window the base has open (a `bootstrap_until` that is earlier or unset): inside the window it signs as before; after it
+  reads the setting at the PR's base, and fails closed (exit 1, nothing signed), whatever the policy, when the default branch's `[approvals]` is stricter than the base's (a policy stricter in any dimension of `default_stricter` over `policy_dims` in `src/cli/approve.rs`: how much stays with the owner, independent verdicts required on the head, whether R-weaken still applies, so quorum and autonomous each fail closed against the other; a `review_models` the base left unset or widened; an `autonomous_allow` the base widened; a `bosun_repo` that differs (the default counts as a value); or a signing policy gone) or ends the D-012 window the base has open (a `bootstrap_until` that is earlier or unset): inside the window it signs as before; after it
   `orchestrator` signs (note line `Signed under approval policy orchestrator (D-014)`), `owner`
   exits 1, and `owner-gated` signs (`... owner-gated (D-014)`) only when the trusted
   `risk-check` status lists `R-ci` alone and the PR changes no workflow file, else exit 1 (the
@@ -331,8 +331,14 @@ High-risk PRs:
     `trust_root_changed`, `risk_check::quorum_trust_root`; always the owner's own GitHub review or
     `/bosun approve <sha>` comment). The rule is a property, not a file list: everything that
     builds or decides the judge is trust root. A property test walks the files on disk. At the
-    repo root and under each code root: `.bosun/approvers.toml` (who may sign), `.bosun/bosun.toml`,
-    `.bosun/risk.toml`, `.bosun/pins.toml` (applies everywhere, with or without a code root),
+    repo root and under each code root: every file of `.bosun/` (`.bosun/**`, matched
+    case-insensitively, at any depth below it: `approvers.toml` (who may sign), `bosun.toml`, `risk.toml`,
+    `pins.toml`, `session-rules.toml`, `template-tests/**`, `limits.toml`, `registry/**` and any file added
+    later; CI restores the whole directory from the base). The one exception is the exact root
+    `.bosun/version`: a change of it is judged by `pin_change_trust_root` (a downgrade, an unreleased or
+    unreadable version, a deletion or a rename go to the owner; an upgrade to a released version stays under
+    quorum); `.bosun/VERSION` and `.Bosun/version` are not the pin and are trust root. `.bosun/pins.toml`
+    applies everywhere, with or without a code root,
     `**/workflows/risk.yml*` (also channel template copies), every `.github/workflows/**` and
     `.github/actions/**` file in every `[checks]` mode (verdicts count by the author
     `github-actions[bot]`, so a workflow the PR adds could post verdict records for invented

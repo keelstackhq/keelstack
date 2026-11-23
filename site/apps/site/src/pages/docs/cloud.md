@@ -389,8 +389,8 @@ skips the install with a warning.
 
 **Practice:** most owner steps fit on a phone:
 
-- **Approve a pull request:** say "approve 222" in the orchestrator's chat; it posts the signed
-  approval.
+- **Approve a pull request:** approve it in the GitHub app (your own review) or comment
+  `/bosun approve <head sha>`. A chat answer never counts (D-025).
 - **Release:** open the release workflow run in the GitHub app and choose **Approve and deploy**
   for the `release` environment.
 - **Stop everything:** open an issue with the label `bosun:halt` in the GitHub app.

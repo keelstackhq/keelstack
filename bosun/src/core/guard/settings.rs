@@ -55,12 +55,13 @@ fn normalize(path: &str) -> String {
     format!("{}{}", if abs { "/" } else { "" }, out.join("/"))
 }
 
-/// `path` without quotes and backslashes (`.cla''ude`), then cleaned lexically; the regexes
+/// `path` without quotes (`.cla''ude`), backslashes read as `/` (Windows paths), then cleaned lexically; the regexes
 /// below ignore case (`.Claude/Settings.json`: macOS and Windows file systems do).
 fn plain(path: &str) -> String {
     let bare: String = path
         .chars()
-        .filter(|c| !matches!(c, '\'' | '"' | '\\'))
+        .filter(|c| !matches!(c, '\'' | '"'))
+        .map(|c| if c == '\\' { '/' } else { c })
         .collect();
     normalize(&bare)
 }
@@ -442,6 +443,12 @@ mod tests {
     }
     fn file(tool: &str, path: &str) -> Option<String> {
         settings_rule(tool, &json!({"file_path": path, "content": "{}"}))
+    }
+    #[test]
+    fn windows_backslash_paths_are_locked() {
+        assert!(file("Write", r"C:\r\.claude\settings.json").is_some());
+        assert!(file("Edit", r"C:\r\.claude\settings.local.json").is_some());
+        assert!(file("Write", r"C:\r\src\main.rs").is_none());
     }
     fn sh(cmd: &str) -> Option<String> {
         settings_rule("Bash", &json!({"command": cmd}))
