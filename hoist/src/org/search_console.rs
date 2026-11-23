@@ -68,6 +68,29 @@ pub(super) fn unavailable(cfg: &SearchConsoleCfg) -> Option<String> {
         .then(|| "no Search Console bridge token (set HOIST_SEARCH_CONSOLE_TOKEN)".to_string())
 }
 
+/// The bridge carries a bearer token: https, or plain http only on loopback.
+pub(super) fn check_bridge(cfg: &SearchConsoleCfg) -> Result<(), String> {
+    let Some(url) = bridge_url(cfg) else {
+        return Ok(());
+    };
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    let host = url.strip_prefix("http://").map(|r| {
+        let auth = r.split(['/', '?', '#']).next().unwrap_or("");
+        match auth.strip_prefix('[') {
+            Some(v6) => format!("[{}", v6.split(']').next().unwrap_or("")) + "]",
+            None => auth.split(':').next().unwrap_or("").to_string(),
+        }
+    });
+    match host.as_deref() {
+        Some("127.0.0.1" | "localhost" | "[::1]") => Ok(()),
+        _ => Err(format!(
+            "search_console.bridge (or HOIST_SEARCH_CONSOLE_BRIDGE) must be an https:// URL (http:// only for 127.0.0.1, localhost or [::1]); got `{url}`"
+        )),
+    }
+}
+
 fn bridge_url(cfg: &SearchConsoleCfg) -> Option<String> {
     std::env::var("HOIST_SEARCH_CONSOLE_BRIDGE")
         .ok()
@@ -313,14 +336,27 @@ pub(crate) fn apply(
                 }
                 Fetch::Unknown(why) => return Err(HoistError::Usage(why)),
             };
-            super::cloudflare::ensure_txt(cf, &zone, &w.domain, &token)?;
+            let created = match super::cloudflare::ensure_txt(cf, &zone, &w.domain, &token)? {
+                Ok(created) => created,
+                Err(e) => {
+                    out.failed.extend(rejected(
+                        "cloudflare",
+                        &format!("TXT record {}", w.domain),
+                        Err(e),
+                    )?);
+                    continue;
+                }
+            };
             let insert = http.send_json(
                 Method::Post,
                 "/sv/webResource?verificationMethod=DNS_TXT",
                 Some(&json!({"site": {"type": "INET_DOMAIN", "identifier": w.domain}})),
             );
             match insert {
-                Err(HttpError::Rejected { status, .. }) if (400..500).contains(&status) => {
+                // Propagation only explains a refusal when this run just created the record.
+                Err(HttpError::Rejected { status, .. })
+                    if created && (400..500).contains(&status) =>
+                {
                     let (items, st) = propagating(w, sites);
                     out.pending.extend(items);
                     out.steps.push(st);

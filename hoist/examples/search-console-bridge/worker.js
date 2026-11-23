@@ -19,6 +19,10 @@ export default {
     const url = new URL(request.url);
     const prefix = Object.keys(UPSTREAM).find((p) => url.pathname.startsWith(p));
     if (!prefix) return json(404, { error: "unknown path" });
+    // No dot segments, raw or encoded: the request stays inside the two API prefixes.
+    if (/(^|\/)(\.|%2e){1,2}(\/|%2f|$)/i.test(url.pathname)) {
+      return json(400, { error: "dot segments are refused" });
+    }
     const target = UPSTREAM[prefix] + url.pathname.slice(prefix.length) + url.search;
     let token;
     try {
@@ -33,6 +37,10 @@ export default {
       body,
       redirect: "manual",
     });
+    // Google refusing the service account is not hoist's bridge token being wrong.
+    if (upstream.status === 401) {
+      return json(502, { error: "Google refused the service account; check SA_KEY" });
+    }
     return new Response(upstream.body, {
       status: upstream.status,
       headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },

@@ -1661,7 +1661,8 @@ the state after the run.
   run only inside GitHub Actions with an app installation token (`GITHUB_ACTIONS=true` and a
   `ghs_` token, e.g. from `actions/create-github-app-token` with the provisioner app): the
   documented path is a workflow in the provision repo, environment `provision`, that runs
-  `hoist org apply --area github --yes`. Anywhere else (laptop, cloud session) the GitHub items
+  `hoist org apply --area github --yes`. The default Actions `GITHUB_TOKEN` also starts with
+  `ghs_`, so hoist cannot tell it apart: with it the write fails with 403 (exit 1). Anywhere else (laptop, cloud session) the GitHub items
   stay as planned (`create`/`update`), nothing is written, and the report hint says so. Every
   other GitHub item is a human step: hoist lists and verifies, never performs (create the org,
   install apps, set secret values).

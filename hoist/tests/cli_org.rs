@@ -286,7 +286,8 @@ fn apply_in_actions_with_an_app_token_writes_the_environment() {
         body["deployment_branch_policy"]["protected_branches"],
         false
     );
-    assert!(body.get("reviewers").is_none());
+    assert_eq!(body["reviewers"], serde_json::json!([]));
+    assert_eq!(body["wait_timer"], 0);
     let post = reqs
         .iter()
         .find(|q| q.method == "POST" && q.path == format!("{ENV}/deployment-branch-policies"))
@@ -858,6 +859,273 @@ fn search_console_without_a_bridge_is_unknown_and_apply_is_exit_3() {
     c.env("HOIST_SEARCH_CONSOLE_TOKEN", "sc-secret-tok");
     c.current_dir(d.path())
         .args(["org", "apply", "--yes"])
+        .assert()
+        .code(3);
+}
+
+const CF_TWO_A: &str = r#"[cloudflare]
+[[cloudflare.zones]]
+name = "example.dev"
+[[cloudflare.zones.records]]
+type = "A"
+name = "example.dev"
+content = "1.1.1.1"
+[[cloudflare.zones.records]]
+type = "A"
+name = "example.dev"
+content = "2.2.2.2"
+"#;
+
+fn a_list(contents: &[&str]) -> String {
+    let recs: Vec<String> = contents
+        .iter()
+        .enumerate()
+        .map(|(i, c)| {
+            format!(
+                r#"{{"id":"r{i}","type":"A","name":"example.dev","content":"{c}","proxied":false}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"success":true,"result":[{}],"result_info":{{"page":1,"total_pages":1}}}}"#,
+        recs.join(",")
+    )
+}
+
+fn cf_two_a_api(live: &[&str]) -> FakeApi {
+    let list = a_list(live);
+    start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        ("GET /zones/z1/dns_records", 200, &list),
+        (
+            "POST /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":{"id":"n"}}"#,
+        ),
+        (
+            "PATCH /zones/z1/dns_records/r0",
+            200,
+            r#"{"success":true,"result":{"id":"r0"}}"#,
+        ),
+    ])
+}
+
+#[test]
+fn two_declared_a_records_on_one_name_post_the_missing_one_and_never_patch() {
+    let api = cf_two_a_api(&["1.1.1.1"]);
+    let d = dir(CF_TWO_A);
+    let r = run(&["plan"], &d, &cf_env(&api), 0);
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 1.1.1.1")["action"],
+        "ok"
+    );
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 2.2.2.2")["action"],
+        "create"
+    );
+    // The fake keeps answering one live record, so the re-read still shows the create: exit 1.
+    run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    let reqs = api.requests();
+    assert_eq!(reqs.iter().filter(|q| q.method == "POST").count(), 1);
+    assert!(reqs.iter().all(|q| q.method != "PATCH"));
+    // Re-run with both live: in sync.
+    let both = cf_two_a_api(&["1.1.1.1", "2.2.2.2"]);
+    run(&["check"], &d, &cf_env(&both), 0);
+}
+
+#[test]
+fn environment_with_reviewers_is_updated_and_the_put_clears_them() {
+    let mut routes: Vec<_> = gh_routes(200)
+        .into_iter()
+        .filter(|(k, _, _)| *k != format!("GET {ENV}"))
+        .collect();
+    routes.push((
+        format!("GET {ENV}"),
+        200,
+        r#"{"name":"provision","protection_rules":[{"type":"required_reviewers"}],"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}"#.into(),
+    ));
+    routes.push((format!("PUT {ENV}"), 200, "{}".into()));
+    let api = gh_api(routes);
+    let d = dir(GH_TOML);
+    let mut envs = gh_env(&api, "ghs_x");
+    let r = run(&["plan", "--area", "github"], &d, &envs, 0);
+    assert_eq!(
+        item(&r, "environment", "provision/provision")["action"],
+        "update"
+    );
+    envs.push(("GITHUB_ACTIONS", "true".into()));
+    run(&["apply", "--yes", "--area", "github"], &d, &envs, 1);
+    let reqs = api.requests();
+    let put = reqs
+        .iter()
+        .find(|q| q.method == "PUT" && q.path == ENV)
+        .expect("PUT environment");
+    let body: Value = serde_json::from_str(put.body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["reviewers"], serde_json::json!([]));
+    assert_eq!(body["wait_timer"], 0);
+}
+
+const SC_TWO: &str = r#"[search_console]
+[[search_console.sites]]
+domain = "example.dev"
+zone = "example.dev"
+[[search_console.sites]]
+domain = "docs.example.dev"
+zone = "example.dev"
+"#;
+
+fn cf_sc_existing_txt() -> FakeApi {
+    start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":[{"id":"r1","type":"TXT","name":"example.dev","content":"google-site-verification=abc"}],"result_info":{"page":1,"total_pages":1}}"#,
+        ),
+    ])
+}
+
+#[test]
+fn search_console_insert_refused_with_an_existing_txt_is_a_failed_write() {
+    let bridge = api_of(&sc_fresh_routes(400));
+    let cf = cf_sc_existing_txt();
+    let d = dir(SC_TOML);
+    let r = run(&["apply", "--yes"], &d, &sc_env(&bridge, Some(&cf)), 1);
+    assert!(
+        r["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "write" && i["action"] == "drift")
+    );
+    assert!(r["human_steps"].as_array().unwrap().is_empty());
+    assert!(cf.requests().iter().all(|q| q.method == "GET"));
+}
+
+#[test]
+fn refused_txt_post_is_a_failed_write_and_later_sites_still_run() {
+    let bridge = api_of(&sc_fresh_routes(200));
+    let cf = start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":[],"result_info":{"page":1,"total_pages":1}}"#,
+        ),
+        (
+            "POST /zones/z1/dns_records",
+            400,
+            r#"{"success":false,"errors":[{"code":1004,"message":"bad record"}]}"#,
+        ),
+    ]);
+    let d = dir(SC_TWO);
+    run(&["apply", "--yes"], &d, &sc_env(&bridge, Some(&cf)), 1);
+    let posts = cf.requests().iter().filter(|q| q.method == "POST").count();
+    assert_eq!(posts, 2, "both sites tried their TXT record");
+}
+
+#[test]
+fn refused_txt_post_with_401_is_exit_3() {
+    let bridge = api_of(&sc_fresh_routes(200));
+    let cf = start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":[],"result_info":{"page":1,"total_pages":1}}"#,
+        ),
+        ("POST /zones/z1/dns_records", 401, r#"{"success":false}"#),
+    ]);
+    let d = dir(SC_TOML);
+    run(&["apply", "--yes"], &d, &sc_env(&bridge, Some(&cf)), 3);
+}
+
+#[test]
+fn github_401_is_exit_3_and_403_is_unknown() {
+    let d = dir(GH_TOML);
+    let mut routes = gh_routes(200);
+    routes[0] = ("GET /orgs/acme".into(), 401, "{}".into());
+    let api = gh_api(routes);
+    run(&["check"], &d, &gh_env(&api, "gh-test-token"), 3);
+    let mut routes = gh_routes(200);
+    routes[0] = ("GET /orgs/acme".into(), 403, "{}".into());
+    let api = gh_api(routes);
+    let r = run(&["check"], &d, &gh_env(&api, "gh-test-token"), 0);
+    assert_eq!(item(&r, "app", "claude")["action"], "unknown");
+}
+
+#[test]
+fn cloudflare_401_is_exit_3() {
+    let api = start(&[("GET /zones?name=example.dev", 401, r#"{"success":false}"#)]);
+    let d = dir(CF_TOML);
+    run(&["check"], &d, &cf_env(&api), 3);
+}
+
+#[test]
+fn bridge_401_is_exit_3_and_403_is_unknown() {
+    let d = dir(SC_TOML);
+    let mut routes = sc_ok_routes();
+    routes[0] = ("GET /sv/webResource".into(), 401, "{}".into());
+    let bridge = api_of(&routes);
+    run(&["check"], &d, &sc_env(&bridge, None), 3);
+    let mut routes = sc_ok_routes();
+    routes[0] = ("GET /sv/webResource".into(), 403, "{}".into());
+    let bridge = api_of(&routes);
+    let r = run(&["check"], &d, &sc_env(&bridge, None), 0);
+    assert_eq!(item(&r, "verification", "example.dev")["action"], "unknown");
+}
+
+#[test]
+fn github_actions_with_a_non_installation_token_writes_nothing() {
+    let api = gh_api(gh_routes(404));
+    let d = dir(GH_TOML);
+    let mut envs = gh_env(&api, "gh-test-token");
+    envs.push(("GITHUB_ACTIONS", "true".into()));
+    run(&["apply", "--yes", "--area", "github"], &d, &envs, 1);
+    api.assert_only_get();
+}
+
+#[test]
+fn a_plain_http_bridge_is_exit_3_naming_the_key_but_loopback_is_fine() {
+    let d = dir(SC_TOML);
+    let mut c = hoist();
+    c.env("HOIST_SEARCH_CONSOLE_BRIDGE", "http://bridge.example.com");
+    c.env("HOIST_SEARCH_CONSOLE_TOKEN", "sc-secret-tok");
+    let out = c
+        .current_dir(d.path())
+        .args(["org", "check"])
+        .assert()
+        .code(3)
+        .get_output()
+        .clone();
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("search_console.bridge"), "{err}");
+    let toml = SC_TOML.replace(
+        "[search_console]\n",
+        "[search_console]\nbridge = \"http://bridge.example.com\"\n",
+    );
+    let d = dir(&toml);
+    let mut c = hoist();
+    c.env_remove("HOIST_SEARCH_CONSOLE_BRIDGE");
+    c.env("HOIST_SEARCH_CONSOLE_TOKEN", "sc-secret-tok");
+    c.current_dir(d.path())
+        .args(["org", "check"])
         .assert()
         .code(3);
 }

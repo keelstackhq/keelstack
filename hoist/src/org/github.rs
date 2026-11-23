@@ -66,7 +66,7 @@ fn can_write(http: &Http) -> bool {
     std::env::var("GITHUB_ACTIONS").is_ok_and(|v| v == "true") && http.app_installation()
 }
 
-const WRITE_HINT: &str = "hint: the GitHub environment is written only inside GitHub Actions with an app installation token (GITHUB_ACTIONS=true, ghs_ token): run `hoist org apply --area github --yes` from the provision repo's workflow";
+const WRITE_HINT: &str = "hint: the GitHub environment is written only inside GitHub Actions with an app installation token (GITHUB_ACTIONS=true, ghs_ token). The default Actions GITHUB_TOKEN also starts with ghs_, so pass the provisioner app's installation token (actions/create-github-app-token); a wrong token fails with 403 (exit 1). Run `hoist org apply --area github --yes` from the provision repo's workflow";
 
 /// Create or fix the provision environment: one deployment branch, no reviewers.
 #[derive(Debug, Clone, PartialEq)]
@@ -484,7 +484,8 @@ pub(crate) fn apply(
             seg(&w.env)
         );
         let body = json!({"deployment_branch_policy": {
-            "protected_branches": false, "custom_branch_policies": true}});
+            "protected_branches": false, "custom_branch_policies": true},
+            "reviewers": [], "wait_timer": 0});
         let label = w.label();
         let put = http.send_json(Method::Put, &env, Some(&body));
         if let Some(f) = rejected("github", &label, put)? {

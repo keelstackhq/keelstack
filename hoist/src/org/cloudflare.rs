@@ -5,7 +5,7 @@ use super::{SectionPlan, item, rejected, step, under};
 use crate::auth::cloudflare_token;
 use crate::error::HoistError;
 use crate::github::Fetch;
-use crate::http::{Fetched, Http, Method, Service, seg};
+use crate::http::{Fetched, Http, HttpError, Method, Service, seg};
 use crate::report::Action;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -190,13 +190,14 @@ fn records(http: &Http, zone_id: &str, name: &str) -> Result<Fetch<Vec<Live>>, H
     })
 }
 
-/// Make sure a TXT record `name` = `content` exists in the zone: `true` when it was created.
+/// Make sure a TXT record `name` = `content` exists in the zone: `Ok(true)` when it was
+/// created, `Ok(false)` when present, the refusal when the POST was rejected.
 pub(crate) fn ensure_txt(
     http: &Http,
     zone_id: &str,
     name: &str,
     content: &str,
-) -> Result<bool, HoistError> {
+) -> Result<Result<bool, HttpError>, HoistError> {
     match records(http, zone_id, name)? {
         Fetch::Unknown(why) => Err(HoistError::Usage(why)),
         Fetch::Got(live) => {
@@ -204,15 +205,19 @@ pub(crate) fn ensure_txt(
                 .iter()
                 .any(|r| r.ty == "TXT" && unquote(&r.content) == content)
             {
-                return Ok(false);
+                return Ok(Ok(false));
             }
             let body = json!({"type": "TXT", "name": name, "content": content, "ttl": 1});
-            http.send_json(
+            match http.send_json(
                 Method::Post,
                 &format!("/zones/{}/dns_records", seg(zone_id)),
                 Some(&body),
-            )?;
-            Ok(true)
+            ) {
+                Ok(_) => Ok(Ok(true)),
+                // A refused write is data for the caller; 401 and the rest are exit 3.
+                Err(e @ HttpError::Rejected { .. }) => Ok(Err(e)),
+                Err(e) => Err(e.into()),
+            }
         }
     }
 }
@@ -304,7 +309,13 @@ pub(crate) fn read(
             };
             let same_type: Vec<&Live> = live.iter().filter(|l| l.ty == r.ty).collect();
             let exact = same_type.iter().find(|l| unquote(&l.content) == r.content);
-            let (action, reason, op) = match (exact, same_type.first()) {
+            // Only a live record that no declared record matches exactly may be rewritten.
+            let spare = same_type.iter().find(|l| {
+                !z.records
+                    .iter()
+                    .any(|d| d.ty == l.ty && d.name == r.name && d.content == unquote(&l.content))
+            });
+            let (action, reason, op) = match (exact, spare) {
                 (Some(l), _) if r.ty == "TXT" || l.proxied == r.proxied => {
                     (Action::Ok, "present".to_string(), None)
                 }

@@ -209,6 +209,9 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
     let sc = wants(OrgArea::SearchConsole)
         .then_some(cfg.search_console.as_ref())
         .flatten();
+    if let Some(c) = sc {
+        search_console::check_bridge(c).map_err(|m| config_err(&path, m))?;
+    }
     let gh_http = gh.and_then(|_| github::client(verbose));
     // Search Console writes its TXT record through the Cloudflare client too.
     let cf_http = (cf.is_some() || sc.is_some())
