@@ -1399,3 +1399,29 @@ fn registry_npm_is_published_and_trusted_on_a_terminal() {
     let err = stderr(out);
     assert!(err.contains(&format!("by {DEADLINE}: run ")), "{err}");
 }
+
+/// A repo with no model package and one `[registry.npm]` entry still bootstraps it.
+#[test]
+fn registry_only_repo_is_bootstrapped() {
+    let repo = fixture_repo("bare", REMOTE);
+    let d = repo.path();
+    std::fs::write(
+        d.join("hoist.toml"),
+        "[registry.npm.\"@acme/other\"]\nworkflow = \"other.yml\"\n",
+    )
+    .unwrap();
+    git(d, &["checkout", "-q", "-b", "main"]);
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: init"]);
+    let tools = tempfile::tempdir().unwrap();
+    stub(tools.path(), "npm", NPM_OK);
+    stub(tools.path(), "cargo", CARGO_OK);
+    let env = Env { repo, tools };
+    let api = FakeApi::start(&[]);
+    let o = bootstrap(&env, &api, &["--dry-run"]).assert().code(0);
+    let v = json(o.get_output());
+    assert_eq!(item(&v, "bootstrap_npm", "@acme/other")["action"], "create");
+    let s = human_step(&v, "npm-trust:@acme/other");
+    assert!(s["title"].as_str().unwrap().contains("--file other.yml"));
+    assert!(s["title"].as_str().unwrap().contains("--env release"));
+}

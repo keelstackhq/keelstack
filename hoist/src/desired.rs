@@ -440,11 +440,12 @@ fn desired_release(
     let publishes = |p: &Package| {
         p.publish.npm.is_some() || p.publish.crates.is_some() || p.publish.github_release.is_some()
     };
-    if !model.packages.iter().any(publishes) {
+    let root = load_root(dir)?;
+    let has_registry = !root.registry.npm.is_empty() || !root.registry.crates.is_empty();
+    if !model.packages.iter().any(publishes) && !has_registry {
         return Ok(None);
     }
     let environment = pick(raw, "release", "environment", model.environment);
-    let root = load_root(dir)?;
     let workflow_name = root.release.workflow.clone();
     let workflow = workflows
         .job_environments
