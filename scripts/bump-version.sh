@@ -244,10 +244,12 @@ if [ -f Cargo.lock ]; then
     # --locked: fail instead of rewriting the lock. A registry that is not cached (offline) is
     # not a problem of the bump.
     if ! out=$(cargo metadata --locked --offline --format-version 1 2>&1 >/dev/null); then
-      case "$out" in
-        *"needs to be updated"* | *"lock file"*) die "Cargo.lock is out of date after the bump: $out" ;;
-        *) echo "bump-version: note: cargo metadata could not run offline here (${out%%$'\n'*})" >&2 ;;
-      esac
+      # `if grep`, not `case`: the agents' guard refuses a glob in a case pattern.
+      if grep -qE 'needs to be updated|lock file' <<<"$out"; then
+        die "Cargo.lock is out of date after the bump: $out"
+      else
+        echo "bump-version: note: cargo metadata could not run offline here ($(head -n1 <<<"$out"))" >&2
+      fi
     fi
   fi
 fi

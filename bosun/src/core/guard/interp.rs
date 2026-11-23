@@ -1296,7 +1296,25 @@ fn text_writes_nothing(text: &str) -> bool {
 /// command word), at every nesting level (`bash -c '..'`, `$( )`), placed in the directory
 /// each runs in. `script_dir`: the directory of the script this code is (`$0`), if any;
 /// `tainted`: an outer level already writes before this code runs.
+/// The command as written and, when `open_bodies` rewrites it, the rewritten text are both
+/// read: a misread rewrite (a separator inside a command) must never hide a script it runs.
 fn script_paths(
+    command: &str,
+    depth: usize,
+    cwd: Cwd,
+    script_dir: Option<&str>,
+    tainted: bool,
+) -> Vec<ScriptPath> {
+    let opened = super::open_bodies(command);
+    let mut out = script_paths_of(command, depth, cwd.clone(), script_dir, tainted);
+    if opened != command {
+        out.extend(script_paths_of(&opened, depth, cwd, script_dir, tainted));
+    }
+    out
+}
+
+/// [`script_paths`] of one text, read as it is.
+fn script_paths_of(
     command: &str,
     depth: usize,
     cwd: Cwd,
@@ -1305,7 +1323,7 @@ fn script_paths(
 ) -> Vec<ScriptPath> {
     // A heredoc body no shell or interpreter reads is data (a commit message naming x.sh);
     // the substitutions of an unquoted body run.
-    let (code, subs) = split_heredocs(&super::open_bodies(command));
+    let (code, subs) = split_heredocs(command);
     let code = strip_comments(&code);
     let (raw, seps) = shell_words_seps(&protect_subs(&code));
     let (raw, seps) = rejoin_redirects(raw, seps);

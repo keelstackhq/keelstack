@@ -43,7 +43,6 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         "[ -f x ] && echo y",
         "[[ -n $x ]] && git status",
         "grep -n a[bc] f",
-        "ls *",
         "ls *.md",
         "rm -f target/*.tmp",
         "grep -n x *.md",
@@ -57,9 +56,6 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
     let scripts = [
-        "case \"$1\" in\n  -h) echo help ;;\n  *) git status ;;\nesac\n",
-        "case \"$1\" in\n  -h|*) git status ;;\nesac\n",
-        "case $x in *\"lock file\"*) echo y ;; *) echo n ;; esac\n",
         "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi\ngit ls-files -- *.rs | wc -l\n",
     ];
     for body in scripts {
@@ -310,6 +306,7 @@ fn g6_fetch_with_read_only_commands_passes() {
 
 #[test]
 fn the_repo_bump_script_passes() {
+    // It uses `if grep`, not a `case` glob (refused, as on main).
     let body = include_str!("../../../../scripts/bump-version.sh");
     let cmd = "BUMP_DATE=2026-11-23 bash scripts/bump-version.sh 0.22.0";
     assert_eq!(hook(cmd, &[("scripts/bump-version.sh", body)]), None);
@@ -340,4 +337,91 @@ fn g2_a_startup_file_a_shell_sources_is_read_like_its_script() {
     ] {
         assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
     }
+}
+
+/// Commands `origin/main`'s guard denies; this guard must deny them too (a differential list:
+/// a rewrite of the text, as `open_bodies` makes, never lets through what the text says).
+const MAIN_DENIES: &[&str] = &[
+    // `function`/`case` after an assignment, an argument or a `$( )` is no keyword.
+    "x=1 function; gh pr merge 1",
+    "echo $(true) function; gh pr merge 1",
+    "x=1 function; git push --force origin feat",
+    "x=1 function; gh workflow run release.yml",
+    "x=1 case; gh pr merge 1",
+    "echo (true) function; gh pr merge 1",
+    "x=1 function\ngh pr merge 1",
+    "echo function; gh pr merge 1",
+    "x=1 function & gh pr merge 1",
+    "x=1 function | gh pr merge 1",
+    "x=1 function && git push --force origin feat",
+    "bash -c 'x=1 function; gh pr merge 1'",
+    "echo $(x=1 function; gh pr merge 1)",
+    // Any glob that can name git, in a segment that names git.
+    "fakeroot /usr/bin/g?t push --force origin feat",
+    "nice -n 1 g?t push --force origin feat",
+    "fakeroot g* push --force origin feat",
+    "ls *",
+    "git add -- *",
+    // A glob that can be `git` in a `case` pattern counts like any other.
+    "case x in *) git status ;; esac",
+    "case \"$1\" in -h) echo help ;; *) git status ;; esac",
+    "case \"$1\" in -h|*) git status ;; esac",
+    "case $x in *\"lock file\"*) echo y ;; *) echo n ;; esac",
+    "case \"$1\" in -h) echo help ;; *.md) git status ;; esac",
+    "case \"$1\" in -h) echo help ;; *.md) echo y ;; esac",
+];
+
+#[test]
+fn rewritten_text_never_allows_what_main_denies() {
+    for cmd in MAIN_DENIES {
+        assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
+    }
+    // A function body or case arm is still opened and judged.
+    for cmd in [
+        "function f { gh pr merge 1; }",
+        "f() { gh pr merge 1; }",
+        "case x in *) gh pr merge 1 ;; esac",
+        "x=1; function f { git push --force origin feat; }",
+    ] {
+        assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
+    }
+}
+
+#[test]
+fn a_script_run_after_a_non_keyword_function_is_read() {
+    let files = [("x.sh", BAD)];
+    for cmd in [
+        "x=1 function; bash x.sh",
+        "echo $(true) function; bash x.sh",
+    ] {
+        assert!(hook(cmd, &files).is_some(), "allowed: {cmd}");
+    }
+}
+
+#[test]
+fn open_bodies_reads_keywords_only_where_a_command_starts() {
+    use super::open_bodies;
+    for text in [
+        "x=1 function; gh pr merge 1",
+        "echo $(true) function; gh pr merge 1",
+        "x=1 case; gh pr merge 1",
+        "echo function f; gh pr merge 1",
+        "echo { function f; gh pr merge 1",
+        "x=1 function\ngh pr merge 1",
+        "(true) function f; gh pr merge 1",
+    ] {
+        assert_eq!(open_bodies(text), text, "{text}");
+    }
+    assert_eq!(
+        open_bodies("function f { gh pr merge 1; }"),
+        "function f ;{ gh pr merge 1; }"
+    );
+    assert_eq!(
+        open_bodies("x=1; function f { gh pr merge 1; }"),
+        "x=1; function f ;{ gh pr merge 1; }"
+    );
+    assert_eq!(
+        open_bodies("if true; then function f { gh pr merge 1; }; fi"),
+        "if true; then function f ;{ gh pr merge 1; }; fi"
+    );
 }

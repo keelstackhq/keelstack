@@ -18,7 +18,8 @@ while IFS= read -r row; do
   if [ -z "$link" ]; then echo "$id: no link to decisions/NNN-title.md"; fail=1; continue; fi
   if [ ! -f "$link" ]; then echo "$id: $link does not exist"; fail=1; continue; fi
   num=${id#D-}
-  case "$(basename "$link")" in "$num"-*) ;; *) echo "$id: file $link does not start with $num-"; fail=1 ;; esac
+  # `grep`, not `case`: the agents' guard refuses a glob in a case pattern.
+  if ! basename "$link" | grep -q "^$num-"; then echo "$id: file $link does not start with $num-"; fail=1; fi
   if grep -q 'Status: superseded' "$link"; then echo "$id: $link is superseded; remove it from the index"; fail=1; fi
 done < <(grep -E '^\| D-[0-9]{3} ' DECISIONS.md)
 # The channel template cannot hold symlinks, so it carries a generated copy of DECISIONS.md

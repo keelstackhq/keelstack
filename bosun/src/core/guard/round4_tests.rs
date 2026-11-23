@@ -84,17 +84,19 @@ fn a_bare_pathspec_glob_can_expand_to_a_git_option() {
         "git diff -*",
         "git add $d/*",
         "git add ?/*",
+        // A glob whose last part can be `git` (`*`) is refused in a segment naming git, as
+        // on main (flipped from the allow list below).
+        "git diff -- *",
+        "git log --oneline -- src/*",
+        "git status bosun/src/*",
+        "git add ./*",
     ] {
         assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
     }
     for cmd in [
         "git add src/*.rs",
         "git diff -- *.md",
-        "git diff -- *",
-        "git log --oneline -- src/*",
         "git grep -e x -- '*.rs' *.md",
-        "git status bosun/src/*",
-        "git add ./*",
         "git ls-files docs/**/*.md",
     ] {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
@@ -178,6 +180,7 @@ fn a_shell_reading_a_duplicated_fd_is_refused() {
 
 #[test]
 fn this_repos_index_check_runs_and_a_bad_snapshot_script_inside_it_is_refused() {
+    // It uses `grep`, not a `case` glob (refused, as on main).
     let top = include_str!("../../../../decisions/scripts/check-index.sh");
     let ok = [
         ("decisions/scripts/check-index.sh", top),

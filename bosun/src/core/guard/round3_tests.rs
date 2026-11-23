@@ -187,15 +187,16 @@ fn case_arm_bodies_are_commands() {
         "case \"$1\" in --x) shift ;; *) gh pr merge 1 ;; esac",
         "case x in x) git push --force origin main;; esac",
         "case x in\n  a|b) echo a ;;\n  (*) gh pr merge 1 ;;\nesac",
-    ] {
-        assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
-    }
-    for cmd in [
+        // A glob in a pattern counts like a command word, as on main.
         "case \"$1\" in -h) echo help ;; *) git status ;; esac",
         "case $x in *\"lock file\"*) echo y ;; *) echo n ;; esac",
     ] {
-        assert_eq!(hook(cmd, &[]), None, "{cmd}");
+        assert!(hook(cmd, &[]).is_some(), "allowed: {cmd}");
     }
+    assert_eq!(
+        hook("case \"$1\" in -h) echo help ;; x) git status ;; esac", &[]),
+        None
+    );
 }
 
 #[test]
