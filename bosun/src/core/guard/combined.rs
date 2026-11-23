@@ -12,20 +12,26 @@ fn bash_command<'a>(tool: &str, input: &'a Value) -> Option<&'a str> {
     (tool == "Bash").then(|| input.get("command").and_then(Value::as_str).unwrap_or(""))
 }
 
-/// New deny, else legacy deny unless `command` is an enumerated intended allow.
+/// Command length up to which a legacy deny also runs the new rules for their reason.
+const QUICK_COMMAND: usize = 2000;
+
+/// Legacy deny (unless `command` is an enumerated intended allow), else the new decision.
+///
+/// The legacy judge runs first, so whatever main denies is denied as fast as main denies it.
 fn either(
-    new: Option<String>,
+    new: impl FnOnce() -> Option<String>,
     old: impl FnOnce() -> Option<String>,
     command: Option<&str>,
 ) -> Option<String> {
-    if new.is_some() {
-        return new;
+    let old = old();
+    if old.is_some() && !command.is_some_and(|c| intended::allow(c).is_some()) {
+        // A short command (fast for the new rules) gets the new rules' more precise reason.
+        if command.is_none_or(|c| c.len() <= QUICK_COMMAND) {
+            return new().or(old);
+        }
+        return old;
     }
-    let why = old()?;
-    if command.is_some_and(|c| intended::allow(c).is_some()) {
-        return None;
-    }
-    Some(why)
+    new()
 }
 
 /// The legacy judge's view of a script the hook read: a binary is lossy text (as main read it),
@@ -47,7 +53,7 @@ pub fn tool_rules(
     own: &str,
 ) -> Option<String> {
     either(
-        super::tool_rules_new(tool, input, branch_at, default_branch, own),
+        || super::tool_rules_new(tool, input, branch_at, default_branch, own),
         || legacy::tool_rules(tool, input, branch_at, default_branch, own),
         bash_command(tool, input),
     )
@@ -62,7 +68,7 @@ pub fn script_rules(
 ) -> Option<String> {
     let old_read = |p: &str| read(p).map(legacy_script);
     either(
-        super::script_rules_new(command, read, branch_at, default_branch),
+        || super::script_rules_new(command, read, branch_at, default_branch),
         || legacy::script_rules(command, &old_read, branch_at, default_branch),
         Some(command),
     )
@@ -108,7 +114,7 @@ pub fn bash_writes(command: &str) -> Vec<String> {
 /// Settings-lock.
 pub fn settings_rule(tool: &str, input: &Value, cwd: &str) -> Option<String> {
     either(
-        super::settings_rule_new(tool, input, cwd),
+        || super::settings_rule_new(tool, input, cwd),
         || legacy::settings_rule(tool, input, cwd),
         bash_command(tool, input),
     )
@@ -117,7 +123,7 @@ pub fn settings_rule(tool: &str, input: &Value, cwd: &str) -> Option<String> {
 /// Subagent-lock.
 pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
     either(
-        super::subagent_lock_new(tool, input),
+        || super::subagent_lock_new(tool, input),
         || legacy::subagent_lock(tool, input),
         bash_command(tool, input),
     )
@@ -126,7 +132,7 @@ pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
 /// Answers-lock.
 pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
     either(
-        super::answers_lock_new(tool, input),
+        || super::answers_lock_new(tool, input),
         || legacy::answers_lock(tool, input),
         bash_command(tool, input),
     )
@@ -135,7 +141,7 @@ pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
 /// `.bosun` directory lock.
 pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
     either(
-        super::bosun_dir_lock_new(tool, input),
+        || super::bosun_dir_lock_new(tool, input),
         || legacy::bosun_dir_lock(tool, input),
         bash_command(tool, input),
     )
@@ -144,7 +150,7 @@ pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
 /// Prereqs-lock.
 pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
     either(
-        super::prereqs_lock_new(tool, input),
+        || super::prereqs_lock_new(tool, input),
         || legacy::prereqs_lock(tool, input),
         bash_command(tool, input),
     )
@@ -153,7 +159,7 @@ pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
 /// Prereqs-lock with the task marker allowed or not.
 pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<String> {
     either(
-        super::prereqs_lock_for_new(tool, input, task_ok),
+        || super::prereqs_lock_for_new(tool, input, task_ok),
         || legacy::prereqs_lock_for(tool, input, task_ok),
         bash_command(tool, input),
     )

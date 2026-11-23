@@ -197,3 +197,20 @@ for (const copy of COPIES) {
       assert.equal(decide(bash(cmd), ctx), null);
     });
 }
+
+// Opus hunt on #66: 1000 nested `eval`s made the new rules run past the hook's 10 s timeout
+// (a timeout lets the call run). The legacy judge runs first, so main's deny comes at main's
+// speed.
+test("a call main denies is denied well inside the hook timeout (legacy judge first)", async () => {
+  for (const copy of COPIES) {
+    const { decide } = await load(copy);
+    for (const command of [
+      `${"eval ".repeat(1000)}rm pins.toml`,
+      `bash -c "${"eval ".repeat(900)}rm pins.toml"`,
+    ]) {
+      const t = Date.now();
+      assert.equal(decide(bash(command), ctx)?.decision, "deny", `${copy}: ${command.slice(-40)}`);
+      assert.ok(Date.now() - t < 5000, `${copy}: took ${Date.now() - t} ms`);
+    }
+  }
+});

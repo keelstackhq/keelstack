@@ -2811,16 +2811,27 @@ function legacyDecision(input, ctx) {
  * @param {{ lockText?: string, projectDir: string }} ctx
  * @returns {null | { decision: "deny" | "ask", reason: string }}
  */
+/** Input size (JSON chars) up to which a legacy deny also runs the new rules for their reason. */
+const QUICK_INPUT = 2000;
+
 export function decide(input, ctx) {
-  const head = decideHead(input, ctx);
-  if (head?.decision === "deny") return head;
+  // The legacy judge runs first: whatever main denies is denied as fast as main denies it, so
+  // the new rules' extra work can never push such a call past the hook's timeout.
   const old = legacyDecision(input, ctx);
   if (old?.decision === "deny") {
     const bashCmd = input?.tool_name === "Bash" ? String(input?.tool_input?.command ?? "") : null;
-    if (bashCmd === null || intendedAllow(bashCmd) === null)
+    if (bashCmd === null || intendedAllow(bashCmd) === null) {
+      // A short call (fast for the new rules) gets the new rules' more precise reason.
+      if (JSON.stringify(input ?? null).length <= QUICK_INPUT) {
+        const head = decideHead(input, ctx);
+        if (head?.decision === "deny") return head;
+      }
       return { decision: "deny", reason: `${REASON.legacy} Main's guard says: ${old.reason}` };
-    return head; // an enumerated allow
+    }
   }
+  const head = decideHead(input, ctx);
+  if (head?.decision === "deny") return head;
+  if (old?.decision === "deny") return head; // an enumerated allow
   return head ?? old ?? null; // an `ask` from either
 }
 
