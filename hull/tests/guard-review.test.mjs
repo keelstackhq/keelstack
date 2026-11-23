@@ -3,7 +3,7 @@
 // tokenizer, a nested script shares the chain, stdin scripts, shebang forms, trampolines,
 // variables, PATH, find -exec, aliases and a broader release-workflow match. Both directions.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -24,7 +24,7 @@ put(S, "ok.sh", "#!/bin/bash\necho ok\n");
 put(S, "big.sh", `#!/bin/bash\n${"echo x\n".repeat(80 * 1024)}${force}`);
 put(S, "big-ok.sh", `#!/bin/bash\n${"echo x\n".repeat(80 * 1024)}`);
 put(S, "nul.sh", `#!/bin/bash\necho a\0b\n${force}`);
-put(S, "elf", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0, 0, 0]));
+put(S, "elf", readFileSync(process.execPath)); // a real host binary (a fake header is text)
 put(S, "backtick.sh", `#!/bin/bash\nx="\n# \`git push --force origin feat\`\n"\n`);
 put(S, "quoted-hash.sh", `#!/bin/bash\nbash -c "echo '\n#' ; git push --force origin feat"\n`);
 put(S, "comment-ok.sh", "#!/bin/bash\n# never push or publish here\necho ok # or release\n");

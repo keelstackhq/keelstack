@@ -2,7 +2,7 @@
 // scratchpad and ran them with `bash`, which hid the commands from the guard. Both directions:
 // the safe commands pass, and a script a command runs is checked like the command itself.
 import assert from "node:assert/strict";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -25,7 +25,7 @@ put(
   "#!/bin/bash\n# Prints `x`; never push or publish here.\ncommand -v x >/dev/null 2>&1\n2>/dev/null\n" +
     'git -C "$1" log -1\necho "$(date) ($(node --version 2>/dev/null || echo none))"\n',
 );
-put(dir, "bin/tool", Buffer.from([0x7f, 0x45, 0x4c, 0x46, 0, 0, 1, 2]), 0o755);
+put(dir, "bin/tool", readFileSync(process.execPath), 0o755); // a real host binary
 put(dir, "scripts/py.py", "#!/usr/bin/env python3\nprint('see git push in docs')\n", 0o755);
 const evil = {
   "force.sh": "#!/bin/bash\ngit push --force origin feat\n",

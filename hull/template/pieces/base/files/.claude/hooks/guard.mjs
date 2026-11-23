@@ -15,7 +15,9 @@
 // like the shell; joined string literals are checked for secret file names.
 // A shell script the command runs (any shell by basename: `bash f`, `< f rbash`, `source f`, `./f`
 // with a shell, `env -S` or busybox shell, or no `#!`; a bare name in a dir the command adds to
-// PATH; through wrappers: sudo, timeout, flock, nice, su -c, ...; trap and coproc bodies) is read and judged
+// PATH; through wrappers: sudo, timeout, flock, nice, su -c, ...; runners: git rebase --exec,
+// git bisect run, git submodule foreach, npm exec, at, expect -c, nix-shell --run; trap and
+// coproc bodies) is read and judged
 // like typed commands, nested scripts, function bodies and startup files (`BASH_ENV`, `ENV`,
 // `--rcfile`) too: they share the chain (a file written earlier is
 // refused) and `$1`/`$@` stand for the literal arguments. Fail closed: a script the guard cannot
@@ -314,6 +316,10 @@ function subEnd(cmd, i) {
     cmd.startsWith(w, j) &&
     /[(;&|\n]$/.test(cmd.slice(i, j).replace(/[ \t]+$/, "")) &&
     /^[\s;&|)]?$/.test(cmd[j + w.length] ?? "");
+  // Comments and heredoc bodies inside the substitution are read the way split() reads them: a
+  // `)` there does not close it (`$(echo # )` or `$(cat <<X` + `)` line continues past the `)`).
+  const arith = cmd[i + 1] === "("; // `$((1<<2))`: a shift, not a heredoc
+  let pending = [];
   for (let j = i + 1; j < cmd.length; j++) {
     const c = cmd[j];
     if (q) {
@@ -321,7 +327,37 @@ function subEnd(cmd, i) {
       else if (c === "\\" && q === '"') j++;
     } else if (c === "'" || c === '"') q = c;
     else if (c === "\\") j++;
-    else if (word(j, "case")) cases++;
+    else if (c === "#" && !arith && (j === i + 1 || /[\s;&|()<>]/.test(cmd[j - 1]))) {
+      const nl = cmd.indexOf("\n", j);
+      if (nl < 0) return cmd.length;
+      j = nl - 1; // the newline itself is read next (it may start heredoc bodies)
+    } else if (c === "<" && !arith && cmd[j + 1] === "<" && cmd[j + 2] !== "<") {
+      const before = cmd.slice(i + 1, j);
+      const inArith = before.split("((").length > before.split("))").length; // `((y=1<<2))`
+      const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>()'"\\])+)/.exec(cmd.slice(j));
+      if (inArith) {
+        j++;
+        continue;
+      }
+      if (!m || /^\d+$/.test(m[2])) return cmd.length; // fail closed: a heredoc the guard cannot read
+      const delim = m[2].replace(/\$?'([^']*)'|\$?"([^"]*)"|\\(.)/g, "$1$2$3");
+      pending.push({ strip: m[1] === "-", delim });
+      j += m[0].length - 1;
+    } else if (c === "\n" && pending.length) {
+      let at = j + 1;
+      for (const { strip, delim } of pending) {
+        for (;;) {
+          if (at >= cmd.length) return cmd.length;
+          let end = cmd.indexOf("\n", at);
+          if (end < 0) end = cmd.length;
+          const line = cmd.slice(at, end);
+          at = end + 1;
+          if ((strip ? line.replace(/^\t+/, "") : line) === delim) break;
+        }
+      }
+      pending = [];
+      j = at - 1;
+    } else if (word(j, "case")) cases++;
     else if (word(j, "esac")) cases = Math.max(0, cases - 1);
     else if (cases && (c === "(" || c === ")")) continue;
     else if (c === "(") depth++;
@@ -430,7 +466,9 @@ function split(cmd) {
       i += 2;
     } else if (c === "<" && cmd[i + 1] === "<" && cmd[i + 2] !== "<") {
       const m = /^<<(-?)[ \t]*((?:'[^']*'|"[^"]*"|\\.|[^\s;&|<>()'"\\])+)/.exec(cmd.slice(i));
-      if (m) {
+      // `((y=1<<2))` shifts; a numeric delimiter is read as commands (fail closed either way)
+      const sofar = `${tokens.join(" ")} ${cur}`;
+      if (m && !/^\d+$/.test(m[2]) && sofar.split("((").length <= sofar.split("))").length) {
         endToken();
         // The delimiter is the whole word minus its quotes (`"E"OF`, `E"OF"`, `\EOF` are EOF);
         // any quote or backslash in it makes the body data.
@@ -642,6 +680,58 @@ function stripPrefixes(tokens, inCase = false) {
     } else if (a === "pnpm" && (b === "exec" || b === "dlx")) {
       t = t.slice(2);
       skipOptions();
+    } else if (a === "npm" && (b === "exec" || b === "x")) {
+      // `npm exec [opts] [--] cmd`, `npm exec -c 'cmd'` (a shell runs it)
+      t = t.slice(2);
+      const dd = t.indexOf("--");
+      for (let n = 0; n < (dd < 0 ? t.length : dd); n++) {
+        const eq = /^--call=(.*)$/s.exec(t[n]);
+        if (eq) return ["sh", "-c", eq[1], ...tail];
+        if (t[n] === "-c" || t[n] === "--call") return ["sh", "-c", t[n + 1] ?? "", ...tail];
+      }
+      if (dd >= 0) t = t.slice(dd + 1);
+      else {
+        // without `--`, an option the guard does not know may or may not take a value
+        const flags =
+          /^(-y|--yes|--no|-q|--quiet|-s|--silent|--ws|--workspaces|--include-workspace-root|--no-[\w-]+|--[\w-]+=.*)$/s;
+        const valued = ["-p", "--package", "-w", "--workspace", "--prefix"];
+        while (t[0]?.startsWith("-")) {
+          if (valued.includes(t[0])) t = t.slice(2);
+          else if (flags.test(t[0])) t = t.slice(1);
+          else return ["@deny", "unscanned", `npm exec ${t.join(" ")}`];
+        }
+      }
+    } else if (a === "nix-shell") {
+      // `nix-shell [opts] --run 'cmd'` runs cmd in a shell; without it, an interactive shell
+      for (let n = 1; n < t.length; n++) {
+        const eq = /^--(?:run|command)=(.*)$/s.exec(t[n]);
+        if (eq) return ["sh", "-c", eq[1], ...tail];
+        if (t[n] === "--run" || t[n] === "--command") return ["sh", "-c", t[n + 1] ?? "", ...tail];
+      }
+      return ["sh", ...tail];
+    } else if (a === "nix" && (b === "develop" || b === "shell")) {
+      // `nix develop [opts] -c cmd args`: argv after `-c`/`--command`; without it, a shell
+      const k = t.findIndex((x) => x === "-c" || x === "--command");
+      if (k < 0) return ["sh", ...tail];
+      t = t.slice(k + 1);
+    } else if (a === "at" || a === "batch") {
+      // at/batch run their stdin (a heredoc, here-string, pipe) or `-f file` with sh later;
+      // options are getopt bundles: `-f file`, `-ffile`, `-mf file`, `-q queue`, `-t time`
+      for (let n = 1; n < t.length && /^-./.test(t[n]); n++) {
+        const o = t[n];
+        for (let k = 1; k < o.length; k++) {
+          if (o[k] === "f") return ["sh", o.slice(k + 1) || (t[n + 1] ?? ""), ...tail];
+          if ("lrdc".includes(o[k])) return done(); // list, remove, show jobs
+          if ("qt".includes(o[k])) {
+            if (k === o.length - 1) n++;
+            break;
+          }
+        }
+      }
+      const input = t.flatMap((x, n) =>
+        /^\d*<(?!\()/.test(x) ? (/^\d*<<?<?$/.test(x) ? [x, t[n + 1] ?? ""] : [x]) : [],
+      );
+      return ["sh", ...input, ...tail];
     } else return done();
   }
 }
@@ -798,7 +888,53 @@ export function commands(cmd) {
         .find((m) => m && m[1].toLowerCase() === String(sub).toLowerCase());
       if (al) for (const x of commands(`${al[2]} ${gitSub(t).args.join(" ")}`)) out.push(x);
       else if (t.slice(1, t.length - args.length - 1).some(hidden)) out.push(["@evade", segText]);
+      // Runners: `rebase -x/--exec cmd` and `submodule foreach cmd` run cmd with sh; `bisect run
+      // cmd args` runs argv. Their command text is read like typed commands.
+      const run = [];
+      if (sub === "rebase")
+        for (let n = 0; n < args.length && args[n] !== "--"; n++) {
+          const a = args[n];
+          const long = /^--ex(?:e(?:c)?)?(?:=(.*))?$/s.exec(a); // git takes a unique prefix
+          if (long) run.push(long[1] ?? args[++n] ?? "");
+          else if (/^-[^-]/.test(a))
+            // a bundle (`-ix cmd`, `-xcmd`); `-s`, `-X`, `-C` take the rest as their value
+            for (let k = 1; k < a.length; k++) {
+              if ("sXC".includes(a[k])) {
+                if (k === a.length - 1) n++;
+                break;
+              }
+              if (a[k] === "x") {
+                run.push(k < a.length - 1 ? a.slice(k + 1) : (args[++n] ?? ""));
+                break;
+              }
+            }
+        }
+      // `bisect run` passes its argv quoted: keep each word one word
+      const q = (x) => `'${x.replaceAll("'", "'\\''")}'`;
+      if (sub === "bisect" && args[0] === "run") run.push(args.slice(1).map(q).join(" "));
+      if (sub === "submodule" && args.includes("foreach"))
+        run.push(
+          args
+            .slice(args.indexOf("foreach") + 1)
+            .filter(
+              (x, n, all) => !all.slice(0, n + 1).every((y) => /^--(recursive|quiet)$/.test(y)),
+            )
+            .join(" "),
+        );
+      for (const body of run) for (const x of commands(body)) out.push(x);
     }
+    // `expect -c 'spawn git push ...'`: Tcl `spawn`/`exec`/`system` run programs; read them as
+    // commands (other Tcl is not parsed; a risky word in it is refused as `@evade-exec`).
+    if (prog === "expect")
+      for (let n = 1; n < t.length; n++)
+        if (t[n] === "-c" && t[n + 1] !== undefined) {
+          const body = t[n + 1];
+          out.push(["@evade-exec", body]);
+          const sh = body
+            .replace(/[{}[\]"]/g, "\n")
+            .replace(/(^|[\n;])\s*(spawn|exec|system)\s+/g, "$1\n");
+          for (const x of commands(sh)) out.push(x);
+        }
     if (prog === "trap") {
       // `trap '<code>' SIG`: the code runs later, read like typed commands
       const body = t.slice(1).find((x) => !/^-[-pl]?$/.test(x));
@@ -1579,6 +1715,7 @@ function checkShell(text, projectDir, cwd, opts) {
     guarded: opts.guarded,
     script,
     lost: opts.lost ?? false, // a `cd` the guard cannot follow: relative script paths are unknown
+    vars: varValues(text, parent?.vars),
   };
   const cmds = commands(text);
   // Writes anywhere in this text (a later command can run first: `(sleep 1; bash f) & cp x f`).
@@ -1652,8 +1789,99 @@ function positional(t, argv) {
   return out;
 }
 
+const UNSET = "\uE003"; // a variable with no value (`${X:-w}` and `${X-w}` give `w`)
+const SAVED_PATH = "\uE004"; // `_OLD=$PATH`: the PATH the shell started with
+/** Every value a variable named in `text` can hold, for PATH entries (`PATH=$VENV/bin:$PATH`,
+ * `PATH=${_OLD_PATH:-}`): its environment value, each literal the text assigns, empty after
+ * `unset`. Any other mention (`read X`, `for X in`, `X+=`, a non-literal value) makes it unknown. */
+function varValues(text, parent) {
+  const vars = new Map(parent ?? []);
+  vars.assigned = new Set(parent?.assigned ?? []); // `$X` alone needs X assigned in the text
+  const assigned = [...String(text).matchAll(/(?<![\w$])([A-Za-z_]\w*)=/g)].map((m) => m[1]);
+  for (const n of assigned) vars.assigned.add(n);
+  const defaulted = [...String(text).matchAll(/\$\{([A-Za-z_]\w*):?-/g)].map((m) => m[1]);
+  const names = new Set([...assigned, ...defaulted].filter((n) => n !== "PATH"));
+  // A nameref, `((`/`let` arithmetic, `${X:=w}` or a sourced/eval'd text can change any variable.
+  const opaque =
+    /(^|[\s;&|(])(source|\.|eval)\s|\b(declare|local|typeset|readonly)\s+-\w*n|\(\(|\blet\s|\$\{!/.test(
+      String(text),
+    );
+  for (const n of names) {
+    if (opaque || new RegExp(`\\$\\{${n}:?[=?]`).test(text)) {
+      vars.set(n, null);
+      continue;
+    }
+    let vals = vars.has(n)
+      ? vars.get(n) && new Set(vars.get(n))
+      : new Set([process.env[n] ?? UNSET]);
+    const re = new RegExp(`(?<![$\\w{#!])${n}(?!\\w)`, "g");
+    for (const m of String(text).matchAll(re)) {
+      if (!vals) break;
+      const before = text.slice(0, m.index);
+      const rest = text.slice(m.index + n.length);
+      const v =
+        /^=("[^"`$]*"|'[^']*'|"\$\{?PATH\}?"|\$\{?PATH\}?(?=[\s;&|)]|$)|[^\s;&|()<>"'`$\\]*(?=[\s;&|)]|$))/.exec(
+          rest,
+        );
+      if (v) {
+        const raw = v[1].replace(/^(["'])(.*)\1$/s, "$2");
+        vals.add(/^\$\{?PATH\}?$/.test(raw) ? SAVED_PATH : raw);
+      } else if (/(^|[\s;&|({])(export|readonly)\s+((-\w+|[A-Za-z_]\w*)\s+)*$/.test(before))
+        continue;
+      else if (/(^|[\s;&|({])unset\s+(-v\s+)?((-\w+|[A-Za-z_]\w*)\s+)*$/.test(before))
+        vals.add(UNSET);
+      else vals = null;
+    }
+    vars.set(n, vals);
+  }
+  return vars;
+}
+
+/** Each string a PATH value can be, its variables expanded from `vars`; null when unknown. */
+function expandPath(value, vars) {
+  let out = [String(value)];
+  for (let round = 0; round < 4; round++) {
+    const next = [];
+    let changed = false;
+    for (const s of out) {
+      const m = /\$\{([A-Za-z_]\w*)(:?-([^}$`]*))?\}|\$([A-Za-z_]\w*)/.exec(s);
+      if (!m) {
+        next.push(s);
+        continue;
+      }
+      const n = m[1] ?? m[4];
+      if (n === "PATH" || n === "HOME" || n === "PWD") {
+        // left for notePath (`$PATH` entries, `$HOME/x`, `$PWD/x`)
+        next.push(s.replace(m[0], m[0].replace("$", "\uE005")));
+        changed = true;
+        continue;
+      }
+      const vals = vars?.get(n);
+      if (!vals || (!m[2] && !vars.assigned.has(n))) return null;
+      for (const v of vals) {
+        let x = v;
+        if (m[2] && (v === UNSET || (v === "" && m[2].startsWith(":")))) x = m[3];
+        else if (v === UNSET) x = "";
+        if (/[$`]/.test(x)) return null;
+        next.push(
+          s.replace(m[0], x === SAVED_PATH ? "$PATH" : x).replaceAll("$PATH", "\uE005PATH"),
+        );
+      }
+      changed = true;
+    }
+    if (next.length > 16) return null;
+    out = next;
+    if (!changed) return out.map((s) => s.replaceAll("\uE005", "$"));
+  }
+  return null;
+}
+
 /** Add the literal dirs of a PATH value to the chain; false when a dir is not literal. */
 function notePath(value, here, chain) {
+  const all = expandPath(value, chain.vars);
+  if (!all) return false;
+  if (all.length !== 1 || all[0] !== value)
+    return all.every((v) => notePath(v, here, { ...chain, vars: null }));
   for (const e of String(value).split(":")) {
     if (/^\$\{?PATH\}?$/.test(e)) continue;
     const dir = e
@@ -1664,7 +1892,9 @@ function notePath(value, here, chain) {
       .replace(/^(~|\$\{?HOME\}?)(?=\/|$)/, homedir())
       .replace(/^(\$\{?PWD\}?|\$\(pwd\)|`pwd`)(?=\/|$)/, here);
     if (/[$`*?[{]/.test(dir)) return false;
-    chain.path.push(resolve(here, dir || "."));
+    const abs = resolve(here, dir || ".");
+    // a system dir is on PATH already: what runs from it is not a script the command added
+    if (!/^\/(usr\/(local\/)?)?s?bin$/.test(abs)) chain.path.push(abs);
   }
   return true;
 }
@@ -1838,9 +2068,39 @@ function shebang(text) {
 const KNOWN_LANG_RE =
   /^(?:python[\d.]*|node|nodejs|bun|deno|ruby|perl|php|awk|gawk|mawk|nawk|sed|make|gmake|tsx|ts-node)$/;
 
-/** Magic numbers of executables the kernel runs itself (ELF, Mach-O, PE, wasm). */
-const BINARY_RE =
-  /^(\x7fELF|\xfe\xed\xfa[\xce\xcf]|[\xce\xcf]\xfa\xed\xfe|\xca\xfe\xba\xbe|MZ|\0asm)/;
+const ELF_MACHINE = { x64: 62, arm64: 183, ia32: 3, arm: 40, riscv64: 243, ppc64: 21, s390x: 22 };
+const MACHO_CPU = { x64: 0x01000007, arm64: 0x0100000c };
+/** True when the kernel runs `top` (a file's first bytes) as a host binary. Anything else is read
+ * as text: a file the kernel refuses (ENOEXEC) is run by sh (bash, execvp in env/timeout/xargs),
+ * so a fake magic number (`\x7fELF\ngit push ...`) is a shell script. A valid header for this
+ * host (ELF on Linux, Mach-O on macOS: class, byte order, version, type, machine) with a NUL
+ * before the first newline counts. */
+function hostBinary(top) {
+  const b = Buffer.from(top, "latin1");
+  const nl = b.indexOf(10);
+  if (b.subarray(0, nl < 0 ? b.length : nl).indexOf(0) < 0) return false;
+  if (process.platform === "darwin") {
+    if (b.length < 28 || b.readUInt32LE(0) !== 0xfeedfacf) return false;
+    return b.readUInt32LE(4) === MACHO_CPU[process.arch] && b.readUInt32LE(12) === 2; // MH_EXECUTE
+  }
+  if (b.length < 64 || b.toString("latin1", 0, 4) !== "\x7fELF") return false;
+  if (![1, 2].includes(b[4]) || ![1, 2].includes(b[5]) || b[6] !== 1) return false;
+  const u16 = (o) => (b[5] === 1 ? b.readUInt16LE(o) : b.readUInt16BE(o));
+  return [2, 3].includes(u16(16)) && u16(18) === ELF_MACHINE[process.arch];
+}
+
+/** Build tools: what they write is a build output, not a checked-out or unpacked tree. */
+const BUILD_RE =
+  /^(\S*\/)?(cargo|go|make|gmake|cmake|ninja|rustc|cc|gcc|g\+\+|clang|clang\+\+|zig|meson|bazel)\s/;
+
+/** True for a host binary (hostBinary) that is not a shell under another name. */
+function nativeBinary(abs) {
+  try {
+    return hostBinary(head(abs)) && !shellBinary(abs);
+  } catch {
+    return false;
+  }
+}
 
 /** First bytes of a file as latin1 text (for `#!` and magic numbers). */
 function head(abs) {
@@ -1910,7 +2170,11 @@ function runScript(t, projectDir, dirs, chain, seen) {
         return { rule: "scriptLater", shown: `${name}: written in this same command` };
       // Whatever an earlier (or concurrent) command wrote is read only at run time: refuse.
       const opaque = chain.state.opaque ?? chain.later.opaque;
-      if (opaque) return { rule: "scriptLater", shown: `${name} with ${opaque}` };
+      // An existing ELF/Mach-O binary run directly (`cargo build && ./target/debug/x`) is not read
+      // anyway; a script stays refused, even a tracked one: the writer (build scripts, install
+      // hooks, `git pull`/`checkout` and their hooks) may change it before it runs (guard.md).
+      if (opaque && !(st?.isFile() && !run.shell && BUILD_RE.test(opaque) && nativeBinary(abs)))
+        return { rule: "scriptLater", shown: `${name} with ${opaque}` };
       if (!st) continue;
       found = true;
       if (!st.isFile()) continue; // a directory: the shell fails
@@ -1920,7 +2184,7 @@ function runScript(t, projectDir, dirs, chain, seen) {
       try {
         if (!run.shell) {
           const top = head(abs);
-          if (BINARY_RE.test(top)) {
+          if (hostBinary(top)) {
             if (shellBinary(abs)) return refuse("a shell under another name: run it by its name");
             continue; // a binary the kernel runs
           }

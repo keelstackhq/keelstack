@@ -29,11 +29,16 @@ rule and the allowed alternative. Use the patterns below; they pass.
 A script does not hide a command: the guard reads a shell script before it runs (any shell by
 name: `bash`, `sh`, `rbash`, `mksh`, `busybox sh`, ...; also `bash < f`, `< f bash`, scripts it
 runs, with `$1`/`$@` bound to the literal arguments, shell functions, `trap` and `coproc` bodies,
-wrappers such as `sudo`, `timeout`, `flock`, `nice`, `su -c`, `script -c`, and startup files:
+wrappers such as `sudo`, `timeout`, `flock`, `nice`, `su -c`, `script -c`, runners such as
+`git rebase --exec`, `git bisect run`, `git submodule foreach`, `npm exec`, `at`, `expect -c`,
+`nix-shell --run`, `nix develop -c`, and startup files:
 `BASH_ENV`, `ENV`, `--rcfile`) and refuses it when a line in it would be refused. A script that
 does not exist when the guard runs is refused (a shell would fail on it anyway), and so is any
 script run after an earlier command in the same call that may write files the guard cannot name
-(downloads, archives, decoders, patches, builds, package managers, interpreters).
+(downloads, archives, decoders, patches, builds, package managers, interpreters); an existing
+host binary (a valid ELF header on Linux, Mach-O on macOS) run directly after a build tool
+(`cargo build && ./target/debug/x`) passes. A file with a fake magic number is a shell script
+(the kernel refuses it and sh runs it) and is read like one.
 Release workflows (file names with `release`, `publish` or `deploy`; the human can set the
 `GUARD_RELEASE_WORKFLOWS` regex in `.claude/settings.json` `env`) never start from here.
 
@@ -84,6 +89,17 @@ A rail, not a sandbox. These stay open:
 - A file written in an earlier Bash call is read as it is when the next call runs: the guard
   judges each call alone.
 - A default branch that `origin/HEAD` does not name (besides `main` and `master`).
+- A script after a writer the guard cannot name in the same call (`pnpm install && bash
+  scripts/gen.sh`, `git pull && bash s.sh`, `git checkout main && bash s.sh`) stays refused, even
+  when it is tracked and unchanged: install scripts, build scripts, the pulled or checked-out
+  commit and git hooks can rewrite it before it runs. Run it in a separate Bash call. A host
+  binary run directly is allowed only after a build tool (`cargo build && ./target/debug/x`).
+- `expect` Tcl beyond `spawn`/`exec`/`system` words and `expect` script files; `at` fed by a pipe
+  (refused); `npm exec` with an option the guard does not know and no `--` (refused: add `--`).
+- PATH entries from variables: `$X` counts only when this text assigns X a literal (or `$PATH`)
+  and changes it no other way (no `${X:=w}`, nameref, `((`, `let`, `source` or `eval` in the
+  text); `${X:-w}` of an unassigned X uses the guard's own environment. System dirs (`/bin`,
+  `/usr/bin`, `/usr/local/bin`, ...) are on PATH already and are not tracked.
 - A re-run by id (`gh run rerun <id>`, `actions/runs/<id>/rerun`, `jobs/<id>/rerun`) cannot tell a
   release run from another: release workflows must stay environment-gated with a required human
   reviewer, so a re-run waits for that approval.
