@@ -1056,7 +1056,11 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
      crate is missing;
    - unless `--yes` or `--dry-run`, list the planned writes and ask for confirmation on a TTY;
      without a TTY and without `--yes`, exit 3 ("use --yes in non-interactive runs").
-2. **npm placeholders.** For each missing npm package hoist writes, in a new temp directory, a
+2. **npm placeholders.** Packages are the release model's plus every root `hoist.toml`
+   `[registry.npm."<name>"]` entry (§5); the placeholder and trusted-publisher steps are the same
+   for both, a registry entry naming its own workflow file. `[registry.crates]` entries get no
+   placeholder crate and no publish: a missing one is `pending`, an existing one gets the
+   crate trust link with the entry's workflow. For each missing npm package hoist writes, in a new temp directory, a
    `package.json` with only `name`, `version: "0.0.0"`, `description` ("placeholder for trusted
    publishing; releases come from <repo URL>"), `repository` and `license` (copied from the
    package's own manifest when present), plus a `README.md` saying the same, and runs
@@ -1071,12 +1075,17 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
    only drops registrations whose directories are already gone. No tag for that version → item `pending` "run the release first; bootstrap publishes
    the tagged version".
 4. **Trusted publishers.** The workflow file and environment are the ones `plan` reports for
-   `release/workflow` (§7.3). For each npm package, hoist runs `npm trust list <pkg> --json` and
+   `release/workflow` (§7.3); a `[registry.*]` package uses its entry's `workflow` instead. For each npm package, hoist runs `npm trust list <pkg> --json` and
    skips it when a GitHub entry for this repo, workflow file and environment exists. Otherwise,
    on a TTY it runs `npm trust github <pkg> --file <workflow> --repo <o>/<r> --env <env>
    --allow-publish` with inherited stdio (npm prompts for the 2FA code); without a TTY it adds a
    human step with that exact command. For crates the crates.io trusted-publishing settings
    link is a human step (no documented API, §13).
+   Every npm trust item (registered now, `would register`, or the human step's `pending` reason)
+   says `npm drops this trusted publisher unless a publish uses it by <now + 48 h, RFC 3339>:
+   run <trigger>` (§13), where the trigger is `the <workflow> workflow` (for the release
+   workflow: re-run the failed release publish job, or push to main / merge the release PR);
+   the stderr hint repeats it once per trigger. `HOIST_NOW` sets "now" in tests.
    Crate trust is reported `unknown` (unreadable) and never needs a confirmation or sets the
    exit code. The prompt and the `--yes` requirement cover only real writes (placeholders,
    crates, npm trust on a TTY); a run left with human steps alone skips the prompt and exits 2.
@@ -1355,7 +1364,12 @@ day; GitHub repo metadata):
   published from private repositories ("even when publishing public packages"); trusted
   publishing itself still works. So the publish job never forces provenance (no
   `--provenance`, no `NPM_CONFIG_PROVENANCE`): it appears by itself once the repo is public.
-- A new npm trusted publisher configuration must complete its first successful publish within 2
+- npm expires an unvalidated trusted publisher configuration when no publish uses it within 2
+  days (48 h): "If the configuration is not validated within 2 days, it expires and can no longer
+  be used or edited"; to fix it, revoke it, create a new one and publish within 2 days (checked
+  2026-11-23: https://github.blog/changelog/2026-10-02-unvalidated-npm-trusted-publishing-configurations-now-expire
+  and https://docs.npmjs.com/trusted-publishers). Bootstrap prints the deadline (§9.6).
+  A new npm trusted publisher configuration must complete its first successful publish within 2
   days, or it expires and must be deleted and recreated. Register trust (bootstrap) only when
   the failed `publish` job can be re-run right after.
 - The trusted publisher's workflow field is the file name only (`release.yml`), the environment

@@ -52,7 +52,7 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
   `reviewers = []` (no reviewer, no `release-reviewer` step) and `workflow = "release.yml"`,
   `[registry.npm."<name>"]` / `[registry.crates."<name>"]` `workflow` (packages outside the release model:
   `npm-trust:`/`crates-trust:`/`first-publish:` steps), target `[deploy] environment` (deploy secrets live in
-  that environment), `[publish] crates = false`. Crate `first-publish:<name>` points at `hoist release bootstrap`.
+  that environment), `[publish] crates = false`. Crate `first-publish:<name>` points at `hoist release bootstrap`, which also covers every `[registry.npm]` entry (placeholder + trusted publisher with the entry's workflow). npm drops a trusted publisher that no publish used within 48 h: bootstrap's trust items and last line print the deadline; publish before it.
 
 ## Exit codes
 

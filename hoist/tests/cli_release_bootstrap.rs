@@ -1086,6 +1086,21 @@ fn assert_hint_last(out: &str, hint: &str) {
 
 const HINT_FINISH: &str = "next: finish the steps above, then run bootstrap again";
 
+/// The finish hint ends the output, followed by the npm expiry line (H7) when an npm trust
+/// step is still open.
+fn assert_finish_hint(out: &str) {
+    let at = out
+        .find(HINT_FINISH)
+        .unwrap_or_else(|| panic!("no finish hint in {out}"));
+    let rest = out[at + HINT_FINISH.len()..].trim_end();
+    assert!(
+        rest.starts_with("\nnpm drops this trusted publisher unless a publish uses it by 20")
+            && rest.contains(": run the release.yml workflow"),
+        "{rest:?}\n{out}"
+    );
+    assert_eq!(rest.lines().count(), 2, "{out}");
+}
+
 #[test]
 fn hint_after_success() {
     let env = setup_single();
@@ -1119,8 +1134,11 @@ fn hint_after_failure() {
     let api = FakeApi::start(&[]);
     let (code, out) = bootstrap_merged(&env, &api, &["--yes"], false, "");
     assert_eq!(code, Some(1), "{out}");
-    assert_hint_last(&out, HINT_FINISH);
-    assert!(!out.contains("re-run the failed"), "{out}");
+    assert_finish_hint(&out);
+    assert!(
+        !out.contains("re-run the failed \"release publish\""),
+        "{out}"
+    );
 }
 
 /// R7: placeholders published but npm trust pending (no terminal, exit 2): the CI publish
@@ -1138,8 +1156,11 @@ fn pending_npm_trust_hint_says_finish() {
     let (code, out) = bootstrap_merged(&env, &api, &["--yes"], false, "");
     assert_eq!(code, Some(2), "{out}");
     assert!(out.contains("npm-trust:@acme/lib"), "{out}");
-    assert_hint_last(&out, HINT_FINISH);
-    assert!(!out.contains("re-run the failed"), "{out}");
+    assert_finish_hint(&out);
+    assert!(
+        !out.contains("re-run the failed \"release publish\""),
+        "{out}"
+    );
 }
 
 /// A failed `npm trust github` on the first of several packages stops the run: the other
@@ -1230,4 +1251,151 @@ fn stale_worktree_of_an_interrupted_run_is_removed() {
             .any(|l| l.ends_with("hoist-bootstrap-tool-x-4242")),
         "another crate's worktree was removed: {left:?}"
     );
+}
+
+// H5 / H7: `[registry.*]` packages and the 48 h expiry of an unvalidated trusted publisher.
+
+const NOW: &str = "2026-11-23T12:00:00Z";
+const DEADLINE: &str = "2026-11-25T12:00:00Z";
+const REGISTRY_TOML: &str = "[registry.npm.\"@acme/extra\"]\nworkflow = \"extra.yml\"\n\
+                             [registry.crates.\"acme-extra\"]\nworkflow = \"extra.yml\"\n";
+const EXTRA_PKG: &str = "GET /@acme%2Fextra";
+const EXTRA_CRATE: &str = "GET /api/v1/crates/acme-extra";
+
+/// `npm` whose `trust list` shows both trusted publishers (release.yml and extra.yml) once
+/// `trust github` ran; it records publishes in `npm.published`.
+fn npm_registry_stub(tools: &std::path::Path) -> String {
+    let mark = tools.join("npm.trusted");
+    let entry = |file: &str| {
+        format!(
+            r#"{{"type":"github","claims":{{"repository":"acme/x","workflow_ref":{{"file":"{file}"}},"environment":"release"}}}}"#
+        )
+    };
+    let (rel, extra) = (entry("release.yml"), entry("extra.yml"));
+    format!(
+        r#"case "$1 $2" in
+  --version*) echo 11.15.0;;
+  whoami*) echo alice;;
+  "trust list") if [ -f '{m}'.$(echo "$3" | tr "/@" "__") ]; then case "$3" in @acme/extra) echo '{extra}';; *) echo '{rel}';; esac; else echo '[]'; fi;;
+  "trust github") read line; touch '{m}'.$(echo "$3" | tr "/@" "__");;
+  publish*) grep '"name"' package.json >> '{p}';;
+  *) echo "unexpected npm call" >&2; exit 9;;
+esac"#,
+        m = mark.display(),
+        p = tools.join("npm.published").display()
+    )
+}
+
+fn setup_registry(tag: Option<&str>) -> Env {
+    let env = setup_writes("publish", tag, None, false);
+    std::fs::write(env.repo.path().join("hoist.toml"), REGISTRY_TOML).unwrap();
+    git(env.repo.path(), &["add", "-A"]);
+    git(env.repo.path(), &["commit", "-q", "-m", "chore: registry"]);
+    stub(
+        env.tools.path(),
+        "npm",
+        &npm_registry_stub(env.tools.path()),
+    );
+    env
+}
+
+#[test]
+fn dry_run_covers_registry_packages() {
+    let env = setup_registry(Some(TAG));
+    let api = FakeApi::start(&[]);
+    let o = bootstrap(&env, &api, &["--dry-run"])
+        .env("HOIST_NOW", NOW)
+        .assert()
+        .code(0);
+    let v = json(o.get_output());
+    let npm = item(&v, "bootstrap_npm", "@acme/extra");
+    assert_eq!(npm["action"], "create", "{npm}");
+    assert_eq!(npm["source"], "hoist.toml:registry.npm.\"@acme/extra\"");
+    let t = item(&v, "bootstrap_trust", "@acme/extra");
+    assert_eq!(t["action"], "pending", "{t}");
+    let s = human_step(&v, "npm-trust:@acme/extra");
+    assert_eq!(
+        s["title"],
+        "npm trust github @acme/extra --file extra.yml --repo acme/x --env release --allow-publish"
+    );
+    let reason = t["reason"].as_str().unwrap();
+    assert!(
+        reason.contains(&format!(
+            "npm drops this trusted publisher unless a publish uses it by {DEADLINE}: run the extra.yml workflow"
+        )),
+        "{reason}"
+    );
+    // The model package keeps the release workflow and says how to publish.
+    let m = item(&v, "bootstrap_trust", "@acme/lib");
+    let reason = m["reason"].as_str().unwrap();
+    assert!(
+        reason.contains(&format!("by {DEADLINE}: run the release.yml workflow")),
+        "{reason}"
+    );
+    assert!(reason.contains("push to main"), "{reason}");
+    // A registry crate is never published; its trust stays a link.
+    let c = item(&v, "bootstrap_crate", "acme-extra");
+    assert_eq!(c["action"], "pending", "{c}");
+    assert_eq!(
+        item(&v, "bootstrap_trust", "acme-extra")["action"],
+        "pending"
+    );
+    api.assert_only_get();
+    let paths: Vec<String> = api.requests().iter().map(|r| r.path.clone()).collect();
+    assert!(paths.contains(&"/@acme%2Fextra".to_string()), "{paths:?}");
+    no_publish(&env);
+}
+
+#[test]
+fn existing_registry_crate_trust_is_a_link_with_its_workflow() {
+    let env = setup_registry(Some(TAG));
+    let routes: [RouteSpec; 2] = [(EXTRA_CRATE, 200, "{}", &[]), (EXTRA_PKG, 200, "{}", &[])];
+    let api = FakeApi::start(&routes);
+    let o = bootstrap(&env, &api, &["--dry-run"]).assert().code(0);
+    let v = json(o.get_output());
+    assert_eq!(
+        item(&v, "bootstrap_trust", "acme-extra")["action"],
+        "unknown"
+    );
+    let s = human_step(&v, "crates-trust:acme-extra");
+    assert_eq!(s["url"], "https://crates.io/crates/acme-extra/settings");
+    assert!(s["title"].as_str().unwrap().contains("workflow extra.yml"));
+    assert_eq!(item(&v, "bootstrap_npm", "@acme/extra")["action"], "ok");
+}
+
+#[test]
+fn registry_npm_is_published_and_trusted_on_a_terminal() {
+    let env = setup_registry(Some(TAG));
+    let routes: [RouteSpec; 2] = [(TOOL_PKG, 200, "{}", &[]), (EXTRA_CRATE, 200, "{}", &[])];
+    let api = FakeApi::start(&routes);
+    let o = bootstrap(&env, &api, &[])
+        .env("HOIST_ASSUME_TTY", "1")
+        .env("HOIST_NOW", NOW)
+        .write_stdin("y\n111111\n222222\n")
+        .assert()
+        .code(0);
+    let out = o.get_output();
+    let v = json(out);
+    assert!(
+        published(&env).contains(&"\"name\": \"@acme/extra\"".to_string()),
+        "{:?}",
+        published(&env)
+    );
+    let t = item(&v, "bootstrap_trust", "@acme/extra");
+    assert_eq!(t["action"], "ok", "{t}");
+    let reason = t["reason"].as_str().unwrap();
+    assert!(reason.starts_with("registered"), "{reason}");
+    assert!(
+        reason.contains(&format!("by {DEADLINE}: run the extra.yml workflow")),
+        "{reason}"
+    );
+    assert!(
+        trust_lines(&env).iter().any(|l| l
+            == "trust github @acme/extra --file extra.yml --repo acme/x --env release --allow-publish"),
+        "{:?}",
+        trust_lines(&env)
+    );
+    // The hint repeats the deadline.
+    let err = stderr(out);
+    assert!(err.contains(&format!("by {DEADLINE}: run ")), "{err}");
 }
