@@ -49,7 +49,7 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         "grep -n x *.md",
         "git add src/*.rs",
         "git diff -- src/*.rs",
-        "git ls-files *.rs | wc -l",
+        "git ls-files -- *.rs | wc -l",
         "git log -- docs/*.md",
         "for f in *.md; do echo $f; done",
         "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi",
@@ -60,7 +60,7 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         "case \"$1\" in\n  -h) echo help ;;\n  *) git status ;;\nesac\n",
         "case \"$1\" in\n  -h|*) git status ;;\nesac\n",
         "case $x in *\"lock file\"*) echo y ;; *) echo n ;; esac\n",
-        "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi\ngit ls-files *.rs | wc -l\n",
+        "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi\ngit ls-files -- *.rs | wc -l\n",
     ];
     for body in scripts {
         assert_eq!(hook("bash x.sh", &[("x.sh", body)]), None, "{body}");

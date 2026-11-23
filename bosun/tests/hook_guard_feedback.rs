@@ -155,3 +155,35 @@ fn text_behind_program_magic_is_read_as_a_script() {
     // Through a wrapper, `execvp` hands a file the kernel refuses to `sh`: not read, refused.
     assert!(hook(dir, "timeout 5 ./prog").contains("\"deny\""));
 }
+
+#[test]
+fn a_shell_binary_run_directly_by_another_name_is_refused() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    std::fs::create_dir_all(dir.join(".bosun")).unwrap();
+    std::fs::write(dir.join(".bosun/version"), "0.9.0\n").unwrap();
+    std::fs::write(dir.join("tool"), host_elf()).unwrap();
+    std::fs::write(dir.join("m.sh"), "gh pr merge 1\n").unwrap();
+    let shell = ["/bin/bash", "/usr/bin/bash", "/bin/sh"]
+        .into_iter()
+        .map(std::path::Path::new)
+        .find(|p| p.is_file() && std::fs::read(p).is_ok_and(|b| b.starts_with(b"\x7fELF")));
+    let Some(shell) = shell else {
+        return;
+    };
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(shell, dir.join("xl")).unwrap();
+    #[cfg(not(unix))]
+    std::fs::copy(shell, dir.join("xl")).unwrap();
+    std::fs::copy(shell, dir.join("yl")).unwrap();
+    for command in [
+        "./xl -c 'gh pr merge 1'",
+        "./xl m.sh",
+        "./yl m.sh",
+        "./yl -c 'gh pr merge 1'",
+        "./tool -c x",
+    ] {
+        assert!(hook(dir, command).contains("\"deny\""), "{command}");
+    }
+    assert_eq!(hook(dir, "./tool --version"), "");
+}

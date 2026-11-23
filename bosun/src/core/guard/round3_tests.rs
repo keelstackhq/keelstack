@@ -288,11 +288,7 @@ fn shells_and_runners_the_guard_cannot_read_are_refused() {
         let why = hook(cmd, &[]).unwrap_or_else(|| panic!("allowed: {cmd}"));
         assert!(why.contains("cannot"), "{cmd}: {why}");
     }
-    for cmd in [
-        "make test",
-        "find . -name '*.rs' -exec wc -l {} +",
-        "find . -name '*.sh' -exec bash -n {} \\;",
-    ] {
+    for cmd in ["make test", "find . -name '*.rs' -exec wc -l {} +"] {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
 }
@@ -400,7 +396,6 @@ fn parse_only_wrapped_programs_and_xargs_runners_are_exact() {
     }
     for cmd in [
         "bash -n x.sh",
-        "find . -name '*.sh' -exec bash -n {} \\;",
         "ls | xargs wc -l",
         "ls | xargs -I{} cp {} /tmp/",
         "./bin --version",

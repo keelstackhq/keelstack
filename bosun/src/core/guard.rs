@@ -15,7 +15,7 @@ mod interp;
 mod literals;
 mod prose;
 mod settings;
-pub use interp::{Script, host_binary, script_rules};
+pub use interp::{Script, host_binary, interpreter_name, script_rules};
 pub use settings::settings_rule;
 mod writes;
 pub use writes::bash_writes;
@@ -23,6 +23,8 @@ pub use writes::bash_writes;
 mod feedback_tests;
 #[cfg(test)]
 mod round3_tests;
+#[cfg(test)]
+mod round4_tests;
 
 const MERGE_FIX: &str = "agents never merge, tag or force-push (spec D13): open the PR with \
     `bosun pr <issue>` and let `bosun pr <issue> --auto-merge` hand it to GitHub after the gates \
@@ -2236,10 +2238,14 @@ fn exec_rule(
     target: &Target,
 ) -> Option<&'static str> {
     match first {
-        Some("find" | "fd" | "fdfind") => {
-            let at = words.iter().position(|w| {
+        // A later group of a find cut at its `\;` (`find . -exec a {} \; -exec b {} \;`) starts
+        // its own segment with the action word.
+        Some(f @ ("find" | "fd" | "fdfind" | "-exec" | "-execdir" | "-ok" | "-okdir")) => {
+            // Every `-exec`/`-execdir`/`-ok`/`-okdir` (`fd -x`/`-X`) group runs a command:
+            // each one is judged, not only the first.
+            let marker = |w: &str| {
                 matches!(
-                    *w,
+                    w,
                     "-exec"
                         | "-execdir"
                         | "-ok"
@@ -2249,31 +2255,32 @@ fn exec_rule(
                         | "--exec"
                         | "--exec-batch"
                 )
-            })?;
-            let end = words[at + 1..]
+            };
+            words
                 .iter()
-                .position(|w| matches!(*w, ";" | "+" | "\\;"))
-                .map_or(words.len(), |e| at + 1 + e);
-            let inner = &words[at + 1..end];
-            // The found files themselves run (`-exec {} ;`, `-exec sh {} ;`): unread.
-            let (cmd, _, _) = unwrap_runners(inner);
-            // Also a path-named program (`-exec ./x.sh {} ;`), never read; only exactly
-            // `sh -n {}` (parse only) passes.
-            // (`\;` reaches here as `\` when the segment was cut at its `;`.)
-            let bare: Vec<&str> = cmd.iter().copied().filter(|a| *a != "\\").collect();
-            let parse_only = matches!(bare[..], [s, "-n", "{}"] if SHELLS.contains(&base(s)));
-            let runs_found = cmd.first() == Some(&"{}")
-                || cmd.first().is_some_and(|c| c.contains('/'))
-                || !parse_only
-                    && cmd
+                .enumerate()
+                .filter(|(_, w)| marker(w))
+                .find_map(|(at, _)| {
+                    let end = words[at + 1..]
+                        .iter()
+                        .position(|w| matches!(*w, ";" | "+" | "\\;"))
+                        .map_or(words.len(), |e| at + 1 + e);
+                    let inner = &words[at + 1..end];
+                    // The found files themselves run (`-exec {} ;`, `-exec ./x.sh {} ;`), or a
+                    // shell or interpreter is handed them (`-exec sh -n {} ;`, `fd -X bash`
+                    // appends them): unread, so refused, parse-only included.
+                    let (cmd, _, _) = unwrap_runners(inner);
+                    let named = cmd.first().is_some_and(|c| *c == "{}" || c.contains('/'));
+                    let shell = cmd
                         .first()
                         .is_some_and(|c| interp::is_runner(c) || SHELLS.contains(&base(c)))
-                    && cmd[1..].contains(&"{}");
-            if runs_found {
-                return Some(FIND_RUNS);
-            }
-            // `{}` stands for names find adds: judged like the command without them.
-            merge_rule(inner, &inner.join(" "), target)
+                        && (matches!(f, "fd" | "fdfind") || cmd[1..].contains(&"{}"));
+                    if named || shell {
+                        return Some(FIND_RUNS);
+                    }
+                    // `{}` stands for names find adds: judged like the command without them.
+                    merge_rule(inner, &inner.join(" "), target)
+                })
         }
         Some("awk" | "gawk" | "mawk" | "nawk") => {
             calls_system(segment).then_some("`awk` runs commands through system()")
@@ -4456,7 +4463,10 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         let cmd = cmd_at.map(|i| &seg[i]);
         let cmd_glob = cmd.is_some_and(|(c, g, _)| *g && c != "[" && c != "[[");
         // A pathspec glob after a literal `git <subcommand>` that writes no ref and moves no
-        // branch (`git add src/*.rs`, `git diff -- *.md`) names files.
+        // branch names files, but only where no expansion can be an option: after a literal
+        // `--` (`git diff -- *.md`), or a word that starts with a plain name and has a `/`
+        // before its first glob character (`git add src/*.rs`). A bare `*` can expand to a
+        // planted `-O<cmd>` file that `git grep` runs.
         const PATHSPEC: [&str; 10] = [
             "add", "diff", "log", "show", "status", "ls-files", "grep", "blame", "rm", "restore",
         ];
@@ -4464,7 +4474,14 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
             && seg
                 .get(sub)
                 .is_some_and(|s| !s.1 && PATHSPEC.contains(&s.0.as_str()))
-            && seg[..=sub].iter().all(|w| !w.1);
+            && seg[..=sub].iter().all(|w| !w.1)
+            && seg.iter().enumerate().skip(sub + 1).all(|(i, w)| {
+                let dashes = seg[sub + 1..i].iter().any(|p| p.0 == "--" && !p.1);
+                let first_glob = w.0.find(['*', '?', '[']).unwrap_or(w.0.len());
+                let plain = w.0.starts_with(|c: char| c.is_ascii_alphanumeric() || "._".contains(c))
+                    && w.0[..first_glob].contains('/');
+                !w.1 || dashes || plain
+            });
         let git_glob = seg.iter().any(|w| w.1) && !paths;
         (cmd_glob && top || git && git_glob).then_some(GLOB_WORD)
     })

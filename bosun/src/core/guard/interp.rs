@@ -7,6 +7,8 @@ use super::{
     git_rule, heredoc_at, http_rule, literal_path, nested, shell_words, shell_words_seps,
     split_heredocs, strip_comments, unwrap_runners,
 };
+use regex::Regex;
+use std::sync::LazyLock;
 
 /// Interpreters and shells whose code or script the scan reads (a version suffix is dropped:
 /// `python3.12` is `python`).
@@ -24,6 +26,35 @@ fn runner_name(word: &str) -> &str {
     if t.is_empty() { b } else { t }
 }
 
+/// Whether a program's name is a shell or interpreter (`bash`, `python3.12`, `busybox`): run
+/// directly it takes code the guard never reads.
+pub fn interpreter_name(name: &str) -> bool {
+    let n = runner_name(name);
+    (RUNS.contains(&n) && n != "." && n != "source")
+        || matches!(
+            n,
+            "busybox" | "toybox" | "fish" | "lua" | "luajit" | "tclsh" | "awk" | "gawk"
+        )
+}
+
+/// Whether a program's arguments hand it code: `-c`, `-e`, `-E`, a short flag cluster
+/// holding one (`-lc`), `--eval`, `--command`, `--execute`.
+fn code_arg(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        let long = a.trim_start_matches("--");
+        if a.starts_with("--") {
+            return ["eval", "command", "execute"]
+                .iter()
+                .any(|f| long == *f || long.starts_with(&format!("{f}=")));
+        }
+        a.strip_prefix('-').is_some_and(|f| {
+            !f.is_empty()
+                && f.chars().all(|c| c.is_ascii_alphabetic())
+                && f.contains(['c', 'e', 'E'])
+        })
+    })
+}
+
 /// Whether a word names an interpreter or shell this scan reads (`python3.12`, `tsx`).
 pub(super) fn is_runner(word: &str) -> bool {
     RUNS.contains(&runner_name(word)) && word != "."
@@ -39,6 +70,8 @@ fn command_words(words: &[String]) -> Vec<usize> {
 /// [`command_words`], each with the directories its runners move to (`env -C d`; `None`:
 /// unknown) and whether it is the word `unwrap_runners` found (not only a flag-skipped guess).
 fn command_words_at(words: &[String]) -> Vec<(usize, Option<Vec<String>>, bool)> {
+    let masked = array_literals(words);
+    let words = &masked[..];
     let mut out: Vec<(usize, Option<Vec<String>>, bool)> = Vec::new();
     let mut s = 0;
     let mut moved_segs = Vec::new();
@@ -74,6 +107,44 @@ fn command_words_at(words: &[String]) -> Vec<(usize, Option<Vec<String>>, bool)>
         }
     }
     out.sort_unstable_by_key(|c| c.0);
+    out
+}
+
+/// The words with each array assignment (`a=(--x "$v"`, newline, `y)`, `a+=(..)`) turned into
+/// plain assignments `a=`, its newlines included: its elements are no commands. An array whose
+/// elements hold a `(` or that does not close is left as is (fail closed).
+fn array_literals(words: &[String]) -> Vec<String> {
+    static OPEN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^[A-Za-z_][A-Za-z0-9_]*\+?=\(").expect("static regex"));
+    let mut out = words.to_vec();
+    let mut i = 0;
+    while i < words.len() {
+        if !OPEN.is_match(&words[i]) {
+            i += 1;
+            continue;
+        }
+        let rest = &words[i][words[i].find("=(").map_or(0, |p| p + 2)..];
+        let end = if rest.contains(')') {
+            Some(i)
+        } else if rest.contains('(') {
+            None
+        } else {
+            words[i + 1..]
+                .iter()
+                .position(|w| w != SEP && w.contains(['(', ')']))
+                .map(|k| i + 1 + k)
+                .filter(|e| !words[*e].contains('('))
+        };
+        match end {
+            Some(e) => {
+                for w in &mut out[i..=e] {
+                    *w = "a=".into();
+                }
+                i = e + 1;
+            }
+            None => i += 1,
+        }
+    }
     out
 }
 
@@ -832,6 +903,9 @@ struct ScriptPath {
     /// Run through a program (`env`, `timeout`, `nice`, ..) that hands a file the kernel
     /// refuses to `sh` (glibc `execvp`), not by bash itself.
     wrapped: bool,
+    /// Run directly with a shell or interpreter name or code arguments (`./xl -c ..`): a
+    /// binary that runs code the guard never reads.
+    code: bool,
     /// The directory it runs in, relative to the hook's (`None`: a `cd` the guard cannot tell).
     cwd: Cwd,
     /// A relative path after a `cd` the guard cannot tell: which file runs is unknown.
@@ -850,6 +924,7 @@ impl ScriptPath {
             unseen: None,
             direct: false,
             wrapped: false,
+            code: false,
             cwd: Some(String::new()),
             lost: false,
             tainted: false,
@@ -956,19 +1031,29 @@ const PROTECT: [(char, char); 5] = [
 fn protect_subs(text: &str) -> String {
     let c: Vec<char> = text.chars().collect();
     let (mut out, mut i, mut level, mut tick) = (String::new(), 0, 0usize, false);
-    let mut quote = false;
+    // `inner`: a single quote open inside a substitution (`$(tr -d '()')`): its parens do not
+    // count.
+    let (mut quote, mut inner, mut dq) = (false, false, false);
     while i < c.len() {
         let ch = c[i];
         match ch {
             '\'' if level == 0 && !tick => quote = !quote,
-            '$' if !quote && c.get(i + 1) == Some(&'(') => {
-                out.push_str("$(");
+            '"' if level > 0 && !inner => dq = !dq,
+            '\'' if level > 0 && !dq => inner = !inner,
+            '$' | '<' | '>' if !quote && !inner && c.get(i + 1) == Some(&'(') => {
+                out.push(ch);
+                out.push('(');
                 level += 1;
                 i += 2;
                 continue;
             }
-            '(' if level > 0 => level += 1,
-            ')' if level > 0 => level -= 1,
+            '(' if level > 0 && !inner => level += 1,
+            ')' if level > 0 && !inner => {
+                level -= 1;
+                if level == 0 {
+                    (inner, dq) = (false, false);
+                }
+            }
             '`' if !quote => tick = !tick,
             _ => {}
         }
@@ -1043,23 +1128,54 @@ fn writes_nothing(seg: &[String]) -> bool {
             continue;
         }
         if let Some(n) = super::assigned(x) {
-            if super::risky_var(n) {
+            // `IFS= read -r line` sets IFS for that one command only.
+            let temporary = n == "IFS" && seg.get(i + 1).is_some_and(|c| c == "read");
+            if super::risky_var(n) && !temporary {
                 return false;
             }
+            i += 1;
+            continue;
+        }
+        // A `case` arm's pattern (`fs)`, `*)`): no command.
+        if x.ends_with(')') && !x.contains('(') && i == 0 {
             i += 1;
             continue;
         }
         break;
     }
     let words = &seg[i..];
-    // `for x in WORDS` and `select` only assign.
+    // `for x in WORDS` and `select` only assign; `case WORD in` runs only the substitutions
+    // of its word (judged below).
     let words = match words.first().map(String::as_str) {
         Some("for" | "select") => &words[..0],
+        _ if seg.first().is_some_and(|f| f == "case") => {
+            if words.iter().any(|x| x.contains(">(")) {
+                return false;
+            }
+            return words
+                .iter()
+                .all(|x| sub_bodies(x).is_some_and(|b| b.iter().all(|n| text_writes_nothing(n))));
+        }
         _ => words,
     };
-    let code = |x: &String| ["$(", "`", "<(", ">("].iter().any(|t| x.contains(t));
+    // A substitution writes when its own commands may (`$(dirname "$0")`, `<(grep x f)` do
+    // not); an output process substitution `>(..)` always counts.
+    let code = |x: &String| {
+        x.contains(">(")
+            || ["$(", "`", "<("].iter().any(|t| x.contains(t))
+                && !sub_bodies(x).is_some_and(|b| b.iter().all(|n| text_writes_nothing(n)))
+    };
     if words.iter().any(code) || writes_a_file(words) {
         return false;
+    }
+    // Input redirections (`done < f`, `done < <(grep x f)`) read only.
+    let mut words = words;
+    while let Some(x) = words
+        .first()
+        .filter(|x| x.starts_with('<') && !x.starts_with("<<"))
+    {
+        let skip = if x.len() == 1 { 2 } else { 1 };
+        words = words.get(skip..).unwrap_or(&[]);
     }
     let Some(cmd) = words.first() else {
         return true;
@@ -1072,6 +1188,10 @@ fn writes_nothing(seg: &[String]) -> bool {
         | "readlink" | "uname" | "id" | "whoami" | "mkdir" | "touch" | "shift" | "exit"
         | "return" | "break" | "continue" | "set" | "cargo" | "bosun" | "type" => true,
         "printf" => !args.iter().any(|a| a.starts_with("-v")),
+        "read" | "tr" | "cut" => true,
+        "sort" => !args
+            .iter()
+            .any(|a| a.starts_with("-o") || a.starts_with("--o")),
         "command" => matches!(args.first(), Some(&("-v" | "-V"))),
         "export" | "readonly" | "local" | "declare" | "typeset" => args
             .iter()
@@ -1131,6 +1251,42 @@ fn writes_a_file(words: &[String]) -> bool {
 }
 
 /// Whether every command of a text writes nothing (see [`writes_nothing`]).
+/// The bodies of the `$( )`, `<( )` and backtick substitutions in a word, a `(` or `)` inside
+/// single quotes not counted (`$(tr -d '()')`); `None` when they do not balance.
+fn sub_bodies(word: &str) -> Option<Vec<String>> {
+    let c: Vec<char> = word.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        if c[i] == '`' {
+            let end = c[i + 1..].iter().position(|x| *x == '`')? + i + 1;
+            out.push(c[i + 1..end].iter().collect());
+            i = end + 1;
+            continue;
+        }
+        if c[i] == '(' && i > 0 && matches!(c[i - 1], '$' | '<') {
+            let (mut level, mut j, mut single) = (1, i + 1, false);
+            while j < c.len() && level > 0 {
+                match c[j] {
+                    '\'' => single = !single,
+                    '(' if !single => level += 1,
+                    ')' if !single => level -= 1,
+                    _ => {}
+                }
+                j += 1;
+            }
+            if level != 0 {
+                return None;
+            }
+            out.push(c[i + 1..j - 1].iter().collect());
+            i = j;
+            continue;
+        }
+        i += 1;
+    }
+    Some(out)
+}
+
 fn text_writes_nothing(text: &str) -> bool {
     let w = shell_words(text);
     w.split(|x| x == SEP).all(writes_nothing)
@@ -1237,6 +1393,10 @@ fn script_paths(
         if chained && !matches!(sep_kind(&runs[j]).as_str(), "&&" | "") {
             cur = None;
         }
+        // A newline ends the `&&` chain of a `cd`: a later `;` or `||` cannot skip it any more.
+        if runs[j].contains('\n') && sep_kind(&runs[j]).is_empty() && open == 0 {
+            chained = false;
+        }
     }
     let seg_of = |i: usize| segs.iter().position(|r| r.contains(&i)).unwrap_or(0);
     let place = |mut p: ScriptPath, cwd: &Cwd, j: usize| {
@@ -1289,6 +1449,7 @@ fn script_paths(
                 Some(path) => ScriptPath {
                     direct: true,
                     wrapped,
+                    code: interpreter_name(word) || code_arg(&w[i + 1..segs[j].end]),
                     ..ScriptPath::file(path, false, true)
                 },
                 None => ScriptPath {
@@ -1299,6 +1460,34 @@ fn script_paths(
             out.push(place(p, &here, j));
         }
         let args = w[i + 1..].iter().take_while(|a| *a != SEP);
+        // A shell or interpreter reading its stdin from another fd (`exec 3<f; bash <&3`):
+        // which file that is the guard does not follow.
+        let dup_stdin = |v: Vec<&String>| {
+            v.iter().enumerate().any(|(k, a)| {
+                let r = a.strip_prefix('0').unwrap_or(a);
+                let Some(t) = r.strip_prefix("<&") else {
+                    return false;
+                };
+                let t = if t.is_empty() {
+                    v.get(k + 1).map_or("", |n| n.as_str())
+                } else {
+                    t
+                };
+                !matches!(t, "0" | "-")
+            })
+        };
+        if RUNS.contains(&name) && dup_stdin(args.clone().collect()) {
+            let p = ScriptPath {
+                unseen: Some((
+                    "it reads its script from a duplicated file descriptor (`<&3`), which the \
+                     guard does not follow",
+                    false,
+                )),
+                ..ScriptPath::file(word.clone(), true, true)
+            };
+            out.push(place(p, &here, j));
+            continue;
+        }
         if SHELL_RUNS.contains(&name) {
             // A shell runs only its first operand; later ones are the script's arguments.
             let all: Vec<String> = args.cloned().collect();
@@ -1869,6 +2058,7 @@ fn walk(
         unseen,
         direct,
         wrapped,
+        code: code_run,
         cwd: run_in,
         lost,
         tainted,
@@ -1934,6 +2124,13 @@ fn walk(
                 ));
             }
             None => continue,
+            Some(Script::Binary) if direct && code_run => {
+                return Some(format!(
+                    "the program `{path}` is refused: it is a shell or interpreter, or is handed \
+                     code (`-c`, `-e`, `--eval`), which the guard cannot read; write the code to \
+                     a script file and run that"
+                ));
+            }
             Some(Script::Binary) if direct && !wrapped => continue,
             Some(Script::Binary) if direct => {
                 return Some(format!(
