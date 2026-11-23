@@ -43,7 +43,7 @@ The state machine, stop rules and resume.
 ## Rules
 
 1. The first `# ` heading is the plan title. A `project:` line names the bosun project; it must
-   equal `project` in `.bosun/bosun.toml`.
+   equal `project` in `.bosun/bosun.toml`. A `pr: one` line next to it (see "One big PR") makes the whole plan one PR.
 2. Each `## <ID>: <title>` heading is one item. The ID matches `^[A-Z][A-Z0-9]{0,7}$` (for example
    `M1`, `S10`) and is unique in the plan.
    A `## ` heading whose first word is prose (no colon, no digit, a lowercase letter after the
@@ -125,7 +125,7 @@ owner's approval (risk-check still rates its gated paths high). `bosun plan chec
 `gated` (by the working tree; `import` and `amend` judge the risk paths by `.bosun/risk.toml` on
 the default branch).
 
-A wildcard touch (`*` or `?`, e.g. `packages/**`) is also resolved against the default branch's file tree: it is gated when a file it matches is matched by a risk path (`packages/a/hoist.toml` ~ `**/hoist.toml`). `import` and `amend` read the tree once; when it is unreadable or truncated, a wildcard touch that no risk path settles is a plan error at the task line (fix: narrow the touch to the paths the task edits, or mark it `risk: high`). `plan check` has no GitHub and keeps the advisory working-tree view of anchored paths only.
+A wildcard touch (`*` or `?`, e.g. `packages/**`) is also resolved against the default branch's file tree: it is gated when a file it matches is matched by a risk path (`packages/a/hoist.toml` ~ `**/hoist.toml`). `import` and `amend` read the tree once; when it is unreadable or truncated, a wildcard touch that no risk path settles is a plan warning that names the task, and the task stays gated (fail closed; narrow the touch to the paths the task edits, or mark it `risk: high`). A wildcard that matches no file is also a warning. `plan check` has no GitHub and keeps the advisory working-tree view of anchored paths only.
 
 `shape: auto` (the default) decides on all the tasks, in this order:
 
@@ -135,6 +135,8 @@ A wildcard touch (`*` or `?`, e.g. `packages/**`) is also resolved against the d
    UC.
 3. Otherwise `single`, with every reason that applies: shared files, a chain with no parallel
    gain, one UC (the goal is testable only whole).
+
+With `pr: one` in the plan header, every item is `single`; `shape: split` is then a plan error. Import records `"pr":"one"` in each epic's metadata. `plan check`, `import` and `amend` print `data.big_pr`: `{tasks, touch, allow, risk}` (`touch` is the union, `allow` is per task, `risk` is `high` if any task is high). Tasks of other epics join one PR with `bosun pr <lead> --bundle N...` only when the owner sets `[approvals] bundle_across_epics = true` (default branch only), and every bundled task must belong to a single-shape epic.
 
 `bosun plan check` prints `shape`, `shape_reasons` and `gated` for each item. An explicit
 `shape: single` or `shape: split` is honoured; a `single` item keeps its gated tasks in the bundle.

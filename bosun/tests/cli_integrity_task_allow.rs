@@ -146,7 +146,10 @@ fn a_decoy_task_first_does_not_lend_its_allow() {
     fake.issue(7, "M1/T1", &[], &task("[]"));
     let (code, v) = check(&fake, &root);
     assert_eq!(code, 1, "{v}");
-    assert_eq!(v["data"]["task"], 7);
+    // Both tasks are the PR's (their touch together covers it), but #99's `allow` reaches only
+    // its own touch: the deleted test stays refused.
+    assert_eq!(v["data"]["tasks"], json!([99, 7]));
+    assert_eq!(v["data"]["findings"][0]["allowed"], false);
     assert_eq!(v["data"]["allow"], json!([]));
 }
 

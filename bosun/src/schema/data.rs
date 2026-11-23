@@ -15,8 +15,8 @@ keygen = {id: str, role: str, path: str, public_key: str, enrolled: bool, toml: 
 test-integrity = {base: str, files_checked: int, integrity: str, integrity_reason?: str,
     findings: [{file: str, kind: str, base: int, head: int | null, allowed: bool, reason?: str}],
     allow?: [str],
-    task?: int};
-review-pack = {pr: int, title: str, draft: bool, head_sha: str, base_sha: str, since_sha: str | null,
+    task?: int | null, tasks?: [int], grants?: [{task: int, allow: [str]}], allow_refused?: str};
+review-pack = {pr: int, not_shown: [str], tasks: [{..}], unsized_tasks: [int], title: str, draft: bool, head_sha: str, base_sha: str, since_sha: str | null,
     changed_files: int, chunks: [[str]], delta_fallback: str | null, delta_not_in_pr: [str],
     delta_not_in_pr_count: int, drift: {actual: int, planned: int} | null, files: [{filename: str,
     status: str, additions: int, deletions: int, patch: str | null}], instructions: str,
@@ -26,7 +26,8 @@ review-pack = {pr: int, title: str, draft: bool, head_sha: str, base_sha: str, s
     verdict_skeleton: {pr: int, head_sha: str, verdict: str, confidence: num, findings: [any],
     lessons_hit: [str], escalate_risk: bool, chunks_reviewed: [int]}};
 ci-log = {pr: int, head_sha: str, jobs: [{name: str, conclusion: str, url: str, log: str}]};
-ask = {issue: int, comment_id: int, owners: [str], drafted: [int], pr_draft_error: str | null};
+ask = {issue: int, comment_id: int, owners: [str], owner_teams: [str],
+    owner_teams_unreadable: [str], owner_teams_fix?: str, drafted: [int], pr_draft_error: str | null};
 hold = {issue: int, id: str, checklist: {number: int, url: str}, released: bool, drafted: [int],
     pr_draft_error: str | null, lesson_error: str | null, warnings: [str]};
 answer = {issue: int, comment_id?: int, state?: str, ask?: int, key_id?: str, moved?: bool,
@@ -58,14 +59,14 @@ budget report = {month: str, written: [str], skipped_no_pr: [int], rows: [{pr: i
 plan check = {file: str, title: str, project: str | null, items: [{id: str, title: str, area: str,
     shape: str, shape_reasons: [str], size: int, tasks: int, ucs: int, gated: [str],
     budget_usd?: num}], warnings: [{line: int, message: str, fix: str}],
-    prereqs_fixed?: [{line: int, from: str, to: str}], fixed_file?: str};
+    prereqs_fixed?: [{line: int, from: str, to: str}], fixed_file?: str, big_pr?: {tasks: [str], touch: [str], allow: {..}, risk: str}};
 plan import = {file: str, dry_run: bool, warnings: [str], skipped?: [str], epics: [{id: str,
     action: str, issue: int | null, state?: str, closed?: bool}], tasks: [{id: str, action: str,
     issue: int | null, state: str | null, closed?: bool}], held: [{task: str, needs: [str]}],
     on_default: [any], on_default_open: [any], promoted?: [str], would_promote?: [str],
     closed?: [str], would_close?: [str], reopened?: [str], would_reopen?: [str], updated?: [str],
     would_update?: [str], unchanged?: {epics?: int, tasks?: int}, summary?: bool, offline?: bool, imported?: bool, note?: str,
-    prereqs_fixed?: [{line: int, from: str, to: str}], fixed_file?: str};
+    prereqs_fixed?: [{line: int, from: str, to: str}], fixed_file?: str, big_pr?: {tasks: [str], touch: [str], allow: {..}, risk: str}};
 plan amend = plan import;
 plan pr = {claim: {..} | null, intake: {..}, pr: {..}};
 fail = {issue: int, signature: str, streak: int, stopped: bool, rule?: str, state?: str,
@@ -133,8 +134,9 @@ main-health = {result: str, changed: bool, opened: bool, closed: bool, main_red:
     issue?: int}], gate_missed: {created?: bool, issue?: int, error?: str} | null,
     lesson: {created: bool, hits: int, issue: int} | null} | {result: str, skipped: str};
 gate-missed = {issue: int, created: bool, key: str};
-review-ci = {pr: int, head_sha?: str, since_sha?: str | null, model?: str, skipped?: str,
+review-ci = {pr: int, chunk_count?: int, chunks_reviewed?: int, head_sha?: str, since_sha?: str | null, model?: str, skipped?: str,
     dry_run?: bool, approved?: bool, status?: str, reasons?: [str], task_state?: str | null,
+    tasks_moved?: [int], sessions?: [str],
     findings?: [{severity: str, file: str, line: int | null, claim: str, evidence: str}],
     findings_count?: int, findings_comment?: {id: int} | null, verdict?: {..},
     usage?: {input_tokens: int, output_tokens: int, usd: num}, spend?: {issue?: int | null,
@@ -174,6 +176,7 @@ approve = {approved?: [{pr: int, head_sha: str, comment_id: int, repost?: bool,
     head_sha: str, files: [str], files_truncated: bool, risk_from_status: [str],
     owner_comment?: str, verdict?: str}], owner_step?: str, held?: [{pr: int, head_sha: str}],
     skipped?: [{pr: int | null, why: str}], waiting?: [{pr: int, why: str}], skipped_fix?: str,
+    owner_teams_unreadable?: [str], owner_teams_fix?: str,
     main_open?: {head_sha: str, pr: int}, bodies?: [{after_review: int | null, body: str}],
     body?: str, bootstrap_until?: str | null, head_sha?: str, key_id?: str, policy?: str | null,
     policy_source?: str | null, pr?: int, role?: str, requested?: bool, workflow?: str,
@@ -184,17 +187,19 @@ risk-check = {pr: int, head_sha: str, level: str, matches: [{rule: str, why: str
     requirement?: str,
     policy?: str, policy_source?: str, verdicts?: [str], autonomous_verdicts?: [str], quorum_verdicts?: [str],
     delegate_verdicts?: [str], delegate_blocked?: str | null, checks_skipped?: bool, dry_run?: bool, author_is_owner?: bool,
-    verdict_cleared_by?: str};
+    verdict_cleared_by?: str, owner_teams_unreadable?: [str]};
 review-loop = {max: int, prs: [{pr: int, head_sha: str, step: str, rounds: int, findings: [{..}], reasons: [str],
     reason: str | null}]}
     | {pr: int, head_sha: str, step: str, rounds: int, max: int, findings: [{..}], reasons: [str], reason: str | null};
 verdict post = {pr: int, head_sha: str, approved: bool, status: str, reasons: [str],
-    task_state: str | null, checks_skipped?: bool};
+    task_state: str | null, checks_skipped?: bool, tasks_moved?: [int], sessions?: [str]};
 verdict comment = {pr: int, head_sha: str, comment_id: int, applied_by: str, reviewer: str,
     signed: bool, relayed_by?: str};
 verdict apply = {pr: int, head_sha: str, approved: bool, status: str, reasons: [str],
-    task_state: str | null, checks_skipped?: bool, fix_task?: int | {..}, relayed_by?: str}
-    | {comment_id: int, author: str, refused: str, status: null};
+    task_state: str | null, checks_skipped?: bool, fix_task?: int | {..}, relayed_by?: str,
+    tasks_moved?: [int], sessions?: [str]}
+    | {comment_id: int, author: str, refused: str, status: null, accepted: bool}
+    | {comment_id: int, author: str, accepted: bool};
 pr = {pr: int, created: bool, draft: bool, head_sha: str, auto_merge: bool,
     task_state: str | null, ready?: bool | "pending", merged?: bool, epic_closed?: bool,
     auto_merge_route?: str | null, enforced_checks?: str | null, note?: str, touch_check?: str,

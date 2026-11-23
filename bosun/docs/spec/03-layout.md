@@ -25,7 +25,7 @@ A consumer repo after `bosun init`:
 .bosun/intake.toml        the owner's upfront answers (seed; below)
 .bosun/risk.toml          risk rules (§8)
 .bosun/version            pinned bosun release (R-gov)
-governance/owners.toml    GitHub and Slack IDs of the owners
+governance/owners.toml    GitHub and Slack IDs of the owners; list two or a team (bus factor, §16)
 docs/lessons.toml         the lessons store
 plans/*.md                plans in the plan format
 .github/workflows/        call only `bosun gate <name>`; cache through hoard

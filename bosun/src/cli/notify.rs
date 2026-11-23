@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 
 use super::NotifyArgs;
 use super::spawn::valid_ts;
-use crate::app::{App, HALT_LABEL, default_ref, limits_from_default, main_red};
-use crate::cli::risk_check::owner_logins;
+use crate::app::{App, HALT_LABEL, default_ref, limits_from_default, main_red, owner_view};
 use crate::core::budget::{Level, level};
 use crate::core::records::{Record, SlackSeat, parse_record, spend_total_today};
+use crate::core::risk::HaltPick;
 use crate::core::state::State;
 use crate::github::{Github, IssueState, Variable};
 use crate::output::{BosunError, CmdResult, Outcome};
@@ -221,26 +221,34 @@ fn collect(
         let r = (|| -> Result<(), BosunError> {
             let halts = gh.list_issues(&[HALT_LABEL], IssueState::Open)?;
             if !halts.is_empty() {
-                let owners = owner_logins(gh, &default_ref(gh)?)?;
-                let hit = if owners.is_empty() {
-                    halts.first()
-                } else {
-                    halts
-                        .iter()
-                        .find(|i| owners.iter().any(|o| o.eq_ignore_ascii_case(&i.user)))
-                };
-                if let Some(i) = hit {
-                    let text = if owners.is_empty() {
-                        format!(
-                            "bosun is halted: halt issue #{} is open and no owners are listed to judge it. {}",
-                            i.number,
-                            url(i.number)
-                        )
-                    } else {
-                        format!(
-                            "bosun is halted: the owner stopped all work. {}",
-                            url(i.number)
-                        )
+                let view = owner_view(gh, &default_ref(gh)?)?;
+                let authors: Vec<&str> = halts.iter().map(|i| i.user.as_str()).collect();
+                if let Some(pick) = view.halt_pick(&authors) {
+                    let (i, text) = match pick {
+                        HaltPick::NoOwners(i) => (
+                            &halts[i],
+                            format!(
+                                "bosun is halted: halt issue #{} is open and no owners are listed to judge it. {}",
+                                halts[i].number,
+                                url(halts[i].number)
+                            ),
+                        ),
+                        HaltPick::Owner(i) => (
+                            &halts[i],
+                            format!(
+                                "bosun is halted: the owner stopped all work. {}",
+                                url(halts[i].number)
+                            ),
+                        ),
+                        HaltPick::UnreadableTeam(i) => (
+                            &halts[i],
+                            format!(
+                                "bosun is halted: halt issue #{} is open and owner team {} is unreadable. {}",
+                                halts[i].number,
+                                view.unreadable.join(", "),
+                                url(halts[i].number)
+                            ),
+                        ),
                     };
                     push(&mut pending, format!("halt:{}", i.number), "halt", text);
                     return Ok(());

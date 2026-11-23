@@ -274,6 +274,11 @@ pub struct Review {
     /// RFC 3339; GitHub leaves it out of a pending review.
     #[serde(default)]
     pub submitted_at: Option<String>,
+    /// The reviewer's association with the repo (`OWNER`, `MEMBER`, `COLLABORATOR`,
+    /// `CONTRIBUTOR`, `NONE`, ...); `None` when GitHub left it out (spec §16 reads it as a
+    /// possible member).
+    #[serde(default)]
+    pub author_association: Option<String>,
 }
 
 /// One commit status as the combined-status endpoint lists it.
@@ -550,4 +555,47 @@ pub struct TreeEntry {
     #[serde(rename = "type")]
     pub kind: String,
     pub sha: String,
+}
+
+/// One workflow run (`GET /actions/runs/{id}`), as far as the verdict binding reads it (spec
+/// section 8). A field GitHub left out is empty: the binding then fails closed.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct WorkflowRun {
+    #[serde(default)]
+    pub path: String,
+    #[serde(default)]
+    pub event: String,
+    #[serde(default)]
+    pub head_branch: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub created_at: String,
+    /// When this attempt started (`run_started_at`); the verdict window opens here.
+    #[serde(default)]
+    pub run_started_at: String,
+    #[serde(default)]
+    pub updated_at: String,
+}
+
+/// A job of a workflow run attempt, with its steps (`GET /actions/runs/{id}/attempts/{n}/jobs`).
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RunJob {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub steps: Vec<RunStep>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RunStep {
+    #[serde(default)]
+    pub name: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub conclusion: String,
+    /// When the step began and ended (RFC 3339; empty for a step that did not run).
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub started_at: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub completed_at: String,
 }

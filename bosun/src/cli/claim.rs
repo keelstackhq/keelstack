@@ -20,7 +20,7 @@ use crate::core::lessons;
 use crate::core::meta::area_of;
 use crate::core::records::{Note, Record, parse_record, spend_total_today};
 use crate::core::state::{State, state_of};
-use crate::github::{Github, Issue};
+use crate::github::{Github, Issue, IssueState};
 use crate::output::{BosunError, CmdResult, Exit, Outcome};
 use crate::registry;
 use crate::time::Timestamp;
@@ -120,7 +120,7 @@ pub fn run(dir: Option<&Path>, args: &ClaimArgs) -> CmdResult {
     let feature = super::budget::task_guard(&app, n, meta.as_ref(), mainfix)?;
 
     super::prereqs_gate::refuse_if_held(gh, n, &meta)?;
-    refuse_if_bundled(gh, n, &meta)?;
+    refuse_if_bundled(&app, n, &meta)?;
     let touch_raw = if args.touch.is_empty() {
         meta.map(|m| m.touch).unwrap_or_default()
     } else {
@@ -427,10 +427,36 @@ fn grow(app: &App, n: u64, old: &Lease, added: &[String], mine: &[Note]) -> CmdR
 /// In a single-shape epic the lead's PR closes the bundled issues, gated ones included (D-021), so
 /// while another task of the epic is active, `n` is not claimable.
 fn refuse_if_bundled(
-    gh: &dyn Github,
+    app: &App,
     n: u64,
     meta: &Option<crate::core::meta::TaskMeta>,
 ) -> Result<(), BosunError> {
+    let gh = app.gh.as_ref();
+    // One big PR (`[approvals] bundle_across_epics`): a bundle may hold tasks of other epics, so
+    // an open PR led by another task (its `bosun:task-pr` marker) that closes `n` holds it too.
+    // The marker is text the PR author controls: it counts only on a PR into the default branch
+    // from this repo by a writer, whose lead task is active with a live, trusted lease. Any other
+    // PR is ignored (it neither blocks nor counts).
+    let repo = app.ctx.repo.to_string();
+    let base = crate::app::default_branch(gh)?;
+    for p in gh.list_pulls(None, IssueState::Open)? {
+        let lead = task_pr_lead(&p.body);
+        if let Some(l) = lead.filter(|l| *l != n)
+            && crate::core::meta::closing_issues_in(&p.body, None).contains(&n)
+            && p.base_ref == base
+            && p.head_repo.eq_ignore_ascii_case(&repo)
+            && matches!(
+                gh.permission(&p.user)?.unwrap_or_default().as_str(),
+                "admin" | "write"
+            )
+            && lead_holds(gh, l, app.ctx.now)?
+        {
+            return Err(BosunError::conflict(
+                format!("#{n} is bundled into #{l}'s PR #{}", p.number),
+                format!("work in #{l}'s bundle: its PR closes #{n}"),
+            ));
+        }
+    }
     let Some(epic) = meta.as_ref().and_then(|m| m.epic) else {
         return Ok(());
     };
@@ -453,4 +479,23 @@ fn refuse_if_bundled(
         )),
         None => Ok(()),
     }
+}
+
+/// Whether task `lead` is in an active state and has a live lease in a trusted note.
+fn lead_holds(gh: &dyn Github, lead: u64, now: Timestamp) -> Result<bool, BosunError> {
+    let Some(issue) = gh.get_issue(lead)? else {
+        return Ok(false);
+    };
+    if !state_of(&issue.labels).is_some_and(State::is_active) {
+        return Ok(false);
+    }
+    Ok(leases_of(lead, &trusted_notes(gh, lead)?)
+        .iter()
+        .any(|l| l.is_live(now)))
+}
+
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
+fn task_pr_lead(body: &str) -> Option<u64> {
+    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
+    rest[..rest.find("-->")?].trim().parse().ok()
 }

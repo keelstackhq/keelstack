@@ -32,7 +32,8 @@ fn the_pack_lists_its_untrusted_fields_and_says_they_are_data() {
             "task.lease_touch",
             "task.touch_added",
             "bundle_tasks[].meta",
-            "delta_not_in_pr"
+            "delta_not_in_pr",
+            "tasks[].title"
         ])
     );
     let ins = v["data"]["instructions"].as_str().unwrap();

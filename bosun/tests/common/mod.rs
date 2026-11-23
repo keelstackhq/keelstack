@@ -94,6 +94,31 @@ pub fn run(fake: &FakeGithub, session: &str, now: &str, args: &[&str]) -> (i32, 
     (out.status.code().unwrap(), v)
 }
 
+/// [`run`] with extra environment variables.
+pub fn run_env(
+    fake: &FakeGithub,
+    session: &str,
+    now: &str,
+    args: &[&str],
+    env: &[(&str, &str)],
+) -> (i32, Value) {
+    let out = bosun()
+        .env("BOSUN_GITHUB_API", fake.url())
+        .env("BOSUN_SESSION", session)
+        .env("BOSUN_NOW", now)
+        .envs(env.iter().copied())
+        .args(args)
+        .output()
+        .unwrap();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.contains(TOKEN_CANARY), "token leaked");
+    (out.status.code().unwrap(), one_object(&out.stdout))
+}
+
 /// A lease comment body as `bosun claim` writes it.
 pub fn lease_note(session: &str, expires: &str, touch: &str) -> String {
     format!(

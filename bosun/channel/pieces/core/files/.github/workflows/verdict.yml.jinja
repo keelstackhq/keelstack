@@ -64,12 +64,28 @@ jobs:
           client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOSUN_APP_KEY }}
           permission-checks: write
-{% endraw %}{% endif %}{% raw %}      - name: bosun verdict apply
+{% endraw %}{% endif %}{% raw %}      - name: bosun verdict check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          BOSUN_SESSION: verdict-workflow
+          COMMENT: ${{ github.event.comment.id }}
+        run: |
+          out="$(bosun verdict apply "$COMMENT" --check)"
+          printf '%s\n' "$out"
+          if printf '%s' "$out" | grep -Eq '"accepted": *true'; then
+            echo "accepted=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: bosun verdict record ${{ github.event.issue.number }} ${{ github.event.comment.id }}
+        if: steps.check.outputs.accepted == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
 {% endraw %}{% if bosun_app %}{% raw %}          BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
 {% endraw %}{% endif %}{% raw %}          BOSUN_REPO: ${{ github.repository }}
           BOSUN_SESSION: verdict-workflow
           COMMENT: ${{ github.event.comment.id }}
-        run: bosun verdict apply "$COMMENT"
+          BOSUN_RUN_ID: ${{ github.run_id }}
+          BOSUN_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: bosun verdict apply "$COMMENT" --require
 {% endraw %}

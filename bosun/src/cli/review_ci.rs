@@ -15,6 +15,7 @@ use crate::config::ReviewMode;
 use crate::core::agreement::approved;
 use crate::core::budget::{Level, level};
 use crate::core::records::{Record, spend_total_today};
+use crate::core::review::merge_chunk_verdicts;
 use crate::core::risk::{FileView, unseen_diff};
 use crate::core::verdict::{Finding, Verdict, valid_model};
 use crate::github::Github;
@@ -96,35 +97,125 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
             "\n\nREVIEW.md of the repo (the rules to apply):\n{md}"
         ));
     }
-    let user = format!(
-        "BEGIN REVIEW PACK\n{}\nEND REVIEW PACK",
-        serde_json::to_string(&pack).expect("a pack serializes")
-    );
+    // One call per chunk of the pack (one call for a pack of 0 or 1 chunks), each under the cap.
+    let chunk_list: Vec<Vec<String>> = pack["chunks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|c| {
+            c.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|n| n.as_str().map(str::to_string))
+                .collect()
+        })
+        .collect();
+    let chunk_count = chunk_list.len() as u32;
+    let calls: Vec<(u32, String)> = if chunk_list.len() <= 1 {
+        vec![(1, pack_text(&pack))]
+    } else {
+        chunk_list
+            .iter()
+            .enumerate()
+            .map(|(i, names)| (i as u32 + 1, pack_text(&chunk_pack(&pack, i, names))))
+            .collect()
+    };
 
-    // A diff over the cap is never cut: the cap bounds the text that is sent.
-    let size = system.len() + user.len();
-    if size as u64 > cfg.max_diff_bytes {
+    // A diff over the cap is never cut: the cap bounds the text of each call.
+    if let Some(size) = calls
+        .iter()
+        .map(|(_, u)| system.len() + u.len())
+        .filter(|s| *s as u64 > cfg.max_diff_bytes)
+        .max()
+    {
         let cap = cfg.max_diff_bytes;
+        let what = if calls.len() > 1 {
+            format!("a chunk is too large for CI review: {size} bytes > {cap}")
+        } else {
+            format!("too large for CI review: {size} bytes > {cap}")
+        };
         return Err(refuse(
             &w,
             (!dry).then_some(head_sha.as_str()),
-            format!("too large for CI review: {size} bytes > {cap}; review in a session (mode a)"),
-            format!("the review of PR #{n} is too large for CI review: {size} bytes > {cap}"),
+            format!("{what}; review in a session (mode a)"),
+            format!("the review of PR #{n} is {what}"),
             "review it in a session (`bosun review-pack`, then `bosun verdict post`), or raise review.max_diff_bytes in .bosun/bosun.toml",
         )?);
     }
 
     let client = Anthropic::from_env()?;
     // A failed call writes no status, so a run can be repeated.
-    let reply = client.message(&cfg.model, cfg.max_tokens, &system, &user)?;
-    let usd = usage::from_tokens(
-        reply.input_tokens,
-        reply.output_tokens,
-        &cfg.model,
-        &app.ctx.config.prices,
-    );
-    let usage_json = json!({"input_tokens": reply.input_tokens,
-        "output_tokens": reply.output_tokens, "usd": usd.as_ref().ok()});
+    let (mut tokens_in, mut tokens_out) = (0u64, 0u64);
+    let mut results: Vec<(u32, Result<Verdict, String>)> = Vec::new();
+    let mut first_err: Option<BosunError> = None;
+    let mut stopped: Option<BosunError> = None;
+    for (k, user) in &calls {
+        // Fail closed: before every chunk after the first, today's spend plus this run's own
+        // cost so far must still be under the daily budget; unreadable spend stops the run too.
+        if *k > 1 {
+            // A cost that cannot be priced is not zero: stop with the limit error (fail closed).
+            let own = usage::from_tokens(tokens_in, tokens_out, &cfg.model, &app.ctx.config.prices)
+                .ok()
+                .filter(|u| u.is_finite() && *u >= 0.0);
+            let Some(own) = own else {
+                stopped = Some(BosunError::limit(
+                    format!(
+                        "the cost of the {} chunk(s) reviewed so far cannot be priced (model {})",
+                        k - 1,
+                        cfg.model
+                    ),
+                    "add the model to [prices] in .bosun/bosun.toml, then run `bosun review-ci` again",
+                ));
+                break;
+            };
+            if let Err(e) = budget_check(&app, own) {
+                stopped = Some(e);
+                break;
+            }
+        }
+        match client.message(&cfg.model, cfg.max_tokens, &system, user) {
+            Ok(reply) => {
+                tokens_in += reply.input_tokens;
+                tokens_out += reply.output_tokens;
+                results.push((*k, parse(&reply.text, n, &head_sha)));
+            }
+            Err(e) if calls.len() == 1 => return Err(e),
+            Err(e) => {
+                results.push((*k, Err(format!("the API call failed: {}", e.message))));
+                first_err.get_or_insert(e);
+            }
+        }
+    }
+    if let Some(e) = stopped {
+        // The chunks already answered cost money: record it, write no verdict and no status.
+        let usd = usage::from_tokens(tokens_in, tokens_out, &cfg.model, &app.ctx.config.prices);
+        let spend = if dry || tokens_in + tokens_out == 0 {
+            Value::Null
+        } else {
+            let task = pack["task"]["meta"]
+                .is_object()
+                .then(|| pack["task"]["issue"].as_u64())
+                .flatten();
+            record_spend(&app, usd, task)
+        };
+        let done = results.len();
+        return Err(e.with_data(
+            json!({"pr": n, "head_sha": head_sha, "chunk_count": chunk_count,
+            "chunks_done": done, "spend": spend}),
+        ));
+    }
+    // No call was answered: the same error as a single failed call.
+    if let Some(e) = first_err
+        && results.len() == calls.len()
+        && results.iter().all(|(_, r)| r.is_err())
+        && tokens_in == 0
+        && tokens_out == 0
+    {
+        return Err(e);
+    }
+    let usd = usage::from_tokens(tokens_in, tokens_out, &cfg.model, &app.ctx.config.prices);
+    let usage_json = json!({"input_tokens": tokens_in,
+        "output_tokens": tokens_out, "usd": usd.as_ref().ok()});
     // Only an issue with task metadata is a task; a link to any other issue is ignored.
     let task = if pack["task"]["meta"].is_object() {
         pack["task"]["issue"].as_u64()
@@ -138,34 +229,29 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
         record_spend(&app, usd, task)
     };
 
-    let mut verdict = match parse(&reply.text, n, &head_sha) {
-        Ok(v) => v,
-        Err(why) => {
-            let why: String = why.chars().take(MAX_REASON).collect();
-            if !dry {
-                w.post(
-                    &head_sha,
-                    CONTEXT,
-                    "failure",
-                    &format!("reviewer output invalid: {why}"),
-                )?;
-            }
-            return Err(BosunError::error(
-                format!("the reviewer's output is invalid: {why}"),
-                "run `bosun review-ci` again, or review in a session (mode a)",
-            )
-            .with_data(json!({"pr": n, "head_sha": head_sha, "model": cfg.model,
-                "usage": usage_json, "spend": spend})));
-        }
+    let all_invalid = results.iter().all(|(_, r)| r.is_err());
+    let verdict = if all_invalid {
+        let why = match results.first() {
+            Some((_, Err(why))) => why.clone(),
+            _ => "no reply".to_string(),
+        };
+        let e = invalid(&w, dry, n, &head_sha, &why, &cfg.model, &usage_json, &spend)?;
+        return Err(e);
+    } else if calls.len() == 1 {
+        let mut v = results.remove(0).1.expect("checked: not all invalid");
+        // The one model call saw the whole pack, so it reviewed every chunk.
+        v.chunks_reviewed = (1..=chunk_count).collect();
+        v
+    } else {
+        merge_chunk_verdicts(n, &head_sha, chunk_count, &results)
     };
-    // The one model call saw the whole pack, so it reviewed every chunk.
-    let chunk_count = pack["chunks"].as_array().map_or(0, Vec::len) as u32;
-    verdict.chunks_reviewed = (1..=chunk_count).collect();
+    let reviewed = verdict.chunks_reviewed.len();
     if dry {
         let approved = approved(&verdict);
         return Ok(Outcome::data(
             json!({"pr": n, "head_sha": head_sha, "dry_run": true,
             "since_sha": pack["since_sha"], "model": cfg.model, "usage": usage_json,
+            "chunk_count": chunk_count, "chunks_reviewed": reviewed,
             "approved": approved, "verdict": verdict}),
         ));
     }
@@ -179,7 +265,7 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
         &verdict,
         SESSION,
         valid_model(&cfg.model),
-        None,
+        (None, None),
     )?;
     let comment = if verdict.findings.is_empty() {
         Value::Null
@@ -192,6 +278,8 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
     };
     if let Some(d) = out.data.as_object_mut() {
         d.insert("since_sha".into(), pack["since_sha"].clone());
+        d.insert("chunk_count".into(), json!(chunk_count));
+        d.insert("chunks_reviewed".into(), json!(reviewed));
         d.insert("model".into(), json!(cfg.model));
         d.insert("usage".into(), usage_json);
         d.insert("findings".into(), json!(verdict.findings));
@@ -202,12 +290,80 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
     Ok(out)
 }
 
+fn pack_text(pack: &Value) -> String {
+    format!(
+        "BEGIN REVIEW PACK\n{}\nEND REVIEW PACK",
+        serde_json::to_string(pack).expect("a pack serializes")
+    )
+}
+
+/// The pack of chunk `i` (0-based): its files only, `chunks` holding that chunk alone.
+fn chunk_pack(pack: &Value, i: usize, names: &[String]) -> Value {
+    let mut p = pack.clone();
+    let keep = |v: &Value, key: &str| -> Vec<Value> {
+        v.as_array()
+            .into_iter()
+            .flatten()
+            .filter(|f| {
+                let name = if key.is_empty() {
+                    f.as_str()
+                } else {
+                    f[key].as_str()
+                };
+                name.is_some_and(|n| names.iter().any(|x| x == n))
+            })
+            .cloned()
+            .collect()
+    };
+    p["files"] = Value::Array(keep(&pack["files"], "filename"));
+    p["not_shown_binary"] = Value::Array(keep(&pack["not_shown_binary"], ""));
+    p["chunks"] = json!([names]);
+    p["chunk"] = json!({"number": i + 1, "of": pack["chunks"].as_array().map_or(0, Vec::len),
+        "note": "this is one chunk of a larger PR: review these files only"});
+    p
+}
+
+/// The reply was not a valid verdict: failure status (not on a dry run); the caller exits 1.
+#[allow(clippy::too_many_arguments)]
+fn invalid(
+    w: &GateWriter,
+    dry: bool,
+    n: u64,
+    head_sha: &str,
+    why: &str,
+    model: &str,
+    usage_json: &Value,
+    spend: &Value,
+) -> Result<BosunError, BosunError> {
+    let why: String = why.chars().take(MAX_REASON).collect();
+    if !dry {
+        w.post(
+            head_sha,
+            CONTEXT,
+            "failure",
+            &format!("reviewer output invalid: {why}"),
+        )?;
+    }
+    Ok(BosunError::error(
+        format!("the reviewer's output is invalid: {why}"),
+        "run `bosun review-ci` again, or review in a session (mode a)",
+    )
+    .with_data(json!({"pr": n, "head_sha": head_sha, "model": model,
+        "usage": usage_json, "spend": spend})))
+}
+
 /// Exit 6 when today's spend (the registry) has reached `daily_usd`: no call, no status. The
 /// per-task cap of `budget record` does not apply here.
 fn budget_guard(app: &App) -> Result<(), BosunError> {
+    budget_check(app, 0.0)
+}
+
+/// The same guard with `own` dollars this run has spent and not yet recorded on top.
+fn budget_check(app: &App, own: f64) -> Result<(), BosunError> {
     let gh = app.gh.as_ref();
     let daily = limits_from_default(gh, &app.ctx)?.budget.daily_usd;
-    let spent = spend_total_today(&registry::trusted_spend_notes(gh)?, app.ctx.now.day_start());
+    let spent =
+        spend_total_today(&registry::trusted_spend_notes(gh)?, app.ctx.now.day_start()) + own;
     if level(spent, daily) == Level::Stop {
         return Err(BosunError::limit(
             format!("spent ${spent:.2} of ${daily:.2} today; no CI review"),

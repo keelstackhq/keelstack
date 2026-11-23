@@ -6,9 +6,14 @@ use std::path::Path;
 use serde_json::json;
 
 use super::RiskCheckArgs;
-use super::carry_over::{candidates, carry_approval, carry_verdict, has_verdict, is_verdict};
+use super::carry_over::{
+    candidates, carry_approval_in, carry_verdict_in, has_verdict, is_verdict,
+    unreadable_withdrawers,
+};
 use super::verdict::{APPROVABLE, CONTEXT as VERDICT, apply as apply_verdict, neutral_refusal};
-use crate::app::{App, Result, default_branch, default_ref, halt_reason, task_meta, trusted_notes};
+use crate::app::{
+    App, Result, default_branch, default_ref, halt_reason, owner_view, task_meta, trusted_notes,
+};
 use crate::config::{CONFIG_FILE, Config};
 use crate::core::approve::{
     APPROVERS_PATH, ApproverKey, Form, OrchestratorCase, Policy, Role, orchestrator_counts,
@@ -19,10 +24,10 @@ use crate::core::lease::leases_of;
 use crate::core::meta::{closing_issues_in, linked_issues_in};
 use crate::core::records::Record;
 use crate::core::risk::{
-    self, Approval, ChangedFile, FileView, Rules, VERDICTS_NEEDED, added_lines, apply_floor,
-    capability_labels, clean_verdicts, comment_approves, evaluate, lease_sessions,
-    new_dependencies, parse_owners_in, plain, replace_note, requirement, risk_note, two_verdicts,
-    unseen_diff,
+    self, Approval, ChangedFile, FileView, OWNER_TEAM_FIX, OwnerView, Rules, VERDICTS_NEEDED,
+    added_lines, apply_floor, capability_labels, clean_verdicts, comment_approves, evaluate,
+    lease_sessions, new_dependencies, parse_owners_in, plain, replace_note, requirement, risk_note,
+    two_verdicts, unseen_diff,
 };
 use crate::core::touch::{Changed, outside, plan_tick_file};
 use crate::core::verdict::{Verdict, bot_verdict_json, comment_json, effective};
@@ -40,18 +45,10 @@ const CONTEXT: &str = "risk-check";
 /// A base with this file carries bosun's own approval code, which is then critical too.
 pub(crate) const BOSUN_CODE_MARKER: &str = "src/cli/risk_check.rs";
 
-/// Owner logins from `governance/owners.toml` at `git_ref`; empty when the file is missing.
+/// Owner logins from `governance/owners.toml` at `git_ref`: the listed users and the readable
+/// members of the listed teams (spec §16); empty when the file is missing.
 pub fn owner_logins(gh: &dyn Github, git_ref: &str) -> Result<Vec<String>> {
-    let Some(text) = gh.file_at(OWNERS_PATH, git_ref)? else {
-        return Ok(Vec::new());
-    };
-    let owners = parse_owners_in(&text, gh.repo_owner()).map_err(|e| {
-        BosunError::error(
-            e,
-            format!("fix {OWNERS_PATH}: one `[[owner]]` table with `github = \"login\"` per owner"),
-        )
-    })?;
-    Ok(owners.into_iter().filter_map(|o| o.github).collect())
+    Ok(owner_view(gh, git_ref)?.logins())
 }
 
 /// Slack IDs of the owners in `governance/owners.toml` at `git_ref`; empty when none is set.
@@ -522,6 +519,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     // Every linked issue counts: the agent writes the PR body, so a decoy first link must not
     // hide the real task's capabilities.
     let mut task = None;
+    // Every task the PR closes: a bundle's lease warning reads all of their leases.
+    let mut tasks: Vec<u64> = Vec::new();
     let mut plan_high = Vec::new();
     let mut one_off = false;
     // D-021: gated work may bundle, so every task the PR closes counts for R-plan: links in the
@@ -535,11 +534,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             linked.push(n);
         }
     }
-    if incomplete {
-        plan_high.push(format!(
-            "the PR has {COMMIT_CAP} or more commits: closing refs in later commits cannot be ruled out"
-        ));
-    }
+    // Fails closed (#49): a cut or unreadable commit list sends the PR to the owner.
+    let unread = incomplete;
+
     for i in linked {
         let issue = gh.get_issue(i)?;
         let meta = issue.as_ref().and_then(task_meta);
@@ -555,6 +552,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             one_off |= is_one_off(gh, issue, &meta, base, &ctx.config.project)?;
             capabilities.extend(meta.capabilities);
             task.get_or_insert(i);
+            tasks.push(i);
         }
     }
 
@@ -566,6 +564,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             why: "the linked task is `risk: high` in the plan, so the owner decides".into(),
             approval: Approval::Owner,
             evidence: plan_high,
+        });
+    }
+    if let Some(why) = unread {
+        matches.push(risk::Match {
+            rule: "R-plan".into(),
+            why: "the PR's commit messages could not all be read, so a closing ref to a `risk: high` task cannot be ruled out: the owner decides".into(),
+            approval: Approval::Owner,
+            evidence: vec![why],
         });
     }
     let lines: u64 = pr_files.iter().map(|f| f.additions + f.deletions).sum();
@@ -672,7 +678,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     apply_floor(&mut matches, &critical);
     let level = risk::level(&matches);
     let high = level == "high";
-    let out_of_touch = out_of_touch(gh, ctx, task, &pr_files, pull.changed_files);
+    let out_of_touch = out_of_touch(gh, ctx, &tasks, &pr_files, pull.changed_files);
 
     let warning = out_of_touch.as_deref().and_then(touch_warning);
     if let Some(w) = &warning {
@@ -696,11 +702,12 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         gh.update_pull_body(n, &body)?;
     }
 
-    let owners = if high {
-        owner_logins(gh, base)?
+    let view = if high {
+        owner_view(gh, base)?
     } else {
-        Vec::new()
+        OwnerView::default()
     };
+    let owners = view.logins();
     if !trust.is_empty() {
         eprintln!(
             "bosun: risk-check: the PR changes {}: signed approvals do not count",
@@ -791,7 +798,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         repo: &ctx.repo,
         pr: n,
         base_ref: &pull.base_ref,
-        owners: &owners,
+        view: &view,
         signed_ok,
         bootstrap: bootstrap.as_deref().ok(),
         requirement,
@@ -825,7 +832,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
                 let recounted = found.autonomous_verdicts.len() >= risk::QUORUM_VERDICTS;
                 (!by_signature || recounted).then_some(f)
             };
-            carry_approval(gh, &pull, &branch, &owners, &approve)
+            carry_approval_in(gh, &pull, &branch, (&owners, Some(&view)), &approve)
         })
     };
     let Found {
@@ -851,6 +858,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     let passed = passed_on_head || carried_from.is_some();
 
     let ids: Vec<&str> = matches.iter().map(|m| m.rule.as_str()).collect();
+    let teams_unreadable = !view.unreadable.is_empty();
     let tag = |h: &String| format!(" (carried from {})", &h[..7]); // a full sha (`candidates`)
     let from: String = carried_from.iter().map(tag).collect();
     let description = match (&approved_by, high) {
@@ -895,6 +903,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         ),
         (None, _) => format!("high risk, owner approval needed: {}", ids.join(", ")),
     };
+    let description = format!("{description}{}", view.status_suffix());
     let state = if passed { "success" } else { "failure" };
     let rules: Vec<String> = matches.iter().map(|m| format!("- {}", m.rule)).collect();
     let summary = format!("{description}\n\nMatched rules:\n{}", rules.join("\n"));
@@ -914,8 +923,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         }
         _ if high => Ok(None),
         _ => {
-            let owners = owner_logins(gh, base)?;
-            let by = approver(gh, &ctx.repo, n, head, &owners, signed_ok, (None, signer))?;
+            let view = owner_view(gh, base)?;
+            let by = approver(gh, &ctx.repo, n, head, &view, signed_ok, (None, signer))?;
             // Low risk reads no policy above: under quorum (or a base config that does not
             // parse) a key never stands for the owner.
             let quorum = by.is_some() && quorum_policy_at(gh, base)?;
@@ -932,6 +941,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     }
     if w.checks_skipped() {
         data["checks_skipped"] = json!(true);
+    }
+    if teams_unreadable {
+        data["owner_teams_unreadable"] = json!(view.unreadable);
     }
     if high {
         data["requirement"] = json!(requirement.name());
@@ -957,12 +969,20 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     if passed {
         return Ok(Outcome::data(data));
     }
-    let owner_fix = if owners.is_empty() {
+    let owner_fix = if owners.is_empty() && !teams_unreadable {
         format!("fill {OWNERS_PATH} on the base branch, then an owner must approve head {head}")
     } else {
-        format!(
+        let fix = format!(
             "an owner in {OWNERS_PATH} must approve head {head}: the owner's own PR comment `/bosun approve {head}`, an owner's GitHub review (then comment `/bosun recheck` (or re-run the risk workflow)), or a signed approval (`bosun approve {n}@{head} --sign-key <pem>`); a chat approval does not count (D-025)"
-        )
+        );
+        if teams_unreadable {
+            format!(
+                "{fix}; owner team {} is unreadable and counts no member: {OWNER_TEAM_FIX}",
+                view.unreadable.join(", ")
+            )
+        } else {
+            fix
+        }
     };
     // A bootstrap-mode signature that does not count says why (D-012).
     let boot = match &bootstrap {
@@ -1012,7 +1032,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     };
     // Agents open PRs through the Claude GitHub App as the owner's login: GitHub refuses the
     // owner's review of it, so say what still works.
-    let author_is_owner = owners.iter().any(|o| o.eq_ignore_ascii_case(&pull.user));
+    let author_is_owner = view.is_owner(&pull.user);
     let author_note = if author_is_owner {
         data["author_is_owner"] = json!(true);
         let signer = if autonomous {
@@ -1206,7 +1226,7 @@ struct Need<'a> {
     repo: &'a RepoId,
     pr: u64,
     base_ref: &'a str,
-    owners: &'a [String],
+    view: &'a OwnerView,
     signed_ok: bool,
     /// The label under which an orchestrator signature counts as the owner (D-012, D-014): see
     /// `orchestrator_window`.
@@ -1282,9 +1302,7 @@ impl Found {
 
 /// The approval of a high-risk PR on `sha`: an owner, two verdicts, or a delegate.
 fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
-    let Need {
-        repo, pr, owners, ..
-    } = *need;
+    let Need { repo, pr, view, .. } = *need;
     let mut found = Found::default();
     let mut bootstrap = need.bootstrap;
     let mut signed_ok = need.signed_ok;
@@ -1320,7 +1338,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         repo,
         pr,
         sha,
-        owners,
+        view,
         signed_ok,
         (bootstrap, need.signer_on),
     )?;
@@ -1349,7 +1367,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
                 &excluded,
                 need.models,
             );
-            if !found.delegate_verdicts.is_empty() && !owners_withdrawn(gh, pr, sha, owners)? {
+            if !found.delegate_verdicts.is_empty() && !owners_withdrawn(gh, pr, sha, view)? {
                 let v1 = |f: Form| f == Form::V1;
                 let key =
                     signed_approver(gh, repo, pr, sha, &comments, (Role::Delegate, false), &v1)?;
@@ -1417,8 +1435,8 @@ fn carry_status(gh: &dyn Github, w: &GateWriter, pull: &Pull, linked: &[u64]) ->
     if candidates(gh, pull, &branch).is_empty() {
         return None;
     }
-    let owners = owner_logins(gh, &pull.base_sha).ok()?;
-    let h = carry_verdict(gh, pull, &branch, linked, &owners)?;
+    let view = owner_view(gh, &pull.base_sha).ok()?;
+    let h = carry_verdict_in(gh, pull, &branch, linked, (&view.logins(), Some(&view)))?;
     let short: String = h.chars().take(7).collect();
     let text = format!("{CARRIED}{short}: clean merge of the default branch");
     if has_verdict(gh, head) {
@@ -1500,7 +1518,7 @@ fn reapply_verdict(app: &App, w: &GateWriter, pull: &Pull) -> Option<u64> {
                 if rounds == 0 && blocked() {
                     return None;
                 }
-                Some(apply_verdict(app, id).map(|o| !o.data["status"].is_null()))
+                Some(apply_verdict(app, id, (false, false)).map(|o| !o.data["status"].is_null()))
             }
             Err(e) => Some(Err(e)),
         };
@@ -1576,14 +1594,14 @@ fn touch_warning(out: &[String]) -> Option<String> {
     ))
 }
 
-/// The PR files outside the linked task's newest live lease (design C3), for a warning. `None`
-/// when the PR links no task, the task has no live lease with a touch, the file list is cut or
-/// the comments cannot be read. The task is the first linked issue with task metadata; humans'
-/// PRs have no lease and so get `None`.
+/// The PR files outside the union of its tasks' newest live leases (design C3), for a warning.
+/// `None` when the PR links no task, no task has a live lease with a touch, the file list is cut
+/// or the comments cannot be read. The tasks are every linked issue with task metadata (a
+/// bundle); humans' PRs have no lease and so get `None`.
 fn out_of_touch(
     gh: &dyn Github,
     ctx: &Ctx,
-    task: Option<u64>,
+    tasks: &[u64],
     pr_files: &[PrFile],
     changed_files: u64,
 ) -> Option<Vec<String>> {
@@ -1591,22 +1609,31 @@ fn out_of_touch(
     if (pr_files.len() as u64) < changed_files || pr_files.len() >= 3000 {
         return None;
     }
-    let task = task?;
-    // Only a warning: a failed read costs the warning, never the check.
-    let notes = match trusted_notes(gh, task) {
-        Ok(notes) => notes,
-        Err(e) => {
-            eprintln!(
-                "bosun: risk-check: no touch warning, cannot read the comments of #{task}: {}",
-                e.message
-            );
-            return None;
+    // A bundle: the union of each task's newest live lease (a task without one adds nothing).
+    let mut touch: Vec<String> = Vec::new();
+    for &task in tasks {
+        // Only a warning: a failed read costs the warning, never the check.
+        let notes = match trusted_notes(gh, task) {
+            Ok(notes) => notes,
+            Err(e) => {
+                eprintln!(
+                    "bosun: risk-check: no touch warning, cannot read the comments of #{task}: {}",
+                    e.message
+                );
+                return None;
+            }
+        };
+        if let Some(lease) = leases_of(task, &notes)
+            .into_iter()
+            .filter(|l| l.is_live(ctx.now) && !l.touch.is_empty())
+            .max_by_key(|l| l.comment_id)
+        {
+            touch.extend(lease.touch);
         }
-    };
-    let lease = leases_of(task, &notes)
-        .into_iter()
-        .filter(|l| l.is_live(ctx.now) && !l.touch.is_empty())
-        .max_by_key(|l| l.comment_id)?;
+    }
+    if touch.is_empty() {
+        return None;
+    }
     let changed: Vec<Changed> = pr_files
         .iter()
         .map(|f| Changed {
@@ -1621,7 +1648,7 @@ fn out_of_touch(
             ),
         })
         .collect();
-    Some(outside(&changed, &lease.touch))
+    Some(outside(&changed, &touch))
 }
 
 /// When a review was submitted; `None` when GitHub gave no time or it does not parse.
@@ -1672,11 +1699,14 @@ fn approver(
     repo: &RepoId,
     pr: u64,
     head: &str,
-    owners: &[String],
+    view: &OwnerView,
     signed_ok: bool,
     (bootstrap, signer_on): (Option<(&str, Form)>, bool),
 ) -> Result<Option<(String, Approver)>> {
     let reviews = gh.list_reviews(pr)?;
+    let owners = view.logins();
+    // While a team is unreadable, a login that may be a member withdraws, never approves.
+    let possible = unreadable_withdrawers(view, &reviews);
     let state = |o: &str| decisive_review(&reviews, o, head);
     let by_review = owners
         .iter()
@@ -1707,7 +1737,8 @@ fn approver(
     // old one could pass for new: it never clears a dismissal. Each dismissed owner review needs
     // an owner v2 signature naming its id, and the timeline must show the dismissal.
     let changes = |o: &String| state(o).as_deref() == Some("CHANGES_REQUESTED");
-    if !signed_ok || owners.is_empty() || owners.iter().any(changes) {
+    let possible_withdrawn = possible.iter().any(|o| withdrawn(state(o).as_deref()));
+    if !signed_ok || owners.is_empty() || owners.iter().any(changes) || possible_withdrawn {
         return Ok(None);
     }
     let sign = |accept: &dyn Fn(Form) -> bool| {
@@ -1832,11 +1863,13 @@ pub(crate) fn delegation_blocked(
 
 /// Whether a signed approval of `head` cannot count: no owners, or an owner's newest decisive
 /// review on `head` requests changes or was dismissed.
-fn owners_withdrawn(gh: &dyn Github, pr: u64, head: &str, owners: &[String]) -> Result<bool> {
+fn owners_withdrawn(gh: &dyn Github, pr: u64, head: &str, view: &OwnerView) -> Result<bool> {
     let reviews = gh.list_reviews(pr)?;
+    let owners = view.logins();
     Ok(owners.is_empty()
         || owners
             .iter()
+            .chain(&unreadable_withdrawers(view, &reviews))
             .any(|o| withdrawn(decisive_review(&reviews, o, head).as_deref())))
 }
 
@@ -1850,6 +1883,8 @@ pub fn verdict_inputs(gh: &dyn Github, n: u64, ls: &[u64]) -> Result<(Vec<Commen
     for c in &mut comments {
         c.user = crate::github::gate::record_author(&c.user);
     }
+    // Only a record of a verdict workflow run counts (issue #39).
+    crate::cli::verdict_run::bind_records(gh, &mut comments);
     let mut excluded = Vec::new();
     for i in ls {
         let notes = gh.list_comments(*i)?;
@@ -1859,8 +1894,9 @@ pub fn verdict_inputs(gh: &dyn Github, n: u64, ls: &[u64]) -> Result<(Vec<Commen
 }
 
 /// D-017: the PR's comments and the sessions that cannot review it, only when the PR closes an
-/// open task issue (not a PR, not itself, with task meta) on which the PR author wrote a lease
-/// record; else no reviewer can be shown independent of the author (a decoy link fails closed).
+/// open task issue (not a PR, not itself, with task meta) with the PR author's lease record, and
+/// every other open task it closes is covered too: by the author's lease on it, or (a bundled
+/// task) by the author's lease on the PR's lead when no one else has a lease record on it; else no reviewer can be shown independent of the author (a decoy link fails closed).
 /// The excluded sessions are every lease session on any linked issue.
 pub(crate) fn autonomous_inputs(
     gh: &dyn Github,
@@ -1871,16 +1907,31 @@ pub(crate) fn autonomous_inputs(
     if super::pr_no_ci::provider_default(gh)? == crate::config::CiProvider::None {
         return Ok(None);
     }
-    let mut task = false;
+    // A bundle: every open task the PR closes is covered. A task is covered by the author's
+    // lease on it; a bundled task (stays `ready`, never claimed: spec 04) also by the author's
+    // lease on the PR's lead (its `bosun:task-pr` marker), but only while nobody else holds a
+    // lease record on it. The lead must be a closed task with the author's lease.
+    let lead = task_pr_lead(&pull.body);
+    let mut lead_leased = false;
+    let mut rest: Vec<(u64, Vec<String>)> = Vec::new();
+    let mut leased_any = false;
     for i in closing_issues_in(&pull.body, Some(repo)) {
         let open = |x: &Issue| x.state == "open" && !x.pull_request && task_meta(x).is_some();
         if i != pull.number && gh.get_issue(i)?.is_some_and(|x| open(&x)) {
             let notes = gh.list_comments(i)?;
             let by = |c: &&Comment| c.user.eq_ignore_ascii_case(&pull.user);
-            let bodies = notes.iter().filter(by).map(|c| c.body.as_str());
-            task |= !lease_sessions(bodies).is_empty();
+            let mine = !lease_sessions(notes.iter().filter(by).map(|c| c.body.as_str())).is_empty();
+            if mine {
+                leased_any = true;
+                lead_leased |= lead == Some(i);
+                continue;
+            }
+            let others = lease_sessions(notes.iter().map(|c| c.body.as_str()));
+            rest.push((i, others));
         }
     }
+    let covered = |(_, others): &(u64, Vec<String>)| lead_leased && others.is_empty();
+    let task = leased_any && rest.iter().all(covered);
     let linked = linked_issues_in(&pull.body, repo);
     let (comments, excluded) = verdict_inputs(gh, pull.number, &linked)?;
     Ok(task.then_some((comments, excluded)))
@@ -2276,22 +2327,43 @@ pub fn owner_comment<'a>(comments: &'a [Comment], owner: &str, head: &str) -> Op
 /// GitHub lists at most this many commits of a PR.
 const COMMIT_CAP: usize = 250;
 
-/// Closing refs to this repo's issues in the PR title and commit messages, and whether the
-/// commit list hit GitHub's 250-commit cap. A commit that cannot be read (an API error, not
-/// the author's choice) is skipped; risk-check runs again on every push.
+/// Closing refs to this repo's issues in the PR title and commit messages, and why the list may
+/// be incomplete: the commit list hit GitHub's 250-commit cap or could not be read (#49: both
+/// fail closed to the owner).
 fn closing_refs_outside_body(
     gh: &dyn crate::github::Github,
     pull: &crate::github::Pull,
     repo: &str,
-) -> crate::app::Result<(Vec<u64>, bool)> {
+) -> crate::app::Result<(Vec<u64>, Option<String>)> {
     let mut out = closing_issues_in(&pull.title, Some(repo));
-    let shas = gh.pull_commits(pull.number)?;
-    let incomplete = shas.len() >= COMMIT_CAP;
-    for sha in &shas {
-        if let Ok(Some(c)) = gh.commit(sha) {
-            out.extend(closing_issues_in(&c.message, Some(repo)));
+    // One paged list with the messages (#49): no per-commit read an author could rate-limit.
+    let messages = match gh.pull_commit_messages(pull.number) {
+        Ok(m) => m,
+        Err(e) => {
+            return Ok((
+                out,
+                Some(format!(
+                    "cannot read the PR's commit messages ({}): closing refs in them cannot be ruled out",
+                    e.message
+                )),
+            ));
         }
+    };
+    let cut = (messages.len() >= COMMIT_CAP).then(|| {
+        format!(
+            "the PR has {COMMIT_CAP} or more commits: closing refs in later commits cannot be ruled out"
+        )
+    });
+    for m in &messages {
+        out.extend(closing_issues_in(m, Some(repo)));
     }
+    out.sort_unstable();
     out.dedup();
-    Ok((out, incomplete))
+    Ok((out, cut))
+}
+
+/// The lead task of a PR body's `<!-- bosun:task-pr N -->` marker.
+fn task_pr_lead(body: &str) -> Option<u64> {
+    let rest = &body[body.find("<!-- bosun:task-pr ")? + "<!-- bosun:task-pr ".len()..];
+    rest[..rest.find("-->")?].trim().parse().ok()
 }

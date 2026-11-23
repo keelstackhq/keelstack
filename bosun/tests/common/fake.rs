@@ -144,6 +144,138 @@ pub struct State {
     pub missing_branches: Vec<String>,
     /// Git refs `GET /git/ref/tags/<name>` answers 200 for; every other one is 404.
     pub release_refs: Vec<(String, String)>,
+    /// `org/slug` -> its members' logins (`GET /orgs/{org}/teams/{slug}/members`); an unlisted
+    /// team answers 404.
+    pub teams: HashMap<String, Vec<String>>,
+    /// `org/slug` -> its child teams' slugs (`GET /orgs/{org}/teams/{slug}/teams`); unset: none.
+    pub team_children: HashMap<String, Vec<String>>,
+    /// `org/slug` -> status of the members read (403, 404, 500 ...); unset: served.
+    pub team_members_status: HashMap<String, u16>,
+    /// `org/slug` -> status of the child-teams read; unset: served.
+    pub team_children_status: HashMap<String, u16>,
+    /// `org/slug` -> answer the members read with a body that is no list.
+    pub team_members_bad_page: std::collections::HashSet<String>,
+    /// Run id -> `GET /actions/runs/{id}` (and attempt 1 of it unless `verdict_attempts` has it).
+    pub verdict_runs: HashMap<u64, Value>,
+    /// (run id, attempt) -> `GET /actions/runs/{id}/attempts/{n}`.
+    pub verdict_attempts: HashMap<(u64, u64), Value>,
+    /// (run id, attempt) -> `jobs` of `GET /actions/runs/{id}/attempts/{n}/jobs`.
+    pub verdict_jobs: HashMap<(u64, u64), Value>,
+    /// Runs seeded verdict records name (valid unless `verdict_runs` has them).
+    pub injected_runs: std::collections::HashSet<u64>,
+    /// Injected run -> the name of its recording step (`bosun verdict record <pr> <comment>`).
+    pub injected_steps: HashMap<u64, String>,
+    /// A field set on every injected run (`default_run_field`).
+    pub default_run_patch: Vec<(String, Value)>,
+    /// Verdict comments that seeded records apply: served by id, never listed.
+    pub applied_comments: HashMap<u64, FakeComment>,
+    /// Do not bind seeded verdict records to a run (they then never count).
+    pub raw_verdict_records: bool,
+}
+
+/// First id of the verdict runs seeded records name (`add_comment`).
+pub const DEFAULT_RUN: u64 = 7000;
+
+/// A run the verdict binding accepts: the verdict workflow, an `issue_comment` on main, live
+/// from 2000 to 2099.
+pub fn verdict_run_json(id: u64) -> Value {
+    json!({"id": id, "path": ".github/workflows/verdict.yml", "event": "issue_comment",
+        "head_branch": "main", "status": "completed",
+        "run_started_at": "2000-01-01T00:00:00Z", "created_at": "2000-01-01T00:00:00Z", "updated_at": "2099-12-31T00:00:00Z"})
+}
+
+/// A job list in which the verdict job ran the recording step `step` (`bosun verdict record
+/// <pr> <comment>`) successfully, from 2000 to 2099.
+pub fn verdict_jobs_json(step: &str) -> Value {
+    verdict_jobs_with(
+        step,
+        "success",
+        "2000-01-01T00:00:00Z",
+        "2099-12-31T00:00:00Z",
+    )
+}
+
+/// A job list with the recording step `step`, its conclusion and its window.
+pub fn verdict_jobs_with(step: &str, conclusion: &str, from: &str, to: &str) -> Value {
+    json!([{"name": "verdict", "steps": [
+        {"name": "Set up job", "conclusion": "success",
+            "started_at": from, "completed_at": to},
+        {"name": step, "conclusion": conclusion, "started_at": from, "completed_at": to}]}])
+}
+
+/// For a test-seeded verdict record of `bosun verdict apply`'s shape that names no run: the
+/// body with `run`, `attempt` and `applied` added, a valid run registered and the verdict comment
+/// it applied (served by id, never listed) that yields exactly this record.
+fn bind_seeded(s: &mut State, issue: u64, id: u64, body: &str) -> String {
+    use bosun::core::records::Record;
+    use bosun::core::verdict::{Finding, Verdict, relayed_comment_body};
+    let Some(Record::Verdict {
+        session,
+        head_sha,
+        approved,
+        confidence,
+        major,
+        model,
+        relayed_by,
+    }) = bosun::core::risk::apply_record(body)
+    else {
+        return body.to_string();
+    };
+    if bosun::core::risk::record_run(body).is_some() {
+        return body.to_string();
+    }
+    let findings = (0..major.unwrap_or(0))
+        .map(|_| Finding {
+            severity: "major".into(),
+            file: "f".into(),
+            line: None,
+            claim: "c".into(),
+            evidence: "e".into(),
+        })
+        .collect();
+    let v = Verdict {
+        pr: issue,
+        head_sha,
+        verdict: if approved {
+            "approve"
+        } else {
+            "request-changes"
+        }
+        .into(),
+        confidence: confidence.unwrap_or(0.95),
+        findings,
+        lessons_hit: vec![],
+        escalate_risk: false,
+        chunks_reviewed: vec![],
+    };
+    let (run, applied) = (DEFAULT_RUN + id, 900_000 + id);
+    let text = relayed_comment_body(&v, &session, model.as_deref(), relayed_by.as_deref());
+    let old = "1999-12-31T00:00:00Z";
+    s.applied_comments.insert(
+        applied,
+        FakeComment {
+            id: applied,
+            issue,
+            body: text,
+            // A reviewer with write access (never a login a test restricts).
+            user: "seeded-reviewer".into(),
+            created_at: old.into(),
+            updated_at: old.into(),
+            via_app: None,
+            no_app_field: false,
+            association: "MEMBER".into(),
+            user_type: None,
+        },
+    );
+    s.injected_runs.insert(run);
+    s.injected_steps
+        .insert(run, format!("bosun verdict record {issue} {applied}"));
+    let at = body.rfind('}').expect("a record ends with }");
+    format!(
+        "{},\"run\":{run},\"attempt\":1,\"applied\":{applied}{}",
+        &body[..at],
+        &body[at..]
+    )
 }
 
 type Mutation = Box<dyn FnOnce(&mut State) + Send>;
@@ -472,6 +604,70 @@ impl FakeGithub {
         s.parents.insert(sha.into(), parent.into());
     }
 
+    /// Org team `org/slug` with these members (read by `bosun`'s team expansion).
+    pub fn team(&self, team: &str, members: &[&str]) {
+        let mut s = self.state.lock().unwrap();
+        s.teams
+            .insert(team.into(), members.iter().map(|m| m.to_string()).collect());
+    }
+
+    /// Team `team` has these child teams.
+    pub fn team_children(&self, team: &str, children: &[&str]) {
+        let mut s = self.state.lock().unwrap();
+        s.team_children.insert(
+            team.into(),
+            children.iter().map(|m| m.to_string()).collect(),
+        );
+    }
+
+    /// The members read of `team` answers `status` (403, 404, ...).
+    pub fn team_members_fail(&self, team: &str, status: u16) {
+        let mut s = self.state.lock().unwrap();
+        s.team_members_status.insert(team.into(), status);
+    }
+
+    /// The child-teams read of `team` answers `status` (403, 404, ...).
+    pub fn team_children_fail(&self, team: &str, status: u16) {
+        let mut s = self.state.lock().unwrap();
+        s.team_children_status.insert(team.into(), status);
+    }
+
+    /// The members read of `team` answers 200 with an object, not a list.
+    pub fn team_members_bad_page(&self, team: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.team_members_bad_page.insert(team.into());
+    }
+
+    /// How many pages of members reads of any team the fake served (a run reads one team once:
+    /// pages of two logins each).
+    pub fn members_calls(&self) -> usize {
+        let s = self.state.lock().unwrap();
+        s.log
+            .iter()
+            .filter(|l| {
+                l.method == "GET" && l.path.ends_with("/members") && l.path.contains("/teams/")
+            })
+            .count()
+    }
+
+    /// The `Authorization` header of the team reads, in order.
+    pub fn team_read_auth(&self) -> Vec<String> {
+        let s = self.state.lock().unwrap();
+        s.log
+            .iter()
+            .filter(|l| l.method == "GET" && l.path.starts_with("/orgs/"))
+            .map(|l| l.headers[0].clone().unwrap_or_default())
+            .collect()
+    }
+
+    /// The review's `author_association` (default: left out, as an old API would).
+    pub fn review_association(&self, number: u64, association: &str) {
+        let mut s = self.state.lock().unwrap();
+        if let Some(r) = s.reviews.get_mut(&number).and_then(|l| l.last_mut()) {
+            r["author_association"] = json!(association);
+        }
+    }
+
     pub fn review(&self, number: u64, user: &str, state: &str, commit_id: &str) {
         self.review_at(number, user, state, commit_id, None);
     }
@@ -752,6 +948,40 @@ impl FakeGithub {
             .via_app = Some(slug.into());
     }
 
+    /// Register workflow run `id` (`GET /actions/runs/{id}`) as `run`.
+    pub fn verdict_run(&self, id: u64, run: Value) {
+        self.state.lock().unwrap().verdict_runs.insert(id, run);
+    }
+
+    /// Set `key` on every run that seeded verdict records name (they are valid otherwise).
+    pub fn default_run_field(&self, key: &str, value: Value) {
+        let mut s = self.state.lock().unwrap();
+        s.default_run_patch.push((key.into(), value));
+    }
+
+    /// Register attempt `n` of run `id` as `run` (default: attempt 1 is the run itself).
+    pub fn verdict_attempt(&self, id: u64, n: u64, run: Value) {
+        self.state
+            .lock()
+            .unwrap()
+            .verdict_attempts
+            .insert((id, n), run);
+    }
+
+    /// The `jobs` of attempt `n` of run `id` (default: the apply step succeeded).
+    pub fn verdict_jobs(&self, id: u64, n: u64, jobs: Value) {
+        self.state
+            .lock()
+            .unwrap()
+            .verdict_jobs
+            .insert((id, n), jobs);
+    }
+
+    /// Stop adding `"run"` to verdict records that name none (they then never count).
+    pub fn raw_verdict_records(&self) {
+        self.state.lock().unwrap().raw_verdict_records = true;
+    }
+
     /// A comment written by `user`.
     pub fn comment_by(&self, issue: u64, user: &str, body: &str) {
         let mut s = self.state.lock().unwrap();
@@ -926,12 +1156,25 @@ impl Drop for FakeGithub {
     }
 }
 
+/// A comment a test seeds: a verdict record in it is bound to a valid verdict run.
 pub fn add_comment(s: &mut State, issue: u64, body: &str) -> u64 {
     let id = s.comments.iter().map(|c| c.id).max().unwrap_or(100) + 1;
+    let body = if s.raw_verdict_records {
+        body.to_string()
+    } else {
+        bind_seeded(s, issue, id, body)
+    };
+    push_comment(s, issue, &body)
+}
+
+/// A comment bosun POSTs: stored as it came.
+pub fn push_comment(s: &mut State, issue: u64, body: &str) -> u64 {
+    let id = s.comments.iter().map(|c| c.id).max().unwrap_or(100) + 1;
+    let body = body.to_string();
     s.comments.push(FakeComment {
         id,
         issue,
-        body: body.into(),
+        body,
         user: "octocat".into(),
         created_at: TS.into(),
         updated_at: TS.into(),
@@ -1097,6 +1340,20 @@ fn page(
     (200, Value::Array(chunk), headers)
 }
 
+/// `GET /actions/runs/{id}`: a registered run, or a valid one for a run seeded records name.
+fn run_json(s: &State, id: u64) -> Option<Value> {
+    if let Some(v) = s.verdict_runs.get(&id) {
+        return Some(v.clone());
+    }
+    s.injected_runs.contains(&id).then(|| {
+        let mut v = verdict_run_json(id);
+        for (k, x) in &s.default_run_patch {
+            v[k.as_str()] = x.clone();
+        }
+        v
+    })
+}
+
 fn route(
     s: &mut State,
     method: &str,
@@ -1123,6 +1380,38 @@ fn route(
             Some(l) => ok(json!({"login": l})),
             None => msg(404, "Not Found"),
         };
+    }
+    if method == "GET"
+        && let ["orgs", org, "teams", slug, what] = seg.as_slice()
+    {
+        let key = format!("{org}/{slug}");
+        let (status, bad) = match *what {
+            "members" => (
+                s.team_members_status.get(&key),
+                s.team_members_bad_page.contains(&key),
+            ),
+            "teams" => (s.team_children_status.get(&key), false),
+            _ => return msg(404, "Not Found"),
+        };
+        if let Some(code) = status {
+            return msg(*code, "fake team failure");
+        }
+        let Some(members) = s.teams.get(&key).cloned() else {
+            return msg(404, "Not Found");
+        };
+        if bad {
+            return ok(json!({"message": "not a list"}));
+        }
+        let items: Vec<Value> = if *what == "members" {
+            members
+                .iter()
+                .map(|m| json!({"login": m, "role": "member"}))
+                .collect()
+        } else {
+            let kids = s.team_children.get(&key).cloned().unwrap_or_default();
+            kids.iter().map(|k| json!({"slug": k})).collect()
+        };
+        return page(items, &query, base, path, raw_query);
     }
     let ["repos", repo_owner, repo_name, rest @ ..] = seg.as_slice() else {
         return msg(404, "Not Found");
@@ -1364,7 +1653,7 @@ fn route(
                 return msg(404, "Not Found");
             };
             let number = s.issues[p].number;
-            let id = add_comment(s, number, body["body"].as_str().unwrap_or(""));
+            let id = push_comment(s, number, body["body"].as_str().unwrap_or(""));
             (
                 201,
                 comment_json(s.comments.iter().find(|c| c.id == id).unwrap()),
@@ -1377,7 +1666,7 @@ fn route(
         }
         ("GET", ["issues", "comments", id]) => {
             let id: u64 = id.parse().unwrap_or(0);
-            match s.comments.iter().find(|c| c.id == id) {
+            match (s.comments.iter().find(|c| c.id == id)).or(s.applied_comments.get(&id)) {
                 Some(c) => ok(comment_json(c)),
                 None => msg(404, "Not Found"),
             }
@@ -1492,7 +1781,14 @@ fn route(
                     .flat_map(|k| k.split("...").map(String::from))
                     .collect()
             });
-            let items = shas.iter().map(|x| json!({"sha": x})).collect();
+            // GitHub lists each commit's message too; the fake takes it from `git_commits`.
+            let msg = |x: &String| {
+                (s.git_commits.get(x)).and_then(|c| c["message"].as_str().map(String::from))
+            };
+            let items = shas
+                .iter()
+                .map(|x| json!({"sha": x, "commit": {"message": msg(x).unwrap_or_default()}}))
+                .collect();
             page(items, &query, base, path, raw_query)
         }
         ("GET", ["compare", range]) => match s.compares.get(*range) {
@@ -1662,6 +1958,37 @@ fn route(
                 "workflow_runs",
                 total,
             )
+        }
+        ("GET", ["actions", "runs", id]) => {
+            let id: u64 = id.parse().unwrap_or(0);
+            match run_json(s, id) {
+                Some(v) => ok(v),
+                None => msg(404, "Not Found"),
+            }
+        }
+        ("GET", ["actions", "runs", id, "attempts", n]) => {
+            let (id, n): (u64, u64) = (id.parse().unwrap_or(0), n.parse().unwrap_or(0));
+            match s.verdict_attempts.get(&(id, n)).cloned() {
+                Some(v) => ok(v),
+                None if n == 1 => match run_json(s, id) {
+                    Some(v) => ok(v),
+                    None => msg(404, "Not Found"),
+                },
+                None => msg(404, "Not Found"),
+            }
+        }
+        ("GET", ["actions", "runs", id, "attempts", n, "jobs"]) => {
+            let (id, n): (u64, u64) = (id.parse().unwrap_or(0), n.parse().unwrap_or(0));
+            let known = s.verdict_attempts.contains_key(&(id, n)) || run_json(s, id).is_some();
+            if !known {
+                return msg(404, "Not Found");
+            }
+            let step = s.injected_steps.get(&id).cloned().unwrap_or_default();
+            let jobs =
+                (s.verdict_jobs.get(&(id, n)).cloned()).unwrap_or_else(|| verdict_jobs_json(&step));
+            let total = jobs.as_array().map_or(0, Vec::len);
+            let items = jobs.as_array().cloned().unwrap_or_default();
+            wrapped(page(items, &query, base, path, raw_query), "jobs", total)
         }
         ("GET", ["actions", "runs", id, "jobs"]) => {
             let id: u64 = id.parse().unwrap_or(0);

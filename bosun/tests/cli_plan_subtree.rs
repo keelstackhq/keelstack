@@ -66,19 +66,33 @@ fn a_clean_subtree_is_not_gated() {
 }
 
 #[test]
-fn an_unreadable_or_truncated_tree_is_a_plan_error_at_the_task() {
+fn an_unreadable_or_truncated_tree_is_a_warning_and_the_task_stays_gated() {
     let (tmp, fake) = world(&[("packages/a/lib.rs", "100644", "blob", "s1")], true);
     let (code, v) = plan(&fake, tmp.path(), "import");
-    assert_eq!(code, 1, "{v}");
-    let e = &v["data"]["errors"][0];
+    assert_eq!(code, 0, "{v}");
+    let w = v["data"]["warnings"].to_string();
     assert!(
-        e["message"].as_str().unwrap().contains("cannot be checked"),
+        w.contains("M1/T1") && w.contains("cannot be checked"),
         "{v}"
     );
-    assert!(e["fix"].as_str().unwrap().contains("risk: high"), "{v}");
+    let gated = (fake.state.lock().unwrap().issues.iter())
+        .any(|i| i.body.contains(r#""task":"T1""#) && i.body.contains(r#""gated":true"#));
+    assert!(gated, "fail closed: the task is gated");
     let (tmp, fake) = (tempfile::tempdir().unwrap(), FakeGithub::start());
     fake.no_main_tree();
     std::fs::write(tmp.path().join("plan.md"), PLAN).unwrap();
+    for cmd in ["import", "amend"] {
+        let (code, v) = plan(&fake, tmp.path(), cmd);
+        assert_eq!(code, 0, "{cmd}: {v}");
+        assert!(v["data"]["warnings"].to_string().contains("M1/T1"), "{v}");
+    }
+}
+
+#[test]
+fn a_wildcard_matching_no_file_is_a_warning() {
+    let (tmp, fake) = world(&[("src/a.rs", "100644", "blob", "s1")], false);
     let (code, v) = plan(&fake, tmp.path(), "import");
-    assert_eq!(code, 1, "{v}");
+    assert_eq!(code, 0, "{v}");
+    let w = v["data"]["warnings"].to_string();
+    assert!(w.contains("M1/T1") && w.contains("matches no file"), "{v}");
 }

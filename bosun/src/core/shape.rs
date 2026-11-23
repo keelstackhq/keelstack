@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::fmt;
 
 use crate::core::glob::{self, Glob};
-use crate::core::plan::{Item, PlanError, Task};
+use crate::core::plan::{Item, Task};
 use crate::core::risk::Rules;
 use crate::core::touch::companions;
 
@@ -120,31 +120,48 @@ pub fn touch_gated_in(
 }
 
 /// Plan ids (`<item>/<task>`) of the tasks gated only by resolving a wildcard touch against
-/// `files` ([`touch_gated_in`]), and a plan error (at the task line) for each touch that cannot be
-/// resolved. Tasks gated by [`is_gated`] are not listed: callers combine both.
+/// `files` ([`touch_gated_in`]), and plan warnings (text, naming the task id). A touch that cannot
+/// be resolved (no file list: unreadable or truncated) is a warning and the task stays gated
+/// (fail closed, so it is in the set); a wildcard touch that matches no file is a warning too.
+/// Tasks gated by [`is_gated`] are not listed: callers combine both.
 pub fn resolve_gated(
     items: &[Item],
     gated: &[Glob],
     files: Option<&[String]>,
-) -> (HashSet<String>, Vec<PlanError>) {
-    let (mut set, mut errs) = (HashSet::new(), vec![]);
+) -> (HashSet<String>, Vec<String>) {
+    let (mut set, mut warns) = (HashSet::new(), vec![]);
     for item in items {
-        for t in item.tasks.iter().filter(|t| !is_gated(t, gated)) {
-            match touch_gated_in(&t.touch, gated, files) {
-                Ok(true) => {
-                    set.insert(t.plan_id(&item.id));
+        for t in &item.tasks {
+            let id = t.plan_id(&item.id);
+            if !is_gated(t, gated) {
+                match touch_gated_in(&t.touch, gated, files) {
+                    Ok(true) => {
+                        set.insert(id.clone());
+                    }
+                    Ok(false) => {}
+                    Err(why) => {
+                        set.insert(id.clone());
+                        warns.push(format!("{id}: {why}; the task is treated as gated"));
+                    }
                 }
-                Ok(false) => {}
-                Err(message) => errs.push(PlanError {
-                    line: t.line,
-                    message,
-                    fix: "narrow the touch to the paths the task edits, or mark it `risk: high`"
-                        .into(),
-                }),
+            }
+            let Some(files) = files else { continue };
+            for w in t
+                .touch
+                .iter()
+                .filter(|w| w.contains('*') || w.contains('?'))
+            {
+                if let Ok(g) = Glob::parse(w)
+                    && !files.iter().any(|f| g.matches(f))
+                {
+                    warns.push(format!(
+                        "{id}: touch `{w}` matches no file on the default branch (fine if the task adds it)"
+                    ));
+                }
             }
         }
     }
-    (set, errs)
+    (set, warns)
 }
 
 /// The gated rules of a plan import: risk-rule globs plus the tasks whose wildcard touch holds a
@@ -519,11 +536,24 @@ mod tests {
             1,
         );
         let tree = files(&["packages/a/hoist.toml"]);
-        let (set, errs) = resolve_gated(std::slice::from_ref(&i), &g, Some(&tree));
-        assert!(errs.is_empty());
+        let (set, warns) = resolve_gated(std::slice::from_ref(&i), &g, Some(&tree));
+        assert!(warns.is_empty());
         assert_eq!(set.into_iter().collect::<Vec<_>>(), ["M1/T1"]);
-        let (_, errs) = resolve_gated(&[i], &g, None);
-        assert_eq!(errs.len(), 1);
-        assert!(errs[0].fix.contains("risk: high"), "{}", errs[0].fix);
+        // Unresolvable: a warning naming the task, and the task stays gated.
+        let (set, warns) = resolve_gated(std::slice::from_ref(&i), &g, None);
+        assert_eq!(warns.len(), 1);
+        assert!(
+            warns[0].starts_with("M1/T1: touch `packages/**` cannot be checked"),
+            "{warns:?}"
+        );
+        assert_eq!(set.into_iter().collect::<Vec<_>>(), ["M1/T1"]);
+        // Resolved but matching nothing: a warning, not gated.
+        let (set, warns) = resolve_gated(&[i], &g, Some(&files(&["src/a.rs"])));
+        assert!(set.is_empty());
+        assert_eq!(warns.len(), 1);
+        assert!(
+            warns[0].contains("M1/T1") && warns[0].contains("matches no file"),
+            "{warns:?}"
+        );
     }
 }

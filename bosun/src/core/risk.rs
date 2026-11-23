@@ -1183,7 +1183,7 @@ pub fn autonomous_excluded(
 /// - `**/.cargo/**`, `**/rust-toolchain*`, `**/.pnpmfile.*`, `**/deny*.toml`,
 ///   `**/package.json`, `**/pnpm-workspace.y*ml`: the files the gate jobs restore from the base
 ///   (the `pat=` regexes), at any depth.
-/// - `hoard/src/**`, `hoard/action.yml`, `hoard/action/dist/**`, `hoard/tests/fixtures/**`: the
+/// - `hoard/src/**`, `hoard/action.yml` (and its `.yaml` twin), `hoard/action/dist/**`, `hoard/tests/fixtures/**`: the
 ///   hoard server that gets the R2 keys in hoard-self-test.yml, and fixture code run beside it.
 /// - `site/package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `.node-version`,
 ///   `.pnpmfile.*` (pnpm 10+ also loads `.mjs`), `packages/deploy/**`: what the deploy-site.yml `wrangler` job loads to
@@ -1199,7 +1199,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 56] = [
+pub const TRUST_ROOT: [&str; 57] = [
     // Every file of `.bosun/` (limits, registry, pins, rules, ...): CI restores all of it from the
     // base (`^\.bosun(/|$)`), so a PR's change to one is judged by the base's copy. Only the root
     // `.bosun/version` is left to [`pin_change_trust_root`].
@@ -1262,6 +1262,7 @@ pub const TRUST_ROOT: [&str; 56] = [
     // action/dist built from src) and then runs the fixtures as the same user.
     "hoard/src/**",
     "hoard/action.yml",
+    "hoard/action.yaml",
     "hoard/action/dist/**",
     // Read and copied into the release bundle by the `release` job (tag key).
     "hoard/action/src/checksums.generated.ts",
@@ -1442,7 +1443,7 @@ pub fn autonomous_verdicts<'a>(
     // Any verdict on the head that would not count blocks, edited too (an edit can only make it
     // count less): a rejection, majors, a low or missing confidence. Only all-clean passes.
     let refused = all.iter().any(|(a, b, _)| {
-        a.eq_ignore_ascii_case(VERDICT_AUTHOR)
+        (a.eq_ignore_ascii_case(VERDICT_AUTHOR) || a.eq_ignore_ascii_case(UNVERIFIED_AUTHOR))
             && matches!(apply_record(b), Some(Record::Verdict { head_sha, approved, confidence, major, .. })
                 if head_sha == head
                     && !(approved && major == Some(0)
@@ -1528,6 +1529,11 @@ pub fn apply_floor(matches: &mut [Match], critical: &[String]) {
 /// A verdict counts only from this author: the verdict workflow writes the record comment with
 /// its own token. A record an agent session posts directly is not a verdict (spec section 8).
 pub const VERDICT_AUTHOR: &str = "github-actions[bot]";
+/// The author a reader gives a [`VERDICT_AUTHOR`] verdict record whose run binding did not verify
+/// (no `run`, or the run is not the verdict workflow's, spec section 8). A GitHub login cannot
+/// contain `/`. Such a record never counts, but a rejection or a newer record on a head still
+/// blocks or withdraws (fail closed: an unreadable run must not hide a rejection).
+pub const UNVERIFIED_AUTHOR: &str = "github-actions[bot]/unverified";
 /// The confidence a verdict needs to count toward two verdicts.
 pub const VERDICT_MIN_CONFIDENCE: f64 = 0.9;
 /// The session prefix `verdict apply` records a `[approvals] verdict_bots` verdict under.
@@ -1563,6 +1569,22 @@ pub fn apply_record(body: &str) -> Option<Record> {
         Ok(r @ Record::Verdict { .. }) => Some(r),
         _ => None,
     }
+}
+
+/// A number field of the verdict record on the last line of `body` (`run`, `attempt`,
+/// `applied`); `None` when the record lacks it or it is no number.
+pub fn record_u64(body: &str, key: &str) -> Option<u64> {
+    let last = body.lines().map(str::trim).rfind(|l| !l.is_empty())?;
+    serde_json::from_str::<serde_json::Value>(last)
+        .ok()?
+        .get(key)?
+        .as_u64()
+}
+
+/// The workflow run id a verdict record names (`"run": <id>`, written by `bosun verdict apply`
+/// from `BOSUN_RUN_ID`).
+pub fn record_run(body: &str) -> Option<u64> {
+    record_u64(body, "run")
 }
 
 /// Sessions that hold or held a lease on a task: they did the work, so their verdict is not
@@ -1613,7 +1635,8 @@ fn verdict_sessions<'a>(
 ) -> Vec<String> {
     let mut newest: std::collections::BTreeMap<String, bool> = Default::default();
     for (author, body) in comments {
-        if !author.eq_ignore_ascii_case(VERDICT_AUTHOR) {
+        let unverified = author.eq_ignore_ascii_case(UNVERIFIED_AUTHOR);
+        if !unverified && !author.eq_ignore_ascii_case(VERDICT_AUTHOR) {
             continue;
         }
         if let Some(Record::Verdict {
@@ -1633,7 +1656,8 @@ fn verdict_sessions<'a>(
         {
             let enrolled = models.is_none_or(|m| model.is_some_and(|x| m.contains(&x)));
             // A newest record relayed by an excluded session withdraws, never counts.
-            let counts = !relayer_excluded(relayed_by.as_deref(), excluded)
+            let counts = !unverified
+                && !relayer_excluded(relayed_by.as_deref(), excluded)
                 && approved
                 && enrolled
                 && confidence.is_some_and(|c| c >= VERDICT_MIN_CONFIDENCE)
@@ -2062,6 +2086,128 @@ pub fn parse_owners_in(text: &str, org: &str) -> Result<Vec<Owner>, String> {
             "governance/owners.toml: team `{t}` is not of the repo's org {org}"
         )),
         None => Ok(owners),
+    }
+}
+
+/// The fix every command gives when an owner team cannot be read (spec §16).
+pub const OWNER_TEAM_FIX: &str = "give the bosun App Members read and pass BOSUN_APP_TOKEN, or list the owner by login in governance/owners.toml";
+
+/// The owners of a repo as a command sees them (spec §16): the listed users, the readable
+/// members of the listed teams, and the teams that could not be read (they count no member).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct OwnerView {
+    pub users: Vec<String>,
+    pub members: Vec<String>,
+    pub teams: Vec<String>,
+    pub unreadable: Vec<String>,
+}
+
+/// Which halt issue halts, and why (see [`OwnerView::halt_pick`]); the index is into the issues.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HaltPick {
+    /// No owner is listed: the first open halt issue halts, there is nobody to judge it.
+    NoOwners(usize),
+    /// An issue opened by a listed user or a readable team member.
+    Owner(usize),
+    /// A team is unreadable and the issue is by a login that is no listed user: it may be a member.
+    UnreadableTeam(usize),
+}
+
+impl OwnerView {
+    /// `owners` with `expand` for each team (`org/slug`): `None` is unreadable (fail closed).
+    pub fn from_owners(
+        owners: &[Owner],
+        mut expand: impl FnMut(&str) -> Option<Vec<String>>,
+    ) -> OwnerView {
+        let mut v = OwnerView::default();
+        for o in owners {
+            if let Some(u) = &o.github {
+                v.users.push(u.clone());
+            }
+            if let Some(t) = &o.team {
+                v.teams.push(t.clone());
+                match expand(t) {
+                    Some(m) => v.members.extend(m),
+                    None => v.unreadable.push(t.clone()),
+                }
+            }
+        }
+        v
+    }
+
+    /// A listed user (not a team member).
+    pub fn is_user(&self, login: &str) -> bool {
+        self.users.iter().any(|u| u.eq_ignore_ascii_case(login))
+    }
+
+    /// A listed user or a readable team member, case-insensitively.
+    pub fn is_owner(&self, login: &str) -> bool {
+        self.is_user(login) || self.members.iter().any(|m| m.eq_ignore_ascii_case(login))
+    }
+
+    /// Users, then readable members, without repeats: the logins whose approval counts.
+    pub fn logins(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for l in self.users.iter().chain(&self.members) {
+            if !out.iter().any(|o| o.eq_ignore_ascii_case(l)) {
+                out.push(l.clone());
+            }
+        }
+        out
+    }
+
+    /// `@login` for each user, `@org/slug` for each team.
+    pub fn mentions(&self) -> Vec<String> {
+        let users = self.users.iter().map(|u| format!("@{u}"));
+        users
+            .chain(self.teams.iter().map(|t| format!("@{t}")))
+            .collect()
+    }
+
+    /// No user and no team listed.
+    pub fn is_empty(&self) -> bool {
+        self.users.is_empty() && self.teams.is_empty()
+    }
+
+    /// ` (team <org>/<slug> unreadable)` for each unreadable team; empty when all are readable.
+    pub fn status_suffix(&self) -> String {
+        self.unreadable
+            .iter()
+            .map(|t| format!(" (team {t} unreadable)"))
+            .collect()
+    }
+
+    /// The kill switch pick over the open halt issues' authors, in order. No owner at all: the
+    /// first. Else the first by an owner. Else, while a team is unreadable, the first by a login
+    /// that is no listed user (it may be a member). `None`: none of them halts.
+    pub fn halt_pick(&self, authors: &[&str]) -> Option<HaltPick> {
+        if authors.is_empty() {
+            return None;
+        }
+        if self.is_empty() {
+            return Some(HaltPick::NoOwners(0));
+        }
+        if let Some(i) = authors.iter().position(|a| self.is_owner(a)) {
+            return Some(HaltPick::Owner(i));
+        }
+        if !self.unreadable.is_empty() {
+            return authors
+                .iter()
+                .position(|a| !self.is_user(a))
+                .map(HaltPick::UnreadableTeam);
+        }
+        None
+    }
+
+    /// Whether a CHANGES_REQUESTED or DISMISSED review by `login` counts as an owner's
+    /// withdrawal because a team is unreadable: `login` is no listed user and its
+    /// `author_association` is OWNER, MEMBER or COLLABORATOR. An unknown association (`None`)
+    /// counts too (fail closed); CONTRIBUTOR, NONE and the rest do not. Only ever a
+    /// withdrawal: nothing here makes a login's approval count.
+    pub fn unreadable_withdrawer(&self, login: &str, association: Option<&str>) -> bool {
+        !self.unreadable.is_empty()
+            && !self.is_user(login)
+            && association.is_none_or(|a| matches!(a, "OWNER" | "MEMBER" | "COLLABORATOR"))
     }
 }
 
@@ -3534,6 +3680,7 @@ mod monorepo_tests {
             "site/.npmrc",
             "hoard/src/main.rs",
             "hoard/action.yml",
+            "hoard/action.yaml",
             "hoard/action/dist/main.js",
             "hoard/tests/fixtures/turbo-repo/package.json",
             "site/package.json",
@@ -3559,6 +3706,67 @@ mod monorepo_tests {
         ] {
             assert!(trust_root_changed(&[(f, None)], &[]).is_empty(), "{f}");
         }
+    }
+
+    #[test]
+    fn owner_view_counts_users_and_readable_members_only() {
+        let owners = parse_owners_in(
+            "[[owner]]\ngithub = \"Ada\"\n[[owner]]\nteam = \"acme/core\"\n[[owner]]\nteam = \"acme/ops\"\n",
+            "acme",
+        )
+        .unwrap();
+        let v = OwnerView::from_owners(&owners, |t| (t == "acme/core").then(|| vec!["Bo".into()]));
+        assert!(v.is_owner("ada") && v.is_owner("BO") && !v.is_owner("cy"));
+        assert_eq!(v.unreadable, ["acme/ops"]);
+        assert_eq!(v.mentions(), ["@Ada", "@acme/core", "@acme/ops"]);
+        assert_eq!(v.status_suffix(), " (team acme/ops unreadable)");
+        assert_eq!(v.logins(), ["Ada", "Bo"]);
+        assert!(!v.is_empty());
+        assert!(OwnerView::default().is_empty());
+    }
+
+    #[test]
+    fn halt_pick_fails_closed_while_a_team_is_unreadable() {
+        let mut v = OwnerView {
+            users: vec!["ada".into()],
+            teams: vec!["acme/core".into()],
+            ..OwnerView::default()
+        };
+        assert_eq!(v.halt_pick(&["x"]), None, "readable team, stranger");
+        v.unreadable = vec!["acme/core".into()];
+        assert_eq!(v.halt_pick(&["x"]), Some(HaltPick::UnreadableTeam(0)));
+        assert_eq!(v.halt_pick(&["x", "ADA"]), Some(HaltPick::Owner(1)));
+        assert_eq!(v.halt_pick(&["Ada"]), Some(HaltPick::Owner(0)));
+        assert_eq!(v.halt_pick(&[]), None);
+        assert_eq!(
+            OwnerView::default().halt_pick(&["x"]),
+            Some(HaltPick::NoOwners(0))
+        );
+    }
+
+    #[test]
+    fn only_an_unreadable_team_makes_a_non_user_review_a_withdrawal() {
+        let mut v = OwnerView {
+            users: vec!["ada".into()],
+            teams: vec!["acme/core".into()],
+            ..OwnerView::default()
+        };
+        assert!(
+            !v.unreadable_withdrawer("x", Some("MEMBER")),
+            "team readable"
+        );
+        v.unreadable = vec!["acme/core".into()];
+        for a in ["OWNER", "MEMBER", "COLLABORATOR"] {
+            assert!(v.unreadable_withdrawer("x", Some(a)), "{a}");
+        }
+        for a in ["CONTRIBUTOR", "NONE", "FIRST_TIMER", ""] {
+            assert!(!v.unreadable_withdrawer("x", Some(a)), "{a}");
+        }
+        assert!(v.unreadable_withdrawer("x", None), "unknown fails closed");
+        assert!(
+            !v.unreadable_withdrawer("Ada", Some("MEMBER")),
+            "a listed user is judged as owner"
+        );
     }
 
     #[test]

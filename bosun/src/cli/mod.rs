@@ -67,6 +67,7 @@ pub mod stamps;
 pub mod status;
 pub mod trailers;
 pub mod verdict;
+pub mod verdict_run;
 pub mod wait;
 pub mod wave;
 use std::path::PathBuf;
@@ -744,6 +745,14 @@ pub enum VerdictCmd {
 pub struct ApplyArg {
     /// The id of the PR comment that carries the verdict.
     pub comment_id: u64,
+    /// Only check the comment: write nothing, print `accepted` (the verdict workflow runs its
+    /// recording step only for an accepted comment).
+    #[arg(long)]
+    pub check: bool,
+    /// Exit 1 instead of a neutral refusal, so that a step that must write a record never
+    /// succeeds without one.
+    #[arg(long)]
+    pub require: bool,
 }
 
 #[derive(Debug, Args)]
