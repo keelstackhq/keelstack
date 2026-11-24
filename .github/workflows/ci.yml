@@ -73,7 +73,7 @@ jobs:
     needs: detect
     if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,6 +121,15 @@ jobs:
       - name: cargo deny (once for the workspace)
         if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
         run: cargo deny check
+      # Every publishable crate must package and build from its own .crate file (a file outside the
+      # crate's `include` breaks `cargo publish` in the release job). Only when Rust is affected.
+      - if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
+        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - name: cargo package (verify every publishable crate)
+        if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
+        run: cargo package --workspace --exclude keel-splice --locked
 
   # bosun's repo-wide gates (test-integrity, ci-minutes), run by bosun built from the BASE commit
   # with the base's copies of the files that decide what runs, never by the change under test, so

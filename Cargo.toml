@@ -6,7 +6,7 @@ exclude = ["hoist/tests/fixtures", "hull"]
 
 [workspace.package]
 # Lockstep version for every tool crate.
-version = "0.22.0"
+version = "0.22.1"
 
 # Exact pins. Crates add their own features.
 [workspace.dependencies]
