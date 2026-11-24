@@ -2786,7 +2786,8 @@ const INTENDED_ALLOWS = [{ name: "gh-api-pulls", shape: ghApiPullsShape }];
 
 /** The name of the enumerated allow `command` is exactly, or null. */
 export function intendedAllow(command) {
-  const s = String(command ?? "");
+  if (typeof command !== "string") return null;
+  const s = command;
   if (/[\n\r]/.test(s)) return null;
   const w = s.split(/[ \t]+/).filter(Boolean);
   if (!w.length || !w.every((x) => PLAIN_WORD_RE.test(x))) return null;

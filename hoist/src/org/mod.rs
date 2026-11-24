@@ -237,6 +237,7 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
     };
     let mut state = read()?;
     let mut failed = Vec::new();
+    let mut declined = false;
     let mut sc_pending: Vec<Item> = Vec::new();
     let mut sc_steps: Vec<HumanStep> = Vec::new();
     if let Mode::Apply { yes } = mode {
@@ -264,9 +265,9 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             .chain(gh_writes.iter().map(|w| w.label()))
             .collect();
         if !lines.is_empty() {
-            if !yes && !confirm(&lines)? {
-                return Err(HoistError::Usage("declined; nothing was written".into()));
-            }
+            declined = !yes && !confirm(&lines)?;
+        }
+        if !lines.is_empty() && !declined {
             // Cloudflare, then Search Console, then GitHub (spec §16.4).
             if let (Some(http), false) = (cf_http.as_ref(), cf_writes.is_empty()) {
                 failed.extend(cloudflare::apply(http, cf_writes)?);
@@ -327,6 +328,9 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
         absorb(p.items, p.steps, p.hint);
     }
     report.items.extend(failed);
+    if declined {
+        mark_declined(&mut report.items);
+    }
     report
         .items
         .sort_by(|a, b| (&a.area, &a.kind, &a.key).cmp(&(&b.area, &b.kind, &b.key)));
@@ -337,10 +341,23 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             report.exit_code = 2;
         }
     }
+    if declined {
+        report.exit_code = 1;
+    }
     if !hints.is_empty() {
         report.hint = Some(format!("{}\n", hints.join("\n")).into());
     }
     Ok(report)
+}
+
+/// A declined prompt: every item that would have been written says so; nothing was written.
+fn mark_declined(items: &mut [Item]) {
+    for i in items
+        .iter_mut()
+        .filter(|i| matches!(i.action, Action::Create | Action::Update))
+    {
+        i.reason = "not applied: declined".into();
+    }
 }
 
 fn confirm(lines: &[String]) -> Result<bool, HoistError> {
@@ -357,4 +374,26 @@ fn confirm(lines: &[String]) -> Result<bool, HoistError> {
         stdin.lock(),
         std::io::stderr().lock(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn declined_marks_only_would_be_writes() {
+        let it = |action, reason: &str| Item {
+            area: "cloudflare".into(),
+            kind: "dns_record".into(),
+            key: "k".into(),
+            action,
+            reason: reason.into(),
+            source: "default".into(),
+            verify: None,
+        };
+        let mut items = vec![it(Action::Create, "missing"), it(Action::Ok, "present")];
+        mark_declined(&mut items);
+        assert_eq!(items[0].reason, "not applied: declined");
+        assert_eq!(items[1].reason, "present");
+    }
 }

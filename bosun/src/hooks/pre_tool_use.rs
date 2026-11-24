@@ -88,16 +88,25 @@ fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {
 /// it denies ([`guarded`]). The only exception is a
 /// Bash command that is exactly an enumerated intended allow ([`intended::allow`]) whose pinned
 /// script, if any, is unchanged; the new rules judge it (and every call legacy allows). On that
-/// exception legacy's repeat-lock result still applies: a repeat deny is returned, a warning
-/// note goes to the new rules.
+/// exception main's repeat-lock still applies: legacy's result when it counted the call, else
+/// (legacy denied before its repeat-lock, e.g. a pathspec glob) the same lock run here on the
+/// same state file, so the count is main's; a repeat deny is returned, a warning note goes to
+/// the new rules.
 fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
-    let (old, repeat) = super::pre_tool_use_legacy::judge_parts(cwd, input);
+    let (old, mut repeat, counted) = super::pre_tool_use_legacy::judge_parts(cwd, input);
     if old.as_deref().is_some_and(is_deny) {
         if !intended_override(cwd, input) {
             return old;
         }
         // Legacy's deny is overridden, but its repeat-lock still counts: a repeat deny stands,
         // a warning note goes on to the new rules.
+        if !counted
+            && let Some(dir) = cwd
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok())
+        {
+            repeat = super::pre_tool_use_legacy::repeat_lock(&dir, input, &input["tool_input"]);
+        }
         if repeat.as_deref().is_some_and(is_deny) {
             return repeat;
         }
@@ -991,6 +1000,35 @@ mod tests {
                 assert!(is_deny(&out) && out.contains("repeat-lock"), "{n}: {out}");
             } else {
                 assert!(!is_deny(&out) && !out.contains("repeat-lock"), "{n}: {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_intended_allow_is_repeat_locked_at_main_thresholds() {
+        use crate::core::repeat::DENY_AT;
+        for (name, cmd) in intended::EXAMPLES {
+            let dir = tempfile::tempdir().unwrap();
+            let d = dir.path();
+            let ok = std::process::Command::new("git")
+                .args(["init", "-q", "-b", "feature"])
+                .arg(d)
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok);
+            let script = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/bump-version.sh"),
+            );
+            if let Ok(t) = script {
+                std::fs::create_dir_all(d.join("scripts")).unwrap();
+                std::fs::write(d.join("scripts/bump-version.sh"), t).unwrap();
+            }
+            let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd},
+                "session_id": format!("S-{name}")});
+            for n in 1..=6 {
+                let out = judge(Some(d), &input).unwrap_or_default();
+                let denied = is_deny(&out) && out.contains("repeat-lock");
+                assert_eq!(denied, n >= DENY_AT, "{name} run {n}: {out}");
             }
         }
     }

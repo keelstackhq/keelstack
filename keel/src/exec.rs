@@ -225,7 +225,7 @@ impl Runner for SystemRunner {
         );
         let deadline = cmd.timeout.map(|t| Instant::now() + t);
         let mut timed_out = false;
-        #[cfg(unix)]
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut forwarded = false;
         let mut kill_at: Option<Instant> = None;
         let status = loop {
@@ -262,8 +262,11 @@ impl Runner for SystemRunner {
             std::thread::sleep(Duration::from_millis(10));
         };
         // After a kill a grandchild may still hold the pipes: wait only briefly for them.
+        // After a forwarded signal keel must exit soon too: a grandchild may outlive the child.
         let grace = if timed_out {
             Duration::from_secs(1)
+        } else if forwarded {
+            Duration::from_secs(2)
         } else {
             Duration::from_secs(3600)
         };

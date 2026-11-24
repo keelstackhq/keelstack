@@ -171,6 +171,103 @@ fn unquote(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// Content as compared: trimmed, unquoted; IPs in canonical form; hostnames lower-cased
+/// without a trailing dot. TXT stays exact.
+fn norm(ty: &str, s: &str) -> String {
+    let s = unquote(s);
+    match ty {
+        "A" => s
+            .parse::<std::net::Ipv4Addr>()
+            .map_or(s.into(), |a| a.to_string()),
+        "AAAA" => s
+            .parse::<std::net::Ipv6Addr>()
+            .map_or(s.into(), |a| a.to_string()),
+        "CNAME" | "NS" | "MX" | "PTR" | "SRV" => s.trim_end_matches('.').to_ascii_lowercase(),
+        _ => s.to_string(),
+    }
+}
+
+enum Match {
+    Present,
+    /// Live record id and the reason text.
+    Patch(String, String),
+    Create,
+}
+
+/// Pairs each declared record with a live one, per (name, type), so no live record is used twice.
+/// Pass 1: a live record with the same normalised content (and proxied, except TXT) is `Present`;
+/// one with only proxied different is patched. Pass 2 (not TXT): a declared record still
+/// unmatched takes the first live same-type record no declared record claimed and patches its
+/// content; with none left it is a `Create`. TXT values coexist: no match is a `Create`.
+/// Undeclared live records are never touched.
+fn match_records(
+    declared: &[Record],
+    live: &std::collections::HashMap<&str, &Vec<Live>>,
+) -> Vec<Match> {
+    let none = Vec::new();
+    let live_of = |r: &Record| -> Vec<&Live> {
+        live.get(r.name.as_str())
+            .copied()
+            .unwrap_or(&none)
+            .iter()
+            .filter(|l| l.ty == r.ty)
+            .collect()
+    };
+    let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<Option<Match>> = declared.iter().map(|_| None).collect();
+    for pass in 0..2 {
+        for (i, r) in declared.iter().enumerate() {
+            if out[i].is_some() {
+                continue;
+            }
+            let cands: Vec<&Live> = live_of(r)
+                .into_iter()
+                .filter(|l| !claimed.contains(&l.id))
+                .collect();
+            let want = norm(&r.ty, &r.content);
+            let hit = if pass == 0 {
+                let same = |l: &&&Live| norm(&l.ty, &l.content) == want;
+                cands
+                    .iter()
+                    .find(|l| same(l) && (r.ty == "TXT" || l.proxied == r.proxied))
+                    .or_else(|| cands.iter().find(same))
+                    .copied()
+            } else if r.ty == "TXT" {
+                None
+            } else {
+                cands.first().copied()
+            };
+            let Some(l) = hit else {
+                if pass == 1 {
+                    out[i] = Some(Match::Create);
+                }
+                continue;
+            };
+            claimed.insert(l.id.clone());
+            let content_same = norm(&l.ty, &l.content) == want;
+            let mut why = Vec::new();
+            if !content_same {
+                why.push(format!(
+                    "content: live {}, want {}",
+                    unquote(&l.content),
+                    r.content
+                ));
+            }
+            if r.ty != "TXT" && l.proxied != r.proxied {
+                why.push(format!("proxied: live {}, want {}", l.proxied, r.proxied));
+            }
+            out[i] = Some(if why.is_empty() {
+                Match::Present
+            } else {
+                Match::Patch(l.id.clone(), why.join("; "))
+            });
+        }
+    }
+    out.into_iter()
+        .map(|m| m.unwrap_or(Match::Create))
+        .collect()
+}
+
 fn records(http: &Http, zone_id: &str, name: &str) -> Result<Fetch<Vec<Live>>, HoistError> {
     let path = format!("/zones/{}/dns_records?name={}", seg(zone_id), seg(name));
     Ok(match http.get_all(&path, None)? {
@@ -287,7 +384,30 @@ pub(crate) fn read(
                 (None, why)
             }
         };
-        for r in &z.records {
+        let mut lives: std::collections::HashMap<&str, Fetch<Vec<Live>>> =
+            std::collections::HashMap::new();
+        if id.is_some() {
+            for r in &z.records {
+                if !lives.contains_key(r.name.as_str()) {
+                    let l = records(http, id.as_deref().unwrap_or_default(), &r.name)?;
+                    lives.insert(r.name.as_str(), l);
+                }
+            }
+        }
+        let plans = match (&id, lives.values().all(|f| matches!(f, Fetch::Got(_)))) {
+            (Some(_), true) => {
+                let by_name: std::collections::HashMap<&str, &Vec<Live>> = lives
+                    .iter()
+                    .filter_map(|(k, v)| match v {
+                        Fetch::Got(l) => Some((*k, l)),
+                        Fetch::Unknown(_) => None,
+                    })
+                    .collect();
+                match_records(&z.records, &by_name)
+            }
+            _ => Vec::new(),
+        };
+        for (i, r) in z.records.iter().enumerate() {
             let key = record_key(r);
             let Some(zid) = &id else {
                 p.items.push(item(
@@ -299,30 +419,34 @@ pub(crate) fn read(
                 ));
                 continue;
             };
-            let live = match records(http, zid, &r.name)? {
-                Fetch::Got(l) => l,
-                Fetch::Unknown(why) => {
-                    p.items
-                        .push(item("cloudflare", "dns_record", &key, Action::Unknown, why));
-                    continue;
-                }
+            if let Some(Fetch::Unknown(why)) = lives.get(r.name.as_str()) {
+                p.items
+                    .push(item("cloudflare", "dns_record", &key, Action::Unknown, why));
+                continue;
+            }
+            let Some(m) = plans.get(i) else {
+                // Another name's read failed; this one is unknown too.
+                p.items.push(item(
+                    "cloudflare",
+                    "dns_record",
+                    &key,
+                    Action::Unknown,
+                    "live records could not be read",
+                ));
+                continue;
             };
-            let same_type: Vec<&Live> = live.iter().filter(|l| l.ty == r.ty).collect();
-            let exact = same_type.iter().find(|l| unquote(&l.content) == r.content);
-            let (action, reason, op) = match exact {
-                Some(l) if r.ty == "TXT" || l.proxied == r.proxied => {
-                    (Action::Ok, "present".to_string(), None)
-                }
-                Some(l) => (
+            let (action, reason, op) = match m {
+                Match::Present => (Action::Ok, "present".to_string(), None),
+                Match::Patch(l, reason) => (
                     Action::Update,
-                    format!("proxied: live {}, want {}", l.proxied, r.proxied),
+                    reason.clone(),
                     Some(Op::Patch {
                         zone_id: zid.clone(),
-                        id: l.id.clone(),
+                        id: l.clone(),
                         rec: r.clone(),
                     }),
                 ),
-                _ => (
+                Match::Create => (
                     Action::Create,
                     "missing".to_string(),
                     Some(Op::Create {

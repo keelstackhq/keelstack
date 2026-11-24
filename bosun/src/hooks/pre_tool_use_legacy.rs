@@ -34,17 +34,20 @@ pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
 
 /// Main's judge with its repeat-lock result alongside: `(verdict, repeat)`. `repeat` is the
 /// repeat-lock's output for the call (a warning note or a deny) when it was counted, even if
-/// a later rule denied; the live hook uses it when an intended allow overrides that deny.
-pub fn judge_parts(cwd: Option<&Path>, input: &Value) -> (Option<String>, Option<String>) {
+/// a later rule denied; the live hook uses it when an intended allow overrides that deny. The
+/// flag is whether the repeat-lock ran at all (a quiet count below the warning gives `None` too).
+pub fn judge_parts(cwd: Option<&Path>, input: &Value) -> (Option<String>, Option<String>, bool) {
     let mut repeat_seen = None;
-    let out = judge_inner(cwd, input, &mut repeat_seen);
-    (out, repeat_seen)
+    let mut counted = false;
+    let out = judge_inner(cwd, input, &mut repeat_seen, &mut counted);
+    (out, repeat_seen, counted)
 }
 
 fn judge_inner(
     cwd: Option<&Path>,
     input: &Value,
     repeat_seen: &mut Option<String>,
+    counted: &mut bool,
 ) -> Option<String> {
     let tool = input.get("tool_name").and_then(Value::as_str)?;
     let tool_input = input.get("tool_input").cloned().unwrap_or(Value::Null);
@@ -111,6 +114,7 @@ fn judge_inner(
                 Err(e) => eprintln!("bosun: warning: edit-lock skipped: {e}"),
             }
         }
+        *counted = true;
         let repeat = repeat_lock(&dir, input, &tool_input);
         *repeat_seen = repeat.clone();
         let read = |p: &str| read_script(&dir, p);
@@ -723,7 +727,7 @@ fn repeat_file(dir: &Path, input: &Value) -> Option<std::path::PathBuf> {
 
 /// repeat-lock: count a Bash call that is not a poll (written atomically); a warning at the
 /// third run in a row, a deny from the fifth. Any I/O failure skips the lock.
-fn repeat_lock(dir: &Path, input: &Value, tool_input: &Value) -> Option<String> {
+pub(super) fn repeat_lock(dir: &Path, input: &Value, tool_input: &Value) -> Option<String> {
     let command = tool_input.get("command").and_then(Value::as_str)?;
     let file = (!is_poll(command))
         .then(|| repeat_file(dir, input))

@@ -1174,18 +1174,22 @@ fn a_plain_http_bridge_is_exit_3_naming_the_key_but_loopback_is_fine() {
 }
 
 #[test]
-fn undeclared_live_a_record_is_never_patched_the_declared_one_is_created() {
+fn one_live_a_record_is_patched_once_and_the_other_declared_one_is_created() {
     let api = cf_two_a_api(&["9.9.9.9"]);
     let d = dir(CF_TWO_A);
     let r = run(&["plan"], &d, &cf_env(&api), 0);
     assert_eq!(
         item(&r, "dns_record", "A example.dev 1.1.1.1")["action"],
+        "update"
+    );
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 2.2.2.2")["action"],
         "create"
     );
     run(&["apply", "--yes"], &d, &cf_env(&api), 1);
     let reqs = api.requests();
-    assert_eq!(reqs.iter().filter(|q| q.method == "POST").count(), 2);
-    assert!(reqs.iter().all(|q| q.method != "PATCH"));
+    assert_eq!(reqs.iter().filter(|q| q.method == "POST").count(), 1);
+    assert_eq!(reqs.iter().filter(|q| q.method == "PATCH").count(), 1);
 }
 
 #[test]
@@ -1235,4 +1239,77 @@ fn failed_policy_post_does_not_delete_the_other_policies() {
     let reqs = api.requests();
     assert!(reqs.iter().any(|q| q.method == "POST"), "{reqs:?}");
     assert!(reqs.iter().all(|q| q.method != "DELETE"), "{reqs:?}");
+}
+
+fn one_record_toml(ty: &str, content: &str) -> String {
+    format!(
+        "[cloudflare]\naccount_id = \"acct\"\n[[cloudflare.zones]]\nname = \"example.dev\"\n\
+         [[cloudflare.zones.records]]\ntype = \"{ty}\"\nname = \"www.example.dev\"\n\
+         content = \"{content}\"\n"
+    )
+}
+
+fn cf_live_api(ty: &str, content: &str) -> FakeApi {
+    let list = format!(
+        r#"{{"success":true,"result":[{{"id":"r0","type":"{ty}","name":"www.example.dev","content":"{content}","proxied":false}}],"result_info":{{"page":1,"total_pages":1}}}}"#
+    );
+    start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        ("GET /zones/z1/dns_records", 200, &list),
+        (
+            "POST /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":{"id":"n"}}"#,
+        ),
+        (
+            "PATCH /zones/z1/dns_records/r0",
+            200,
+            r#"{"success":true,"result":{"id":"r0"}}"#,
+        ),
+    ])
+}
+
+#[test]
+fn changed_content_of_a_same_name_same_type_record_is_an_update_and_a_patch() {
+    for (ty, live, want) in [
+        ("CNAME", "old.example.com", "new.example.com"),
+        ("A", "1.1.1.1", "2.2.2.2"),
+    ] {
+        let api = cf_live_api(ty, live);
+        let d = dir(&one_record_toml(ty, want));
+        let key = format!("{ty} www.example.dev {want}");
+        let r = run(&["plan"], &d, &cf_env(&api), 0);
+        api.assert_only_get();
+        let it = item(&r, "dns_record", &key);
+        assert_eq!(it["action"], "update");
+        assert!(it["reason"].as_str().unwrap().contains("content: live"));
+        run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+        let reqs = api.requests();
+        assert!(reqs.iter().all(|q| q.method != "POST"), "{ty}");
+        let patch = reqs
+            .iter()
+            .find(|q| q.method == "PATCH" && q.path == "/zones/z1/dns_records/r0")
+            .expect("PATCH");
+        let body: Value = serde_json::from_str(patch.body.as_deref().unwrap()).unwrap();
+        assert_eq!(body["content"], want);
+    }
+}
+
+#[test]
+fn normalised_equal_content_is_ok_with_no_write() {
+    for (ty, live, want) in [
+        ("CNAME", "Foo.Example.com.", "foo.example.com"),
+        ("AAAA", "2001:db8:0:0::1", "2001:db8::1"),
+    ] {
+        let api = cf_live_api(ty, live);
+        let d = dir(&one_record_toml(ty, want));
+        let key = format!("{ty} www.example.dev {want}");
+        let r = run(&["apply", "--yes"], &d, &cf_env(&api), 0);
+        assert_eq!(item(&r, "dns_record", &key)["action"], "ok", "{ty}");
+        api.assert_only_get();
+    }
 }

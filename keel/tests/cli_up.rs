@@ -557,3 +557,46 @@ fn cloudflare_dns_and_backup_use_the_area_flag_and_the_fly_sink() {
         "{t}"
     );
 }
+
+/// A SIGTERM while keel waits on the token stdin read (held open, never written) exits 143
+/// instead of hanging on the blocked read.
+#[test]
+fn sigterm_during_token_read_exits_143() {
+    use std::process::Stdio;
+    let env = Env::new();
+    env.rendered();
+    let a = up("up", &["--token-stdin"]);
+    let mut c = std::process::Command::new(assert_cmd::cargo::cargo_bin("keel"));
+    c.env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", env.stubs.display()))
+        .env("HOME", &env.home)
+        .env("TMPDIR", &env.home)
+        .env("KEEL_LOG", &env.log)
+        .env("KEEL_SCENARIO", "token")
+        .env("KEEL_PINS", &env.pins)
+        .env("KEEL_POLL_SECS", "1")
+        .arg("-C")
+        .arg(&env.repo)
+        .args(&a)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut keel = c.spawn().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    std::process::Command::new("kill")
+        .args(["-TERM", &keel.id().to_string()])
+        .status()
+        .unwrap();
+    let t = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = keel.try_wait().unwrap() {
+            break st;
+        }
+        if t.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = keel.kill();
+            panic!("keel hung in the token read after SIGTERM");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(143));
+}

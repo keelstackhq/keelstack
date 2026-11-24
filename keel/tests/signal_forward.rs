@@ -13,16 +13,17 @@ fn alive(pid: &str) -> bool {
 }
 
 fn check(sig: &str) {
+    check_with(sig, "exec sleep 30");
+}
+
+fn check_with(sig: &str, tail: &str) {
     let dir = tempfile::tempdir().unwrap();
     let pidfile = dir.path().join("pid");
     let bin = dir.path().join("bin");
     std::fs::create_dir(&bin).unwrap();
     for tool in ["git", "node", "gh"] {
         let p = bin.join(tool);
-        let body = format!(
-            "#!/bin/sh\necho $$ > {}\nexec sleep 30\n",
-            pidfile.display()
-        );
+        let body = format!("#!/bin/sh\necho $$ > {}\n{tail}\n", pidfile.display());
         std::fs::write(&p, body).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
@@ -61,7 +62,14 @@ fn check(sig: &str) {
         .args([&format!("-{sig}"), &keel.id().to_string()])
         .status()
         .unwrap();
+    let sent = Instant::now();
     let status = keel.wait().unwrap();
+    if tail.contains("20") {
+        assert!(
+            sent.elapsed() < Duration::from_secs(8),
+            "keel waited for the grandchild"
+        );
+    }
     // The signal stops keel through the normal error path: exit 128 + signal, not a raw kill.
     let want = if sig == "INT" { 130 } else { 143 };
     assert_eq!(status.code(), Some(want), "exit code after {sig}");
@@ -78,6 +86,12 @@ fn check(sig: &str) {
 #[test]
 fn sigterm_stops_child() {
     check("TERM");
+}
+
+/// A grandchild that outlives the signalled child and holds stdout open must not delay exit.
+#[test]
+fn sigterm_does_not_wait_for_grandchild_pipe() {
+    check_with("TERM", "exec sh -c 'sleep 20; echo x'");
 }
 
 #[test]

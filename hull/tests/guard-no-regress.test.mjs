@@ -119,6 +119,11 @@ for (const copy of COPIES) {
         assert.equal(decide(bash(cmd), ctx), null);
       });
 
+  test(`${copy}: a non-string command is never an allow`, () => {
+    for (const v of [null, undefined, 42, ["gh", "api"], { toString: () => "gh api" }])
+      assert.equal(intendedAllow(v), null);
+  });
+
   for (const cmd of LEGACY_ALLOWS)
     test(`${copy}: legacy and guard.mjs allow, no list entry: ${cmd}`, () => {
       assert.equal(decideLegacy(bash(cmd), ctx), null);

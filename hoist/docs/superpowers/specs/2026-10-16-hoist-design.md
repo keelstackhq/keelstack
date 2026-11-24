@@ -1649,6 +1649,12 @@ the state after the run.
 - **Cloudflare**: `POST /zones/{id}/dns_records` (`ttl` 1, `proxied` for non-TXT), `PATCH` an
   existing record's `content`/`proxied`, `POST /accounts/{a}/pages/projects/{p}/domains
   {name}`. hoist never creates zones and never deletes records it does not manage.
+  A declared non-TXT record with the same name and type as live ones pairs with a live record
+  whose normalised content (trimmed, unquoted, canonical IP, hostname lower-case without trailing
+  dot) matches, else with the first live record no other declared record claimed (`update`
+  content/proxied); with none left it is a `create`, and each live record is patched at most once.
+  A declined prompt writes nothing, marks each pending create/update `not applied: declined` and
+  exits 1.
 - **Search Console** (per site, in order): if not verified, `POST /sv/token`
   (`{"site":{"type":"INET_DOMAIN","identifier":<domain>},"verificationMethod":"DNS_TXT"}`) →
   `token`; create the TXT record `<domain> <token>` in `zone` through the Cloudflare client
