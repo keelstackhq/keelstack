@@ -332,7 +332,8 @@ fn this_repos_approvers_file_parses_with_32_byte_keys() {
         got,
         [
             ("orchestrator-2026-10", Role::Owner),
-            ("delegate-2026-10", Role::Delegate)
+            ("delegate-2026-10", Role::Delegate),
+            ("signer-ci", Role::Signer)
         ]
     );
     for k in &keys {
