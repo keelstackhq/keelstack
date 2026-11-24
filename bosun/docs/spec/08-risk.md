@@ -426,16 +426,51 @@ High-risk PRs:
   config that does not parse revokes every signer signature), with every D-017 condition above
   unchanged. `.github/workflows/signer.yml` (bosun's own and the
   channel's `core` piece, owned; R-ci, so owner-class) runs on `workflow_dispatch` only (inputs
-  `pr`, `head`, `requester`), only from the default branch, never checks out the PR: job `sign` (environment
-  `bosun-signer`) installs the release pinned in `.bosun/version` and runs `bosun approve
+  `pr`, `head`, `requester`), only from the default branch, never checks out the PR. In bosun's
+  own copy, job `mirror` (environment `bosun-app`, before `sign`) runs `bosun gate ci-ok --pr
+  <pr>`: it reads the workflow runs of the PR head (`GET /actions/runs?head_sha=`), takes the
+  newest `pull_request` run whose file is `.github/workflows/ci.yml` and whose `pull_requests`
+  holds this PR into the default branch (a run of any other file, a PR-added workflow with a job
+  named `ci-ok` included, and a run of another PR or base on the same head sha, such as a PR into
+  a branch whose ci.yml always passes, never count; a run tied to no PR never counts), reads its `ci-ok` job
+  (latest attempt) and creates the gate App's `bosun-ci-ok` check run on the head (its own name,
+  so it can never satisfy or block the required `ci-ok`, whatever the ruleset pins): `success` only when
+  that job succeeded, else `failure` (a missing job too; never neutral or skipped). It never posts
+  a status, needs `BOSUN_APP_TOKEN` and `[checks] mode` other than `statuses` (else exit 1,
+  nothing posted), and posts nothing (exit 1) while the newest ci.yml run is not completed or
+  when there is none, so `sign` does not run. What the mirrored run proves is what ci.yml's
+  `ci-ok` proves: the PR's own CI passed. A PR's `pull_request` run executes the PR's own copies
+  of everything ci.yml runs from the checkout, so a PR that changes any of it gets no mirror and
+  `approve --as signer` refuses it (exit 1, nothing signed; the orchestrator-held key or the
+  owner approves it): anything under `.github/` (workflows, `.github/scripts/**` such as the
+  affected-folder detection, `.github/actions/**`), every local action ci.yml uses (`uses: ./X`,
+  read from ci.yml on the default branch, so a new one counts at once; ci.yml missing there fails
+  closed), anything under a `scripts/` directory at any depth, and every path of the built-in
+  R-ci rule (never the repo's risk.toml). A rename counts on both sides. At signing `approve --as
+  signer` re-reads the newest such ci.yml run itself (`gates::ci_ok::ci_verdict`), so a stale green
+  `bosun-ci-ok` after a red re-run never counts. The ruleset's required `ci-ok` stays GitHub Actions' (§15). The channel's copy has no
+  `mirror` yet (its pinned release may lack `gate ci-ok`): a consumer that turns the signer on
+  posts the App's `bosun-ci-ok` itself. Job `sign` (environment
+  `bosun-signer`; bosun's own copy builds bosun from the default branch's workspace, the channel's installs the release pinned in `.bosun/version`) runs `bosun approve
   <pr>@<head> --sign-key <pem> --bootstrap --as signer`; job `judge` (needs `sign`, the same default-branch `if:`, environment
   `bosun-app`) runs `bosun risk-check <pr>`, because a comment posted with `GITHUB_TOKEN` starts
-  no workflow. Two jobs on purpose (D-007 exception): the signer key and the App key never share
-  a job. `--as signer` signs only when the policy at the default branch (and the PR's base) is quorum or autonomous, and the default branch is not stricter than the PR's base in any of the three dimensions of `policy_dims` (how much stays with the owner, independent verdicts required on the head, whether R-weaken still applies; quorum is stricter in the second, autonomous in the third, so a base of autonomous under a quorum default, of quorum under an autonomous default, or of orchestrator under an owner-gated default is refused; so is a base whose `review_models` or `autonomous_allow` is looser than the default branch's), the head is
+  no workflow. Separate jobs on purpose (D-007 exception): the signer key and the App key never share
+  a job. Under the quorum policy with owner delegation (D-027, `owner_delegation = "all"`) the
+  signer's quorum-form signature covers what the orchestrator key's does: the trust root and
+  R-weaken, with the same floor (`tests/cli_signer_delegation.rs`); without delegation a
+  trust-root PR is refused (exit 1, nothing signed). The remaining trust, plainly: with owner
+  delegation and the signer on, a keyless session can get the trust root (`.bosun/**`,
+  approvers, governance, the gate workflows other than ci.yml) and R-ci changes signed with no
+  owner and no key in any session; what stands between such a PR and main is the quorum floor
+  (green required checks, two clean verdicts from different reviewer sessions on the exact head,
+  whose independence rests on honest agents, see the trust model above) and `bosun halt`. Turning
+  either `owner_delegation` or `signer` off at base gives those PRs back to the owner. In `checks`
+  mode the signer, like risk-check, also refuses while the default branch's ruleset does not pin
+  risk-check, review-verdict and main-open to the gate App (§15). `--as signer` signs only when the policy at the default branch (and the PR's base) is quorum or autonomous, and the default branch is not stricter than the PR's base in any of the three dimensions of `policy_dims` (how much stays with the owner, independent verdicts required on the head, whether R-weaken still applies; quorum is stricter in the second, autonomous in the third, so a base of autonomous under a quorum default, of quorum under an autonomous default, or of orchestrator under an owner-gated default is refused; so is a base whose `review_models` or `autonomous_allow` is looser than the default branch's), the head is
   the PR's current head, every D-017 check `approve` runs passes (the session that asked, the
   workflow's `requester` input, is excluded as a reviewer like the signer's own, so signer !=
-  reviewer holds in CI), and the head's `ci-ok` is green as `ci_green` reads it: the newest
-  check run of the gate App (`checks.app_id`, §15), never a status and never GitHub Actions'. The hole it narrows: anyone or any workflow with `checks: write`, or any
+  reviewer holds in CI), and the head's CI is green as `ci_green_named` reads it: the newest
+  `bosun-ci-ok` check run of the gate App (`checks.app_id`, §15; posted by `mirror`), never a status, never GitHub Actions' and never a run named `ci-ok`. The hole it narrows: anyone or any workflow with `checks: write`, or any
   App, can create a check run named `ci-ok` (D32), so no other creator counts. `approve --as signer`
   also refuses, as risk-check does, a PR with R-weaken findings or a `weaken` capability (label or
   linked task), which are the owner's (else exit 1, nothing signed; `data.ci_ok`). Any session asks for it

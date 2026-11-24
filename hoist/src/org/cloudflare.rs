@@ -72,6 +72,21 @@ pub(super) fn validate(cfg: &CloudflareCfg) -> Result<(), String> {
                     r.name, z.name
                 ));
             }
+            // Cloudflare holds one record per type, name and content: two declared records that
+            // differ only in `proxied` cannot both exist (a create would be rejected).
+            if r.ty != "TXT"
+                && z.records.iter().any(|o| {
+                    o.ty == r.ty
+                        && name_key(&o.name) == name_key(&r.name)
+                        && norm(&o.ty, &o.content) == norm(&r.ty, &r.content)
+                        && o.proxied != r.proxied
+                })
+            {
+                return Err(format!(
+                    "[cloudflare] record {} `{}` {} is declared twice with different `proxied`; Cloudflare holds one such record: declare it once",
+                    r.ty, r.name, r.content
+                ));
+            }
             if r.ty == "TXT" && r.proxied {
                 return Err(format!(
                     "[cloudflare] TXT record `{}` cannot be proxied",
@@ -171,9 +186,54 @@ fn unquote(s: &str) -> &str {
         .unwrap_or(s)
 }
 
+/// A TXT value as DNS serves it: `"a" "b"` (chunks of at most 255 bytes, each quoted) is the
+/// value `ab`; a value that is not a run of quoted chunks stays as it is (outer quotes off).
+fn txt_value(s: &str) -> String {
+    let t = s.trim();
+    let mut out = String::new();
+    let mut chars = t.chars().peekable();
+    let mut chunks = 0;
+    loop {
+        while chars.peek().is_some_and(|c| c.is_whitespace()) {
+            chars.next();
+        }
+        match chars.next() {
+            None if chunks > 0 => return out,
+            Some('"') => {}
+            _ => return unquote(s).to_string(),
+        }
+        let mut closed = false;
+        while let Some(c) = chars.next() {
+            match c {
+                '\\' => match chars.next() {
+                    Some(e) => out.push(e),
+                    None => return unquote(s).to_string(),
+                },
+                '"' => {
+                    closed = true;
+                    break;
+                }
+                c => out.push(c),
+            }
+        }
+        if !closed {
+            return unquote(s).to_string();
+        }
+        chunks += 1;
+    }
+}
+
+/// A record name as compared: DNS names are case-insensitive; no trailing dot.
+fn name_key(name: &str) -> String {
+    name.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
 /// Content as compared: trimmed, unquoted; IPs in canonical form; hostnames lower-cased
-/// without a trailing dot. TXT stays exact.
+/// without a trailing dot. TXT stays exact, its quoted chunks joined (`"a" "b"` is `ab`).
 fn norm(ty: &str, s: &str) -> String {
+    if ty == "TXT" {
+        return txt_value(s);
+    }
     let s = unquote(s);
     match ty {
         "A" => s
@@ -196,6 +256,23 @@ enum Match {
     Twin,
 }
 
+/// Whether each declared record repeats an earlier identical one (spec §16.4: "Identical declared
+/// records are one"): same type, name (any case, no trailing dot), normalised content and, except
+/// for TXT, `proxied`. Records that differ in `proxied` are two wishes, never twins.
+fn twins(declared: &[Record]) -> Vec<bool> {
+    let key = |r: &Record| {
+        (
+            r.ty.clone(),
+            name_key(&r.name),
+            norm(&r.ty, &r.content),
+            r.ty != "TXT" && r.proxied,
+        )
+    };
+    (0..declared.len())
+        .map(|i| declared[..i].iter().any(|e| key(e) == key(&declared[i])))
+        .collect()
+}
+
 /// Pairs each declared record with a live one, per (name, type), so no live record is used twice.
 /// Pass 1: a live record with the same normalised content (and proxied, except TXT) is `Present`;
 /// one with only proxied different is patched. Pass 2 (not TXT): a declared record still
@@ -204,11 +281,11 @@ enum Match {
 /// Undeclared live records are never touched.
 fn match_records(
     declared: &[Record],
-    live: &std::collections::HashMap<&str, &Vec<Live>>,
+    live: &std::collections::HashMap<String, &Vec<Live>>,
 ) -> Vec<Match> {
     let none = Vec::new();
     let live_of = |r: &Record| -> Vec<&Live> {
-        live.get(r.name.as_str())
+        live.get(&name_key(&r.name))
             .copied()
             .unwrap_or(&none)
             .iter()
@@ -216,16 +293,11 @@ fn match_records(
             .collect()
     };
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
-    let mut out: Vec<Option<Match>> = declared.iter().map(|_| None).collect();
-    // An identical declared record (same type, name, normalised content) is the first one's
-    // twin: it claims nothing and is reported once (by the first), so one live record is
-    // claimed once.
-    for (i, r) in declared.iter().enumerate() {
-        let key = |r: &Record| (r.ty.clone(), r.name.clone(), norm(&r.ty, &r.content));
-        if declared[..i].iter().any(|e| key(e) == key(r)) {
-            out[i] = Some(Match::Twin);
-        }
-    }
+    // A twin claims nothing, so one live record is claimed once.
+    let mut out: Vec<Option<Match>> = twins(declared)
+        .into_iter()
+        .map(|t| t.then_some(Match::Twin))
+        .collect();
     for pass in 0..2 {
         for (i, r) in declared.iter().enumerate() {
             if out[i].is_some() {
@@ -280,7 +352,12 @@ fn match_records(
 }
 
 fn records(http: &Http, zone_id: &str, name: &str) -> Result<Fetch<Vec<Live>>, HoistError> {
-    let path = format!("/zones/{}/dns_records?name={}", seg(zone_id), seg(name));
+    // Queried by the name as compared (lower case, no trailing dot), as the reads are keyed.
+    let path = format!(
+        "/zones/{}/dns_records?name={}",
+        seg(zone_id),
+        seg(&name_key(name))
+    );
     Ok(match http.get_all(&path, None)? {
         Fetched::Ok(Value::Array(list)) => Fetch::Got(
             list.iter()
@@ -311,7 +388,7 @@ pub(crate) fn ensure_txt(
         Fetch::Got(live) => {
             if live
                 .iter()
-                .any(|r| r.ty == "TXT" && unquote(&r.content) == content)
+                .any(|r| r.ty == "TXT" && norm("TXT", &r.content) == norm("TXT", content))
             {
                 return Ok(Ok(false));
             }
@@ -341,7 +418,8 @@ pub(crate) fn read(
         for z in &cfg.zones {
             p.items
                 .push(item("cloudflare", "zone", &z.name, Action::Unknown, why));
-            for r in &z.records {
+            // A twin is the first record's repeat: one unknown item, not two.
+            for (r, _) in z.records.iter().zip(twins(&z.records)).filter(|(_, t)| !t) {
                 p.items.push(item(
                     "cloudflare",
                     "dns_record",
@@ -395,27 +473,36 @@ pub(crate) fn read(
                 (None, why)
             }
         };
-        let mut lives: std::collections::HashMap<&str, Fetch<Vec<Live>>> =
+        // Keyed by the DNS name as compared (any case, no trailing dot), as twins are: one read
+        // per name.
+        let mut lives: std::collections::HashMap<String, Fetch<Vec<Live>>> =
             std::collections::HashMap::new();
         if id.is_some() {
             for r in &z.records {
-                if !lives.contains_key(r.name.as_str()) {
-                    let l = records(http, id.as_deref().unwrap_or_default(), &r.name)?;
-                    lives.insert(r.name.as_str(), l);
+                if let std::collections::hash_map::Entry::Vacant(e) = lives.entry(name_key(&r.name))
+                {
+                    e.insert(records(http, id.as_deref().unwrap_or_default(), &r.name)?);
                 }
             }
         }
         // Names whose read failed are absent here and reported unknown below.
-        let by_name: std::collections::HashMap<&str, &Vec<Live>> = lives
+        let by_name: std::collections::HashMap<String, &Vec<Live>> = lives
             .iter()
             .filter_map(|(k, v)| match v {
-                Fetch::Got(l) => Some((*k, l)),
+                Fetch::Got(l) => Some((k.clone(), l)),
                 Fetch::Unknown(_) => None,
             })
             .collect();
         let plans = match_records(&z.records, &by_name);
         for (i, r) in z.records.iter().enumerate() {
             let key = record_key(r);
+            let twin = matches!(plans[i], Match::Twin);
+            let unreadable =
+                id.is_none() || matches!(lives.get(&name_key(&r.name)), Some(Fetch::Unknown(_)));
+            if twin && unreadable {
+                // The first record already says why it is unknown.
+                continue;
+            }
             let Some(zid) = &id else {
                 p.items.push(item(
                     "cloudflare",
@@ -426,14 +513,18 @@ pub(crate) fn read(
                 ));
                 continue;
             };
-            if let Some(Fetch::Unknown(why)) = lives.get(r.name.as_str()) {
+            if let Some(Fetch::Unknown(why)) = lives.get(&name_key(&r.name)) {
                 p.items
                     .push(item("cloudflare", "dns_record", &key, Action::Unknown, why));
                 continue;
             }
             let m = &plans[i];
             let (action, reason, op) = match m {
-                Match::Twin => continue,
+                Match::Twin => (
+                    Action::Ok,
+                    "repeat of an identical declared record; claims nothing".to_string(),
+                    None,
+                ),
                 Match::Present => (Action::Ok, "present".to_string(), None),
                 Match::Patch(l, reason) => (
                     Action::Update,
@@ -569,4 +660,38 @@ pub(crate) fn apply(http: &Http, writes: &[Op]) -> Result<Vec<crate::report::Ite
         failed.extend(rejected("cloudflare", &w.label(), result)?);
     }
     Ok(failed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn txt_values_join_their_quoted_chunks() {
+        assert_eq!(txt_value(r#""a" "b""#), "ab");
+        assert_eq!(txt_value(r#""v=spf1 -all""#), "v=spf1 -all");
+        assert_eq!(txt_value("v=spf1 -all"), "v=spf1 -all");
+        assert_eq!(txt_value(r#""a\"b" "c""#), "a\"bc");
+        // Not a run of quoted chunks: as it is (only matching outer quotes would go).
+        assert_eq!(txt_value(r#""a" b"#), r#""a" b"#);
+        assert_eq!(txt_value(r#""a"#), r#""a"#);
+    }
+
+    #[test]
+    fn twins_key_on_name_case_and_proxied() {
+        let r = |name: &str, proxied: bool| Record {
+            ty: "A".into(),
+            name: name.into(),
+            content: "1.1.1.1".into(),
+            proxied,
+        };
+        assert_eq!(
+            twins(&[r("www.x.dev", false), r("WWW.x.dev.", false)]),
+            [false, true]
+        );
+        assert_eq!(
+            twins(&[r("www.x.dev", false), r("www.x.dev", true)]),
+            [false, false]
+        );
+    }
 }

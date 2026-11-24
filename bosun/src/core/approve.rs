@@ -65,8 +65,13 @@ pub fn risk_ids(description: &str) -> Vec<String> {
 /// `ci-ok` is green: the newest check run of that name created by GitHub Actions concluded
 /// `success`. A `ci-ok` commit status never counts (anyone with write access can post one).
 pub fn ci_green(runs: &[Run]) -> bool {
+    ci_green_named(runs, "ci-ok")
+}
+
+/// As [`ci_green`] for the check run named `name` (the CI signer reads `bosun-ci-ok`).
+pub fn ci_green_named(runs: &[Run], name: &str) -> bool {
     runs.iter()
-        .filter(|r| r.name == "ci-ok" && r.app == TRUSTED_APP)
+        .filter(|r| r.name == name && r.app == TRUSTED_APP)
         .max_by(|a, b| (&a.at, a.id).cmp(&(&b.at, b.id)))
         .is_some_and(|r| r.conclusion.as_deref() == Some("success"))
 }

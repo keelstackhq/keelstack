@@ -92,7 +92,12 @@ pub fn run(dir: Option<&Path>, args: &RiskCheckArgs) -> CmdResult {
             e.message
         );
     }
-    let out = judge(app.gh.as_ref(), &app.ctx, Some(&app), &w, pull.clone());
+    // Checks mode without the ruleset pins (spec §15 step 7 before step 6): fail closed.
+    let pinned = match crate::github::gate::trusted_app_id() {
+        Some(id) => crate::github::gate::require_pinned(gh, id),
+        None => Ok(()),
+    };
+    let out = pinned.and_then(|()| judge(app.gh.as_ref(), &app.ctx, Some(&app), &w, pull.clone()));
     // A run that cannot finish must not leave `pending` behind (exit 5 posted its verdict).
     if out.as_ref().is_err_and(|e| e.exit != Exit::NeedsHuman) {
         // The cleanup write must not fail on the time budget that stopped the run.

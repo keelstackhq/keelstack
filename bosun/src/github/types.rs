@@ -578,6 +578,40 @@ pub struct WorkflowRun {
     pub updated_at: String,
 }
 
+/// One workflow run of a head sha (`GET /actions/runs?head_sha=`): which file ran, on what event.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ShaRun {
+    pub id: u64,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub path: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub event: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub head_sha: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub status: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub html_url: String,
+    /// The pull requests GitHub ties the run to (`pull_requests`: number and base ref); empty
+    /// for a fork's run or a push.
+    #[serde(default)]
+    pub pull_requests: Vec<RunPull>,
+}
+
+/// One entry of a workflow run's `pull_requests`.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RunPull {
+    pub number: u64,
+    #[serde(default)]
+    pub base: RunPullBase,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct RunPullBase {
+    #[serde(default, rename = "ref", deserialize_with = "text_or_empty")]
+    pub git_ref: String,
+}
+
 /// A job of a workflow run attempt, with its steps (`GET /actions/runs/{id}/attempts/{n}/jobs`).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct RunJob {

@@ -325,7 +325,7 @@ Both are off by default.
 
 **CI signer** (keyless fast lane for cloud and Claude Tag sessions, which hold no secrets). Four steps, once per repo:
 
-1. Pin a release that reads the key, then set `signer = true` under [approvals] and [checks] mode = "checks" (with the gate App) in .bosun/bosun.toml, in an owner-approved PR (R-weaken). It needs the autonomous policy.
+1. Pin a release that reads the key, then set `signer = true` under [approvals] and [checks] mode = "checks" (with the gate App) in .bosun/bosun.toml, in an owner-approved PR (R-weaken). It needs the quorum or autonomous policy; under quorum with owner delegation (D-027) the signer also covers the trust root.
 2. `bosun keygen --role signer --id signer-ci --out <pem outside the repo> --enroll`
 3. Merge that .bosun/approvers.toml PR (R-gov: the owner approves).
 4. Create the GitHub environment bosun-signer (deployment branches: the default branch only) with the secret BOSUN_SIGNER_KEY set to the PEM, then delete the PEM.

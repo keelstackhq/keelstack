@@ -166,6 +166,7 @@ gate = {gate?: str, stack?: str | null, command?: [str], packages?: [str], exit_
     checks_skipped?: bool, mode?: str, app_id?: int | null, verified?: bool, gates?: [{context: str,
     status: {state: str, creator: str} | null, app_run: {state: str, id: int} | null,
     other_runs: int, state: str | null, trusted: bool, disagree: bool}],
+    run_id?: int, conclusion?: str, check_run_id?: int,
     ci?: {base: str, event: str, provider: str}, runs?: [{gate: str, stack: str | null,
     command: [str], packages: [str], exit_status: int, secs: num, over_budget: bool,
     skipped: bool}]};

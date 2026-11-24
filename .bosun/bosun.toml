@@ -39,15 +39,23 @@ policy = "quorum"
 # sessions on the exact head. Read from the PR's base; remove it to give the trust root back to
 # the owner.
 owner_delegation = "all"
+# The CI signer (spec §8, keyless fast lane): `bosun approve <pr>@<head> --via-signer` asks
+# signer.yml to sign the quorum form with the enrolled `signer-ci` key (.bosun/approvers.toml,
+# role signer, secret BOSUN_SIGNER_KEY of environment bosun-signer). Same floor as the
+# orchestrator key: green gate-App ci-ok, two clean verdicts from different sessions on the exact
+# head (never the requester's or the signer's own), not halted. Needs `[checks] mode = "checks"`.
+# Remove it to turn the signer off (every signer signature then stops counting).
+signer = true
 
 [cloud]
 # The shared cloud environment "keelstack" (spec §5.2): a relayed root starts there.
 environment_id = "env_014hvpWkGQxciwPhBBysjvGr"
 
 [checks]
-# The transition (spec §15, step 3): statuses stay the authority (the ruleset requires them) and
-# the gate App posts the same gates as check runs. `checks` only after the ruleset pins the App.
-mode = "dual"
+# The transition (spec §15, step 7): the gate App's check runs are the authority, statuses stop.
+# The owner pins the ruleset first (`hoist apply --area github` with hoist.toml's pinned
+# required_checks, step 6; in `dual` the App already posts every gate). Undo: `mode = "dual"`.
+mode = "checks"
 app_id = 5696830
 app_slug = "keelstackhq-bosun-gate"
 

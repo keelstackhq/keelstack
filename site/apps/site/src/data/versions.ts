@@ -46,8 +46,10 @@ export const pinsLine = (v: Versions = versions, isReleased: boolean = released)
 /** Oldest bosun with `bosun migrate --to <mode>` and `--finish` (bosun CHANGELOG). */
 export const MIN_BOSUN_MIGRATE = "0.15.0";
 
-/** The date the pins were last checked (the archived releases; history in legacy.ts). */
-export const verifiedOn: string = legacy.verifiedOn;
+/** The date the pins were last checked: the shown release's date (bosun/CHANGELOG.md) once the
+ * page follows a monorepo release, else the archived releases' check (legacy.ts). */
+export const verifiedOn: string =
+  facts.released && facts.versionDate ? facts.versionDate : legacy.verifiedOn;
 
 /** The one "last verified" line: shown once per page by components/Verified.astro and docs-md.ts. */
 export const verifiedLine = (

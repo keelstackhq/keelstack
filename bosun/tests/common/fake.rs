@@ -72,6 +72,9 @@ pub struct State {
     pub environments: HashMap<String, (Value, Value)>,
     /// Contexts a ruleset on the default branch requires (`GET /rules/branches/<b>`).
     pub ruleset_checks: Vec<String>,
+    /// With no `ruleset_checks`: the ruleset still pins the three gates to the token's App (a
+    /// repo whose owner ran `hoist apply`), unless a test unpins them (`unpin_gates`).
+    pub gates_unpinned: bool,
     /// Contexts classic branch protection requires; empty answers 404.
     pub classic_checks: Vec<String>,
     pub pulls: Vec<Value>,
@@ -851,6 +854,47 @@ impl FakeGithub {
         s.logs.insert(job_id, log.into());
     }
 
+    /// A workflow run of `sha` from file `path` on `event` (`GET /actions/runs?head_sha=`), in
+    /// `status`, with one job `ci-ok` of `conclusion` when given; returns the run id.
+    /// The run is bound to PR 1 into `main` (`pull_requests`); see `workflow_file_run_for`.
+    pub fn workflow_file_run(
+        &self,
+        sha: &str,
+        path: &str,
+        event: &str,
+        status: &str,
+        ci_ok: Option<&str>,
+    ) -> u64 {
+        let prs = json!([{"number": 1, "base": {"ref": "main", "sha": "base0000"}}]);
+        self.workflow_file_run_for(sha, path, event, status, ci_ok, prs)
+    }
+
+    /// As `workflow_file_run`, with the run's `pull_requests` list as given.
+    pub fn workflow_file_run_for(
+        &self,
+        sha: &str,
+        path: &str,
+        event: &str,
+        status: &str,
+        ci_ok: Option<&str>,
+        pull_requests: Value,
+    ) -> u64 {
+        let mut s = self.state.lock().unwrap();
+        let n = s.runs.len() as u64 + 1;
+        let (run_id, job_id) = (1000 + n, 5000 + n);
+        s.runs.push(
+            json!({"id": run_id, "head_sha": sha, "path": path, "event": event,
+            "status": status, "pull_requests": pull_requests,
+            "html_url": format!("https://github.test/acme/widget/actions/runs/{run_id}")}),
+        );
+        if let Some(c) = ci_ok {
+            s.jobs
+                .push(json!({"id": job_id, "run_id": run_id, "name": "ci-ok",
+                "status": "completed", "conclusion": c, "html_url": ""}));
+        }
+        run_id
+    }
+
     pub fn log_mode(&self, mode: LogMode) {
         self.state.lock().unwrap().log_mode = mode;
     }
@@ -1058,8 +1102,16 @@ impl FakeGithub {
     }
 
     /// Checks the default branch enforces through a ruleset.
+    /// An explicit list (even empty) is the whole ruleset: the default gate pins are dropped.
     pub fn enforce_checks(&self, checks: &[&str]) {
-        self.state.lock().unwrap().ruleset_checks = checks.iter().map(|c| c.to_string()).collect();
+        let mut s = self.state.lock().unwrap();
+        s.ruleset_checks = checks.iter().map(|c| c.to_string()).collect();
+        s.gates_unpinned = true;
+    }
+
+    /// No ruleset pins the gates (the owner has not run `hoist apply`).
+    pub fn unpin_gates(&self) {
+        self.state.lock().unwrap().gates_unpinned = true;
     }
 
     /// Checks the default branch enforces through classic branch protection.
@@ -2035,8 +2087,23 @@ fn route(
             Some(t) => ok(json!({"tag_name": t, "published_at": s.release_at})),
             None => msg(404, "Not Found"),
         },
+        // The fake's default branch is `main`: rulesets read for any other branch are a bug.
+        ("GET", ["rules", "branches", b]) if *b != "main" => msg(
+            500,
+            &format!("the rulesets are read for branch {b:?}, not the default branch `main`"),
+        ),
         ("GET", ["rules", "branches", _]) => ok(if s.ruleset_checks.is_empty() {
-            json!([{"type": "deletion"}])
+            if s.gates_unpinned {
+                json!([{"type": "deletion"}])
+            } else {
+                let id = s.token_app.1;
+                let list: Vec<Value> = ["risk-check", "review-verdict", "main-open"]
+                    .iter()
+                    .map(|c| json!({"context": c, "integration_id": id}))
+                    .collect();
+                json!([{"type": "deletion"}, {"type": "required_status_checks",
+                    "parameters": {"required_status_checks": list}}])
+            }
         } else {
             // `context@id` pins the check to the App with that integration id.
             let list: Vec<Value> = (s.ruleset_checks.iter())

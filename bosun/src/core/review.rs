@@ -62,25 +62,43 @@ pub fn merge_chunk_verdicts(
         chunks_reviewed: vec![],
     };
     for k in 1..=total {
-        // Several results for one chunk: the worst one wins (fail closed), the first on a tie.
-        let bad = |r: &Result<Verdict, String>| match r {
-            Ok(v) if v.pr == pr && v.head_sha == head_sha => {
-                v.verdict != "approve" || is_serious(v)
-            }
-            _ => true,
+        // Several results for one chunk: the worst one wins (fail closed). Worst: no usable
+        // verdict (an error, another PR or head), then a request for changes or a serious
+        // finding, then an approval; within a kind the lower confidence. Order never matters.
+        let worse = |a: &Result<Verdict, String>, b: &Result<Verdict, String>| {
+            let rank = |r: &Result<Verdict, String>| match r {
+                Ok(v) if v.pr == pr && v.head_sha == head_sha => {
+                    let bad = v.verdict != "approve" || is_serious(v);
+                    // A NaN confidence is the worst: it ranks below every number.
+                    let c = if v.confidence.is_nan() {
+                        f64::NEG_INFINITY
+                    } else {
+                        v.confidence
+                    };
+                    (u8::from(bad), -c)
+                }
+                _ => (2, 0.0),
+            };
+            let (ra, rb) = (rank(a), rank(b));
+            ra.0 > rb.0 || (ra.0 == rb.0 && ra.1 > rb.1)
         };
         let pick = results
             .iter()
             .filter(|(n, _)| *n == k)
             .map(|(_, r)| r)
-            .reduce(|best, r| if !bad(best) && bad(r) { r } else { best });
+            .reduce(|best, r| if worse(r, best) { r } else { best });
         match pick {
             Some(Ok(v)) if v.pr == pr && v.head_sha == head_sha => {
                 merged.chunks_reviewed.push(k);
                 if v.verdict != "approve" || is_serious(v) {
                     merged.verdict = "request-changes".into();
                 }
-                merged.confidence = merged.confidence.min(v.confidence);
+                // A NaN confidence is no confidence (f64::min would skip it).
+                merged.confidence = if v.confidence.is_nan() {
+                    0.0
+                } else {
+                    merged.confidence.min(v.confidence)
+                };
                 merged.escalate_risk |= v.escalate_risk;
                 for l in &v.lessons_hit {
                     if !merged.lessons_hit.contains(l) {
@@ -219,6 +237,45 @@ mod tests {
             merge_chunk_verdicts(1, "h", 1, &r).verdict,
             "request-changes"
         );
+    }
+
+    #[test]
+    fn merge_takes_the_worst_of_equal_results_of_one_chunk_not_the_first() {
+        // Two approvals of one chunk: the lower confidence counts, whatever the order.
+        for r in [
+            [
+                (1, Ok(ver("approve", 0.95, &[]))),
+                (1, Ok(ver("approve", 0.86, &[]))),
+            ],
+            [
+                (1, Ok(ver("approve", 0.86, &[]))),
+                (1, Ok(ver("approve", 0.95, &[]))),
+            ],
+        ] {
+            let m = merge_chunk_verdicts(1, "h", 1, &r);
+            assert_eq!((m.verdict.as_str(), m.confidence), ("approve", 0.86));
+        }
+        // Two bad results: a failed review (no verdict) is worse than a request for changes.
+        let r = [
+            (1, Ok(ver("request-changes", 0.9, &[]))),
+            (1, Err("timed out".to_string())),
+        ];
+        let m = merge_chunk_verdicts(1, "h", 1, &r);
+        assert_eq!(m.confidence, 0.0);
+        assert!(m.chunks_reviewed.is_empty());
+        // A NaN confidence is the worst approval, whatever the order: it merges as 0.
+        for r in [
+            [
+                (1, Ok(ver("approve", f64::NAN, &[]))),
+                (1, Ok(ver("approve", 0.95, &[]))),
+            ],
+            [
+                (1, Ok(ver("approve", 0.95, &[]))),
+                (1, Ok(ver("approve", f64::NAN, &[]))),
+            ],
+        ] {
+            assert_eq!(merge_chunk_verdicts(1, "h", 1, &r).confidence, 0.0);
+        }
     }
 
     #[test]

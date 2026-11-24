@@ -341,8 +341,10 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             report.exit_code = 2;
         }
     }
+    // Nothing was written, so the run never reads as in sync: the exit code is at least 1 (the
+    // would-be writes stay drift); a higher one the items gave is kept.
     if declined {
-        report.exit_code = 1;
+        report.exit_code = report.exit_code.max(1);
     }
     if !hints.is_empty() {
         report.hint = Some(format!("{}\n", hints.join("\n")).into());
@@ -362,7 +364,9 @@ fn mark_declined(items: &mut [Item]) {
 
 fn confirm(lines: &[String]) -> Result<bool, HoistError> {
     let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
+    // `HOIST_ASSUME_TTY=1` is for tests only (as for `apply` and `release bootstrap`).
+    let assume = std::env::var("HOIST_ASSUME_TTY").is_ok_and(|v| v == "1");
+    if !stdin.is_terminal() && !assume {
         return Err(HoistError::Usage(
             "stdin is not a terminal; use --yes in non-interactive runs".into(),
         ));

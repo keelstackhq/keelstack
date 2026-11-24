@@ -81,6 +81,8 @@ jobs:
           client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOSUN_APP_KEY }}
           permission-checks: write
+          # checks mode (spec §15 step 7): the App writes the verdict record comment.
+          permission-pull-requests: write
       # Two steps: this one only judges the comment (`--check` writes nothing) and says whether
       # the next step may run. A neutral refusal leaves that step skipped.
       - name: bosun verdict check

@@ -482,10 +482,7 @@ fn pin_warnings(gh: &dyn Github, ctx: &Ctx, branch: &str) -> Vec<String> {
     let mut out = Vec::new();
     match gh.ruleset_pins(branch) {
         Ok(Some(pins)) => {
-            let unpinned: Vec<&str> = ["risk-check", "review-verdict", "main-open"]
-                .into_iter()
-                .filter(|g| !pins.iter().any(|(c, id)| c == g && *id == Some(app_id)))
-                .collect();
+            let unpinned = crate::github::gate::unpinned_gates(&pins, app_id);
             if !unpinned.is_empty() {
                 out.push(format!(
                     "{unpinned:?} not pinned to the gate App (integration_id {app_id}) in the rulesets: a status or another App's run would satisfy them; pin them in hoist.toml and run `hoist apply --area github`"

@@ -398,7 +398,8 @@ fn step3_repo() -> tempfile::TempDir {
 fn step_3_checks_what_the_default_branch_enforces() {
     let tmp = step3_repo();
     let fake = FakeGithub::start();
-    // Nothing enforced.
+    // Nothing enforced (the fake's default gate pins off).
+    fake.unpin_gates();
     let item = step3_on(&fake, tmp.path());
     assert_eq!(item["status"], "missing", "{item}");
     assert!(

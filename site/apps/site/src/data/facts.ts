@@ -71,6 +71,16 @@ export interface Facts {
   /** Piece counts of the default template. */
   templateFiles: Record<string, number>;
   hoardAction: string;
+  /** `hoist org <sub>` subcommands, from the `OrgCommand` enum of hoist/src/cli.rs. */
+  hoistOrg: string[];
+  /** The date of `version` in bosun/CHANGELOG.md (`## X.Y.Z (YYYY-MM-DD)`), when it has one. */
+  versionDate: string | undefined;
+}
+
+/** The date of `version`'s heading `## <version> (YYYY-MM-DD)` in a changelog, if any. */
+export function releaseDate(changelog: string, version: string): string | undefined {
+  const v = version.replace(/\./g, "\\.");
+  return new RegExp(`^## v?${v} [(—-]+ ?(\\d{4}-\\d{2}-\\d{2})\\)?\\s*$`, "m").exec(changelog)?.[1];
 }
 
 // No @types/node in this workspace: only the environment is used.
@@ -139,8 +149,8 @@ export function parseLegacyTags(src: string): {
 const kebab = (s: string): string => s.replace(/([a-z0-9])([A-Z])/g, "$1-$2").toLowerCase();
 
 /** Subcommands of the first `enum Command` in a clap source file, in source order. */
-export function parseSubcommands(src: string): Subcommand[] {
-  const start = /^(?:pub )?enum Command \{$/m.exec(src);
+export function parseSubcommands(src: string, name = "Command"): Subcommand[] {
+  const start = new RegExp(`^(?:pub )?enum ${name} \\{$`, "m").exec(src);
   if (!start) return [];
   const lines = src.slice(start.index + start[0].length).split("\n");
   const out: Subcommand[] = [];
@@ -313,6 +323,8 @@ export function loadFacts(
     stack: { node, pnpm: pnpmM[1]!, typescript: tsM[1]! },
     templateFiles,
     hoardAction: `${org}/${repo}/hoard@v${shown}`,
+    hoistOrg: parseSubcommands(read("hoist", "src", "cli.rs"), "OrgCommand").map((c) => c.name),
+    versionDate: releaseDate(read("bosun", "CHANGELOG.md"), shown),
   };
 }
 

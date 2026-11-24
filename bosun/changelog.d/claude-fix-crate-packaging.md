@@ -1,1 +1,0 @@
-- packaging: keel-bosun's `include` now ships `channel/pieces/rust/files` (embedded by `include_str!`), so `cargo publish` verifies; CI runs `cargo package --workspace --locked` when Rust is affected.

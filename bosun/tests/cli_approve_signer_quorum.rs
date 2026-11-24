@@ -53,6 +53,19 @@ fn pr(k: &Key, base: &str, main: &str, reviewers: &[&str]) -> FakeGithub {
     fake.pull(1, "change", "feature", "Closes #7");
     fake.pull_as_issue(1, "change");
     fake.pull_set(1, "head", json!({"sha": HEAD, "ref": "feature"}));
+    // ci.yml on the default branch and its green run of this PR: the signer re-reads it.
+    fake.content(
+        ".github/workflows/ci.yml",
+        "refs/heads/main",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    fake.workflow_file_run(
+        HEAD,
+        ".github/workflows/ci.yml",
+        "pull_request",
+        "completed",
+        Some("success"),
+    );
     fake.pull_set(1, "user", json!({"login": "octocat"}));
     fake.issue(7, "task", &[], "task\n<!-- bosun:task {} -->");
     fake.comment_by(
@@ -74,7 +87,7 @@ fn pr(k: &Key, base: &str, main: &str, reviewers: &[&str]) -> FakeGithub {
     fake.content(".bosun/bosun.toml", BASE, base);
     fake.content(".bosun/bosun.toml", MAIN, main);
     fake.pull_file(1, "src/a.rs", "modified", 1, 0, Some(PLAIN));
-    fake.app_run(HEAD, "ci-ok", "success", "ok", "gate-app", 4242);
+    fake.app_run(HEAD, "bosun-ci-ok", "success", "ok", "gate-app", 4242);
     for session in reviewers {
         let r = json!({"bosun": "verdict", "session": session, "head_sha": HEAD,
             "approved": true, "confidence": 0.95, "major": 0});
@@ -146,7 +159,7 @@ fn the_quorum_signer_refuses_what_the_quorum_refuses() {
     refused(&fake, &k, "requester and author as reviewers");
     // ci-ok must be the gate App's green run.
     let fake = pr(&k, &cfg, &cfg, &["session_r1", "session_r2"]);
-    fake.app_run(HEAD, "ci-ok", "failure", "bad", "gate-app", 4242);
+    fake.app_run(HEAD, "bosun-ci-ok", "failure", "bad", "gate-app", 4242);
     refused(&fake, &k, "red ci-ok");
     // The trust root is the owner's, even with two clean verdicts.
     let fake = pr(&k, &cfg, &cfg, &["session_r1", "session_r2"]);

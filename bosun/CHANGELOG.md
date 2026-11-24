@@ -6,6 +6,8 @@ All notable changes to bosun. The format follows [Keep a Changelog](https://keep
 
 ## 0.22.1 (2026-11-24)
 
+- packaging: keel-bosun's `include` now ships `channel/pieces/rust/files` (embedded by `include_str!`), so `cargo publish` verifies; CI runs `cargo package --workspace --locked` when Rust is affected. (#70)
+
 ## 0.22.0 (2026-11-23)
 
 - Gated PRs have no line cap and may bundle (D-021): plan lint, wave, claim, `bosun pr --bundle` and risk-check (`R-bundle`) drop the 400-line, one-task, alone rule; chunked review stays.

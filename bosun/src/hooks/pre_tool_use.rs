@@ -1016,15 +1016,25 @@ mod tests {
                 .status()
                 .is_ok_and(|s| s.success());
             assert!(ok);
-            let script = std::fs::read_to_string(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/bump-version.sh"),
-            );
-            if let Ok(t) = script {
-                std::fs::create_dir_all(d.join("scripts")).unwrap();
-                std::fs::write(d.join("scripts/bump-version.sh"), t).unwrap();
-            }
+            // The pinned bump script, always (never skipped): the bump shape's override needs it.
+            std::fs::create_dir_all(d.join("scripts")).unwrap();
+            std::fs::write(
+                d.join("scripts/bump-version.sh"),
+                include_str!("../../../scripts/bump-version.sh"),
+            )
+            .unwrap();
             let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd},
                 "session_id": format!("S-{name}")});
+            // The path under test is the override: legacy denies the call and the intended
+            // allow overrides it (else the lock seen below would be legacy's own).
+            let probe = json!({"tool_name": "Bash", "tool_input": {"command": cmd},
+                "session_id": format!("S-{name}-probe")});
+            let legacy = super::super::pre_tool_use_legacy::judge(Some(d), &probe);
+            assert!(
+                legacy.as_deref().is_some_and(is_deny),
+                "{name}: legacy must deny"
+            );
+            assert!(intended_override(Some(d), &input), "{name}: not overridden");
             for n in 1..=6 {
                 let out = judge(Some(d), &input).unwrap_or_default();
                 let denied = is_deny(&out) && out.contains("repeat-lock");

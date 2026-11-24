@@ -2813,8 +2813,13 @@ function combine(old, bashCmd, runHead) {
   return head ?? old ?? null; // an `ask` from either
 }
 
-const bashCommand = (input) =>
-  input?.tool_name === "Bash" ? String(input?.tool_input?.command ?? "") : null;
+/** The Bash command when the call is Bash with a string command, else null: a non-string command
+ * is never coerced (`String([...])` could read as an enumerated allow), so a legacy deny stays
+ * final for it. */
+const bashCommand = (input) => {
+  const command = input?.tool_name === "Bash" ? input?.tool_input?.command : undefined;
+  return typeof command === "string" ? command : null;
+};
 
 /**
  * Tests only (not the hook path, see `main`): the no-regression rule on a parsed call, with the

@@ -120,6 +120,10 @@ pub fn run(dir: Option<&Path>, args: &GateArgs) -> CmdResult {
     if args.name == "main-open" {
         return gates::main_open::run(dir, args.pr);
     }
+    // Mirrors ci.yml's ci-ok job as the gate App's check run, for the CI signer (spec §8).
+    if args.name == "ci-ok" {
+        return gates::ci_ok::run(dir, args.pr);
+    }
     // Read-only: who posted each gate context on the PR head (spec §15).
     if args.name == "sources" {
         return gates::sources::run(dir, args.pr);

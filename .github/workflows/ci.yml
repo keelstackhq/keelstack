@@ -123,10 +123,14 @@ jobs:
         run: cargo deny check
       # Every publishable crate must package and build from its own .crate file (a file outside the
       # crate's `include` breaks `cargo publish` in the release job). Only when Rust is affected.
+      # The toolchain is the root rust-toolchain.toml's (rustup installs it on first use): no
+      # second pin to drift. The cache is saved on main only, as in the folder jobs.
       - if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
-        uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          toolchain: "1.97"
+          shared-key: package
+          cache-bin: "false"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo package (verify every publishable crate)
         if: (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && needs.detect.outputs.rust == 'true'
         run: cargo package --workspace --exclude keel-splice --locked

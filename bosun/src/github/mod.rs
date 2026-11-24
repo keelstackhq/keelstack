@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use types::RawGitCommit;
 pub use types::{
     CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label, PrFile, Pull,
-    Review, RunJob, RunState, RunStep, Status, TreeEntry, WorkflowRun,
+    Review, RunJob, RunPull, RunPullBase, RunState, RunStep, ShaRun, Status, TreeEntry,
+    WorkflowRun,
 };
 
 pub use crate::output::BosunError;
@@ -208,6 +209,11 @@ pub trait Github {
     fn workflow_run_attempt(&self, id: u64, n: u64) -> Result<Option<WorkflowRun>>;
     /// The jobs of attempt `n` of run `id`, with their steps; a 404 is an error.
     fn run_attempt_jobs(&self, id: u64, n: u64) -> Result<Vec<RunJob>>;
+    /// The workflow runs of `sha` (`GET /actions/runs?head_sha=`, every page), each with its
+    /// workflow file (`path`) and event, newest first as GitHub lists them.
+    fn workflow_runs_of(&self, sha: &str) -> Result<Vec<ShaRun>>;
+    /// The jobs of run `id`'s latest attempt (`GET /actions/runs/{id}/jobs`, every page).
+    fn run_jobs(&self, id: u64) -> Result<Vec<Job>>;
     /// The repository name this client talks to.
     fn repo_name(&self) -> &str;
     /// The login the token belongs to (`GET /user`); `None` when GitHub will not say.
@@ -1205,6 +1211,19 @@ impl Github for LiveGithub {
             }
             Err(e) => Err(e),
         }
+    }
+
+    fn workflow_runs_of(&self, sha: &str) -> Result<Vec<ShaRun>> {
+        let path = self.path(&format!("/actions/runs?head_sha={}&per_page=100", enc(sha)));
+        self.parse_all(
+            "workflow run",
+            self.http.get_all_in(&path, "workflow_runs")?,
+        )
+    }
+
+    fn run_jobs(&self, id: u64) -> Result<Vec<Job>> {
+        let path = self.path(&format!("/actions/runs/{id}/jobs?per_page=100"));
+        self.parse_all("job", self.http.get_all_in(&path, "jobs")?)
     }
 
     fn failed_jobs(&self, sha: &str) -> Result<Vec<Job>> {

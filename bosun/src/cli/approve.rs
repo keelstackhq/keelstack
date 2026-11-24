@@ -24,9 +24,9 @@ use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
     APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, DELEGATION_LINE, Form, Policy, QUORUM_LINE,
     Readiness, Role, Run, Stat, TRUSTED_CREATOR, api_url_ok, approve_command, batch_message,
-    bootstrap_line, ci_green, in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line,
-    readiness, signed_comment, signed_message, signed_message_autonomous, signed_message_bootstrap,
-    signed_message_v2, summary_readiness,
+    bootstrap_line, ci_green_named, in_cloud, only_r_ci, parse_ready_summary, parse_target,
+    policy_line, readiness, signed_comment, signed_message, signed_message_autonomous,
+    signed_message_bootstrap, signed_message_v2, summary_readiness,
 };
 use crate::core::ask;
 use crate::core::records::{PrHead, Record};
@@ -662,8 +662,8 @@ fn via_signer(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
     .with_next("mcp__github__actions_run_trigger", args))
 }
 
-/// What the head's `ci-ok` is for the CI signer: the newest GitHub Actions check run (in
-/// `[checks] mode = "checks"` is required: the gate App's), as
+/// What the head's CI is for the CI signer: the gate App's newest `bosun-ci-ok` check run (the
+/// mirror of ci.yml's `ci-ok`, `bosun gate ci-ok`; `[checks] mode = "checks"` is required), as
 /// `ci_green` reads it (a commit status never counts). Returns (green, what was seen).
 fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
     let runs: Vec<Run> = gh
@@ -683,8 +683,9 @@ fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
             },
         })
         .collect();
+    let name = crate::gates::ci_ok::CONTEXT;
     let seen = (runs.iter())
-        .filter(|r| r.name == "ci-ok")
+        .filter(|r| r.name == name)
         .max_by(|a, b| (&a.at, a.id).cmp(&(&b.at, b.id)))
         .map_or("missing".to_string(), |r| {
             format!(
@@ -693,7 +694,7 @@ fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
                 r.app
             )
         });
-    Ok((ci_green(&runs), seen))
+    Ok((ci_green_named(&runs, name), seen))
 }
 
 /// `bosun approve <pr>@<head> --sign-key <pem>`: the signer (the orchestrator session
@@ -834,6 +835,10 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
         // Fail closed: the default branch (now) and the PR's base must both allow the signer.
         signer_allowed(gh, &crate::app::default_ref(gh)?, "the default branch")?;
         signer_allowed(gh, &pull.base_sha, "the PR's base")?;
+        // The signer counts only the gate App's runs: only once the ruleset pins the gates.
+        if let Some(id) = crate::github::gate::trusted_app_id() {
+            crate::github::gate::require_pinned(gh, id)?;
+        }
     }
     let boot = match args.bootstrap {
         true => Some(bootstrap_mode(
@@ -849,11 +854,28 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
         if !green {
             return Err(BosunError::error(
                 format!(
-                    "the head's ci-ok is not green ({ci_ok}; only the newest GitHub Actions check run counts); nothing was signed"
+                    "the head's ci-ok is not green ({ci_ok}; only the gate App's newest bosun-ci-ok check run counts, never a status, GitHub Actions' or a run named ci-ok); nothing was signed"
                 ),
-                "wait for ci-ok to pass on this head, then run the signer again",
+                "wait for ci-ok to pass on this head (signer.yml's `mirror` job posts bosun-ci-ok), then run the signer again",
             )
             .with_data(json!({"ci_ok": ci_ok, "head_sha": head})));
+        }
+        // Re-read ci.yml now: a stale green bosun-ci-ok (ci.yml re-run red since the mirror) never
+        // counts, and a PR that changes what ci.yml runs from the checkout (`.github/**`, local
+        // actions), or a run of another PR or base on this head, is refused here too.
+        let ci = crate::gates::ci_ok::ci_verdict(gh, pr, &head).map_err(|mut e| {
+            e.message = format!("{}: nothing was signed", e.message);
+            e
+        })?;
+        if !ci.green {
+            return Err(BosunError::error(
+                format!(
+                    "ci.yml run {} of PR #{pr} on this head is not green now (its ci-ok job), whatever bosun-ci-ok says; nothing was signed",
+                    ci.run_id
+                ),
+                "fix CI on this head (signer.yml's `mirror` then posts a fresh bosun-ci-ok), then run the signer again",
+            )
+            .with_data(json!({"ci_ok": "failure by ci.yml", "head_sha": head})));
         }
     }
     // A request for changes, and any withdrawal for a delegate, cannot be signed away. After a

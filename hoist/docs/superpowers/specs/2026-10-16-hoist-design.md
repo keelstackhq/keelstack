@@ -1655,9 +1655,18 @@ the state after the run.
   content/proxied); with none left it is a `create`, and each live record is patched at most once.
   So a live same-name same-type record that no declared record matches is patched to a declared
   value (hoist then manages it) and is never deleted; "never deletes" holds for every record.
-  Identical declared records are one: the repeat is `ok` and claims nothing.
+  Identical declared records are one: the repeat is `ok` ("repeat of an identical declared
+  record; claims nothing") and claims nothing. Identical means the same type, name (any case, no
+  trailing dot), normalised content and, except for TXT, `proxied`. Two declared records that
+  differ only in `proxied` are a config error (exit 3): Cloudflare holds one record per type,
+  name and content. Live records are read once per name as compared (any case, no trailing dot). When the zone or the record list cannot be read, the repeat adds
+  no second `unknown` item. A TXT value compares joined: a live `"a" "b"` (quoted chunks) matches
+  a declared `ab`. A record list without `result_info.total_pages` is read page by page until a 404, an empty, a
+  short or a repeated page; any other failure of a later page (403, a 5xx, a body that is no
+  list) is what it is on page 1 (`unknown` or exit 3), never a silent partial list. Records are
+  queried by the name as compared (`?name=` lower case, no trailing dot).
   A declined prompt writes nothing, marks each pending create/update `not applied: declined` and
-  exits 1.
+  exits 1 (the would-be writes stay drift).
 - **Search Console** (per site, in order): if not verified, `POST /sv/token`
   (`{"site":{"type":"INET_DOMAIN","identifier":<domain>},"verificationMethod":"DNS_TXT"}`) →
   `token`; create the TXT record `<domain> <token>` in `zone` through the Cloudflare client
