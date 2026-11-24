@@ -372,6 +372,35 @@ High-risk PRs:
     quorum: every counting verdict is already clean (approve, no major finding), so a reviewer
     treats a real secret value in the diff as a blocker (`approved = false`: nothing counts) and
     approves only the false positives; a placeholder or test fixture is not a blocker.
+- Owner delegation (D-027). `[approvals] owner_delegation = "all"` (the only value; any other is a
+  config error, and so is the key without `policy = "quorum"`) hands the trust root to the quorum:
+  `risk_check::quorum_trust_root` then returns only the strong-secret files
+  (`risk::strong_secret_files`) and the fail-closed case of a base config that does not parse, and
+  risk-check counts a quorum signature on a PR that changes a trust file (`TRUST_FILES`, the
+  quorum trust root, the `.bosun/version` pin rule) or carries R-weaken. The `R-trust` match stays
+  (the PR is high risk; its `why` names D-027), `orchestrator_counts` labels the signature
+  `quorum with owner delegation, D-022, D-027`, `data.owner_delegation` is true, and `bosun approve
+  --bootstrap` signs the autonomous form with the note line `Signed under the quorum policy (D-022)
+  with owner delegation (D-027), not an owner answer`. The floor is the quorum's, unchanged: green
+  required checks, `QUORUM_VERDICTS` counting verdicts from different sessions on the exact head (a
+  verdict on another head never counts), a linked task leased by the author, not halted, no
+  R-unseen, no strong secret, and an escalated verdict still needs the owner. The setting is read
+  from the PR's base only (`risk_check::delegation_at`; a missing or unparsable config is off), so
+  a PR that turns it on is judged without it; `bosun approve` fails closed when the default branch
+  dropped it since the base (`lists_stricter`). A carry-over never carries a signature across a
+  trust-root change (rule 4 unchanged): sign the new head. `data.approved_by` names the key
+  (`key <id> (...)`); the CI signer's comment also names its `requester`. Environment taps, GitHub
+  settings and secrets are not PR approvals and stay outside bosun. A pinned release older than the
+  one that adds the key rejects it (fail closed, owner only): pin first, then set it. Plain `--sign-key` (a v1 or v2 signature, no
+  `--bootstrap`) never covers the trust root under delegation: it refuses (exit 1) on a PR whose
+  quorum trust root or trust files are not empty, so only the autonomous form, with its check of
+  the default branch, signs there. risk-check enforces the same itself: under delegation a plain
+  owner-role v1 or v2 signature on such a PR counts for nothing (nor clears a dismissal: the
+  owner acts), only the autonomous/bootstrap (or signer) form with its verdict floor. risk-check reads the setting at the base only: a default branch
+  that drops it does not revoke an open PR whose base still has it, but `bosun approve` no longer
+  signs one. Workflow and action changes are covered too: a workflow the PR adds can comment as
+  `github-actions[bot]`, but a verdict record counts only when bound to the default branch's
+  `verdict.yml` `issue_comment` run (`verdict_run::bind_records`), so it cannot add counting verdicts.
 - Keyless fast lane: the CI signer (D-017 in ephemeral sessions). Off by default: `[approvals]
   signer = true` turns it on (an `[approvals]` change, so R-weaken: the owner decides), it needs
   `[checks] mode = "checks"` with the gate App (`approve --as signer` refuses otherwise, exit 1, and

@@ -183,7 +183,7 @@ approve = {approved?: [{pr: int, head_sha: str, comment_id: int, repost?: bool,
     ref?: str, ci_ok?: str, comment_id?: int, question_id?: str | null};
 risk-check = {pr: int, head_sha: str, level: str, matches: [{rule: str, why: str, approval: str,
     evidence: [str]}], out_of_touch: [str] | null, approved_by: str | null,
-    approval_carried_from: str | null, verdict_carried_from: str | null, verdict_reapplied: int | null,
+    approval_carried_from: str | null, verdict_carried_from: str | null, verdict_reapplied: int | null, owner_delegation: bool,
     requirement?: str,
     policy?: str, policy_source?: str, verdicts?: [str], autonomous_verdicts?: [str], quorum_verdicts?: [str],
     delegate_verdicts?: [str], delegate_blocked?: str | null, checks_skipped?: bool, dry_run?: bool, author_is_owner?: bool,

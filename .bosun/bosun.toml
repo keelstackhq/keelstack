@@ -33,6 +33,12 @@ bootstrap_until = "2026-11-30"
 # bosun/src/core/approve.rs under each code root, here `bosun/`; spec §8) and read with this file from the PR's base. This file is
 # trust root as a whole: every edit of it needs the owner.
 policy = "quorum"
+# D-027 (owner decision 2026-11-24, in chat: "full approval from my side"): owner delegation.
+# The quorum signature (an enrolled key's, or the CI signer's) also approves the trust root and
+# R-weaken, still only with green required checks and two clean verdicts from different reviewer
+# sessions on the exact head. Read from the PR's base; remove it to give the trust root back to
+# the owner.
+owner_delegation = "all"
 
 [cloud]
 # The shared cloud environment "keelstack" (spec §5.2): a relayed root starts there.

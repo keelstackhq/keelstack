@@ -655,6 +655,8 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     );
     // D-022: under the quorum policy (read at base) its trust root is the owner's too.
     let (quorum_root, root_cause) = quorum_trust_root(gh, &pr_files, &roots, (base, head))?;
+    // D-027: owner delegation (read at base) lets the quorum signature cover the trust root.
+    let delegated = delegation_at(gh, base)?;
     // Built in, whatever the repo's rules say (bosun#706): a trust-root change is high risk and
     // the owner's, so a PR that rewrites the base rules cannot make itself normal risk.
     let mut root_hits: Vec<String> = trust.iter().chain(&quorum_root).cloned().collect();
@@ -664,7 +666,11 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         matches.retain(|m| m.rule != TRUST_RULE);
         matches.push(risk::Match {
             rule: TRUST_RULE.into(),
-            why: "the PR changes the trust root (D-022): only the owner approves".into(),
+            why: if delegated {
+                "the PR changes the trust root (D-022): owner delegation (D-027) lets the quorum approve".into()
+            } else {
+                "the PR changes the trust root (D-022): only the owner approves".into()
+            },
             approval: Approval::Owner,
             evidence: root_hits,
         });
@@ -708,7 +714,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         OwnerView::default()
     };
     let owners = view.logins();
-    if !trust.is_empty() {
+    if !trust.is_empty() && !delegated {
         eprintln!(
             "bosun: risk-check: the PR changes {}: signed approvals do not count",
             trust.join(", ")
@@ -732,7 +738,16 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             eprintln!("bosun: risk-check: {cause}");
         }
     }
-    let signed_ok = trust.is_empty() && quorum_root.is_empty() && !unseen;
+    let signed_ok = (trust.is_empty() || delegated) && quorum_root.is_empty() && !unseen;
+    // D-027: delegation covers the trust root only with the quorum (autonomous/bootstrap, signer)
+    // form and its two-verdict floor; a plain owner-role v1/v2 signature never covers it.
+    let plain_ok = !delegated
+        || (trust.is_empty() && delegated_root(gh, &pr_files, &roots, (base, head)).is_empty());
+    if !plain_ok {
+        eprintln!(
+            "bosun: risk-check: owner delegation (D-027) covers the trust root only with the quorum signature: a plain signature does not count"
+        );
+    }
     let requirement = requirement(&matches);
     let (mut bootstrap, policy_source) = if high && signed_ok {
         let excluded = bootstrap_excluded(&pr_files, &matches, &roots);
@@ -808,6 +823,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         quorum,
         models: models.as_deref(),
         signer_on: signer_on(gh, base)?,
+        plain_ok,
     };
     let found = if high {
         approval_on(gh, &need, head)?
@@ -924,7 +940,15 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         _ if high => Ok(None),
         _ => {
             let view = owner_view(gh, base)?;
-            let by = approver(gh, &ctx.repo, n, head, &view, signed_ok, (None, signer))?;
+            let by = approver(
+                gh,
+                &ctx.repo,
+                n,
+                head,
+                &view,
+                signed_ok,
+                (None, signer, plain_ok),
+            )?;
             // Low risk reads no policy above: under quorum (or a base config that does not
             // parse) a key never stands for the owner.
             let quorum = by.is_some() && quorum_policy_at(gh, base)?;
@@ -933,7 +957,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     });
 
     let mut data = json!({"pr": n, "head_sha": head, "level": level, "matches": matches,
-        "approved_by": approved_by, "out_of_touch": out_of_touch,
+        "approved_by": approved_by, "out_of_touch": out_of_touch, "owner_delegation": delegated,
         "verdict_carried_from": carried, "approval_carried_from": carried_from,
         "verdict_reapplied": reapplied});
     if cleared.is_some() {
@@ -1243,6 +1267,9 @@ struct Need<'a> {
     models: Option<&'a [String]>,
     /// `[approvals] signer` at base: a signer key's signature counts only while it is true.
     signer_on: bool,
+    /// False when owner delegation (D-027) is on and the PR touches the trust root: a plain
+    /// owner-role v1/v2 signature does not count, only the quorum form.
+    plain_ok: bool,
 }
 
 /// Who approved a head (D-022). Only the owner's own GitHub review or `/bosun approve <sha>`
@@ -1340,7 +1367,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         sha,
         view,
         signed_ok,
-        (bootstrap, need.signer_on),
+        (bootstrap, need.signer_on, need.plain_ok),
     )?;
     found.kind = by.as_ref().map(|b| b.1);
     found.approved_by = by.map(|b| b.0);
@@ -1701,7 +1728,7 @@ fn approver(
     head: &str,
     view: &OwnerView,
     signed_ok: bool,
-    (bootstrap, signer_on): (Option<(&str, Form)>, bool),
+    (bootstrap, signer_on, plain_ok): (Option<(&str, Form)>, bool, bool),
 ) -> Result<Option<(String, Approver)>> {
     let reviews = gh.list_reviews(pr)?;
     let owners = view.logins();
@@ -1757,8 +1784,10 @@ fn approver(
         .collect();
     // A bootstrap-mode signature never clears a dismissal.
     if ids.is_empty() {
-        // Bootstrap and autonomous signatures are not owner approvals.
-        if let Some(id) = sign(&|f| matches!(f, Form::V1 | Form::V2(_)))? {
+        // Bootstrap and autonomous signatures are not owner approvals. D-027: a plain one never
+        // covers the trust root under delegation.
+        if !plain_ok {
+        } else if let Some(id) = sign(&|f| matches!(f, Form::V1 | Form::V2(_)))? {
             return Ok(Some((format!("key {id}"), Approver::OWNER_KEY)));
         }
         let Some((label, form)) = bootstrap else {
@@ -1770,6 +1799,11 @@ fn approver(
             owner_form: false,
         };
         return Ok(boot.map(|id| (format!("key {id} ({label})"), kind)));
+    }
+    // D-027: only a plain v2 clears a dismissal, and it never covers the trust root under
+    // delegation: the owner acts.
+    if !plain_ok {
+        return Ok(None);
     }
     let mut by = None;
     for id in ids {
@@ -2011,8 +2045,12 @@ pub(crate) fn quorum_trust_root(
     let paths: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.previous_filename.as_deref()))
         .collect();
-    let mut out = risk::quorum_trust_paths(&paths, roots);
-    out.extend(pin_trust_root(gh, &paths, (base, head)));
+    let mut out = Vec::new();
+    // D-027: owner delegation hands the trust root to the quorum; a strong secret stays out.
+    if !config.approvals.delegated() {
+        out = risk::quorum_trust_paths(&paths, roots);
+        out.extend(pin_trust_root(gh, &paths, (base, head)));
+    }
     let patches: Vec<_> = (files.iter())
         .map(|f| (&*f.filename, f.patch.as_deref()))
         .collect();
@@ -2020,6 +2058,15 @@ pub(crate) fn quorum_trust_root(
     out.sort();
     out.dedup();
     Ok((out, None))
+}
+
+/// Whether owner delegation (D-027) is on at base: `owner_delegation = "all"` under quorum. A
+/// config that does not parse or is missing turns it off (fail closed).
+pub(crate) fn delegation_at(gh: &dyn Github, base: &str) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE).is_ok_and(|c| c.approvals.delegated()),
+        None => false,
+    })
 }
 
 /// Whether `[approvals] policy` at base is quorum; a config that does not parse may be a quorum
@@ -2157,6 +2204,22 @@ fn signed_approver(
 /// version. A pin names releases of bosun's upstream repo (`[approvals] bosun_repo` read at base,
 /// default keelstackhq/keelstack), whose `v{version}` ref is looked up there, whatever repo the PR is
 /// in. An unparsable base config, an invalid `bosun_repo` and any API error fail closed.
+/// The quorum trust root that owner delegation (D-027) hands to the quorum signature (the
+/// quorum trust paths and pin changes); a plain signature never covers it.
+fn delegated_root(
+    gh: &dyn Github,
+    files: &[PrFile],
+    roots: &[String],
+    (base, head): (&str, &str),
+) -> Vec<String> {
+    let paths: Vec<_> = (files.iter())
+        .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+        .collect();
+    let mut out = risk::quorum_trust_paths(&paths, roots);
+    out.extend(pin_trust_root(gh, &paths, (base, head)));
+    out
+}
+
 pub(crate) fn pin_trust_root(
     gh: &dyn Github,
     paths: &[(&str, Option<&str>)],
@@ -2247,6 +2310,7 @@ fn orchestrator_window(
         autonomous_excluded: &autonomous_excluded,
         trust_root,
         capabilities,
+        delegated: approvals.delegated(),
     });
     let p = approvals.policy();
     let signed = matches!(p, Policy::Autonomous | Policy::Quorum);

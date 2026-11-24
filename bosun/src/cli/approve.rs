@@ -22,10 +22,10 @@ use crate::cli::risk_check::{
 };
 use crate::config::{CONFIG_FILE, CiProvider, Config};
 use crate::core::approve::{
-    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, Form, Policy, QUORUM_LINE, Readiness, Role,
-    Run, Stat, TRUSTED_CREATOR, api_url_ok, approve_command, batch_message, bootstrap_line,
-    ci_green, in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line, readiness,
-    signed_comment, signed_message, signed_message_autonomous, signed_message_bootstrap,
+    APPROVERS_PATH, AUTONOMOUS_LINE, BOOTSTRAP_END, DELEGATION_LINE, Form, Policy, QUORUM_LINE,
+    Readiness, Role, Run, Stat, TRUSTED_CREATOR, api_url_ok, approve_command, batch_message,
+    bootstrap_line, ci_green, in_cloud, only_r_ci, parse_ready_summary, parse_target, policy_line,
+    readiness, signed_comment, signed_message, signed_message_autonomous, signed_message_bootstrap,
     signed_message_v2, summary_readiness,
 };
 use crate::core::ask;
@@ -777,6 +777,29 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
     let files = gh.pull_files(pr)?;
     let (root, cause) =
         crate::cli::risk_check::quorum_trust_root(gh, &files, &roots, (&pull.base_sha, &head))?;
+    // D-027: owner delegation covers the trust root only for the quorum signature
+    // (`--bootstrap`), which also checks the default branch still delegates (`lists_stricter`).
+    if !args.bootstrap && crate::cli::risk_check::delegation_at(gh, &pull.base_sha)? {
+        let paths: Vec<_> = (files.iter())
+            .map(|f| (&*f.filename, f.previous_filename.as_deref()))
+            .collect();
+        let mut hit = risk::quorum_trust_paths(&paths, &roots);
+        hit.extend(crate::core::approve::trust_files_changed_in(
+            paths.iter().copied(),
+            &roots,
+        ));
+        if !hit.is_empty() {
+            hit.sort();
+            hit.dedup();
+            return Err(BosunError::error(
+                format!(
+                    "owner delegation (D-027) covers the trust root ({}) only with the quorum signature: nothing was signed",
+                    hit.join(", ")
+                ),
+                "sign with --bootstrap (the autonomous form, after two clean verdicts on the head)",
+            ));
+        }
+    }
     if !root.is_empty() {
         return Err(BosunError::error(
             format!(
@@ -1039,6 +1062,8 @@ fn lists_stricter(main: &crate::config::Approvals, base: &crate::config::Approva
         (a.bosun_repo.clone()).unwrap_or_else(|| crate::config::DEFAULT_BOSUN_REPO.to_string())
     };
     models
+        // Owner delegation (D-027) the base has and the default branch dropped.
+        || (base.delegated() && !main.delegated())
         || repo(main) != repo(base)
         || b.iter().any(|g| !m.contains(g))
         || wider(&main.verdict_bots, &base.verdict_bots)
@@ -1096,7 +1121,9 @@ fn bootstrap_mode(app: &App, today: &str, pull: &Pull, requester: Option<&str>) 
     }
     if signs(policy) {
         autonomous_ok(app, pull, requester, policy)?;
-        let line = if policy == Policy::Quorum {
+        let line = if policy == Policy::Quorum && approvals.delegated() {
+            DELEGATION_LINE
+        } else if policy == Policy::Quorum {
             QUORUM_LINE
         } else {
             AUTONOMOUS_LINE

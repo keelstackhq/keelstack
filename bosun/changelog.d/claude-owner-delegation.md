@@ -1,0 +1,1 @@
+- bosun: `[approvals] owner_delegation = "all"` (D-027): under quorum the orchestrator signature also approves the trust root and R-weaken, with the same floor (green checks, two clean verdicts on the exact head); read at base.

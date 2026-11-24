@@ -366,6 +366,9 @@ pub fn bootstrap_line(until: &str) -> String {
 pub const AUTONOMOUS_LINE: &str = "Signed in autonomous mode (D-017), not an owner answer";
 /// The note line of a quorum signature (D-022).
 pub const QUORUM_LINE: &str = "Signed under the quorum policy (D-022), not an owner answer";
+/// The line of a quorum signature under owner delegation (D-027): it may cover the trust root.
+pub const DELEGATION_LINE: &str =
+    "Signed under the quorum policy (D-022) with owner delegation (D-027), not an owner answer";
 
 /// `[approvals] policy`: who may approve gated PRs once bootstrap mode (D-012) is over (D-014).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, serde::Deserialize, serde::Serialize)]
@@ -440,6 +443,9 @@ pub struct OrchestratorCase<'a> {
     pub trust_root: &'a [String],
     /// The PR's capabilities (labels and linked task metadata, plus `weaken` for findings).
     pub capabilities: &'a [String],
+    /// `[approvals] owner_delegation = "all"` at base under quorum (D-027): `trust_root` then
+    /// holds only what delegation never covers (a strong secret, a base config that fails).
+    pub delegated: bool,
 }
 
 /// `Ok(label for the status)` when an orchestrator approval can count, else `Err(why)`.
@@ -448,6 +454,9 @@ pub fn orchestrator_counts(c: &OrchestratorCase) -> Result<String, String> {
     // risk-check adds the verdict, signature and halt conditions.
     if c.policy == Policy::Quorum {
         if c.trust_root.is_empty() {
+            if c.delegated {
+                return Ok("quorum with owner delegation, D-022, D-027".into());
+            }
             return Ok("quorum, D-022".into());
         }
         return Err(format!(
@@ -1037,6 +1046,7 @@ mod tests {
             autonomous_excluded: &[],
             trust_root: &[],
             capabilities: &[],
+            delegated: false,
         }
     }
 
