@@ -352,7 +352,12 @@ fn match_records(
 }
 
 fn records(http: &Http, zone_id: &str, name: &str) -> Result<Fetch<Vec<Live>>, HoistError> {
-    let path = format!("/zones/{}/dns_records?name={}", seg(zone_id), seg(name));
+    // Queried by the name as compared (lower case, no trailing dot), as the reads are keyed.
+    let path = format!(
+        "/zones/{}/dns_records?name={}",
+        seg(zone_id),
+        seg(&name_key(name))
+    );
     Ok(match http.get_all(&path, None)? {
         Fetched::Ok(Value::Array(list)) => Fetch::Got(
             list.iter()

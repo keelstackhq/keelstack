@@ -265,12 +265,55 @@ fn a_record_list_without_result_info_is_read_past_page_1() {
 }
 
 #[test]
-fn without_result_info_a_failed_or_short_later_page_keeps_what_was_read() {
+fn without_result_info_only_a_404_short_empty_or_repeated_page_ends_the_list() {
     let p1 = r#"{"success":true,"result":[{"id":"r0","type":"A","name":"www.example.dev","content":"1.1.1.1","proxied":false},{"id":"r1","type":"A","name":"www.example.dev","content":"2.2.2.2","proxied":false}]}"#;
     let short = r#"{"success":true,"result":[{"id":"r2","type":"A","name":"www.example.dev","content":"3.3.3.3","proxied":false}]}"#;
     let d = dir(&toml(&[("A", "www.example.dev", "1.1.1.1", false)]));
-    // Page 2 fails: page 1's records still count, no unknown.
-    for (status, body) in [(404, r#"{"success":false}"#), (500, r#"{"success":false}"#)] {
+    // Page 2 is 404: the list has ended, page 1's records count.
+    let api = start(&[
+        zone_route(),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+            200,
+            p1,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=2",
+            404,
+            r#"{"success":false}"#,
+        ),
+    ]);
+    let r = run(&["check"], &d, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
+        "ok",
+        "{r:#}"
+    );
+    // Page 2 is refused (403): the list is unknown, never a silent partial one.
+    let api = start(&[
+        zone_route(),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+            200,
+            p1,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=2",
+            403,
+            r#"{"success":false,"errors":[{"code":1,"message":"no"}]}"#,
+        ),
+    ]);
+    let r = run(&["check"], &d, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
+        "unknown",
+        "{r:#}"
+    );
+    // Page 2 is a 5xx or not a list: an error (exit 3), as on page 1.
+    for (status, body) in [
+        (500, r#"{"success":false}"#),
+        (200, r#"{"success":true,"result":7}"#),
+    ] {
         let api = start(&[
             zone_route(),
             (
@@ -284,12 +327,12 @@ fn without_result_info_a_failed_or_short_later_page_keeps_what_was_read() {
                 body,
             ),
         ]);
-        let r = run(&["check"], &d, &env(&api), 0);
-        assert_eq!(
-            records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
-            "ok",
-            "{status}: {r:#}"
-        );
+        hoist()
+            .current_dir(d.path())
+            .envs(env(&api))
+            .args(["--json", "org", "check"])
+            .assert()
+            .code(3);
     }
     // A page shorter than the one before is the last: no page 3 is asked for.
     let api = start(&[
@@ -341,4 +384,51 @@ fn names_that_differ_only_in_case_read_the_records_once() {
         .filter(|q| q.path == "/zones/z1/dns_records")
         .count();
     assert_eq!(reads, 1, "one read per DNS name");
+}
+
+#[test]
+fn result_info_without_total_pages_reads_on_like_no_result_info() {
+    let p1 = r#"{"success":true,"result":[{"id":"r0","type":"A","name":"www.example.dev","content":"1.1.1.1","proxied":false}],"result_info":{"page":1}}"#;
+    let p2 = r#"{"success":true,"result":[{"id":"r1","type":"A","name":"www.example.dev","content":"2.2.2.2","proxied":false}],"result_info":{"page":2}}"#;
+    let p3 = r#"{"success":true,"result":[],"result_info":{"page":3}}"#;
+    let api = start(&[
+        zone_route(),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+            200,
+            p1,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=2",
+            200,
+            p2,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=3",
+            200,
+            p3,
+        ),
+    ]);
+    let d = dir(&toml(&[("A", "www.example.dev", "2.2.2.2", false)]));
+    let r = run(&["check"], &d, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 2.2.2.2")[0]["action"],
+        "ok",
+        "{r:#}"
+    );
+}
+
+#[test]
+fn records_are_queried_by_the_compared_name() {
+    let api = api(LIVE_A);
+    let d = dir(&toml(&[("A", "WWW.Example.dev", "1.1.1.1", false)]));
+    run(&["check"], &d, &env(&api), 0);
+    let urls: Vec<String> = (api.requests().iter())
+        .filter(|q| q.path == "/zones/z1/dns_records")
+        .map(|q| q.url.clone())
+        .collect();
+    assert!(
+        urls.iter().all(|u| u.contains("name=www.example.dev&")),
+        "{urls:?}"
+    );
 }

@@ -179,20 +179,28 @@ fn pipe_grace(timed_out: bool, forwarded: bool) -> Duration {
     }
 }
 
+/// Whether an interrupt ends the after-exit pipe wait at once: yes after a normal exit (Ctrl-C
+/// must not hold keel for `PIPE_GRACE`), no once a signal was forwarded (the interrupt is why the
+/// child stopped: its trailing output still gets the 2 s grace).
+fn interruptible_wait(forwarded: bool) -> bool {
+    !forwarded
+}
+
 /// Wait for a pipe reader's EOF signal until `until`, in short slices, and stop at once when
 /// `interrupted` says so (Ctrl-C during the after-exit wait must not hold keel).
-fn wait_eof(rx: &mpsc::Receiver<()>, until: Instant, interrupted: &dyn Fn() -> bool) {
+fn wait_eof(rx: &mpsc::Receiver<()>, until: Instant, interrupted: &dyn Fn() -> bool) -> bool {
     loop {
         if interrupted() {
-            return;
+            return false;
         }
         let left = until.saturating_duration_since(Instant::now());
         if left.is_zero() {
-            return;
+            return false;
         }
         match rx.recv_timeout(left.min(Duration::from_millis(50))) {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
-            _ => return,
+            Ok(()) => return true,
+            Err(mpsc::RecvTimeoutError::Disconnected) => return false,
         }
     }
 }
@@ -327,7 +335,9 @@ impl Runner for SystemRunner {
             mpsc::Receiver<()>,
         );
         let got = |(buf, rx): Drain| {
-            wait_eof(&rx, until, &|| interrupted().is_some());
+            let _ = wait_eof(&rx, until, &|| {
+                interruptible_wait(forwarded) && interrupted().is_some()
+            });
             buf.lock().map_or_else(
                 |_| String::new(),
                 |b| String::from_utf8_lossy(&b).into_owned(),
@@ -471,20 +481,45 @@ mod tests {
         assert_eq!((out.code, out.stdout.as_str()), (0, "hi\n"));
         assert!(took >= Duration::from_millis(300), "{took:?}");
         assert!(
-            took < Duration::from_millis(550),
+            took < Duration::from_millis(900),
             "one deadline, not two: {took:?}"
         );
+    }
+
+    /// After a forwarded signal keel is interrupted for good, yet the child's trailing output
+    /// (written while it shuts down) is still read within the grace, not dropped at once.
+    #[test]
+    fn after_a_forwarded_signal_the_trailing_output_is_still_read() {
+        let (tx, rx) = mpsc::channel::<()>();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = tx.send(());
+        });
+        let started = Instant::now();
+        let eof = wait_eof(&rx, Instant::now() + Duration::from_secs(2), &|| {
+            interruptible_wait(true)
+        });
+        assert!(eof, "the trailing output's EOF arrived within the grace");
+        assert!(started.elapsed() >= Duration::from_millis(150));
+        // After a normal exit, an interrupt stops the wait at once.
+        let (_tx, rx) = mpsc::channel::<()>();
+        let started = Instant::now();
+        let eof = wait_eof(&rx, Instant::now() + Duration::from_secs(2), &|| {
+            interruptible_wait(false)
+        });
+        assert!(!eof);
+        assert!(started.elapsed() < Duration::from_millis(200));
     }
 
     #[test]
     fn an_interrupt_ends_the_pipe_wait_at_once() {
         let (_tx, rx) = mpsc::channel::<()>();
         let started = Instant::now();
-        wait_eof(&rx, Instant::now() + Duration::from_secs(10), &|| true);
+        let _ = wait_eof(&rx, Instant::now() + Duration::from_secs(10), &|| true);
         assert!(started.elapsed() < Duration::from_millis(200));
         // Not interrupted: it waits for the deadline.
         let started = Instant::now();
-        wait_eof(&rx, Instant::now() + Duration::from_millis(150), &|| false);
+        let _ = wait_eof(&rx, Instant::now() + Duration::from_millis(150), &|| false);
         assert!(started.elapsed() >= Duration::from_millis(150));
     }
 

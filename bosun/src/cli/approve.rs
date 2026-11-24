@@ -835,22 +835,6 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
         // Fail closed: the default branch (now) and the PR's base must both allow the signer.
         signer_allowed(gh, &crate::app::default_ref(gh)?, "the default branch")?;
         signer_allowed(gh, &pull.base_sha, "the PR's base")?;
-        // The mirrored CI result comes from the PR's own ci.yml run: never for a PR that changes it.
-        if let Some(f) = (files.iter()).find(|f| {
-            crate::gates::ci_ok::touches_trusted_workflow(
-                &f.filename,
-                f.previous_filename.as_deref(),
-            )
-        }) {
-            return Err(BosunError::error(
-                format!(
-                    "the CI signer never signs a PR that changes {} ({}): its mirrored ci-ok runs the PR's own copy; nothing was signed",
-                    crate::gates::ci_ok::CI_WORKFLOW,
-                    f.filename
-                ),
-                "sign with the orchestrator-held key (`--sign-key <pem> --bootstrap`) or ask the owner",
-            ));
-        }
         // The signer counts only the gate App's runs: only once the ruleset pins the gates.
         if let Some(id) = crate::github::gate::trusted_app_id() {
             crate::github::gate::require_pinned(gh, id)?;
@@ -875,6 +859,23 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
                 "wait for ci-ok to pass on this head (signer.yml's `mirror` job posts bosun-ci-ok), then run the signer again",
             )
             .with_data(json!({"ci_ok": ci_ok, "head_sha": head})));
+        }
+        // Re-read ci.yml now: a stale green bosun-ci-ok (ci.yml re-run red since the mirror) never
+        // counts, and a PR that changes what ci.yml runs from the checkout (`.github/**`, local
+        // actions), or a run of another PR or base on this head, is refused here too.
+        let ci = crate::gates::ci_ok::ci_verdict(gh, pr, &head).map_err(|mut e| {
+            e.message = format!("{}: nothing was signed", e.message);
+            e
+        })?;
+        if !ci.green {
+            return Err(BosunError::error(
+                format!(
+                    "ci.yml run {} of PR #{pr} on this head is not green now (its ci-ok job), whatever bosun-ci-ok says; nothing was signed",
+                    ci.run_id
+                ),
+                "fix CI on this head (signer.yml's `mirror` then posts a fresh bosun-ci-ok), then run the signer again",
+            )
+            .with_data(json!({"ci_ok": "failure by ci.yml", "head_sha": head})));
         }
     }
     // A request for changes, and any withdrawal for a delegate, cannot be signed away. After a

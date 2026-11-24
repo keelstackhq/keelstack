@@ -11,7 +11,8 @@ use serde_json::{Value, json};
 use types::RawGitCommit;
 pub use types::{
     CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label, PrFile, Pull,
-    Review, RunJob, RunState, RunStep, ShaRun, Status, TreeEntry, WorkflowRun,
+    Review, RunJob, RunPull, RunPullBase, RunState, RunStep, ShaRun, Status, TreeEntry,
+    WorkflowRun,
 };
 
 pub use crate::output::BosunError;

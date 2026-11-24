@@ -429,18 +429,26 @@ High-risk PRs:
   `pr`, `head`, `requester`), only from the default branch, never checks out the PR. In bosun's
   own copy, job `mirror` (environment `bosun-app`, before `sign`) runs `bosun gate ci-ok --pr
   <pr>`: it reads the workflow runs of the PR head (`GET /actions/runs?head_sha=`), takes the
-  newest `pull_request` run whose file is `.github/workflows/ci.yml` (a run of any other file, a
-  PR-added workflow with a job named `ci-ok` included, never counts), reads its `ci-ok` job
+  newest `pull_request` run whose file is `.github/workflows/ci.yml` and whose `pull_requests`
+  holds this PR into the default branch (a run of any other file, a PR-added workflow with a job
+  named `ci-ok` included, and a run of another PR or base on the same head sha, such as a PR into
+  a branch whose ci.yml always passes, never count; a run tied to no PR never counts), reads its `ci-ok` job
   (latest attempt) and creates the gate App's `bosun-ci-ok` check run on the head (its own name,
   so it can never satisfy or block the required `ci-ok`, whatever the ruleset pins): `success` only when
   that job succeeded, else `failure` (a missing job too; never neutral or skipped). It never posts
   a status, needs `BOSUN_APP_TOKEN` and `[checks] mode` other than `statuses` (else exit 1,
   nothing posted), and posts nothing (exit 1) while the newest ci.yml run is not completed or
   when there is none, so `sign` does not run. What the mirrored run proves is what ci.yml's
-  `ci-ok` proves: the PR's own CI passed. A PR's `pull_request` run executes the PR's own copy of
-  ci.yml, so a PR that changes `.github/workflows/ci.yml` (or renames it away) gets no mirror and
-  `approve --as signer` refuses it (exit 1, nothing signed): the orchestrator-held key or the
-  owner approves it. The ruleset's required `ci-ok` stays GitHub Actions' (§15). The channel's copy has no
+  `ci-ok` proves: the PR's own CI passed. A PR's `pull_request` run executes the PR's own copies
+  of everything ci.yml runs from the checkout, so a PR that changes any of it gets no mirror and
+  `approve --as signer` refuses it (exit 1, nothing signed; the orchestrator-held key or the
+  owner approves it): anything under `.github/` (workflows, `.github/scripts/**` such as the
+  affected-folder detection, `.github/actions/**`), every local action ci.yml uses (`uses: ./X`,
+  read from ci.yml on the default branch, so a new one counts at once; ci.yml missing there fails
+  closed), anything under a `scripts/` directory at any depth, and every path of the built-in
+  R-ci rule (never the repo's risk.toml). A rename counts on both sides. At signing `approve --as
+  signer` re-reads the newest such ci.yml run itself (`gates::ci_ok::ci_verdict`), so a stale green
+  `bosun-ci-ok` after a red re-run never counts. The ruleset's required `ci-ok` stays GitHub Actions' (§15). The channel's copy has no
   `mirror` yet (its pinned release may lack `gate ci-ok`): a consumer that turns the signer on
   posts the App's `bosun-ci-ok` itself. Job `sign` (environment
   `bosun-signer`; bosun's own copy builds bosun from the default branch's workspace, the channel's installs the release pinned in `.bosun/version`) runs `bosun approve

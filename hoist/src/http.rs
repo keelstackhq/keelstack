@@ -427,7 +427,7 @@ impl Http {
     /// All pages of a list endpoint as one JSON array. GitHub follows `Link: rel="next"`;
     /// `array_key` names the array inside an object body (else the body is the array).
     /// Cloudflare concatenates `result` across `result_info.page/total_pages`; a list without
-    /// `result_info` is read page by page until an empty, short, failed or repeated page.
+    /// `total_pages` is read page by page until a 404, an empty, short or repeated page.
     pub fn get_all(&self, path: &str, array_key: Option<&str>) -> Result<Fetched, HttpError> {
         match self.service {
             Service::Cloudflare => self.get_all_cloudflare(path),
@@ -472,44 +472,21 @@ impl Http {
         let mut last: Option<Vec<Value>> = None;
         loop {
             let current = with_query(path, &format!("page={page}"));
-            // Past page 1 of a list without `result_info` (`last` is set), whether there is a
-            // next page is a guess: a page that fails (404, 403, a 5xx, a body that is no list)
-            // ends the list and keeps what was read. A 401 is still an error.
+            // Past page 1 of a list whose page count is unknown (`last` is set), a 404 means the
+            // list has ended. Every other failure (403, a 5xx, a body that is no list) is what it
+            // would be on page 1: unknown or an error, never a silent partial list.
             let guessing = last.is_some();
-            let resp = match self.fetch(&current) {
-                Ok(Ok(resp)) => resp,
-                Ok(Err(_)) | Err(HttpError::Status { .. }) if guessing => break,
-                Ok(Err(fetched)) => return Ok(fetched),
-                Err(e) => return Err(e),
+            let resp = match self.fetch(&current)? {
+                Ok(resp) => resp,
+                Err(Fetched::NotFound) if guessing => break,
+                Err(fetched) => return Ok(fetched),
             };
-            let parsed = self.parse(&current, &resp.body);
-            let more = match parsed.as_ref().ok().and_then(|b| b.get("result")) {
+            let body = self.parse(&current, &resp.body)?;
+            let more = match body.get("result") {
                 Some(Value::Array(more)) => more.clone(),
-                _ if guessing => break,
-                _ => return Err(parsed.err().unwrap_or_else(|| self.invalid(&current))),
+                _ => return Err(self.invalid(&current)),
             };
-            let body = parsed?;
             let info = body.get("result_info");
-            // No `result_info`: the page count is unknown, so read on until an empty page, a
-            // page shorter than the last one (the last page), or a page equal to the last one
-            // (an endpoint that ignores `page` answers it again).
-            if info.is_none() {
-                if more.is_empty() || last.as_ref() == Some(&more) {
-                    break;
-                }
-                let short = last.as_ref().is_some_and(|l| more.len() < l.len());
-                items.extend(more.iter().cloned());
-                if short {
-                    break;
-                }
-                last = Some(more);
-                if page >= self.max_pages {
-                    return Err(self.page_limit(&current));
-                }
-                page += 1;
-                continue;
-            }
-            items.extend(more);
             let at = info.and_then(|i| i.get("page")).and_then(Value::as_u64);
             let total = info
                 .and_then(|i| i.get("total_pages"))
@@ -524,14 +501,33 @@ impl Http {
                     wanted: page,
                 });
             }
-            match total {
-                Some(total) if u64::from(page) < total => {
-                    if page >= self.max_pages {
-                        return Err(self.page_limit(&current));
-                    }
-                    page += 1;
+            // No `total_pages` (no `result_info`, or one without it): the page count is unknown,
+            // so read on until a 404, an empty page, a page shorter than the last one (the last
+            // page), or a page equal to the last one (an endpoint that ignores `page`).
+            let Some(total) = total else {
+                if more.is_empty() || last.as_ref() == Some(&more) {
+                    break;
                 }
-                _ => break,
+                let short = last.as_ref().is_some_and(|l| more.len() < l.len());
+                items.extend(more.iter().cloned());
+                if short {
+                    break;
+                }
+                last = Some(more);
+                if page >= self.max_pages {
+                    return Err(self.page_limit(&current));
+                }
+                page += 1;
+                continue;
+            };
+            items.extend(more);
+            if u64::from(page) < total {
+                if page >= self.max_pages {
+                    return Err(self.page_limit(&current));
+                }
+                page += 1;
+            } else {
+                break;
             }
         }
         Ok(Fetched::Ok(Value::Array(items)))

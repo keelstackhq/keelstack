@@ -7,7 +7,7 @@ mod common;
 
 use common::fake::FakeGithub;
 use common::{bosun, one_object};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 const APP_TOKEN: &str = "app-token-canary";
 const HEAD: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -28,10 +28,14 @@ fn repo(mode: &str) -> tempfile::TempDir {
     dir
 }
 
+/// ci.yml on the default branch: the mirror reads its local actions (`uses: ./...`).
+const CI_YML: &str = "jobs:\n  ci-hull:\n    steps:\n      - uses: ./hoard\n        with:\n          x: 1\n  ci-ok:\n    runs-on: x\n";
+
 fn pr() -> FakeGithub {
     let fake = FakeGithub::start();
     fake.pull(1, "change", "feature", "No link.");
     fake.pull_head_sha(1, HEAD);
+    fake.content(CI, "refs/heads/main", CI_YML);
     fake
 }
 
@@ -184,4 +188,86 @@ fn a_running_ci_a_missing_token_or_statuses_mode_posts_nothing() {
     assert_eq!(code, 1, "{v}");
     assert!(ci_ok_runs(&fake).is_empty());
     assert!(fake.statuses_of(HEAD).is_empty());
+}
+
+#[test]
+fn a_run_bound_to_another_pr_or_base_is_never_mirrored() {
+    // Attack: PR 2 from the same head into a branch `evil` whose ci.yml always passes.
+    for (what, prs) in [
+        (
+            "another PR",
+            json!([{"number": 2, "base": {"ref": "main"}}]),
+        ),
+        (
+            "another base",
+            json!([{"number": 1, "base": {"ref": "evil"}}]),
+        ),
+        ("no PR (a fork or a push)", json!([])),
+    ] {
+        let fake = pr();
+        fake.workflow_file_run_for(HEAD, CI, "pull_request", "completed", Some("success"), prs);
+        let (code, v) = mirror(&fake, "checks", true);
+        assert_eq!(code, 1, "{what}: {v}");
+        assert!(ci_ok_runs(&fake).is_empty(), "{what}");
+    }
+    // A forged green run for another base beside a red one for this PR: the red one decides.
+    let fake = pr();
+    fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("failure"));
+    fake.workflow_file_run_for(
+        HEAD,
+        CI,
+        "pull_request",
+        "completed",
+        Some("success"),
+        json!([{"number": 1, "base": {"ref": "evil"}}]),
+    );
+    let (code, v) = mirror(&fake, "checks", true);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(ci_ok_runs(&fake)[0]["conclusion"], "failure");
+}
+
+#[test]
+fn a_pr_that_changes_what_ci_yml_runs_from_the_checkout_gets_no_mirror() {
+    // One per class: .github/** (workflows, scripts, actions), a local `uses: ./` action ci.yml
+    // runs, and every R-ci path (scripts/** at any depth, action.yml anywhere, toolchain and
+    // tool configs, deny.toml, Makefile).
+    for file in [
+        ".github/workflows/other.yml",
+        ".github/scripts/affected.sh",
+        ".github/actions/x/action.yml",
+        "hoard/action.yml",
+        "hoard/action/dist/index.js",
+        "scripts/bump-version.sh",
+        "hull/scripts/render.mjs",
+        "tools/x/action.yml",
+        "rust-toolchain.toml",
+        "deny.toml",
+        ".cargo/config.toml",
+        "Makefile",
+    ] {
+        let fake = pr();
+        fake.pull_file(1, file, "modified", 1, 0, Some("@@ -0,0 +1,1 @@\n+x"));
+        fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
+        let (code, v) = mirror(&fake, "checks", true);
+        assert_eq!(code, 1, "{file}: {v}");
+        assert!(ci_ok_runs(&fake).is_empty(), "{file}");
+    }
+    // Other code is what ci.yml tests, not what it trusts: mirrored.
+    let fake = pr();
+    fake.pull_file(
+        1,
+        "hoist/src/a.rs",
+        "modified",
+        1,
+        0,
+        Some("@@ -0,0 +1,1 @@\n+x"),
+    );
+    fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
+    assert_eq!(mirror(&fake, "checks", true).0, 0);
+    // No ci.yml on the default branch: the local actions are unknown, so nothing is mirrored.
+    let fake = FakeGithub::start();
+    fake.pull(1, "change", "feature", "No link.");
+    fake.pull_head_sha(1, HEAD);
+    fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
+    assert_eq!(mirror(&fake, "checks", true).0, 1);
 }

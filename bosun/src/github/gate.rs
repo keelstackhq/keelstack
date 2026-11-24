@@ -257,7 +257,7 @@ pub fn unpinned_gates(pins: &[(String, Option<u64>)], app_id: u64) -> Vec<&'stat
 /// workflow's token has it); a 403 also fails closed.
 pub fn require_pinned(gh: &dyn Github, app_id: u64) -> Result<()> {
     let fix = String::from(
-        "the owner pins the gates in hoist.toml (`{ context = \"risk-check\", app = \"<app_slug>\" }`, the same for review-verdict and main-open) and runs `hoist apply --area github`; then re-run the risk workflow (or set `[checks] mode = \"dual\"` until then)",
+        "the owner pins the gates in hoist.toml (`{ context = \"risk-check\", app = \"<app_slug>\" }`, the same for review-verdict and main-open) and runs `hoist apply --area github`, then re-runs the risk workflow; until then only the owner's ruleset bypass merges",
     );
     let branch = crate::app::default_branch(gh)?;
     let missing = match gh.ruleset_pins(&branch)? {

@@ -19,7 +19,7 @@ for (const copy of COPIES) {
   });
 
   test(`${copy}: a non-string command is never coerced into an intended allow`, () => {
-    for (const command of [[ALLOWED], { toString: ALLOWED }, 42, null]) {
+    for (const command of [[ALLOWED], { toString: () => ALLOWED }, 42, null]) {
       const got = mod.main(raw(command), { legacy, head });
       assert.equal(got?.decision, "deny", JSON.stringify(command));
     }

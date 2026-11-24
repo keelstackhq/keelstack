@@ -262,7 +262,8 @@ mod tests {
         ];
         let m = merge_chunk_verdicts(1, "h", 1, &r);
         assert_eq!(m.confidence, 0.0);
-        assert!(m.chunks_reviewed.is_empty()); // A NaN confidence is the worst approval, whatever the order: it merges as 0.
+        assert!(m.chunks_reviewed.is_empty());
+        // A NaN confidence is the worst approval, whatever the order: it merges as 0.
         for r in [
             [
                 (1, Ok(ver("approve", f64::NAN, &[]))),

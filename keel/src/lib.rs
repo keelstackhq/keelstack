@@ -88,31 +88,49 @@ fn read_token() -> std::io::Result<Zeroizing<String>> {
     let saved = tty_settings();
     read_token_with(
         read_token_blocking,
-        &|| exec::interrupted().is_some(),
-        saved.as_deref(),
-        &restore_tty,
+        || exec::interrupted().is_some(),
+        saved,
+        std::sync::Arc::new(restore_tty),
     )
 }
 
+type Restore = std::sync::Arc<dyn Fn(&str) + Send + Sync>;
+
 fn read_token_with(
     read: fn() -> std::io::Result<Zeroizing<String>>,
-    interrupted: &dyn Fn() -> bool,
-    saved_tty: Option<&str>,
-    restore: &dyn Fn(&str),
+    interrupted: fn() -> bool,
+    saved_tty: Option<String>,
+    restore: Restore,
 ) -> std::io::Result<Zeroizing<String>> {
+    let stop = |saved: &Option<String>, restore: &Restore| {
+        if let Some(s) = saved {
+            restore(s);
+        }
+        Err(std::io::Error::new(
+            std::io::ErrorKind::Interrupted,
+            "interrupted",
+        ))
+    };
+    // Interrupted already: no prompt (and no reader thread) at all.
+    if interrupted() {
+        return stop(&saved_tty, &restore);
+    }
     let (tx, rx) = std::sync::mpsc::channel();
+    let (saved, again) = (saved_tty.clone(), restore.clone());
     std::thread::spawn(move || {
-        let _ = tx.send(read());
+        let r = read();
+        // The prompt outlived an interrupt (keel stopped waiting for it): when it finally ends,
+        // its own cleanup may have run on stale settings, so restore the saved ones again.
+        if interrupted()
+            && let Some(s) = &saved
+        {
+            again(s);
+        }
+        let _ = tx.send(r);
     });
     loop {
         if interrupted() {
-            if let Some(s) = saved_tty {
-                restore(s);
-            }
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Interrupted,
-                "interrupted",
-            ));
+            return stop(&saved_tty, &restore);
         }
         match rx.recv_timeout(Duration::from_millis(50)) {
             Ok(r) => return r,
@@ -229,38 +247,76 @@ mod tests {
         }
     }
 
-    fn blocked() -> std::io::Result<Zeroizing<String>> {
-        std::thread::sleep(Duration::from_secs(30));
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    fn recorder() -> (Arc<Mutex<Vec<String>>>, Restore) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let s = seen.clone();
+        (
+            seen,
+            Arc::new(move |x: &str| s.lock().unwrap().push(x.to_string())),
+        )
+    }
+
+    static EARLY_READ: AtomicBool = AtomicBool::new(false);
+    fn early_read() -> std::io::Result<Zeroizing<String>> {
+        EARLY_READ.store(true, Ordering::SeqCst);
         Ok(Zeroizing::new(String::new()))
     }
 
     #[test]
-    fn an_interrupt_during_the_prompt_restores_the_saved_terminal() {
-        let restored = std::cell::RefCell::new(Vec::new());
-        let r = read_token_with(blocked, &|| true, Some("500:5:bf:8a3b"), &|s| {
-            restored.borrow_mut().push(s.to_string())
-        });
+    fn interrupted_before_the_prompt_reads_nothing_and_restores() {
+        let (seen, restore) = recorder();
+        let r = read_token_with(early_read, || true, Some("500:5:bf".into()), restore);
         assert_eq!(r.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
-        assert_eq!(*restored.borrow(), ["500:5:bf:8a3b"]);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(!EARLY_READ.load(Ordering::SeqCst), "no reader started");
+        assert_eq!(*seen.lock().unwrap(), ["500:5:bf"]);
         // Not a terminal (nothing saved): nothing to restore.
-        let restored = std::cell::RefCell::new(Vec::<String>::new());
-        let r = read_token_with(blocked, &|| true, None, &|s| {
-            restored.borrow_mut().push(s.to_string())
-        });
-        assert!(r.is_err());
-        assert!(restored.borrow().is_empty());
+        let (seen, restore) = recorder();
+        assert!(read_token_with(early_read, || true, None, restore).is_err());
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    static MID: AtomicUsize = AtomicUsize::new(0);
+    fn mid_interrupted() -> bool {
+        MID.load(Ordering::SeqCst) > 0
+    }
+    fn mid_read() -> std::io::Result<Zeroizing<String>> {
+        MID.store(1, Ordering::SeqCst); // the signal arrives while the prompt is up
+        std::thread::sleep(Duration::from_millis(300));
+        Ok(Zeroizing::new(String::new()))
+    }
+
+    #[test]
+    fn an_interrupt_during_the_prompt_restores_now_and_again_when_the_reader_ends() {
+        let (seen, restore) = recorder();
+        let r = read_token_with(mid_read, mid_interrupted, Some("500:5:bf".into()), restore);
+        assert_eq!(r.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["500:5:bf"],
+            "restored at the interrupt"
+        );
+        std::thread::sleep(Duration::from_millis(600));
+        assert_eq!(
+            *seen.lock().unwrap(),
+            ["500:5:bf", "500:5:bf"],
+            "restored again once the reader stopped"
+        );
     }
 
     #[test]
     fn a_finished_read_restores_nothing() {
-        let restored = std::cell::RefCell::new(Vec::<String>::new());
+        let (seen, restore) = recorder();
         let r = read_token_with(
             || Ok(Zeroizing::new("tok".into())),
-            &|| false,
-            Some("x"),
-            &|s| restored.borrow_mut().push(s.to_string()),
+            || false,
+            Some("x".into()),
+            restore,
         );
         assert_eq!(r.unwrap().as_str(), "tok");
-        assert!(restored.borrow().is_empty());
+        assert!(seen.lock().unwrap().is_empty());
     }
 }

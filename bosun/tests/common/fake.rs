@@ -856,6 +856,7 @@ impl FakeGithub {
 
     /// A workflow run of `sha` from file `path` on `event` (`GET /actions/runs?head_sha=`), in
     /// `status`, with one job `ci-ok` of `conclusion` when given; returns the run id.
+    /// The run is bound to PR 1 into `main` (`pull_requests`); see `workflow_file_run_for`.
     pub fn workflow_file_run(
         &self,
         sha: &str,
@@ -864,11 +865,28 @@ impl FakeGithub {
         status: &str,
         ci_ok: Option<&str>,
     ) -> u64 {
+        let prs = json!([{"number": 1, "base": {"ref": "main", "sha": "base0000"}}]);
+        self.workflow_file_run_for(sha, path, event, status, ci_ok, prs)
+    }
+
+    /// As `workflow_file_run`, with the run's `pull_requests` list as given.
+    pub fn workflow_file_run_for(
+        &self,
+        sha: &str,
+        path: &str,
+        event: &str,
+        status: &str,
+        ci_ok: Option<&str>,
+        pull_requests: Value,
+    ) -> u64 {
         let mut s = self.state.lock().unwrap();
         let n = s.runs.len() as u64 + 1;
         let (run_id, job_id) = (1000 + n, 5000 + n);
-        s.runs.push(json!({"id": run_id, "head_sha": sha, "path": path, "event": event,
-            "status": status, "html_url": format!("https://github.test/acme/widget/actions/runs/{run_id}")}));
+        s.runs.push(
+            json!({"id": run_id, "head_sha": sha, "path": path, "event": event,
+            "status": status, "pull_requests": pull_requests,
+            "html_url": format!("https://github.test/acme/widget/actions/runs/{run_id}")}),
+        );
         if let Some(c) = ci_ok {
             s.jobs
                 .push(json!({"id": job_id, "run_id": run_id, "name": "ci-ok",
@@ -2069,6 +2087,11 @@ fn route(
             Some(t) => ok(json!({"tag_name": t, "published_at": s.release_at})),
             None => msg(404, "Not Found"),
         },
+        // The fake's default branch is `main`: rulesets read for any other branch are a bug.
+        ("GET", ["rules", "branches", b]) if *b != "main" => msg(
+            500,
+            &format!("the rulesets are read for branch {b:?}, not the default branch `main`"),
+        ),
         ("GET", ["rules", "branches", _]) => ok(if s.ruleset_checks.is_empty() {
             if s.gates_unpinned {
                 json!([{"type": "deletion"}])

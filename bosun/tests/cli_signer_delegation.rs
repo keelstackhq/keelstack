@@ -56,6 +56,19 @@ fn pr(k: &Key, cfg: &str, file: &str) -> FakeGithub {
     fake.pull(1, "change", "feature", "Closes #7");
     fake.pull_as_issue(1, "change");
     fake.pull_set(1, "head", json!({"sha": HEAD, "ref": "feature"}));
+    // ci.yml on the default branch and its green run of this PR: the signer re-reads it.
+    fake.content(
+        ".github/workflows/ci.yml",
+        "refs/heads/main",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    fake.workflow_file_run(
+        HEAD,
+        ".github/workflows/ci.yml",
+        "pull_request",
+        "completed",
+        Some("success"),
+    );
     fake.pull_set(1, "user", json!({"login": "octocat"}));
     fake.issue(7, "task", &[], "task\n<!-- bosun:task {} -->");
     fake.comment_by(
@@ -115,12 +128,13 @@ fn sign(fake: &FakeGithub, k: &Key, cfg: &str) -> (i32, Value) {
     (out.status.code().unwrap(), v)
 }
 
-/// Trust-root files the signer may sign under delegation (ci.yml, which the mirrored ci-ok runs,
-/// is refused: `the_signer_refuses_a_pr_that_changes_ci_yml`).
+/// Trust-root files the signer may sign under delegation. Anything ci.yml executes from the
+/// checkout (`.github/**`, local actions, R-ci paths) is refused instead:
+/// `the_signer_refuses_a_pr_that_changes_what_ci_yml_runs`.
 const TRUST_ROOT: [&str; 3] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
-    ".github/workflows/risk.yml",
+    "decisions/DECISIONS.md",
 ];
 
 #[test]
@@ -184,13 +198,16 @@ fn with_delegation_the_signer_still_needs_two_verdicts_and_a_green_gate_ci_ok() 
 }
 
 #[test]
-fn the_signer_refuses_a_pr_that_changes_ci_yml() {
+fn the_signer_refuses_a_pr_that_changes_what_ci_yml_runs() {
     // The mirrored ci-ok comes from the PR's own copy of ci.yml (a pull_request run): a PR that
     // changes it could make its own ci-ok green, so the keyless signer never signs it.
     let cfg = config(true);
     for (file, prev) in [
         (".github/workflows/ci.yml", None),
         (".github/workflows/x.yml", Some(".github/workflows/ci.yml")),
+        (".github/scripts/affected.sh", None),
+        ("scripts/bump-version.sh", None),
+        ("rust-toolchain.toml", None),
     ] {
         let k = key();
         let fake = pr(&k, &cfg, file);
@@ -200,7 +217,10 @@ fn the_signer_refuses_a_pr_that_changes_ci_yml() {
         let (code, v) = sign(&fake, &k, &cfg);
         assert_eq!(code, 1, "{file}: {v}");
         assert!(
-            v["error"]["message"].as_str().unwrap().contains("ci.yml"),
+            v["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("executes from the checkout"),
             "{file}: {v}"
         );
         assert_eq!(fake.comments_of(1).len(), 4, "{file}: nothing signed");
@@ -220,6 +240,31 @@ fn the_signer_refuses_while_the_ruleset_does_not_pin_the_gates() {
             .as_str()
             .unwrap()
             .contains("hoist apply --area github"),
+        "{v}"
+    );
+    assert_eq!(fake.comments_of(1).len(), 4, "nothing signed");
+}
+
+#[test]
+fn a_stale_green_bosun_ci_ok_never_counts_after_ci_yml_turns_red() {
+    // The mirror posted green earlier; ci.yml was re-run since and its ci-ok failed.
+    let cfg = config(true);
+    let k = key();
+    let fake = pr(&k, &cfg, "src/a.rs");
+    fake.workflow_file_run(
+        HEAD,
+        ".github/workflows/ci.yml",
+        "pull_request",
+        "completed",
+        Some("failure"),
+    );
+    let (code, v) = sign(&fake, &k, &cfg);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("not green now"),
         "{v}"
     );
     assert_eq!(fake.comments_of(1).len(), 4, "nothing signed");

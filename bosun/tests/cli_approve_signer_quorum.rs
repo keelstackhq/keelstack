@@ -53,6 +53,19 @@ fn pr(k: &Key, base: &str, main: &str, reviewers: &[&str]) -> FakeGithub {
     fake.pull(1, "change", "feature", "Closes #7");
     fake.pull_as_issue(1, "change");
     fake.pull_set(1, "head", json!({"sha": HEAD, "ref": "feature"}));
+    // ci.yml on the default branch and its green run of this PR: the signer re-reads it.
+    fake.content(
+        ".github/workflows/ci.yml",
+        "refs/heads/main",
+        "jobs:\n  ci-ok:\n    runs-on: x\n",
+    );
+    fake.workflow_file_run(
+        HEAD,
+        ".github/workflows/ci.yml",
+        "pull_request",
+        "completed",
+        Some("success"),
+    );
     fake.pull_set(1, "user", json!({"login": "octocat"}));
     fake.issue(7, "task", &[], "task\n<!-- bosun:task {} -->");
     fake.comment_by(

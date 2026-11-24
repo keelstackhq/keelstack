@@ -12,17 +12,27 @@ fn config() -> toml::Value {
 }
 
 #[test]
-fn the_signer_is_on_only_with_checks_mode_and_the_gate_app() {
+fn the_signer_is_on_with_checks_mode_and_the_gate_app() {
     let c = config();
-    let signer = c["approvals"].get("signer").and_then(|v| v.as_bool()) == Some(true);
-    let mode = c["checks"]["mode"].as_str().unwrap();
-    if signer {
-        assert_eq!(mode, "checks", "the CI signer needs checks mode");
-        assert!(c["checks"]["app_id"].as_integer().is_some_and(|i| i > 0));
-        assert!(root(".github/workflows/signer.yml").contains("bosun gate ci-ok"));
-        let keys = root(".bosun/approvers.toml");
-        assert!(keys.contains("role = \"signer\""), "no signer key enrolled");
-    }
+    // This repo runs the CI signer (spec §8); turning it off edits this test.
+    assert_eq!(
+        c["approvals"].get("signer").and_then(|v| v.as_bool()),
+        Some(true),
+        "[approvals] signer"
+    );
+    assert_eq!(
+        c["checks"]["mode"].as_str(),
+        Some("checks"),
+        "the CI signer needs checks mode"
+    );
+    assert!(c["checks"]["app_id"].as_integer().is_some_and(|i| i > 0));
+    let signer = root(".github/workflows/signer.yml");
+    assert!(signer.contains("bosun gate ci-ok"));
+    // The mirror's check run has its own name, never the required `ci-ok`, and signer.yml says so.
+    assert_eq!(bosun::gates::ci_ok::CONTEXT, "bosun-ci-ok");
+    assert!(signer.contains(bosun::gates::ci_ok::CONTEXT));
+    let keys = root(".bosun/approvers.toml");
+    assert!(keys.contains("role = \"signer\""), "no signer key enrolled");
 }
 
 #[test]
