@@ -426,7 +426,8 @@ impl Http {
 
     /// All pages of a list endpoint as one JSON array. GitHub follows `Link: rel="next"`;
     /// `array_key` names the array inside an object body (else the body is the array).
-    /// Cloudflare concatenates `result` across `result_info.page/total_pages`.
+    /// Cloudflare concatenates `result` across `result_info.page/total_pages`; a list without
+    /// `result_info` is read page by page until an empty page or a repeat of the last one.
     pub fn get_all(&self, path: &str, array_key: Option<&str>) -> Result<Fetched, HttpError> {
         match self.service {
             Service::Cloudflare => self.get_all_cloudflare(path),
@@ -468,6 +469,7 @@ impl Http {
     fn get_all_cloudflare(&self, path: &str) -> Result<Fetched, HttpError> {
         let mut items = Vec::new();
         let mut page = 1u32;
+        let mut last: Option<Vec<Value>> = None;
         loop {
             let current = with_query(path, &format!("page={page}"));
             let resp = match self.fetch(&current)? {
@@ -475,11 +477,26 @@ impl Http {
                 Ok(resp) => resp,
             };
             let body = self.parse(&current, &resp.body)?;
-            match body.get("result") {
-                Some(Value::Array(more)) => items.extend(more.iter().cloned()),
-                _ => return Err(self.invalid(&current)),
-            }
             let info = body.get("result_info");
+            let more = match body.get("result") {
+                Some(Value::Array(more)) => more.clone(),
+                _ => return Err(self.invalid(&current)),
+            };
+            // No `result_info`: the page count is unknown, so read on until an empty page, or a
+            // page equal to the last one (an endpoint that ignores `page` answers it again).
+            if info.is_none() {
+                if more.is_empty() || last.as_ref() == Some(&more) {
+                    break;
+                }
+                items.extend(more.iter().cloned());
+                last = Some(more);
+                if page >= self.max_pages {
+                    return Err(self.page_limit(&current));
+                }
+                page += 1;
+                continue;
+            }
+            items.extend(more);
             let at = info.and_then(|i| i.get("page")).and_then(Value::as_u64);
             let total = info
                 .and_then(|i| i.get("total_pages"))

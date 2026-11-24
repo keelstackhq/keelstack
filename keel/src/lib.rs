@@ -45,15 +45,64 @@ fn read_token_blocking() -> std::io::Result<Zeroizing<String>> {
     Ok(line)
 }
 
+/// The terminal's settings (`stty -g`) when stdin is a terminal, before the hidden prompt turns
+/// echo off; `None` otherwise or when `stty` is unavailable.
+fn tty_settings() -> Option<String> {
+    if !std::io::stdin().is_terminal() {
+        return None;
+    }
+    let out = std::process::Command::new("stty")
+        .arg("-g")
+        .stdin(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    let saved = String::from_utf8(out.stdout).ok()?.trim().to_string();
+    // `stty -g` prints one word of hex fields and colons; anything else is not passed back.
+    (!saved.is_empty() && saved.chars().all(|c| c.is_ascii_alphanumeric() || c == ':'))
+        .then_some(saved)
+}
+
+/// Restore the terminal settings `tty_settings` saved (echo back on).
+fn restore_tty(saved: &str) {
+    let _ = std::process::Command::new("stty")
+        .arg(saved)
+        .stdin(std::process::Stdio::inherit())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
 /// Read the token on a helper thread so a signal can stop the wait: the engine then returns
-/// `KeelError::Interrupted`, and the token (zeroized on drop) never outlives the read.
+/// `KeelError::Interrupted`, and the token (zeroized on drop) never outlives the read. The
+/// hidden prompt's reader thread stays blocked after an interrupt with echo off, so the saved
+/// terminal settings are restored then.
 fn read_token() -> std::io::Result<Zeroizing<String>> {
+    let saved = tty_settings();
+    read_token_with(
+        read_token_blocking,
+        &|| exec::interrupted().is_some(),
+        saved.as_deref(),
+        &restore_tty,
+    )
+}
+
+fn read_token_with(
+    read: fn() -> std::io::Result<Zeroizing<String>>,
+    interrupted: &dyn Fn() -> bool,
+    saved_tty: Option<&str>,
+    restore: &dyn Fn(&str),
+) -> std::io::Result<Zeroizing<String>> {
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let _ = tx.send(read_token_blocking());
+        let _ = tx.send(read());
     });
     loop {
-        if exec::interrupted().is_some() {
+        if interrupted() {
+            if let Some(s) = saved_tty {
+                restore(s);
+            }
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Interrupted,
                 "interrupted",
@@ -172,5 +221,40 @@ mod tests {
         for bad in ["", "0", "-3", "soon"] {
             assert_eq!(tool_timeout_secs(Some(bad)), 600, "{bad}");
         }
+    }
+
+    fn blocked() -> std::io::Result<Zeroizing<String>> {
+        std::thread::sleep(Duration::from_secs(30));
+        Ok(Zeroizing::new(String::new()))
+    }
+
+    #[test]
+    fn an_interrupt_during_the_prompt_restores_the_saved_terminal() {
+        let restored = std::cell::RefCell::new(Vec::new());
+        let r = read_token_with(blocked, &|| true, Some("500:5:bf:8a3b"), &|s| {
+            restored.borrow_mut().push(s.to_string())
+        });
+        assert_eq!(r.unwrap_err().kind(), std::io::ErrorKind::Interrupted);
+        assert_eq!(*restored.borrow(), ["500:5:bf:8a3b"]);
+        // Not a terminal (nothing saved): nothing to restore.
+        let restored = std::cell::RefCell::new(Vec::<String>::new());
+        let r = read_token_with(blocked, &|| true, None, &|s| {
+            restored.borrow_mut().push(s.to_string())
+        });
+        assert!(r.is_err());
+        assert!(restored.borrow().is_empty());
+    }
+
+    #[test]
+    fn a_finished_read_restores_nothing() {
+        let restored = std::cell::RefCell::new(Vec::<String>::new());
+        let r = read_token_with(
+            || Ok(Zeroizing::new("tok".into())),
+            &|| false,
+            Some("x"),
+            &|s| restored.borrow_mut().push(s.to_string()),
+        );
+        assert_eq!(r.unwrap().as_str(), "tok");
+        assert!(restored.borrow().is_empty());
     }
 }

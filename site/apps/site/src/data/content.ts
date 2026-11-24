@@ -90,7 +90,7 @@ export const agentRows: { key: string; text: string; href?: string }[] = [
   },
   {
     key: "hoist",
-    text: "Settings as code. A required check can pin the App that posts it. `hoist org plan|check|apply` runs the org control plane.",
+    text: `Settings as code. A required check can pin the App that posts it. \`hoist org ${facts.hoistOrg.join("|")}\` runs the org control plane.`,
   },
   { key: "--json --yes", text: "Every splice command takes both. No prompts, parseable results." },
   { key: "ci-ok", text: "One job, one check to wait on. Turbo runs only affected tasks." },

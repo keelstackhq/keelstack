@@ -72,6 +72,12 @@ test("hoist row: the org control plane is available, not coming", () => {
   expect(row?.text).not.toMatch(/coming/);
 });
 
+test("hoist row: the org subcommands come from hoist's OrgCommand enum (D-024)", () => {
+  const row = agentRows.find((r) => r.key === "hoist");
+  expect(facts.hoistOrg).toEqual(["plan", "check", "apply"]);
+  expect(row?.text).toContain(`\`hoist org ${facts.hoistOrg.join("|")}\``);
+});
+
 test("CLAUDE.md row: hull ships the subagents, no rigging step since hull v0.11.0", () => {
   const row = agentRows.find((r) => r.key === "CLAUDE.md");
   expect(row?.text).toContain("hull ships the subagents");

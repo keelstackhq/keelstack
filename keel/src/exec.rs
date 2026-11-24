@@ -154,6 +154,21 @@ pub fn sleep_interruptible(d: Duration) {
     }
 }
 
+/// How long keel reads a finished child's pipes after a normal exit: what the child wrote is
+/// already buffered, so only a grandchild that keeps the pipes open can make it wait this long.
+pub const PIPE_GRACE: Duration = Duration::from_secs(10);
+
+/// The one deadline (from now) for reading both pipes once the child is gone.
+fn pipe_grace(timed_out: bool, forwarded: bool) -> Duration {
+    if timed_out {
+        Duration::from_secs(1)
+    } else if forwarded {
+        Duration::from_secs(2)
+    } else {
+        PIPE_GRACE
+    }
+}
+
 /// Runs real subprocesses. Stdin is piped only when the call has some; it is never logged.
 pub struct SystemRunner;
 
@@ -199,17 +214,30 @@ impl Runner for SystemRunner {
             // A child that exits early closes the pipe: not an error here.
             let _ = pipe.write_all(data);
         }
-        // Both pipes are drained on threads so a chatty child never blocks on a full pipe.
+        // Both pipes are drained on threads so a chatty child never blocks on a full pipe. Each
+        // thread appends what it reads to a shared buffer and says when it reached EOF, so what
+        // the child wrote is kept even when a grandchild holds the pipe past the grace.
         let reader = |pipe: Option<Box<dyn Read + Send>>| {
-            let (tx, rx) = mpsc::channel();
+            let buf = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let (tx, rx) = mpsc::channel::<()>();
+            let sink = buf.clone();
             std::thread::spawn(move || {
-                let mut buf = Vec::new();
                 if let Some(mut p) = pipe {
-                    let _ = p.read_to_end(&mut buf);
+                    let mut chunk = [0u8; 8192];
+                    loop {
+                        match p.read(&mut chunk) {
+                            Ok(0) => break,
+                            Ok(n) => sink
+                                .lock()
+                                .map_or((), |mut b| b.extend_from_slice(&chunk[..n])),
+                            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => break,
+                        }
+                    }
                 }
-                let _ = tx.send(buf);
+                let _ = tx.send(());
             });
-            rx
+            (buf, rx)
         };
         let out_rx = reader(
             child
@@ -261,17 +289,21 @@ impl Runner for SystemRunner {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        // After a kill a grandchild may still hold the pipes: wait only briefly for them.
-        // After a forwarded signal keel must exit soon too: a grandchild may outlive the child.
-        let grace = if timed_out {
-            Duration::from_secs(1)
-        } else if forwarded {
-            Duration::from_secs(2)
-        } else {
-            Duration::from_secs(3600)
-        };
-        let got = |rx: mpsc::Receiver<Vec<u8>>| {
-            String::from_utf8_lossy(&rx.recv_timeout(grace).unwrap_or_default()).into_owned()
+        // The child is gone; a grandchild may still hold the pipes. One deadline covers both
+        // pipes: after a kill 1 s, after a forwarded signal 2 s (keel must exit soon), after a
+        // normal exit `PIPE_GRACE` (what the child wrote is already in the pipes).
+        let until = Instant::now() + pipe_grace(timed_out, forwarded);
+        type Drain = (
+            std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+            mpsc::Receiver<()>,
+        );
+        let got = |(buf, rx): Drain| {
+            let left = until.saturating_duration_since(Instant::now());
+            let _ = rx.recv_timeout(left);
+            buf.lock().map_or_else(
+                |_| String::new(),
+                |b| String::from_utf8_lossy(&b).into_owned(),
+            )
         };
         let (stdout, mut stderr) = (got(out_rx), got(err_rx));
         match status {
@@ -389,6 +421,27 @@ mod tests {
             (out.code, out.stdout.as_str(), out.stderr.as_str()),
             (3, "hi\n", "err\n")
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_grandchild_holding_the_pipes_delays_an_untimed_call_by_one_bounded_grace() {
+        // The child exits at once; its background grandchild keeps stdout and stderr open for
+        // 30 s. keel reads both pipes against ONE deadline (`PIPE_GRACE`), not one per pipe.
+        let started = Instant::now();
+        let c = Cmd::new("sh", &["-c", "sleep 30 & echo hi"]);
+        let out = SystemRunner.run(&c);
+        let took = started.elapsed();
+        assert_eq!((out.code, out.stdout.as_str()), (0, "hi\n"));
+        assert!(took >= PIPE_GRACE, "{took:?}");
+        assert!(took < PIPE_GRACE + Duration::from_secs(4), "{took:?}");
+    }
+
+    #[test]
+    fn the_pipe_grace_is_shortest_after_a_kill() {
+        assert_eq!(pipe_grace(true, false), Duration::from_secs(1));
+        assert_eq!(pipe_grace(false, true), Duration::from_secs(2));
+        assert_eq!(pipe_grace(false, false), PIPE_GRACE);
     }
 
     #[cfg(unix)]

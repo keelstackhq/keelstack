@@ -165,14 +165,13 @@ fn applied_yields(
         && relayed_by.as_deref() == comment_relayed_by(&a.body)
 }
 
-/// Whether the verdict job has the step `name` with no `completed_at` yet (still running).
+/// Whether the verdict job's step `name` is not finished in this job list: it has no
+/// `completed_at` yet (still running), or the list has no such step at all (read before the
+/// step started). Either way the list may change, so it is never kept in the cache.
 fn step_pending(jobs: &[RunJob], name: &str) -> bool {
-    jobs.iter().any(|j| {
-        j.name == JOB
-            && j.steps
-                .iter()
-                .any(|s| s.name == name && s.completed_at.trim().is_empty())
-    })
+    let steps = || (jobs.iter().filter(|j| j.name == JOB)).flat_map(|j| j.steps.iter());
+    steps().any(|s| s.name == name && s.completed_at.trim().is_empty())
+        || !steps().any(|s| s.name == name)
 }
 
 /// Drop one cached job list so the next read asks GitHub again.
@@ -266,8 +265,9 @@ fn verify(
     );
     let pr = c.issue_url.rsplit('/').next().unwrap_or("");
     let step = format!("{STEP} {pr} {applied}");
-    // A step still running has no `completed_at`: the record may be fresh, read too early. It is
-    // pending, not unverified: do not keep this job list in the cache.
+    // A step still running has no `completed_at`, and a list read before the step started has
+    // no such step: the record may be fresh, read too early. It is pending, not unverified: do
+    // not keep this job list in the cache (it still does not count now: fail closed).
     if jobs.as_ref().is_some_and(|js| step_pending(js, &step)) {
         forget_jobs(&(repo, run, attempt));
         return false;
@@ -325,6 +325,12 @@ mod tests {
             &[job("2026-01-01T00:00:02Z")],
             "bosun verdict record 1 2"
         ));
+        // Read before the step appeared (or no verdict job yet): not final either.
+        assert!(step_pending(
+            &[job("2026-01-01T00:00:02Z")],
+            "bosun verdict record 1 3"
+        ));
+        assert!(step_pending(&[], "bosun verdict record 1 2"));
         let key = ("o/r-pending".to_string(), 1, 1);
         let read = cached(
             |m| &mut m.jobs,

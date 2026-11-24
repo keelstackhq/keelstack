@@ -1,1 +1,1 @@
-- 2026-11-24 · fix crate packaging · keel-bosun package include + cargo package CI step, release 0.22.1 · PR #?
+- 2026-11-24 · fix crate packaging · keel-bosun package include + cargo package CI step, release 0.22.1 · PR #70

@@ -2,6 +2,8 @@
 
 ## 0.22.1 (2026-11-24)
 
+- Lockstep release with keel-bosun's packaging fix (#70); no hoist changes.
+
 ## 0.22.0 (2026-11-23)
 
 ### Features
