@@ -1,14 +1,13 @@
 //! The legacy hook: main's (d90f917) `bosun hook pre-tool-use` judge, vendored verbatim with
-//! main's guard ([`crate::core::guard::legacy`]) and main's script reader, so the legacy judge sees
-//! exactly the input main saw. The live hook ([`super::pre_tool_use`]) runs it first and returns
-//! its deny at once (the no-regression rule). Three differences from main, none of which judges a
-//! call: no repeat-lock (the live hook keeps its count; running it twice would double it), no
-//! stale-verdict notes and no repeat-file reset (side effects the live hook performs once).
-//! Returns the hook's deny output or `None`; never an allow note.
+//! main's guard ([`crate::core::guard::legacy`]), main's script reader and main's repeat-lock,
+//! so the legacy judge sees exactly the input main saw and counts repeats where main counted
+//! them. The live hook ([`super::pre_tool_use`]) runs it first and returns its deny at once (the
+//! no-regression rule); otherwise its repeat note goes on to the new rules. One difference from
+//! main: no stale-verdict notes (warnings, never a deny; the live hook adds them once).
 
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{cache, git_out};
 use crate::app::{App, trusted_notes};
@@ -21,11 +20,12 @@ use crate::core::guard::legacy::{
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
+use crate::core::repeat::{Verdict as Repeat, is_poll, repeat_key, repeat_step, repeat_verdict};
 use crate::core::stamps::gate_loop;
 use crate::core::touch::{is_plan_file, is_plan_tick};
 use crate::ctx::own_session;
 
-use super::pre_tool_use::deny;
+use super::pre_tool_use::{deny, is_deny};
 
 /// Main's judge (see the module doc for the three omissions).
 pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
@@ -94,6 +94,7 @@ pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
                 Err(e) => eprintln!("bosun: warning: edit-lock skipped: {e}"),
             }
         }
+        let repeat = repeat_lock(&dir, input, &tool_input);
         let read = |p: &str| read_script(&dir, p);
         if let Some(why) = script_rules(command, &read, &branch_at, &default) {
             return Some(deny(&why));
@@ -108,8 +109,28 @@ pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
             Ok(p) => p,
             Err(why) => return Some(deny(&why)),
         };
-        let _ = pushed;
-        return None;
+        if repeat.as_deref().is_some_and(is_deny) {
+            return repeat;
+        }
+        let notes: Vec<String> = repeat
+            .and_then(|r| serde_json::from_str::<Value>(&r).ok())
+            .and_then(|v| {
+                v["hookSpecificOutput"]["additionalContext"]
+                    .as_str()
+                    .map(String::from)
+            })
+            .into_iter()
+            .collect();
+        let _ = pushed; // main added stale-verdict notes here (warnings only)
+        return (!notes.is_empty()).then(|| {
+            json!({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+                "additionalContext": notes.join("\n")}})
+            .to_string()
+        });
+    }
+    if let Some(file) = repeat_file(&dir, input) {
+        // Another tool call (an edit between test runs) ends the run of repeats.
+        let _ = std::fs::remove_file(file);
     }
     let path = edited_path(tool, &tool_input)?;
     if plan_tick_in(&dir, tool, &path, &tool_input) {
@@ -668,4 +689,42 @@ fn repo_relative(root: &Path, cwd: &Path, path: &str) -> Option<String> {
     })?;
     let text = rel.to_str()?.replace('\\', "/");
     (!rel.components().any(|c| c == Component::ParentDir)).then_some(text)
+}
+
+/// `<git common dir>/bosun/repeat/<key>.json` of the session, agent and directory; `None`
+/// without a session or a git repo.
+fn repeat_file(dir: &Path, input: &Value) -> Option<std::path::PathBuf> {
+    let text = |k: &str| input.get(k).and_then(Value::as_str).map(String::from);
+    let session = text("session_id").or_else(|| std::env::var("BOSUN_SESSION").ok());
+    let session = session.filter(|s| !s.trim().is_empty())?;
+    let agent = text("agent_id").unwrap_or_default();
+    let key = repeat_key(&session, &agent, &dir.to_string_lossy());
+    let common = git_out(dir, &["rev-parse", "--git-common-dir"])?;
+    Some(dir.join(common).join(format!("bosun/repeat/{key}.json")))
+}
+
+/// repeat-lock: count a Bash call that is not a poll (written atomically); a warning at the
+/// third run in a row, a deny from the fifth. Any I/O failure skips the lock.
+fn repeat_lock(dir: &Path, input: &Value, tool_input: &Value) -> Option<String> {
+    let command = tool_input.get("command").and_then(Value::as_str)?;
+    let file = (!is_poll(command))
+        .then(|| repeat_file(dir, input))
+        .flatten()?;
+    let prev = serde_json::from_slice(&std::fs::read(&file).unwrap_or_default()).ok();
+    let step = repeat_step(prev, command);
+    let tmp = file.with_extension(format!("json.tmp{}", std::process::id()));
+    let wrote = (file.parent().map_or(Ok(()), std::fs::create_dir_all))
+        .and_then(|()| std::fs::write(&tmp, serde_json::to_vec(&step)?))
+        .and_then(|()| std::fs::rename(&tmp, &file));
+    if let Err(e) = wrote {
+        eprintln!("bosun: warning: repeat-lock skipped: {e}");
+        return None;
+    }
+    match repeat_verdict(step.count)? {
+        Repeat::Deny(why) => Some(deny(&why)),
+        Repeat::Warn(why) => Some(
+            json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": why}})
+                .to_string(),
+        ),
+    }
 }

@@ -2836,6 +2836,8 @@ export function decide(input, ctx) {
  * never run (but for an enumerated intended allow). A missing legacy judge or one that throws
  * denies every call. The head rules run only when the legacy judge allows or asks; their internal
  * error denies a risky call (`failClosed`), else keeps the legacy decision.
+ * Cost on a legacy deny beyond main's: loading this module, one more JSON.parse of `raw` and
+ * the `intendedAllow` word test.
  * `deps` is for tests (inject a head-rule spy or a missing legacy judge).
  * @param {string} raw
  * @returns {null | { decision: "deny" | "ask", reason: string }}

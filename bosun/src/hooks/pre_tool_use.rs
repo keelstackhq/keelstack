@@ -16,7 +16,7 @@ use crate::core::guard::{
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
-use crate::core::repeat::{Verdict as Repeat, is_poll, repeat_key, repeat_step, repeat_verdict};
+use crate::core::repeat::repeat_key;
 use crate::core::stamps::gate_loop;
 use crate::core::touch::{is_plan_file, is_plan_tick};
 use crate::core::verdict::{Verdict, comment_json};
@@ -82,17 +82,19 @@ fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {
 
 /// The no-regression rule, by construction: main's hook (vendored with main's guard and script
 /// reader in [`super::pre_tool_use_legacy`]) judges the call first, on the same hook input, and
-/// its deny is returned at once: the new rules never run after it, so a call main denies is
-/// denied as fast as main denies it. A panic in it denies ([`guarded`]). The only exception is a
+/// its deny is returned at once: the new rules never run after it, so a call main denies costs
+/// main's work plus only the intended-allow check (a word-shape test, and for the bump shape a
+/// read and hash of the bump script). Main's repeat-lock counts in it, as on main. A panic in
+/// it denies ([`guarded`]). The only exception is a
 /// Bash command that is exactly an enumerated intended allow ([`intended::allow`]) whose pinned
 /// script, if any, is unchanged; the new rules judge it (and every call legacy allows).
 fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
-    if let Some(old) = super::pre_tool_use_legacy::judge(cwd, input)
-        && !intended_override(cwd, input)
-    {
-        return Some(old);
+    let old = super::pre_tool_use_legacy::judge(cwd, input);
+    if old.as_deref().is_some_and(is_deny) && !intended_override(cwd, input) {
+        return old;
     }
-    judge_new(cwd, input)
+    // Legacy counted the call (main's repeat-lock); its note, if any, goes to the new rules.
+    judge_new(cwd, input, old.filter(|o| !is_deny(o)))
 }
 
 /// Whether the call is a Bash command that is exactly an enumerated intended allow, with its
@@ -150,7 +152,7 @@ thread_local! {
 }
 
 /// The new guard's judge; runs only when the legacy judge allows (see [`judge`]).
-fn judge_new(cwd: Option<&Path>, input: &Value) -> Option<String> {
+fn judge_new(cwd: Option<&Path>, input: &Value, repeat: Option<String>) -> Option<String> {
     #[cfg(test)]
     NEW_RUNS.with(|n| n.set(n.get() + 1));
     let tool = input.get("tool_name").and_then(Value::as_str)?;
@@ -206,7 +208,7 @@ fn judge_new(cwd: Option<&Path>, input: &Value) -> Option<String> {
     }
     if tool == "Bash" {
         // Edit-lock for the files a command plainly writes (`> f`, `tee f`, `cp .. f`, `sed -i`),
-        // then repeat-lock; script files are read last, after every other lock.
+        // (repeat-lock counted in the legacy judge); script files are read last.
         let command = tool_input
             .get("command")
             .and_then(Value::as_str)
@@ -218,7 +220,6 @@ fn judge_new(cwd: Option<&Path>, input: &Value) -> Option<String> {
                 Err(e) => eprintln!("bosun: warning: edit-lock skipped: {e}"),
             }
         }
-        let repeat = repeat_lock(&dir, input, &tool_input);
         let read = |p: &str| read_script(&dir, p);
         if let Some(why) = script_rules(command, &read, &branch_at, &default) {
             return Some(deny(&why));
@@ -772,32 +773,6 @@ fn repeat_file(dir: &Path, input: &Value) -> Option<std::path::PathBuf> {
     Some(dir.join(common).join(format!("bosun/repeat/{key}.json")))
 }
 
-/// repeat-lock: count a Bash call that is not a poll (written atomically); a warning at the
-/// third run in a row, a deny from the fifth. Any I/O failure skips the lock.
-fn repeat_lock(dir: &Path, input: &Value, tool_input: &Value) -> Option<String> {
-    let command = tool_input.get("command").and_then(Value::as_str)?;
-    let file = (!is_poll(command))
-        .then(|| repeat_file(dir, input))
-        .flatten()?;
-    let prev = serde_json::from_slice(&std::fs::read(&file).unwrap_or_default()).ok();
-    let step = repeat_step(prev, command);
-    let tmp = file.with_extension(format!("json.tmp{}", std::process::id()));
-    let wrote = (file.parent().map_or(Ok(()), std::fs::create_dir_all))
-        .and_then(|()| std::fs::write(&tmp, serde_json::to_vec(&step)?))
-        .and_then(|()| std::fs::rename(&tmp, &file));
-    if let Err(e) = wrote {
-        eprintln!("bosun: warning: repeat-lock skipped: {e}");
-        return None;
-    }
-    match repeat_verdict(step.count)? {
-        Repeat::Deny(why) => Some(deny(&why)),
-        Repeat::Warn(why) => Some(
-            json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": why}})
-                .to_string(),
-        ),
-    }
-}
-
 /// Whether this session is a registered child for `write.epic`: the epic carries a live lease
 /// for this session with origin `spawned` and an empty touch, which only `bosun spawn --record`
 /// writes (a claim has touch paths), in a comment of a repo writer (`trusted_notes`, not any
@@ -954,6 +929,30 @@ mod tests {
 
     /// The no-regression rule by construction: a call the legacy judge (main's hook) denies is
     /// denied without running the new rules; an allowed call runs them once.
+    #[test]
+    fn repeats_denied_by_a_later_lock_still_count_as_on_main() {
+        // Opus hunt on #66: main counts a Bash call before its script, push and fetch locks;
+        // the fifth same command is the repeat-lock's deny even after the script turned benign.
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "feature"])
+            .arg(d)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok);
+        std::fs::create_dir_all(d.join("scripts")).unwrap();
+        std::fs::write(d.join("scripts/y.sh"), "git push -f origin main\n").unwrap();
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash scripts/y.sh"},
+            "session_id": "S1"});
+        for _ in 0..4 {
+            assert!(judge(Some(d), &input).as_deref().is_some_and(is_deny));
+        }
+        std::fs::write(d.join("scripts/y.sh"), "echo ok\n").unwrap();
+        let fifth = judge(Some(d), &input).unwrap_or_default();
+        assert!(is_deny(&fifth) && fifth.contains("repeat-lock"), "{fifth}");
+    }
+
     #[test]
     fn a_legacy_deny_never_runs_the_new_rules() {
         let dir = tempfile::tempdir().unwrap();
