@@ -93,7 +93,7 @@ jobs:
         run: |
           out="$(./target/release/bosun verdict apply "$COMMENT" --check)"
           printf '%s\n' "$out"
-          if printf '%s' "$out" | grep -Eq '"accepted": *true'; then
+          if printf '%s' "$out" | jq -e '.data.accepted == true' >/dev/null; then
             echo "accepted=true" >> "$GITHUB_OUTPUT"
           fi
       # The one step that writes the verdict record. Its name carries the PR and the comment of

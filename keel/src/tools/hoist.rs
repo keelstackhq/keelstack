@@ -131,7 +131,7 @@ fn in_drift(item: &Value) -> bool {
 
 /// `hoist --json check --area cloudflare`, read for one [`Slice`]: exit 0 or 1 is done only when
 /// at least one item of the slice's kinds exists and every such item is done (see [`in_drift`]);
-/// no such item, or one that is not "ok", is drift. Exit 2 is `human_steps[0]` (never done). A
+/// no such item is `Res::NoItems`, and any item that is not "ok" is drift. Exit 2 is `human_steps[0]` (never done). A
 /// hoist that rejects `--area` is `Upgrade`.
 pub fn check_cloudflare(r: &dyn Runner, dir: &Path, s: &Slice, t: Duration) -> Res {
     let c = cmd(&["--json", "check"], area_args(&[CLOUDFLARE]), dir, t);

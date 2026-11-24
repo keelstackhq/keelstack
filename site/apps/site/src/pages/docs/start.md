@@ -71,7 +71,7 @@ With hull: from the repo root on a new branch with a clean tree, assess first, t
 
 ```bash
 curl -fsSL https://keelstack.dev/assess/v0.22.0.mjs -o /tmp/assess.mjs
-echo "4f8ee979812a43beb607b824eae0253c6a6fed7b27fcc75f8d5fe24f9b2a4007  /tmp/assess.mjs" | sha256sum -c
+echo "ee7933f0c2afff2098c91a158d7ffddf6f2300d3a40e7df0391a59d11e8f7ec6  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 pnpm dlx @keelstackhq/splice@0.22.0 adopt gh:keelstackhq/keelstack//hull/<template> --ref v0.22.0 --piece <id>:<name> ... --dry-run --json
 ```

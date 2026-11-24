@@ -99,7 +99,10 @@ fn a_bare_pathspec_glob_can_expand_to_a_git_option() {
     // Denied by the legacy judge (main) and not an enumerated intended allow (a glob with no
     // `/` before it can expand to an option even after `--`, which may be an option's value).
     for cmd in ["git grep -e x -- '*.rs' *.md", "git diff -- *.md"] {
-        assert!(hook(cmd, &[]).is_some(), "{cmd}");
+        assert!(
+            crate::hooks::pre_tool_use::hook_bash(&[], cmd).is_some(),
+            "{cmd}"
+        );
     }
 }
 

@@ -55,12 +55,15 @@ fn g1_tests_regex_and_globs_outside_protected_words_pass() {
         assert_eq!(hook(cmd, &[]), None, "{cmd}");
     }
     // Denied by the legacy judge (main) and not an enumerated intended allow.
-    assert!(hook("git ls-files -- *.rs | wc -l", &[]).is_some());
+    assert!(crate::hooks::pre_tool_use::hook_bash(&[], "git ls-files -- *.rs | wc -l").is_some());
     let scripts = [
         "if [ -n \"$(git status --porcelain)\" ]; then echo dirty; fi\ngit ls-files -- *.rs | wc -l\n",
     ];
     for body in scripts {
-        assert!(hook("bash x.sh", &[("x.sh", body)]).is_some(), "{body}");
+        assert!(
+            crate::hooks::pre_tool_use::hook_bash(&[("x.sh", body)], "bash x.sh").is_some(),
+            "{body}"
+        );
     }
 }
 
@@ -121,7 +124,10 @@ fn g2_a_script_that_is_only_named_is_not_read() {
         "bash ok.sh x.sh",
         "bash -e ok.sh x.sh",
     ] {
-        assert!(hook(cmd, &files).is_some(), "{cmd}");
+        assert!(
+            crate::hooks::pre_tool_use::hook_bash(&files, cmd).is_some(),
+            "{cmd}"
+        );
     }
     for cmd in [
         "bash x.sh",
@@ -145,7 +151,10 @@ fn g2_a_script_that_is_only_named_is_not_read() {
 fn g3_braces_in_quoted_text_pass_and_unread_braces_stay_refused() {
     // Denied by the legacy judge (main) and not an enumerated intended allow.
     for cmd in ["git commit -m \"note {,] here\"", "xargs grep -E \"a {,]\""] {
-        assert!(hook(cmd, &[]).is_some(), "{cmd}");
+        assert!(
+            crate::hooks::pre_tool_use::hook_bash(&[], cmd).is_some(),
+            "{cmd}"
+        );
     }
     for cmd in [
         "git log --grep \"x {1,2} y\"",
@@ -297,7 +306,10 @@ fn g6_fetch_with_read_only_commands_passes() {
         "git fetch -q origin main && grep -n x f | wc -l",
         "git diff --name-only | grep -E '\\.rs$' | xargs -r ls",
     ] {
-        assert!(hook(cmd, &[]).is_some(), "{cmd}");
+        assert!(
+            crate::hooks::pre_tool_use::hook_bash(&[], cmd).is_some(),
+            "{cmd}"
+        );
     }
     for cmd in [
         "export GIT_SSH_COMMAND=x; git fetch origin",

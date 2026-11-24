@@ -17,6 +17,7 @@ pub mod cli_repeat;
 pub mod compact;
 pub mod post_tool_use;
 pub mod pre_tool_use;
+pub mod pre_tool_use_legacy;
 pub mod refusal;
 pub mod session_rules;
 pub mod session_start;

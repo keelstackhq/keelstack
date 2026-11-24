@@ -125,7 +125,7 @@ fn a_cd_before_a_script_is_followed_or_refused() {
     }
     let files = [("evil.sh", BAD), ("/tmp/evil.sh", OK), ("sub/x.sh", OK)];
     // Denied by the legacy judge (main reads `evil.sh` at the hook directory).
-    assert!(hook("cd /tmp && bash evil.sh", &files).is_some());
+    assert!(crate::hooks::pre_tool_use::hook_bash(&files, "cd /tmp && bash evil.sh").is_some());
     for cmd in ["cd sub && bash x.sh", "cd \"$D\" && bash /tmp/evil.sh"] {
         assert_eq!(hook(cmd, &files), None, "{cmd}");
     }

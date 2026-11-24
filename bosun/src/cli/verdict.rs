@@ -542,7 +542,9 @@ pub(crate) fn record(
         eff.approve = false;
         eff.reasons.push("escalated to the owner".into());
     }
-    // #52: the status aggregates the latest verdict of every reviewer session on this head. Green
+    // #52: the status aggregates the latest verdict of every reviewer session on this head,
+    // bound to a reviewer session or not. It is informational: merge approval (risk-check) counts
+    // only records bound to a reviewer session. Green
     // when one session approves at the threshold and no session's latest verdict blocks (a
     // request-changes, a blocker, an escalation); a low-confidence approve with no
     // findings neither counts nor blocks. Posting order does not matter.

@@ -6,7 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { decide } from "../template/pieces/base/files/.claude/hooks/guard.mjs";
+import { decide, decideHead } from "../template/pieces/base/files/.claude/hooks/guard.mjs";
 
 const bash = (command) => ({ tool_name: "Bash", tool_input: { command } });
 const dir = mkdtempSync(join(tmpdir(), "guard-feedback-"));
@@ -116,7 +116,10 @@ for (const c of [
 }
 
 test("a refused gh api write names the workflow alternatives", () => {
-  const d = decide(bash("gh api -X POST repos/o/r/actions/workflows/123/dispatches"), ctx);
+  // main's guard denies it first (its reason reaches the hook); guard.mjs's own rule names these
+  const call = bash("gh api -X POST repos/o/r/actions/workflows/123/dispatches");
+  assert.equal(decide(call, ctx)?.decision, "deny");
+  const d = decideHead(call, ctx);
   assert.match(d.reason, /gh workflow run <file>/);
   assert.match(d.reason, /gh run rerun/);
 });

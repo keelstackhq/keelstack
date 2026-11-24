@@ -261,6 +261,19 @@ if grep -q '^version = "=1.13.1"$' "$syn/a/Cargo.toml"; then ok "table-form regi
 if [ "$(grep -c '^version = "2.0.0"$' "$syn/Cargo.lock")" = 2 ] && grep -q '^version = "1.0.229"$' "$syn/Cargo.lock"; then ok "synthetic Cargo.lock"; else fail "synthetic Cargo.lock"; fi
 if [ -z "$(bash "$syn/scripts/bump-version.sh" 2.0.0)" ]; then ok "synthetic second run is a no-op"; else fail "synthetic second run changed files"; fi
 
+# A member name with sed metacharacters is rejected before any file is touched.
+bad="$tmp/bad"
+mkdir -p "$bad/scripts" "$bad/a"
+cp "$root/scripts/bump-version.sh" "$bad/scripts/"
+printf '[workspace]\nmembers = ["a#b"]\n\n[workspace.package]\nversion = "1.0.0"\n' >"$bad/Cargo.toml"
+if out=$(bash "$bad/scripts/bump-version.sh" 2.0.0 2>&1); then
+  fail "member name with '#' was accepted"
+elif grep -q 'invalid workspace member' <<<"$out"; then
+  ok "member name with '#' is rejected"
+else
+  fail "member name rejected without the expected message: $out"
+fi
+
 # --- shell hygiene -------------------------------------------------------------------------------
 for s in scripts/bump-version.sh scripts/bump-version.test.sh; do
   check "bash -n $s" bash -n "$root/$s"

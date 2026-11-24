@@ -63,6 +63,10 @@ while IFS= read -r m; do members+=("$m"); done < <(
   awk '/^members[ \t]*=/ { f = 1 } f { print } f && /\]/ { exit }' Cargo.toml | grep -o '"[^"]*"' | tr -d '"'
 )
 [ "${#members[@]}" -gt 0 ] || die "no [workspace] members in Cargo.toml"
+# Member names reach sed expressions below: refuse anything but plain path characters.
+for m in "${members[@]}"; do
+  [[ $m =~ ^[A-Za-z0-9_./-]+$ ]] || die "invalid workspace member name '$m' (allowed: A-Z a-z 0-9 _ . / -)"
+done
 
 crates=()
 for m in "${members[@]}"; do

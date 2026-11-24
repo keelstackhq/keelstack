@@ -68,7 +68,9 @@ const ALLOW = [
 ];
 
 for (const copy of COPIES) {
-  const { decide } = await import(`../${copy}/pieces/base/files/.claude/hooks/guard.mjs`);
+  const { decide, decideHead } = await import(
+    `../${copy}/pieces/base/files/.claude/hooks/guard.mjs`
+  );
   for (const c of DENY)
     test(`${copy} denied: ${JSON.stringify(c).slice(0, 120)}`, () =>
       assert.equal(decide(bash(c), ctx)?.decision, "deny"));
@@ -76,10 +78,11 @@ for (const copy of COPIES) {
     test(`${copy} allowed: ${JSON.stringify(c).slice(0, 120)}`, () =>
       assert.equal(decide(bash(c), ctx), null));
   test(`${copy} a pushed branch from $(...) keeps the literal-branch fix`, () => {
-    const d = decide(bash('git push -u origin "$(git branch --show-current)"'), ctx);
-    assert.equal(d?.decision, "deny");
+    const call = bash('git push -u origin "$(git branch --show-current)"');
+    assert.equal(decide(call, ctx)?.decision, "deny");
+    const d = decideHead(call, ctx);
     assert.match(d.reason, /write the branch name literally/);
   });
   test(`${copy} a changed word says to write it plainly`, () =>
-    assert.match(decide(bash("npm publish$()"), ctx)?.reason ?? "", /write the word plainly/));
+    assert.match(decideHead(bash("npm publish$()"), ctx)?.reason ?? "", /write the word plainly/));
 }

@@ -74,7 +74,7 @@ fn parse_only(w: &[&str]) -> bool {
 /// a test keeps the hash in step with the file).
 pub const BUMP_SCRIPT: (&str, &str) = (
     "scripts/bump-version.sh",
-    "69c0dc93a5b9e6166d6d5a90fb8181ffcfbff95b871d7d00b9f1844fc0ab7b33",
+    "753c6534a9ac8df3d2e345ca3898fba66225fbfba72f9d6afc95ca0c3b748681",
 );
 
 /// Whether `text` is the pinned script of an allow (`bump-version`); other allows pin none.

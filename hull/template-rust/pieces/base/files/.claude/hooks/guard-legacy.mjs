@@ -1,6 +1,8 @@
 // Legacy judge: main's guard.mjs (d90f917) verbatim, for guard.mjs's no-regression rule. Only
-// renames (decide -> decideLegacy, failClosed -> failClosedLegacy) and the stdin hook entry is
-// removed (guard.mjs is the hook). Never edit the rules here; docs/agents/guard.md explains.
+// renames (decide -> decideLegacy, failClosed -> failClosedLegacy) and the stdin hook entry:
+// `judgeRaw(raw)` is main's main() body verbatim, given the raw stdin string guard.mjs read, and
+// returns the decision main would emit instead of emitting it (guard.mjs is the hook). Never edit
+// the rules here; docs/agents/guard.md explains.
 
 // PreToolUse guard: denies releases, force/tag pushes, pushes to the default branch, gh admin verbs
 // (merge without --auto, release, secret, repo edit), secret reads and edits of the guard rail itself
@@ -1286,4 +1288,35 @@ function noteWrites(t, cwd, chain) {
 /** True when a call that failed inside the guard still looks like push, publish, release or secrets. */
 export function failClosedLegacy(raw) {
   return RISKY_RE.test(String(raw ?? "")) || FAIL_CLOSED_RE.test(String(raw ?? ""));
+}
+
+/** main's main() body verbatim, judging the exact raw stdin string guard.mjs read: returns the
+ * `{ decision, reason }` main would emit, or null where main emits nothing. */
+export function judgeRaw(stdin) {
+  let out = null;
+  const emit = (decision, reason) => {
+    out = { decision, reason };
+  };
+  const decide = decideLegacy;
+  const failClosed = failClosedLegacy;
+  let raw = "";
+  try {
+    raw = String(stdin);
+    const input = JSON.parse(raw);
+    const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+    let lockText;
+    try {
+      lockText = readFileSync(resolve(projectDir, ".splice/lock.toml"), "utf8");
+    } catch {
+      lockText = undefined;
+    }
+    const d = decide(input, { lockText, projectDir });
+    if (d) emit(d.decision, d.reason);
+  } catch (err) {
+    process.stderr.write(
+      `guard.mjs: internal error: ${String(err?.message ?? err).split("\n")[0]}\n`,
+    );
+    if (failClosed(raw)) emit("deny", REASON.failClosed);
+  }
+  return out;
 }

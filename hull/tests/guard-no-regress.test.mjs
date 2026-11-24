@@ -214,3 +214,80 @@ test("a call main denies is denied well inside the hook timeout (legacy judge fi
     }
   }
 });
+
+// The hook path (`main(raw)`): legacy first, on the exact raw stdin; its deny is final.
+test("main(raw): a legacy deny never calls the head rules", async () => {
+  for (const copy of COPIES) {
+    const { main } = await load(copy);
+    let calls = 0;
+    const head = () => {
+      calls++;
+      return null;
+    };
+    for (const command of [
+      "git push --force origin main",
+      "gh api -X POST repos/o/r/actions/runs/1/rerun",
+      `${"eval ".repeat(1000)}rm pins.toml`,
+    ]) {
+      const d = main(JSON.stringify(bash(command)), { head });
+      assert.equal(d?.decision, "deny", command);
+      assert.match(d.reason, /main's guard/);
+    }
+    const write = { tool_name: "Write", tool_input: { file_path: ".splice/lock.toml" } };
+    assert.equal(main(JSON.stringify(write), { head })?.decision, "deny");
+    assert.equal(calls, 0, `${copy}: head rules ran on a legacy deny`);
+    // an enumerated intended allow falls through to the head rules
+    assert.equal(main(JSON.stringify(bash(PULLS)), { head }), null);
+    assert.equal(calls, 1);
+    // a legacy allow runs them too
+    assert.equal(main(JSON.stringify(bash("ls")), { head }), null);
+    assert.equal(calls, 2);
+  }
+});
+
+test("main(raw): a missing or throwing legacy judge denies every call; an ask stays an ask", async () => {
+  for (const copy of COPIES) {
+    const { main } = await load(copy);
+    const head = () => null;
+    const ls = JSON.stringify(bash("ls"));
+    for (const legacy of [
+      null,
+      {},
+      {
+        judgeRaw: () => {
+          throw new Error("boom");
+        },
+      },
+    ])
+      assert.equal(main(ls, { legacy, head })?.decision, "deny", JSON.stringify(legacy));
+    const ask = { judgeRaw: () => ({ decision: "ask", reason: "owned" }) };
+    assert.equal(main(ls, { legacy: ask, head })?.decision, "ask");
+    const deny = () => ({ decision: "deny", reason: "head" });
+    assert.equal(main(ls, { legacy: ask, head: deny })?.reason, "head");
+    // the legacy judge gets the exact raw string, never one guard.mjs built
+    let got;
+    const spy = { judgeRaw: (r) => ((got = r), null) };
+    const raw = '{"tool_name":"Bash", "tool_input":{"command":"ls","command":"x"}}';
+    main(raw, { legacy: spy, head });
+    assert.equal(got, raw);
+  }
+});
+
+test("hook: a guard.mjs without guard-legacy.mjs next to it denies every call", async () => {
+  const { copyFileSync } = await import("node:fs");
+  const { spawnSync } = await import("node:child_process");
+  const lone = mkdtempSync(join(tmpdir(), "guard-lone-"));
+  copyFileSync(
+    new URL("../template/pieces/base/files/.claude/hooks/guard.mjs", import.meta.url),
+    join(lone, "guard.mjs"),
+  );
+  for (const command of ["ls", "echo hi"]) {
+    const r = spawnSync(process.execPath, [join(lone, "guard.mjs")], {
+      input: JSON.stringify(bash(command)),
+      env: { ...process.env, CLAUDE_PROJECT_DIR: dir },
+      encoding: "utf8",
+    });
+    assert.equal(r.status, 0);
+    assert.equal(JSON.parse(r.stdout).hookSpecificOutput.permissionDecision, "deny", command);
+  }
+});

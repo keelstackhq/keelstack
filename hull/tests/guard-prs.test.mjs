@@ -133,12 +133,14 @@ for (const [name, g] of [
     for (const [c, rule] of REFUSED) {
       const r = await g.decide(bash(c), { projectDir: dir });
       assert.equal(r?.decision, "deny", `${c}: ${JSON.stringify(r)}`);
-      assert.match(r.reason, new RegExp(`\\(rule (${rule})\\b`), `${c}: ${r.reason}`);
+      // guard.mjs's own rule (the hook may answer with main's reason first)
+      const h = g.decideHead(bash(c), { projectDir: dir });
+      assert.match(h.reason, new RegExp(`\\(rule (${rule})\\b`), `${c}: ${h.reason}`);
     }
   });
 
   test(`guard prs (${name}): the gh api refusal names the PR route`, async () => {
-    const r = await g.decide(bash("gh api -X PUT repos/o/r/pulls/1/merge"), { projectDir: dir });
+    const r = g.decideHead(bash("gh api -X PUT repos/o/r/pulls/1/merge"), { projectDir: dir });
     assert.match(r.reason, /gh api -X POST repos\/<owner>\/<repo>\/pulls/);
   });
 }

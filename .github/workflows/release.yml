@@ -779,7 +779,13 @@ jobs:
               echo "skip $c $VERSION: already on crates.io"
               continue
             fi
+            # One 404 is not trusted: re-ask up to 3 times (2, 4, 8 s apart) before skipping.
             exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
+            for wait in 2 4 8; do
+              [ "$exists" = 404 ] || break
+              sleep "$wait"
+              exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
+            done
             if [ "$exists" = 404 ]; then
               echo "::notice::skip $c $VERSION: $c is not on crates.io yet and trusted publishing cannot create a crate. Its first publish is the owner's local step: run \`hoist release bootstrap\` (publishes it and adds its trusted publisher: keelstackhq/keelstack, release.yml, environment release), then re-run this workflow"
               echo "::warning::skipped $c $VERSION: not on crates.io yet (run \`hoist release bootstrap\`)"
@@ -940,7 +946,14 @@ jobs:
               echo "$out" >&2
               exit 1
             fi
-            if out=$(npm view "$name" name 2>&1 </dev/null); then
+            # One E404 is not trusted: re-ask up to 3 times (2, 4, 8 s apart) before skipping.
+            out=$(npm view "$name" name 2>&1 </dev/null) && found=1 || found=0
+            for wait in 2 4 8; do
+              [ "$found" = 0 ] && grep -q E404 <<<"$out" || break
+              sleep "$wait"
+              out=$(npm view "$name" name 2>&1 </dev/null) && found=1 || found=0
+            done
+            if [ "$found" = 1 ]; then
               :
             elif grep -q E404 <<<"$out"; then
               echo "::notice::skip $name@$VERSION: $name is not on npm yet and trusted publishing cannot create a package. Its first publish is the owner's local step: run \`hoist release bootstrap\`, then re-run this workflow"

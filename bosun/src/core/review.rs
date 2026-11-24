@@ -95,6 +95,17 @@ pub fn merge_chunk_verdicts(
             }
         }
     }
+    if let Some((n, _)) = results.iter().find(|(n, _)| *n == 0 || *n > total) {
+        merged.verdict = "request-changes".into();
+        merged.confidence = 0.0;
+        merged.findings.push(Finding {
+            severity: "major".into(),
+            file: String::new(),
+            line: None,
+            claim: format!("[chunk {n}] chunk number outside 1..={total}"),
+            evidence: "a result for a chunk the pack does not have".into(),
+        });
+    }
     if total == 0 {
         merged.verdict = "request-changes".into();
         merged.confidence = 0.0;
@@ -183,6 +194,20 @@ mod tests {
         assert_eq!(claims.len(), 2, "{claims:?}");
         assert!(m.findings.iter().all(|f| f.severity == "major"));
         assert!(merge_chunk_verdicts(1, "h", 0, &[]).verdict == "request-changes");
+    }
+
+    #[test]
+    fn merge_rejects_a_chunk_number_above_total_or_zero() {
+        for bad in [3, 0] {
+            let r = vec![
+                (1, Ok(ver("approve", 0.9, &[]))),
+                (2, Ok(ver("approve", 0.9, &[]))),
+                (bad, Ok(ver("approve", 0.9, &[]))),
+            ];
+            let m = merge_chunk_verdicts(1, "h", 2, &r);
+            assert_eq!(m.verdict, "request-changes", "chunk {bad}");
+            assert_eq!(m.confidence, 0.0);
+        }
     }
 
     #[test]

@@ -33,7 +33,7 @@ describe("Adopt an existing repo", () => {
   it("hosts the assessment at a versioned URL with the expected sha256", () => {
     expect(source.assess.url).toBe(`/assess/${versions.hull}.mjs`);
     expect(sha(hosted(versions.hull))).toBe(
-      "4f8ee979812a43beb607b824eae0253c6a6fed7b27fcc75f8d5fe24f9b2a4007",
+      "ee7933f0c2afff2098c91a158d7ffddf6f2300d3a40e7df0391a59d11e8f7ec6",
     );
     expect(source.assess.sha256).toBe(sha(hosted(versions.hull)));
   });

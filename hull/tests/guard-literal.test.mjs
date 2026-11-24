@@ -108,7 +108,9 @@ const ALLOW = [
 ];
 
 for (const copy of COPIES) {
-  const { decide } = await import(`../${copy}/pieces/base/files/.claude/hooks/guard.mjs`);
+  const { decide, decideHead } = await import(
+    `../${copy}/pieces/base/files/.claude/hooks/guard.mjs`
+  );
   for (const c of DENY)
     test(`${copy} denied: ${JSON.stringify(c).slice(0, 120)}`, () =>
       assert.equal(decide(bash(c), ctx)?.decision, "deny"));
@@ -117,7 +119,7 @@ for (const copy of COPIES) {
       assert.equal(decide(bash(c), ctx), null));
   test(`${copy} a variable in a PR create names the literal route`, () =>
     assert.match(
-      decide(bash("gh api repos/o/r/pulls -f title=x -f body=$B"), ctx)?.reason ?? "",
+      decideHead(bash("gh api repos/o/r/pulls -f title=x -f body=$B"), ctx)?.reason ?? "",
       /-F body=@/,
     ));
 }

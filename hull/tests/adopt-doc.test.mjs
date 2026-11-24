@@ -86,23 +86,24 @@ test("adopt.md's fetch URL is pinned to the newest released CHANGELOG version", 
   assert.doesNotMatch(DOC, /ASSESS_SHA256/, "no placeholder: adopters would paste it");
 });
 
-test("adopt.md's sha256 check is the real sha256 of ready.mjs (once filled in)", async () => {
+test("adopt.md's sha256 check is the real sha256 of ready.mjs", async () => {
   const { createHash } = await import("node:crypto");
   const m = /^echo "([0-9a-f]{64}) {2}\/tmp\/assess\.mjs" \| sha256sum -c$/m.exec(DOC);
   assert.ok(m, "the check-before-run line");
-  // The hosted copy is the released file: hash the tagged ready.mjs, not the working tree's.
+  // The hosted copy is the released file: the tagged ready.mjs (the monorepo's tag, so the path
+  // has the hull/ prefix). Before that tag exists (the release PR), it is this tree's ready.mjs.
   const top = releasedTop();
-  let released;
+  const rel = "template/pieces/base/files/scripts/ready.mjs";
+  let file;
   try {
-    released = execFileSync(
-      "git",
-      ["show", `v${top[1]}:template/pieces/base/files/scripts/ready.mjs`],
-      { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] },
-    );
+    file = execFileSync("git", ["show", `v${top[1]}:hull/${rel}`], {
+      cwd: ROOT,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
   } catch {
-    return; // no tag in this clone (shallow or untagged): CI with full history checks it
+    file = readFileSync(fileURLToPath(new URL(`../${rel}`, import.meta.url)));
   }
-  assert.equal(m[1], createHash("sha256").update(released).digest("hex"));
+  assert.equal(m[1], createHash("sha256").update(file).digest("hex"), "stale sha256 pin");
 });
 
 test("adopt.md documents the --assess --json fields in order and names the schema", async () => {

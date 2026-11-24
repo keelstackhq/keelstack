@@ -61,6 +61,7 @@ jobs:
         run: |
           # bosun < 0.22.0 has no --check/--require: run plain `verdict apply` in the record step.
           cur="$(bosun --version | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+' | head -n1)"
+          [ -n "$cur" ] || { echo "::error::cannot read the bosun version"; exit 1; }
           if [ "$(printf '%s\n%s\n' "$cur" 0.22.0 | sort -V | head -n1)" != "0.22.0" ]; then
             echo "accepted=true" >> "$GITHUB_OUTPUT"
             exit 0

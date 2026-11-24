@@ -733,7 +733,9 @@ pub struct IntegrityArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum VerdictCmd {
-    /// Post a reviewer verdict as the review-verdict status.
+    /// Post a reviewer verdict as the review-verdict status. The status is informational: it
+    /// combines the latest verdict of every session, bound or not; merge approval counts only
+    /// verdict records bound to a reviewer session.
     Post(FromArg),
     /// Post the verdict as a PR comment; the verdict workflow applies it (no status write).
     Comment(CommentArgs),

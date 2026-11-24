@@ -158,6 +158,19 @@ fn a_marker_without_a_lease_holding_lead_is_ignored() {
 }
 
 #[test]
+fn a_marked_pr_of_an_author_with_unknown_permission_still_holds_the_task() {
+    // Behind the proxy the author's permission is `unknown`: fail closed, no duplicate claim.
+    let fake = epic("split");
+    task(&fake, 12, "ready", "src/b/**", "");
+    lead(&fake);
+    fake.permission("proxied", "unknown");
+    fake.pull(40, "big", "claude/big", BIG);
+    fake.pull_set(40, "user", serde_json::json!({"login": "proxied"}));
+    let (code, v) = claim(&fake, 12);
+    assert_eq!(code, 3, "{v}");
+}
+
+#[test]
 fn a_marked_pr_of_a_non_writer_is_ignored() {
     let fake = epic("split");
     task(&fake, 12, "ready", "src/b/**", "");

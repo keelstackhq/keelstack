@@ -15,21 +15,16 @@ mod interp;
 mod literals;
 mod prose;
 mod settings;
-use interp::script_rules as script_rules_new;
+pub use interp::script_rules;
 pub use interp::{Script, host_binary, interpreter_name};
-use settings::settings_rule as settings_rule_new;
+pub use settings::settings_rule;
 mod writes;
-use writes::bash_writes as bash_writes_new;
-mod combined;
+pub use writes::bash_writes;
 pub mod intended;
 #[allow(dead_code, clippy::all)]
 pub(crate) mod legacy;
-pub use combined::{
-    answers_lock, bash_writes, bosun_dir_lock, child_task_create, config_fetch_risk, prereqs_lock,
-    prereqs_lock_for, pushes, script_rules, settings_rule, subagent_lock, tool_rules,
-};
-#[cfg(test)]
-mod differential_tests;
+// The new guard's rules. The live hook runs the legacy judge (main's hook and guard, vendored
+// in `hooks::pre_tool_use_legacy` and `legacy`) first and these only when it allows.
 #[cfg(test)]
 mod feedback_tests;
 #[cfg(test)]
@@ -192,7 +187,7 @@ const READ_ONLY_GITHUB: &[&str] = &[
 /// Label-lock and merge-lock; `None` allows the call. `branch_at` reads the checked-out branch
 /// of the directory a git command acts on (after `cd dir &&` and `git -C dir`), and
 /// `default_branch` is the repo's default branch; `own` is the session id (identity allowance).
-fn tool_rules_new(
+pub fn tool_rules(
     tool: &str,
     input: &Value,
     branch_at: BranchAt,
@@ -278,7 +273,7 @@ const CHILD_KEYS: [&str; 7] = ["item", "task", "epic", "touch", "depends", "kind
 /// the command) and the MCP `issue_write` with method `create` qualify; edits, comments, API
 /// calls and other repos never do. The marker must be JSON with only [`CHILD_KEYS`] and an
 /// `epic`; the caller checks that the child's spawn lease is on that epic.
-fn child_task_create_new(tool: &str, input: &Value) -> Result<ChildTask, String> {
+pub fn child_task_create(tool: &str, input: &Value) -> Result<ChildTask, String> {
     let (text, repo) = match tool {
         "mcp__github__issue_write" => {
             let create = input.get("method").and_then(Value::as_str) == Some("create")
@@ -454,7 +449,7 @@ fn writes_marker(command: &str, depth: usize, task_ok: bool) -> bool {
 /// `gh api graphql -F query=@file` mutation (the text is in the file), wget,
 /// httpie and python urllib. The real guarantees are elsewhere: bosun re-reads the checklist and
 /// trusts only its own writes.
-fn prereqs_lock_new(tool: &str, input: &Value) -> Option<String> {
+pub fn prereqs_lock(tool: &str, input: &Value) -> Option<String> {
     prereqs_lock_for(tool, input, false)
 }
 
@@ -464,7 +459,7 @@ fn prereqs_lock_new(tool: &str, input: &Value) -> Option<String> {
 /// purely read-only ([`answers_read_only`]). A hint, not a seal: it stops confused workers,
 /// not liars (quoting can hide a name). The PostToolUse hook checks the transcript; the strong
 /// path is a signed approval or the owner's own comment.
-fn answers_lock_new(tool: &str, input: &Value) -> Option<String> {
+pub fn answers_lock(tool: &str, input: &Value) -> Option<String> {
     let hit = match tool {
         "Bash" => {
             let cmd = input.get("command").and_then(Value::as_str).unwrap_or("");
@@ -570,7 +565,7 @@ fn names_answers(command: &str) -> bool {
 /// Bosun-dir lock: `rm`, `shred`, `mv` (source paths) and `git rm|mv` (also `--cached`) on `.bosun` or
 /// under it are refused in a Bash command (also inside `bash -c` and `eval`): removing
 /// `.bosun/version` would switch the guards off. Best effort: a path built in a variable or glob is missed.
-fn bosun_dir_lock_new(tool: &str, input: &Value) -> Option<String> {
+pub fn bosun_dir_lock(tool: &str, input: &Value) -> Option<String> {
     let c = (tool == "Bash").then(|| input.get("command").and_then(Value::as_str))??;
     let why = "removing or moving `.bosun/` is refused: it holds the repo's bosun setup; change \
         it in a PR the owner approves";
@@ -692,7 +687,7 @@ fn removes_bosun_dir(command: &str, depth: usize) -> bool {
 
 /// [`prereqs_lock`] for a caller that may write the `task` marker (`task_ok`: a registered child
 /// session, spec §4): the checklist and epic markers stay refused.
-fn prereqs_lock_for_new(tool: &str, input: &Value, task_ok: bool) -> Option<String> {
+pub fn prereqs_lock_for(tool: &str, input: &Value, task_ok: bool) -> Option<String> {
     let hit = match tool.strip_prefix("mcp__github__") {
         Some(name) => {
             ISSUE_TEXT_TOOLS.contains(&name)
@@ -722,7 +717,7 @@ fn prereqs_lock_for_new(tool: &str, input: &Value, task_ok: bool) -> Option<Stri
 /// `bosun merge` or sign an approval (`bosun approve` with `--sign-key`, `--via-signer` or
 /// `--as`). Lexical and best effort, like the other locks: any `bosun` word followed in its
 /// segment by `merge`, or by `approve` and a signing flag, is refused.
-fn subagent_lock_new(tool: &str, input: &Value) -> Option<String> {
+pub fn subagent_lock(tool: &str, input: &Value) -> Option<String> {
     if tool != "Bash" {
         return None;
     }
@@ -965,7 +960,7 @@ pub(crate) struct Sinks<'a> {
 /// it runs too (the same walk as the merge-lock). A refused command may list fewer. Interpreter
 /// code is scanned as words, so a push found only there is one push whose directory is unknown;
 /// when the shell walk found pushes, the code scan (which sees the same text) adds none.
-fn pushes_new(
+pub fn pushes(
     command: &str,
     read: &dyn Fn(&str) -> Option<Script>,
     default_branch: &str,
@@ -4567,7 +4562,7 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
 /// command it runs (`uploadpack`, `receivepack`, `core.sshCommand`, an `ext::`/`fd::` URL,
 /// `protocol.allow` or `protocol.ext|fd.allow` not `never`), `tagOpt=--tags` on an untrusted
 /// remote, or a URL rewrite to `ext::`, `fd::` or a non-network URL.
-fn config_fetch_risk_new(key: &str, value: &str, default_branch: &str) -> bool {
+pub fn config_fetch_risk(key: &str, value: &str, default_branch: &str) -> bool {
     let k = cfg_key(key);
     let remote = k.strip_prefix("remote.").and_then(|r| r.rsplit_once('.'));
     let remote = remote.map_or("", |r| r.0);

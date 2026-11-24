@@ -15,7 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { decide } from "../template/pieces/base/files/.claude/hooks/guard.mjs";
+import { decide, decideHead } from "../template/pieces/base/files/.claude/hooks/guard.mjs";
 
 const bash = (command) => ({ tool_name: "Bash", tool_input: { command } });
 const dir = mkdtempSync(join(tmpdir(), "guard-r3-"));
@@ -209,7 +209,9 @@ for (const c of ALLOW)
     assert.equal(decide(bash(c), ctx), null));
 
 test("a branch from a variable names the literal-branch form", () => {
-  const d = decide(bash('B=$(git branch --show-current); git push -u origin "$B"'), ctx);
+  const call = bash('B=$(git branch --show-current); git push -u origin "$B"');
+  assert.equal(decide(call, ctx)?.decision, "deny");
+  const d = decideHead(call, ctx);
   assert.match(d.reason, /git push -u origin HEAD/);
   assert.match(d.reason, /literal/);
 });

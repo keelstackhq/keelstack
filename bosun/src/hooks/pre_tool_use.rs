@@ -11,8 +11,8 @@ use crate::cli::stamps;
 use crate::config::Config;
 use crate::core::guard::{
     ChildTask, Script, answers_lock, bash_writes, bosun_dir_lock, child_task_create,
-    config_fetch_risk, edit_lock, edited_path, foreign_lock, prereqs_lock, prereqs_lock_for,
-    pushes, script_rules, settings_rule, subagent_lock, tool_rules,
+    config_fetch_risk, edit_lock, edited_path, foreign_lock, intended, prereqs_lock,
+    prereqs_lock_for, pushes, script_rules, settings_rule, subagent_lock, tool_rules,
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
@@ -80,7 +80,79 @@ fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {
     })
 }
 
+/// The no-regression rule, by construction: main's hook (vendored with main's guard and script
+/// reader in [`super::pre_tool_use_legacy`]) judges the call first, on the same hook input, and
+/// its deny is returned at once: the new rules never run after it, so a call main denies is
+/// denied as fast as main denies it. A panic in it denies ([`guarded`]). The only exception is a
+/// Bash command that is exactly an enumerated intended allow ([`intended::allow`]) whose pinned
+/// script, if any, is unchanged; the new rules judge it (and every call legacy allows).
 fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
+    if let Some(old) = super::pre_tool_use_legacy::judge(cwd, input)
+        && !intended_override(cwd, input)
+    {
+        return Some(old);
+    }
+    judge_new(cwd, input)
+}
+
+/// Whether the call is a Bash command that is exactly an enumerated intended allow, with its
+/// pinned script (`bump-version`) unchanged. Residual: the pin is read here and the script runs
+/// later, so a concurrent swap of the file between the two (TOCTOU) is not seen; main has the
+/// same gap for every script it reads and allows.
+fn intended_override(cwd: Option<&Path>, input: &Value) -> bool {
+    if input.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return false;
+    }
+    let command = input["tool_input"]["command"].as_str().unwrap_or("");
+    let Some(name) = intended::allow(command) else {
+        return false;
+    };
+    let Some(dir) = cwd
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+    else {
+        return false;
+    };
+    match read_script(&dir, intended::BUMP_SCRIPT.0) {
+        Some(Script::Text(t)) => intended::script_pinned(name, intended::BUMP_SCRIPT.0, &t),
+        _ => intended::script_pinned(name, "", ""),
+    }
+}
+
+/// Tests: the live hook's judgement of a Bash `cmd` in a fresh git checkout on branch `feature`
+/// holding `files` (relative path, text). Absolute paths in `files` are skipped.
+#[cfg(test)]
+pub(crate) fn hook_bash(files: &[(&str, &str)], cmd: &str) -> Option<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q", "-b", "feature"])
+        .arg(d)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(ok, "git init");
+    for (path, text) in files.iter().filter(|f| !f.0.starts_with('/')) {
+        let f = d.join(path);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, text).unwrap();
+    }
+    judge(
+        Some(d),
+        &json!({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+    )
+    .filter(|o| is_deny(o))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times the new rules ran (tests: a legacy deny never reaches them).
+    static NEW_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The new guard's judge; runs only when the legacy judge allows (see [`judge`]).
+fn judge_new(cwd: Option<&Path>, input: &Value) -> Option<String> {
+    #[cfg(test)]
+    NEW_RUNS.with(|n| n.set(n.get() + 1));
     let tool = input.get("tool_name").and_then(Value::as_str)?;
     let tool_input = input.get("tool_input").cloned().unwrap_or(Value::Null);
     let dir = cwd
@@ -653,7 +725,6 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
         Ok(_) if binary && interpreter_binary(&real, meta.len()) => Some(Script::Unreadable(
             "a shell or interpreter program, by its name or its bytes",
         )),
-        // The legacy judge reads a binary as lossy text, as main did (None: over 1 MiB).
         Ok(n) if binary => Some(Script::Binary(
             (n as u64 <= MAX).then(|| String::from_utf8_lossy(&buf).into_owned()),
         )),
@@ -880,6 +951,31 @@ fn repo_relative(root: &Path, cwd: &Path, path: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The no-regression rule by construction: a call the legacy judge (main's hook) denies is
+    /// denied without running the new rules; an allowed call runs them once.
+    #[test]
+    fn a_legacy_deny_never_runs_the_new_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let run_new = |input: Value| {
+            NEW_RUNS.with(|n| n.set(0));
+            let out = judge(Some(d), &input);
+            (out, NEW_RUNS.with(|n| n.get()))
+        };
+        for cmd in [
+            "git push --force origin main",
+            "gh pr merge 1",
+            &format!("bash -c '{}git push -f origin main'", "eval ".repeat(50)),
+        ] {
+            let (out, runs) = run_new(json!({"tool_name": "Bash", "tool_input": {"command": cmd}}));
+            assert!(out.as_deref().is_some_and(is_deny), "{cmd}");
+            assert_eq!(runs, 0, "new rules ran after a legacy deny: {cmd}");
+        }
+        let (out, runs) = run_new(json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}));
+        assert!(!out.as_deref().is_some_and(is_deny));
+        assert_eq!(runs, 1);
+    }
 
     #[test]
     fn only_a_checkbox_tick_in_a_plan_skips_the_edit_lock() {

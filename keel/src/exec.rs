@@ -93,12 +93,17 @@ pub trait Runner {
     fn run(&self, cmd: &Cmd) -> Out;
 }
 
-/// SIGKILL the whole process group `pgid` (the child leads its own group). Safe code only: the
-/// crate forbids `unsafe`, so this shells out to `kill`.
+/// Send `sig` (a `kill` name such as `KILL`) to the process group `pid` leads (`group`), or to
+/// the child alone. Safe code only: the crate forbids `unsafe`, so this shells out to `kill`.
 #[cfg(unix)]
-fn kill_group(pgid: u32) {
+fn signal_child(sig: &str, pid: u32, group: bool) {
+    let target = if group {
+        format!("-{pid}")
+    } else {
+        pid.to_string()
+    };
     let _ = Command::new("kill")
-        .args(["-KILL", "--", &format!("-{pgid}")])
+        .args([&format!("-{sig}"), "--", &target])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -125,9 +130,23 @@ impl Runner for SystemRunner {
         for (k, v) in &cmd.env {
             c.env(k, v);
         }
-        // Own process group, so a timeout can stop the grandchildren too (flyctl under fly-setup.sh).
+        // Own process group only when a timeout must stop the grandchildren too (flyctl under
+        // fly-setup.sh). Runs without a timeout stay in keel's group, so the child is never a
+        // background group (no SIGTTIN on tty reads) and Ctrl-C reaches it directly.
         #[cfg(unix)]
-        c.process_group(0);
+        let grouped = cmd.timeout.is_some();
+        #[cfg(unix)]
+        if grouped {
+            c.process_group(0);
+        }
+        // SIGINT/SIGTERM sent to keel are forwarded to the child, so it is never orphaned.
+        #[cfg(unix)]
+        let got_sig = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        #[cfg(unix)]
+        let sig_ids: Vec<_> = [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM]
+            .into_iter()
+            .filter_map(|s| signal_hook::flag::register_usize(s, got_sig.clone(), s as usize).ok())
+            .collect();
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => return Out::with(-1, "", &e.to_string()),
@@ -170,15 +189,33 @@ impl Runner for SystemRunner {
                 Ok(None) => {}
                 Err(e) => break Err(e),
             }
+            #[cfg(unix)]
+            {
+                let s = got_sig.load(std::sync::atomic::Ordering::SeqCst);
+                if s != 0 {
+                    let name = if s == signal_hook::consts::SIGINT as usize {
+                        "INT"
+                    } else {
+                        "TERM"
+                    };
+                    signal_child(name, child.id(), grouped);
+                    let _ = child.wait();
+                    std::process::exit(128 + s as i32);
+                }
+            }
             if deadline.is_some_and(|d| Instant::now() >= d) {
                 timed_out = true;
                 #[cfg(unix)]
-                kill_group(child.id());
+                signal_child("KILL", child.id(), grouped);
                 let _ = child.kill();
                 break child.wait();
             }
             std::thread::sleep(Duration::from_millis(10));
         };
+        #[cfg(unix)]
+        for id in sig_ids {
+            signal_hook::low_level::unregister(id);
+        }
         // After a kill a grandchild may still hold the pipes: wait only briefly for them.
         let grace = if timed_out {
             Duration::from_secs(1)

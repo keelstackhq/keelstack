@@ -102,8 +102,11 @@ with the full path instead, so the guard sees the target.
 ## No regression
 
 `.claude/hooks/guard-legacy.mjs` is the guard as it was before this rewrite (main at d90f917),
-kept verbatim. A call is refused when `guard.mjs`'s rules refuse it or when the legacy judge
-refuses it; the reason then starts with "main's guard denies this call". The only exception is
+kept verbatim; its `judgeRaw` is main's hook body. The hook reads stdin once and hands the exact
+string to the legacy judge first: a call it refuses is refused at once, with its reason (starting
+"main's guard denies this call"), and `guard.mjs`'s own rules never run. A missing or failing
+legacy judge refuses every call. `guard.mjs`'s rules run only on calls the legacy judge allows or
+asks about, and refuse more. The only exception is
 a Bash command that is exactly one of the enumerated allows, each a literal shape (every word
 plain: letters, digits, `-_./:=@,+%`; no quotes, `$`, backquotes, globs, redirects, `;`/`&&`/`|`
 or newlines), and `guard.mjs`'s own rules (credential files, tainted env, literal words) still
@@ -115,7 +118,7 @@ apply inside it:
 
 `gh pr|issue create|new` and `gh workflow run <file>` need no entry: the legacy judge allows them.
 Adding an entry needs evidence that it is intended and a test (`tests/guard-no-regress.test.mjs`
-in hull); hull's differential test checks every probe of its guard tests against both judges.
+in hull); hull's differential test runs both hooks on every probe of its guard tests.
 
 ## Gaps that stay open
 

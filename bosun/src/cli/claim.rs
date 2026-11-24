@@ -445,10 +445,15 @@ fn refuse_if_bundled(
             && crate::core::meta::closing_issues_in(&p.body, None).contains(&n)
             && p.base_ref == base
             && p.head_repo.eq_ignore_ascii_case(&repo)
-            && matches!(
-                gh.permission(&p.user)?.unwrap_or_default().as_str(),
-                "admin" | "write"
-            )
+            // Unknown permission (e.g. behind the proxy): fail closed, the marker counts.
+            && gh
+                .permission(&p.user)?
+                .is_none_or(|perm| {
+                    matches!(
+                        perm.as_str(),
+                        "admin" | "write" | crate::github::UNKNOWN_PERMISSION
+                    )
+                })
             && lead_holds(gh, l, app.ctx.now)?
         {
             return Err(BosunError::conflict(

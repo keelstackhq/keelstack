@@ -2184,7 +2184,9 @@ impl OwnerView {
         if authors.is_empty() {
             return None;
         }
-        if self.is_empty() {
+        if self.is_empty()
+            || (self.users.is_empty() && self.members.is_empty() && self.unreadable.is_empty())
+        {
             return Some(HaltPick::NoOwners(0));
         }
         if let Some(i) = authors.iter().position(|a| self.is_owner(a)) {
@@ -3738,6 +3740,11 @@ mod monorepo_tests {
         assert_eq!(v.halt_pick(&["x", "ADA"]), Some(HaltPick::Owner(1)));
         assert_eq!(v.halt_pick(&["Ada"]), Some(HaltPick::Owner(0)));
         assert_eq!(v.halt_pick(&[]), None);
+        let empty_team = OwnerView {
+            teams: vec!["acme/core".into()],
+            ..OwnerView::default()
+        };
+        assert_eq!(empty_team.halt_pick(&["x"]), Some(HaltPick::NoOwners(0)));
         assert_eq!(
             OwnerView::default().halt_pick(&["x"]),
             Some(HaltPick::NoOwners(0))

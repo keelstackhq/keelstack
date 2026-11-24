@@ -46,11 +46,13 @@
 // value (`tar -C "$D"`; `cd "$D"` itself is refused), a patch piped in (refused) or made by a
 // producer other than `git diff|show|format-patch -- <paths>` (refused), and a default branch
 // that origin/HEAD does not name. Node built-ins only.
-// No regression (`decide`): a call is also denied when the legacy judge (guard-legacy.mjs, main's
-// guard verbatim) denies it, unless the Bash command is exactly an enumerated literal allow
-// (`intendedAllow`: `gh api -X POST repos/<o>/<r>/pulls ...`); so the gh api dispatch and re-run
-// routes above are refused (main refuses them). docs/agents/guard.md lists the allows.
-// An internal error denies when the call mentions push, publish, release, gh, secret or sops (retry),
+// No regression (`main`): the legacy judge (guard-legacy.mjs, main's guard verbatim) judges the
+// same raw stdin first; a call it denies is denied without the rules above running, unless the
+// Bash command is exactly an enumerated literal allow (`intendedAllow`: `gh api -X POST
+// repos/<o>/<r>/pulls ...`); so the gh api dispatch and re-run routes above are refused (main
+// refuses them). docs/agents/guard.md lists the allows. A missing or throwing legacy judge denies
+// every call. An internal error of the rules above denies when the call mentions push, publish,
+// release, gh, secret or sops (retry),
 // else allows and prints one stderr line. Settings deny rules only cover force pushes and publish
 // commands: the guard is the one layer for default-branch pushes and secrets.
 import {
@@ -68,8 +70,8 @@ import { homedir } from "node:os";
 import { basename, dirname, join, posix, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** The legacy judge (main's guard, verbatim): loaded here so a missing or broken copy fails
- * closed (a risky call is denied) instead of the hook crashing open. */
+/** The legacy judge (main's guard, verbatim): loaded here so a missing or broken copy denies
+ * every call (`main`) instead of the hook crashing open. */
 const LEGACY = await import("./guard-legacy.mjs").catch(() => null);
 
 const SECRET_SAFE = new Set([".env.example", ".env.sample", ".env.template", ".dev.vars.example"]);
@@ -2701,7 +2703,7 @@ function runScript(t, projectDir, dirs, chain, seen) {
  * @param {{ lockText?: string, projectDir: string }} ctx
  * @returns {null | { decision: "deny" | "ask", reason: string }}
  */
-function decideHead(input, ctx) {
+export function decideHead(input, ctx) {
   const name = input?.tool_name;
   const ti = input?.tool_input ?? {};
   const deny = (key, hit) => {
@@ -2788,51 +2790,92 @@ export function intendedAllow(command) {
   return INTENDED_ALLOWS.find((a) => a.shape(w))?.name ?? null;
 }
 
-/** The legacy judge's decision, as main's hook made it: an internal error (or a missing judge)
- * denies a call that looks like push, publish, release, gh or secrets. */
-function legacyDecision(input, ctx) {
-  try {
-    if (!LEGACY) throw new Error("guard-legacy.mjs did not load");
-    return LEGACY.decideLegacy(input, ctx);
-  } catch {
-    const raw = JSON.stringify(input ?? null);
-    return (LEGACY?.failClosedLegacy ?? failClosed)(raw)
-      ? { decision: "deny", reason: `${REASON.failClosed} (rule failClosed, legacy judge)` }
-      : null;
-  }
+/** The deny for a call main's guard denies (or for any call when the legacy judge is missing). */
+const legacyDeny = (why) => ({
+  decision: "deny",
+  reason: `${REASON.legacy} Main's guard says: ${why}`,
+});
+
+/** The no-regression rule, given the legacy judge's decision `old` (already made) and the head
+ * rules as a thunk: a legacy deny is final, with no call to the head rules, unless the Bash
+ * command is exactly an enumerated intended allow (`intendedAllow`); then the head rules decide.
+ * Otherwise the head rules run: their deny wins, else an `ask` from either stays an ask. */
+function combine(old, bashCmd, runHead) {
+  if (old?.decision === "deny" && (bashCmd === null || intendedAllow(bashCmd) === null))
+    return legacyDeny(old.reason);
+  const head = runHead();
+  if (head?.decision === "deny") return head;
+  if (old?.decision === "deny") return head; // an enumerated allow
+  return head ?? old ?? null; // an `ask` from either
 }
 
+const bashCommand = (input) =>
+  input?.tool_name === "Bash" ? String(input?.tool_input?.command ?? "") : null;
+
 /**
- * The hook's decision, with the no-regression rule: deny when guard.mjs's rules deny or when the
- * legacy judge (main's guard) denies, unless the Bash command is exactly an enumerated intended
- * allow (`intendedAllow`). guard.mjs runs first, so its credential and taint rules apply inside
- * the allow shapes too.
+ * Tests only (not the hook path, see `main`): the no-regression rule on a parsed call, with the
+ * legacy judge's `decideLegacy` on the same `input` and `ctx`.
  * @param {{ tool_name: string, tool_input: Record<string, unknown> }} input
  * @param {{ lockText?: string, projectDir: string }} ctx
  * @returns {null | { decision: "deny" | "ask", reason: string }}
  */
-/** Input size (JSON chars) up to which a legacy deny also runs the new rules for their reason. */
-const QUICK_INPUT = 2000;
-
 export function decide(input, ctx) {
-  // The legacy judge runs first: whatever main denies is denied as fast as main denies it, so
-  // the new rules' extra work can never push such a call past the hook's timeout.
-  const old = legacyDecision(input, ctx);
-  if (old?.decision === "deny") {
-    const bashCmd = input?.tool_name === "Bash" ? String(input?.tool_input?.command ?? "") : null;
-    if (bashCmd === null || intendedAllow(bashCmd) === null) {
-      // A short call (fast for the new rules) gets the new rules' more precise reason.
-      if (JSON.stringify(input ?? null).length <= QUICK_INPUT) {
-        const head = decideHead(input, ctx);
-        if (head?.decision === "deny") return head;
-      }
-      return { decision: "deny", reason: `${REASON.legacy} Main's guard says: ${old.reason}` };
-    }
+  let old;
+  try {
+    if (!LEGACY) throw new Error("guard-legacy.mjs did not load");
+    old = LEGACY.decideLegacy(input, ctx);
+  } catch (err) {
+    old = { decision: "deny", reason: `internal error: ${String(err?.message ?? err)}` };
   }
-  const head = decideHead(input, ctx);
-  if (head?.decision === "deny") return head;
-  if (old?.decision === "deny") return head; // an enumerated allow
-  return head ?? old ?? null; // an `ask` from either
+  return combine(old, bashCommand(input), () => decideHead(input, ctx));
+}
+
+/**
+ * The hook: judges the exact raw stdin string. The legacy judge (guard-legacy.mjs `judgeRaw`,
+ * main's hook body verbatim) runs first on that same string; its deny is final and the head rules
+ * never run (but for an enumerated intended allow). A missing legacy judge or one that throws
+ * denies every call. The head rules run only when the legacy judge allows or asks; their internal
+ * error denies a risky call (`failClosed`), else keeps the legacy decision.
+ * `deps` is for tests (inject a head-rule spy or a missing legacy judge).
+ * @param {string} raw
+ * @returns {null | { decision: "deny" | "ask", reason: string }}
+ */
+export function main(raw, deps = {}) {
+  const legacy = "legacy" in deps ? deps.legacy : LEGACY;
+  const head = deps.head ?? decideHead;
+  if (typeof legacy?.judgeRaw !== "function") return legacyDeny("guard-legacy.mjs did not load");
+  let old;
+  try {
+    old = legacy.judgeRaw(raw);
+  } catch (err) {
+    return legacyDeny(`internal error: ${String(err?.message ?? err).split("\n")[0]}`);
+  }
+  let input = null;
+  try {
+    input = JSON.parse(raw);
+  } catch {
+    input = null;
+  }
+  return combine(old, bashCommand(input), () => {
+    // Not JSON: the legacy judge already printed main's one stderr line for it.
+    if (input === null)
+      return failClosed(raw) ? { decision: "deny", reason: REASON.failClosed } : null;
+    try {
+      const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
+      let lockText;
+      try {
+        lockText = readFileSync(resolve(projectDir, ".splice/lock.toml"), "utf8");
+      } catch {
+        lockText = undefined;
+      }
+      return head(input, { lockText, projectDir });
+    } catch (err) {
+      process.stderr.write(
+        `guard.mjs: internal error: ${String(err?.message ?? err).split("\n")[0]}\n`,
+      );
+      return failClosed(raw) ? { decision: "deny", reason: REASON.failClosed } : null;
+    }
+  });
 }
 
 /** True when a git path argument could name a protected file or a dir that holds one. */
@@ -2970,26 +3013,16 @@ const emit = (decision, reason) =>
     })}\n`,
   );
 
-function main() {
+/** Reads stdin once and hands the exact string to `main`. */
+function hookEntry() {
   let raw = "";
   try {
     raw = readFileSync(0, "utf8");
-    const input = JSON.parse(raw);
-    const projectDir = process.env.CLAUDE_PROJECT_DIR || process.cwd();
-    let lockText;
-    try {
-      lockText = readFileSync(resolve(projectDir, ".splice/lock.toml"), "utf8");
-    } catch {
-      lockText = undefined;
-    }
-    const d = decide(input, { lockText, projectDir });
-    if (d) emit(d.decision, d.reason);
-  } catch (err) {
-    process.stderr.write(
-      `guard.mjs: internal error: ${String(err?.message ?? err).split("\n")[0]}\n`,
-    );
-    if (failClosed(raw)) emit("deny", REASON.failClosed);
+  } catch {
+    raw = "";
   }
+  const d = main(raw);
+  if (d) emit(d.decision, d.reason);
 }
 
 /** Entry check, fail-safe: only a different real file (an import) skips main(). */
@@ -3002,4 +3035,4 @@ const isMain = () => {
     return true;
   }
 };
-if (isMain()) main();
+if (isMain()) hookEntry();
