@@ -308,6 +308,21 @@ pub struct Approvals {
     /// a pinned release older than 0.22.0 rejects the key. `.bosun/bosun.toml` is trust root.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bosun_repo: Option<String>,
+    /// Owner delegation (D-027): `"all"` lets a quorum signature (an enrolled key, `.bosun/approvers.toml`)
+    /// approve every PR, the trust root and R-weaken included, still with the quorum floor (two
+    /// counting verdicts on the exact head, a leased task, no halt, no unseen diff, no strong
+    /// secret). Needs `policy = "quorum"`. Read from the PR's base only (a PR never turns it on
+    /// for itself); the owner sets it with a PR they approve. A pinned release older than the one
+    /// that adds this key fails to parse it, which fails closed (owner only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_delegation: Option<OwnerDelegation>,
+}
+
+/// `[approvals] owner_delegation` values (D-027). Only `all` exists.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum OwnerDelegation {
+    All,
 }
 
 /// The upstream repository of bosun releases when `[approvals] bosun_repo` is unset.
@@ -316,6 +331,11 @@ pub const DEFAULT_BOSUN_REPO: &str = "keelstackhq/keelstack";
 impl Approvals {
     pub fn policy(&self) -> Policy {
         self.policy.unwrap_or_default()
+    }
+
+    /// Owner delegation (D-027) is on: `owner_delegation = "all"` under the quorum policy.
+    pub fn delegated(&self) -> bool {
+        self.owner_delegation == Some(OwnerDelegation::All) && self.policy() == Policy::Quorum
     }
 
     /// Who set the effective policy: `explicit` (`[approvals]`), `preset` (`[mode]`), `default`.
@@ -626,6 +646,16 @@ impl Config {
         if c.approvals.policy.is_none() {
             c.approvals.policy = c.mode.name.and_then(crate::core::mode::preset_policy);
             c.approvals.policy_preset = c.approvals.policy.is_some();
+        }
+        if c.approvals.owner_delegation.is_some() && c.approvals.policy() != Policy::Quorum {
+            return Err(BosunError::error(
+                format!(
+                    "{file}: approvals.owner_delegation needs approvals.policy = \"quorum\" (D-027)"
+                ),
+                format!(
+                    "edit {file}: set [approvals] policy = \"quorum\", or remove owner_delegation"
+                ),
+            ));
         }
         let k = &c.checks;
         if k.mode != CheckMode::Statuses {
