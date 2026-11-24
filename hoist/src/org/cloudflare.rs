@@ -215,6 +215,14 @@ fn match_records(
     };
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<Option<Match>> = declared.iter().map(|_| None).collect();
+    // An identical declared record (same type, name, normalised content) is the first one's
+    // twin: it claims nothing and is `Present`, so one live record is claimed once.
+    for (i, r) in declared.iter().enumerate() {
+        let key = |r: &Record| (r.ty.clone(), r.name.clone(), norm(&r.ty, &r.content));
+        if declared[..i].iter().any(|e| key(e) == key(r)) {
+            out[i] = Some(Match::Present);
+        }
+    }
     for pass in 0..2 {
         for (i, r) in declared.iter().enumerate() {
             if out[i].is_some() {
@@ -394,19 +402,15 @@ pub(crate) fn read(
                 }
             }
         }
-        let plans = match (&id, lives.values().all(|f| matches!(f, Fetch::Got(_)))) {
-            (Some(_), true) => {
-                let by_name: std::collections::HashMap<&str, &Vec<Live>> = lives
-                    .iter()
-                    .filter_map(|(k, v)| match v {
-                        Fetch::Got(l) => Some((*k, l)),
-                        Fetch::Unknown(_) => None,
-                    })
-                    .collect();
-                match_records(&z.records, &by_name)
-            }
-            _ => Vec::new(),
-        };
+        // Names whose read failed are absent here and reported unknown below.
+        let by_name: std::collections::HashMap<&str, &Vec<Live>> = lives
+            .iter()
+            .filter_map(|(k, v)| match v {
+                Fetch::Got(l) => Some((*k, l)),
+                Fetch::Unknown(_) => None,
+            })
+            .collect();
+        let plans = match_records(&z.records, &by_name);
         for (i, r) in z.records.iter().enumerate() {
             let key = record_key(r);
             let Some(zid) = &id else {
@@ -424,17 +428,7 @@ pub(crate) fn read(
                     .push(item("cloudflare", "dns_record", &key, Action::Unknown, why));
                 continue;
             }
-            let Some(m) = plans.get(i) else {
-                // Another name's read failed; this one is unknown too.
-                p.items.push(item(
-                    "cloudflare",
-                    "dns_record",
-                    &key,
-                    Action::Unknown,
-                    "live records could not be read",
-                ));
-                continue;
-            };
+            let m = &plans[i];
             let (action, reason, op) = match m {
                 Match::Present => (Action::Ok, "present".to_string(), None),
                 Match::Patch(l, reason) => (

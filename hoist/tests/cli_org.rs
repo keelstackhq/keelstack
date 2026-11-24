@@ -1313,3 +1313,118 @@ fn normalised_equal_content_is_ok_with_no_write() {
         api.assert_only_get();
     }
 }
+
+fn a_toml(declared: &[&str]) -> String {
+    let mut t = String::from(
+        "[cloudflare]\naccount_id = \"acct\"\n[[cloudflare.zones]]\nname = \"example.dev\"\n",
+    );
+    for c in declared {
+        t.push_str(&format!(
+            "[[cloudflare.zones.records]]\ntype = \"A\"\nname = \"example.dev\"\ncontent = \"{c}\"\n"
+        ));
+    }
+    t
+}
+
+/// Fake zone with live A records r0, r1, ... and a PATCH route per record id (a wrong id is a 404).
+fn cf_per_id_api(live: &[&str]) -> FakeApi {
+    let list = a_list(live);
+    let mut routes: Vec<(String, u16, String)> = vec![
+        (
+            "GET /zones?name=example.dev".into(),
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#.into(),
+        ),
+        ("GET /zones/z1/dns_records".into(), 200, list),
+        (
+            "POST /zones/z1/dns_records".into(),
+            200,
+            r#"{"success":true,"result":{"id":"n"}}"#.into(),
+        ),
+    ];
+    for i in 0..live.len() {
+        routes.push((
+            format!("PATCH /zones/z1/dns_records/r{i}"),
+            200,
+            format!(r#"{{"success":true,"result":{{"id":"r{i}"}}}}"#),
+        ));
+    }
+    api_of(&routes)
+}
+
+fn writes(api: &FakeApi) -> Vec<(String, String)> {
+    api.requests()
+        .iter()
+        .filter(|q| q.method != "GET")
+        .map(|q| (q.method.clone(), q.path.clone()))
+        .collect()
+}
+
+#[test]
+fn two_live_a_one_declared_patches_only_the_first_live_by_id() {
+    let api = cf_per_id_api(&["9.9.9.9", "8.8.8.8"]);
+    let d = dir(&a_toml(&["1.1.1.1"]));
+    run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    assert_eq!(
+        writes(&api),
+        vec![("PATCH".to_string(), "/zones/z1/dns_records/r0".to_string())]
+    );
+}
+
+#[test]
+fn a_matching_live_a_is_ok_and_the_other_declared_patches_the_unmatched_live() {
+    let api = cf_per_id_api(&["2.2.2.2", "9.9.9.9"]);
+    let d = dir(&a_toml(&["1.1.1.1", "2.2.2.2"]));
+    let r = run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    assert_eq!(
+        writes(&api),
+        vec![("PATCH".to_string(), "/zones/z1/dns_records/r1".to_string())]
+    );
+    let _ = r;
+}
+
+#[test]
+fn identical_declared_records_claim_one_live_record_once() {
+    let api = cf_per_id_api(&["9.9.9.9", "8.8.8.8"]);
+    let d = dir(&a_toml(&["1.1.1.1", "1.1.1.1"]));
+    run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    assert_eq!(
+        writes(&api),
+        vec![("PATCH".to_string(), "/zones/z1/dns_records/r0".to_string())]
+    );
+}
+
+#[test]
+fn a_failed_read_of_one_name_leaves_the_other_names_planned() {
+    let toml = format!(
+        "{}[[cloudflare.zones.records]]\ntype = \"A\"\nname = \"bad.example.dev\"\ncontent = \"3.3.3.3\"\n",
+        a_toml(&["1.1.1.1"])
+    );
+    let api = start(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1","name":"example.dev"}]}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=example.dev&page=1",
+            200,
+            r#"{"success":true,"result":[],"result_info":{"page":1,"total_pages":1}}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=bad.example.dev&page=1",
+            403,
+            "{}",
+        ),
+    ]);
+    let d = dir(&toml);
+    let r = run(&["plan"], &d, &cf_env(&api), 0);
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 1.1.1.1")["action"],
+        "create"
+    );
+    assert_eq!(
+        item(&r, "dns_record", "A bad.example.dev 3.3.3.3")["action"],
+        "unknown"
+    );
+}

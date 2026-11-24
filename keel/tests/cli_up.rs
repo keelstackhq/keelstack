@@ -558,10 +558,9 @@ fn cloudflare_dns_and_backup_use_the_area_flag_and_the_fly_sink() {
     );
 }
 
-/// A SIGTERM while keel waits on the token stdin read (held open, never written) exits 143
-/// instead of hanging on the blocked read.
-#[test]
-fn sigterm_during_token_read_exits_143() {
+/// A signal while keel waits on the token stdin read (held open, never written) exits 128 + the
+/// signal number instead of hanging on the blocked read.
+fn signal_during_token_read(sig: &str, want: i32) {
     use std::process::Stdio;
     let env = Env::new();
     env.rendered();
@@ -582,9 +581,18 @@ fn sigterm_during_token_read_exits_143() {
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let mut keel = c.spawn().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    // The token step's check calls the secrets API; the stdin read follows at once.
+    let t = std::time::Instant::now();
+    while !env.read("calls.log").contains("/secrets/") {
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(10),
+            "token step never reached"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
     std::process::Command::new("kill")
-        .args(["-TERM", &keel.id().to_string()])
+        .args([&format!("-{sig}"), &keel.id().to_string()])
         .status()
         .unwrap();
     let t = std::time::Instant::now();
@@ -594,9 +602,19 @@ fn sigterm_during_token_read_exits_143() {
         }
         if t.elapsed() > std::time::Duration::from_secs(5) {
             let _ = keel.kill();
-            panic!("keel hung in the token read after SIGTERM");
+            panic!("keel hung in the token read after SIG{sig}");
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     };
-    assert_eq!(status.code(), Some(143));
+    assert_eq!(status.code(), Some(want));
+}
+
+#[test]
+fn sigterm_during_token_read_exits_143() {
+    signal_during_token_read("TERM", 143);
+}
+
+#[test]
+fn sigint_during_token_read_exits_130() {
+    signal_during_token_read("INT", 130);
 }
