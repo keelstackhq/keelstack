@@ -112,8 +112,8 @@ plain: letters, digits, `-_./:=@,+%`; no quotes, `$`, backquotes, globs, redirec
 or newlines), and `guard.mjs`'s own rules (credential files, tainted env, literal words) still
 apply inside it:
 
-| Allow          | Shape                                                                                                                                                                                                                                                                     |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Allow          | Shape                                                                                                                                                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `gh-api-pulls` | `gh api` with exactly one method `-X POST`, `--method POST`, `-XPOST` or `--method=POST`; exactly one endpoint `repos/<o>/<r>/pulls` or `/repos/<o>/<r>/pulls`; any `-f`/`--raw-field <key>=<value>` (key `[a-z_]+`); any number of `-F`/`--field body=@<file>`; no other flag |
 
 `gh pr|issue create|new` and `gh workflow run <file>` need no entry: the legacy judge allows them.
