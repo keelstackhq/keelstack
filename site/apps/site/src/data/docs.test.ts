@@ -160,6 +160,8 @@ describe("cloud environment page", () => {
       cmp,
       `setup script pins ${pin}, workspace is ${facts.workspaceVersion}`,
     ).toBeLessThanOrEqual(0);
+    // The cloud page says which bosun the script installs: the script's own pin.
+    expect(page).toContain(`It installs bosun ${pin},`);
   });
 });
 
