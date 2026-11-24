@@ -47,8 +47,8 @@ versions and their sha512 checksums and moves them only by reviewed pull request
 (R-gov).
 
 The script below is bosun's own,
-[`docs/setup-script.sh`](https://github.com/keelstackhq/keelstack/blob/640beca8e3fd3b4e7dc0bc8d6e3234dafc2c72e6/bosun/docs/setup-script.sh)
-at bosun `main` commit `640beca` (the post-`v0.22.1` pin), copied verbatim. It installs bosun 0.22.1, splice 0.6.0, hoist 0.5.1 and berth 0.2.1; a repo's script pins the bosun release that repo uses.
+[`docs/setup-script.sh`](https://github.com/keelstackhq/keelstack/blob/5bce43e380edcecf458d7ce8d0c319486fea3e99/bosun/docs/setup-script.sh)
+at bosun `main` commit `5bce43e` (the post-`v0.22.1` pin), copied verbatim. It installs bosun 0.22.1, splice 0.6.0, hoist 0.5.1 and berth 0.2.1; a repo's script pins the bosun release that repo uses.
 
 ```bash
 #!/usr/bin/env bash
@@ -104,7 +104,8 @@ CARGO_DENY_BIN_LINUX_ARM64_SHA256="$(pin cargo-deny linux_arm64_sha256)"
 KEELSTACK_MARKETPLACE_REF=main
 SUPERPOWERS_SHA=22f0b463e7a5e579904dd6211a520321035526f7
 CAVEMAN_SHA=a9cc1f7b82598852e8c6b8e599dde6ac2491b26e
-# The bosun release this repo pins in .bosun/version.
+# The bosun release the cloud environment installs (the newest published one this script was
+# checked against; independent of .bosun/version, which may say `unreleased`).
 BOSUN_VERSION=0.22.1
 BOSUN_SHA512=ifeB8W7rWVUVYSd9BWv5A/fF6c3fhI6lpxSSBGKZfnmxAZzRZ+nOECrOEGmAC1R3FIh3AcSDCCH32XhrkxBo7g==
 BOSUN_LINUX_X64_SHA512=B8orcgb/Jjwc3cTaIpfMWn4FItj6VVf7tIrC/xQrvdo5B41+oQb3xl/QaReBhiNfEdoqh2lzCSQBDp0i4VdEIQ==
