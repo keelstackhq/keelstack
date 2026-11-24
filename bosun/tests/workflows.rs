@@ -1594,8 +1594,16 @@ fn app_job_problems(file: &str, yaml: &str, job: &str) -> Vec<String> {
                 .map(str::trim)
                 .filter(|l| l.starts_with("permission-"))
                 .collect();
-            // Dual mode: the App writes check runs only (the record comment joins in checks mode).
-            let allowed = ["permission-checks: write"];
+            // The App writes check runs; in checks mode (spec §15 step 7) verdict.yml's App also
+            // writes the verdict record comment, and no other job asks for more.
+            let allowed: &[&str] = if file == "verdict.yml" {
+                &[
+                    "permission-checks: write",
+                    "permission-pull-requests: write",
+                ]
+            } else {
+                &["permission-checks: write"]
+            };
             if perms.is_empty() || perms.iter().any(|p| !allowed.contains(p)) {
                 out.push(format!("token not downscoped: {perms:?}"));
             }
@@ -1638,6 +1646,9 @@ fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
         ("main-health.yml", "report"),
         ("signer.yml", "judge"),
     ];
+    // Root only (the channel's signer still runs a pinned release without `gate ci-ok`): the
+    // job that posts the gate App's ci-ok for the CI signer (spec §8), before `sign`.
+    let root_only = [("signer.yml", "mirror")];
     let mut problems = Vec::new();
     let mut found = Vec::new();
     for (path, yaml) in all_workflows() {
@@ -1657,7 +1668,10 @@ fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
                 }
                 continue;
             }
-            if !want.iter().any(|(f, j)| *f == name && *j == id) {
+            let channel = path.contains("/channel/");
+            let gate = want.iter().any(|(f, j)| *f == name && *j == id)
+                || (!channel && root_only.iter().any(|(f, j)| *f == name && *j == id));
+            if !gate {
                 problems.push(format!(
                     "{path} job {id}: bosun-app on a job that is no gate"
                 ));
@@ -1680,6 +1694,18 @@ fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
                 problems.push(format!("{f} job {j} (channel: {channel}): no bosun-app"));
             }
         }
+    }
+    for (f, j) in root_only {
+        if !found.iter().any(|(c, n, i)| !*c && n == f && i == j) {
+            problems.push(format!("{f} job {j}: no bosun-app"));
+        }
+    }
+    let signer = fs::read_to_string(format!("{root}signer.yml")).unwrap();
+    if !signer.contains("  sign:\n    needs: mirror\n") {
+        problems.push("signer.yml: sign does not need mirror".into());
+    }
+    if !signer.contains("./target/release/bosun gate ci-ok --pr \"$PR\"") {
+        problems.push("signer.yml: mirror does not run `bosun gate ci-ok`".into());
     }
     assert!(problems.is_empty(), "{problems:#?}");
     // UC-B2W-2: the jobs that run repo code ask for no checks or statuses write.

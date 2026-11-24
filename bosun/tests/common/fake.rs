@@ -851,6 +851,29 @@ impl FakeGithub {
         s.logs.insert(job_id, log.into());
     }
 
+    /// A workflow run of `sha` from file `path` on `event` (`GET /actions/runs?head_sha=`), in
+    /// `status`, with one job `ci-ok` of `conclusion` when given; returns the run id.
+    pub fn workflow_file_run(
+        &self,
+        sha: &str,
+        path: &str,
+        event: &str,
+        status: &str,
+        ci_ok: Option<&str>,
+    ) -> u64 {
+        let mut s = self.state.lock().unwrap();
+        let n = s.runs.len() as u64 + 1;
+        let (run_id, job_id) = (1000 + n, 5000 + n);
+        s.runs.push(json!({"id": run_id, "head_sha": sha, "path": path, "event": event,
+            "status": status, "html_url": format!("https://github.test/acme/widget/actions/runs/{run_id}")}));
+        if let Some(c) = ci_ok {
+            s.jobs
+                .push(json!({"id": job_id, "run_id": run_id, "name": "ci-ok",
+                "status": "completed", "conclusion": c, "html_url": ""}));
+        }
+        run_id
+    }
+
     pub fn log_mode(&self, mode: LogMode) {
         self.state.lock().unwrap().log_mode = mode;
     }

@@ -578,6 +578,22 @@ pub struct WorkflowRun {
     pub updated_at: String,
 }
 
+/// One workflow run of a head sha (`GET /actions/runs?head_sha=`): which file ran, on what event.
+#[derive(Debug, Clone, Default, PartialEq, Deserialize)]
+pub struct ShaRun {
+    pub id: u64,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub path: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub event: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub head_sha: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub status: String,
+    #[serde(default, deserialize_with = "text_or_empty")]
+    pub html_url: String,
+}
+
 /// A job of a workflow run attempt, with its steps (`GET /actions/runs/{id}/attempts/{n}/jobs`).
 #[derive(Debug, Clone, Default, PartialEq, Deserialize)]
 pub struct RunJob {

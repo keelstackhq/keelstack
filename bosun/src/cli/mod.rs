@@ -598,7 +598,9 @@ pub struct GateArgs {
     /// sources, ...
     /// `ci-minutes` is built in: it checks `.github/workflows` for the CI-minute rules (drafts skip,
     /// `ready_for_review`, cancelling concurrency, `paths` on heavy PR jobs). `sources` is
-    /// read-only: it checks that the gate App posted each gate on the PR head (spec §15).
+    /// read-only: it checks that the gate App posted each gate on the PR head (spec §15). `ci-ok`
+    /// mirrors ci.yml's `ci-ok` job on the PR head as the gate App's check run (the CI signer's
+    /// input, spec §8); it needs `BOSUN_APP_TOKEN`.
     pub name: String,
     /// Base ref for the diff (default: the PR base or origin/main).
     #[arg(long)]
@@ -606,7 +608,7 @@ pub struct GateArgs {
     /// Run on all packages (merge queue).
     #[arg(long)]
     pub all: bool,
-    /// The PR number, for `main-open` and `sources` (default: env `BOSUN_PR`).
+    /// The PR number, for `main-open`, `sources` and `ci-ok` (default: env `BOSUN_PR`).
     #[arg(long)]
     pub pr: Option<u64>,
 }

@@ -3,11 +3,17 @@
 # (workflows, Cargo workspace, npm launchers).
 
 [github]
-# ci-ok aggregates the per-folder ci-* jobs; the other three are bosun's commit statuses (D-022).
-required_checks = ["ci-ok", "risk-check", "review-verdict", "main-open"]
-# To pin a check to the App that posts it (hoist spec §6.1), use the table form, e.g.
-# { context = "risk-check", app = "keelstackhq-bosun-gate" } or { context = "ci-ok", integration_id = 15368 }.
-# Plain strings leave the source alone; pin only once the App exists and is installed.
+# Each required check is pinned to the App that posts it (hoist spec §6.1, bosun spec §15 step 6):
+# ci-ok aggregates the per-folder ci-* jobs of ci.yml (GitHub Actions, id 15368); risk-check,
+# review-verdict and main-open are check runs of the bosun gate App ([checks] mode = "checks" in
+# .bosun/bosun.toml). A status, or a check run from any other App, then satisfies none of them.
+# The gate App's own `ci-ok` run (signer.yml `mirror`, for the CI signer) is not the required one.
+required_checks = [
+  { context = "ci-ok", integration_id = 15368 },
+  { context = "risk-check", app = "keelstackhq-bosun-gate" },
+  { context = "review-verdict", app = "keelstackhq-bosun-gate" },
+  { context = "main-open", app = "keelstackhq-bosun-gate" },
+]
 # Off: risk-check, review-verdict and main-open never post on merge_group, so a merge queue
 # would hold every PR (ci.yml still listens to merge_group, harmless).
 merge_queue = false

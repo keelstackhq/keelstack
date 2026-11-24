@@ -3,6 +3,7 @@
 
 pub mod adapters;
 pub mod ci_env;
+pub mod ci_ok;
 pub mod integrity;
 pub mod main_open;
 pub mod packages;

@@ -6,6 +6,13 @@ the doctor pin check. The workflows (B2W) are not switched yet. The default mode
 so nothing changes until a repo sets `[checks]`. Until the ruleset switch (Transition, step 6), §7, §8 and §9
 describe what runs.
 
+keelstack itself (2026-11-24): `[checks] mode = "checks"` and hoist.toml's required checks
+pinned (risk-check, review-verdict, main-open to `keelstackhq-bosun-gate`, ci-ok to GitHub
+Actions, 15368), with verdict.yml's token step asking `permission-pull-requests: write`. The
+order is the Transition's: the owner runs `hoist apply --area github` from the PR's checkout
+(step 6, while main is still `dual`, so the App's runs already satisfy the pins) and only then
+merges the PR (step 7). The CI signer (§8, `[approvals] signer = true`) needs this mode.
+
 **The problem.** `risk-check`, `review-verdict` and `main-open` are commit statuses that the
 workflows post with `GITHUB_TOKEN`, as the github-actions app (D32). Any `on: pull_request`
 workflow that a same-repo PR adds or edits runs the PR's copy of that file and gets a
@@ -58,7 +65,10 @@ the risk workflow)"; for main-open and review-verdict, re-run that workflow).
 `main-open`. A status (from any token) or a check run from github-actions or any other App then
 never satisfies them. `ci-ok` stays pinned to GitHub Actions (`integration_id` 15368): it must
 come from a workflow, but any workflow counts, the PR's rewritten ci.yml or a new file with a
-job named `ci-ok` included. So `ci-ok` means "the PR's own CI passed", never more. risk-check
+job named `ci-ok` included. So `ci-ok` means "the PR's own CI passed", never more. The gate App also posts a `ci-ok` check run, only when the CI signer asks
+(signer.yml job `mirror`, `bosun gate ci-ok`, §8): it mirrors the `ci-ok` job of ci.yml's newest
+run on the head, read from the API by workflow file, so the signer never counts a `ci-ok` that
+another workflow file posted. The ruleset ignores it (pinned to 15368). risk-check
 covers the rest: such a PR edits `.github/workflows/**`, which is R-ci and on the critical floor
 (§8), so it needs the owner, and that owner gate can no longer be forged. ci.yml grants no write
 scope, so PR code it runs (tests, build scripts) cannot post either.

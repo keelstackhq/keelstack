@@ -662,8 +662,8 @@ fn via_signer(dir: Option<&Path>, args: &ApproveArgs) -> CmdResult {
     .with_next("mcp__github__actions_run_trigger", args))
 }
 
-/// What the head's `ci-ok` is for the CI signer: the newest GitHub Actions check run (in
-/// `[checks] mode = "checks"` is required: the gate App's), as
+/// What the head's `ci-ok` is for the CI signer: the newest check run of the gate App
+/// (`[checks] mode = "checks"` is required), as
 /// `ci_green` reads it (a commit status never counts). Returns (green, what was seen).
 fn ci_ok_state(gh: &dyn Github, sha: &str) -> Result<(bool, String)> {
     let runs: Vec<Run> = gh
@@ -849,7 +849,7 @@ fn sign(dir: Option<&Path>, args: &ApproveArgs, key_path: &Path) -> CmdResult {
         if !green {
             return Err(BosunError::error(
                 format!(
-                    "the head's ci-ok is not green ({ci_ok}; only the newest GitHub Actions check run counts); nothing was signed"
+                    "the head's ci-ok is not green ({ci_ok}; only the gate App's newest check run counts, never a status or GitHub Actions'); nothing was signed"
                 ),
                 "wait for ci-ok to pass on this head, then run the signer again",
             )
