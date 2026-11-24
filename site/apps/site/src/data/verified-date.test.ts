@@ -1,6 +1,7 @@
 // agents/versions.json's `verified` date (#70 review): once the page follows a monorepo release,
 // it is that release's date from bosun/CHANGELOG.md (`## X.Y.Z (YYYY-MM-DD)`), never the date the
 // archived repos' pins were checked (legacy.ts).
+import { readFileSync } from "node:fs";
 import { expect, test } from "vite-plus/test";
 import { facts, releaseDate } from "./facts";
 import { legacy } from "./legacy";
@@ -15,7 +16,11 @@ test("releaseDate reads the dated heading of a version", () => {
 
 test("verified is the shown release's date when released, else legacy's", () => {
   if (facts.released) {
-    expect(verifiedOn).toBe(facts.versionDate);
+    // Pinned against the file itself, not the parser under test.
+    const log = readFileSync(new URL("../../../../../bosun/CHANGELOG.md", import.meta.url), "utf8");
+    const heading = log.split("\n").find((l) => l.startsWith(`## ${facts.version} (`));
+    expect(heading, `bosun/CHANGELOG.md has no ## ${facts.version} heading`).toBeDefined();
+    expect(verifiedOn).toBe(heading!.slice(`## ${facts.version} (`.length, -1));
     expect(verifiedOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   } else {
     expect(verifiedOn).toBe(legacy.verifiedOn);

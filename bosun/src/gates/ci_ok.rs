@@ -1,6 +1,8 @@
 //! `bosun gate ci-ok --pr N` (spec §8, keyless fast lane; §15): mirrors the `ci-ok` job of the
-//! newest `.github/workflows/ci.yml` run on the PR head as a `ci-ok` check run of the gate App,
-//! the only `ci-ok` the CI signer counts (`approve --as signer`). Any workflow can post a
+//! newest `.github/workflows/ci.yml` run on the PR head as a `bosun-ci-ok` check run of the gate
+//! App, the only CI result the CI signer counts (`approve --as signer`). Its own name keeps it
+//! apart from the required `ci-ok`: it can never satisfy or block that check, whatever the
+//! ruleset pins. Any workflow can post a
 //! GitHub Actions check run named `ci-ok` (a PR's new file with a job of that name included), so
 //! this reads the run's workflow file from the API and mirrors ci.yml's only. It never posts a
 //! status: the ruleset's `ci-ok` stays GitHub Actions'. Run by signer.yml's `mirror` job (App key
@@ -16,9 +18,21 @@ use crate::github::gate::APP_TOKEN_ENV;
 use crate::github::{GateRun, Github, Job, LiveGithub, RunState, ShaRun};
 use crate::output::{BosunError, CmdResult, Outcome};
 
-pub const CONTEXT: &str = "ci-ok";
+/// The mirrored check run's name; the job it mirrors is ci.yml's `ci-ok`.
+pub const CONTEXT: &str = "bosun-ci-ok";
+/// The job of ci.yml that is mirrored.
+pub const CI_JOB: &str = "ci-ok";
 /// The one workflow whose `ci-ok` job is mirrored.
 pub const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+
+/// Whether a changed file (or the file it was renamed from) is a workflow the mirror trusts: a
+/// PR's `pull_request` run executes the PR's own copy of ci.yml, so a PR that changes it could
+/// make its own ci-ok green.
+pub fn touches_trusted_workflow(path: &str, previous: Option<&str>) -> bool {
+    std::iter::once(path)
+        .chain(previous)
+        .any(|p| p.trim_start_matches("./").eq_ignore_ascii_case(CI_WORKFLOW))
+}
 
 /// The newest run of ci.yml on `sha` for a pull request (the highest id: ids only grow).
 /// A run of any other file, event or head never counts.
@@ -38,7 +52,7 @@ pub fn newest_ci_run<'a>(runs: &'a [ShaRun], sha: &str) -> Option<&'a ShaRun> {
 /// and any other conclusion (failure, cancelled, skipped, neutral) are not green.
 pub fn ci_ok_green(jobs: &[Job]) -> bool {
     jobs.iter()
-        .filter(|j| j.name == CONTEXT)
+        .filter(|j| j.name == CI_JOB)
         .max_by_key(|j| j.id)
         .is_some_and(|j| j.conclusion == "success")
 }
@@ -76,6 +90,15 @@ pub fn run(dir: Option<&Path>, pr: Option<u64>) -> CmdResult {
             BosunError::error(format!("PR #{n} is not an open PR"), "name an open PR")
         })?;
     let head = pull.head_sha.clone();
+    let files = gh.pull_files(n)?;
+    if (files.iter()).any(|f| touches_trusted_workflow(&f.filename, f.previous_filename.as_deref()))
+    {
+        return Err(BosunError::error(
+            format!("PR #{n} changes {CI_WORKFLOW}, whose own run would be mirrored: nothing was posted"),
+            "the CI signer does not cover a PR that changes ci.yml: approve it with the orchestrator-held key (`bosun approve <pr>@<head> --sign-key <pem> --bootstrap`) or ask the owner",
+        )
+        .with_data(json!({"pr": n, "head_sha": head})));
+    }
     let runs = gh.workflow_runs_of(&head)?;
     let Some(ci) = newest_ci_run(&runs, &head) else {
         return Err(BosunError::error(
@@ -96,7 +119,10 @@ pub fn run(dir: Option<&Path>, pr: Option<u64>) -> CmdResult {
     }
     let green = ci_ok_green(&gh.run_jobs(ci.id)?);
     let conclusion = if green { "success" } else { "failure" };
-    let title = format!("ci-ok {conclusion} (mirrored from ci.yml run {})", ci.id);
+    let title = format!(
+        "{CONTEXT} {conclusion} (ci.yml run {}'s ci-ok, for the CI signer)",
+        ci.id
+    );
     let summary = format!(
         "The ci-ok job of {CI_WORKFLOW} run {} on this head: {conclusion}. {}",
         ci.id, ci.html_url

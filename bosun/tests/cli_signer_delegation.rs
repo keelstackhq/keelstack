@@ -82,7 +82,7 @@ fn pr(k: &Key, cfg: &str, file: &str) -> FakeGithub {
         include_str!("../src/core/risk_default.toml"),
     );
     fake.pull_file(1, file, "modified", 1, 0, Some(PLAIN));
-    fake.app_run(HEAD, "ci-ok", "success", "ok", "gate-app", 4242);
+    fake.app_run(HEAD, "bosun-ci-ok", "success", "ok", "gate-app", 4242);
     for session in ["session_r1", "session_r2"] {
         let r = json!({"bosun": "verdict", "session": session, "head_sha": HEAD,
             "approved": true, "confidence": 0.95, "major": 0});
@@ -115,10 +115,12 @@ fn sign(fake: &FakeGithub, k: &Key, cfg: &str) -> (i32, Value) {
     (out.status.code().unwrap(), v)
 }
 
+/// Trust-root files the signer may sign under delegation (ci.yml, which the mirrored ci-ok runs,
+/// is refused: `the_signer_refuses_a_pr_that_changes_ci_yml`).
 const TRUST_ROOT: [&str; 3] = [
     ".bosun/approvers.toml",
     ".bosun/bosun.toml",
-    ".github/workflows/ci.yml",
+    ".github/workflows/risk.yml",
 ];
 
 #[test]
@@ -173,10 +175,52 @@ fn with_delegation_the_signer_still_needs_two_verdicts_and_a_green_gate_ci_ok() 
     let cfg = config(true);
     let k = key();
     let fake = pr(&k, &cfg, ".bosun/approvers.toml");
-    fake.app_run(HEAD, "ci-ok", "failure", "bad", "gate-app", 4242);
+    fake.app_run(HEAD, "bosun-ci-ok", "failure", "bad", "gate-app", 4242);
     let (code, v) = sign(&fake, &k, &cfg);
     assert_eq!(code, 1, "red ci-ok: {v}");
     let msg = v["error"]["message"].as_str().unwrap();
     assert!(msg.contains("gate App"), "{msg}");
     assert!(!msg.contains("GitHub Actions check run counts"), "{msg}");
+}
+
+#[test]
+fn the_signer_refuses_a_pr_that_changes_ci_yml() {
+    // The mirrored ci-ok comes from the PR's own copy of ci.yml (a pull_request run): a PR that
+    // changes it could make its own ci-ok green, so the keyless signer never signs it.
+    let cfg = config(true);
+    for (file, prev) in [
+        (".github/workflows/ci.yml", None),
+        (".github/workflows/x.yml", Some(".github/workflows/ci.yml")),
+    ] {
+        let k = key();
+        let fake = pr(&k, &cfg, file);
+        if let Some(p) = prev {
+            fake.renamed_from(1, p);
+        }
+        let (code, v) = sign(&fake, &k, &cfg);
+        assert_eq!(code, 1, "{file}: {v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("ci.yml"),
+            "{file}: {v}"
+        );
+        assert_eq!(fake.comments_of(1).len(), 4, "{file}: nothing signed");
+    }
+}
+
+#[test]
+fn the_signer_refuses_while_the_ruleset_does_not_pin_the_gates() {
+    let cfg = config(true);
+    let k = key();
+    let fake = pr(&k, &cfg, "src/a.rs");
+    fake.unpin_gates();
+    let (code, v) = sign(&fake, &k, &cfg);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]["fix"]
+            .as_str()
+            .unwrap()
+            .contains("hoist apply --area github"),
+        "{v}"
+    );
+    assert_eq!(fake.comments_of(1).len(), 4, "nothing signed");
 }

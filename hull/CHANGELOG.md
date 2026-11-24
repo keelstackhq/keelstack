@@ -7,6 +7,10 @@ Releases are automatic: merging a change to `main` whose top heading is a new da
 `v<version>` and publishes the GitHub release after the owner approves the `release` environment.
 Keep `unreleased` while changes accumulate.
 
+## v0.23.0 — unreleased
+
+- guard.mjs (both templates): a Bash call whose command is not a string is never coerced into an enumerated intended allow; `docs/agents/guard.md` states the `-F body=@<file>` name limit.
+
 ## v0.22.1 — 2026-11-24
 
 - Lockstep release with keel-bosun's packaging fix (#70); no template changes.

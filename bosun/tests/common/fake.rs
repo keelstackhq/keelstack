@@ -72,6 +72,9 @@ pub struct State {
     pub environments: HashMap<String, (Value, Value)>,
     /// Contexts a ruleset on the default branch requires (`GET /rules/branches/<b>`).
     pub ruleset_checks: Vec<String>,
+    /// With no `ruleset_checks`: the ruleset still pins the three gates to the token's App (a
+    /// repo whose owner ran `hoist apply`), unless a test unpins them (`unpin_gates`).
+    pub gates_unpinned: bool,
     /// Contexts classic branch protection requires; empty answers 404.
     pub classic_checks: Vec<String>,
     pub pulls: Vec<Value>,
@@ -1081,8 +1084,16 @@ impl FakeGithub {
     }
 
     /// Checks the default branch enforces through a ruleset.
+    /// An explicit list (even empty) is the whole ruleset: the default gate pins are dropped.
     pub fn enforce_checks(&self, checks: &[&str]) {
-        self.state.lock().unwrap().ruleset_checks = checks.iter().map(|c| c.to_string()).collect();
+        let mut s = self.state.lock().unwrap();
+        s.ruleset_checks = checks.iter().map(|c| c.to_string()).collect();
+        s.gates_unpinned = true;
+    }
+
+    /// No ruleset pins the gates (the owner has not run `hoist apply`).
+    pub fn unpin_gates(&self) {
+        self.state.lock().unwrap().gates_unpinned = true;
     }
 
     /// Checks the default branch enforces through classic branch protection.
@@ -2059,7 +2070,17 @@ fn route(
             None => msg(404, "Not Found"),
         },
         ("GET", ["rules", "branches", _]) => ok(if s.ruleset_checks.is_empty() {
-            json!([{"type": "deletion"}])
+            if s.gates_unpinned {
+                json!([{"type": "deletion"}])
+            } else {
+                let id = s.token_app.1;
+                let list: Vec<Value> = ["risk-check", "review-verdict", "main-open"]
+                    .iter()
+                    .map(|c| json!({"context": c, "integration_id": id}))
+                    .collect();
+                json!([{"type": "deletion"}, {"type": "required_status_checks",
+                    "parameters": {"required_status_checks": list}}])
+            }
         } else {
             // `context@id` pins the check to the App with that integration id.
             let list: Vec<Value> = (s.ruleset_checks.iter())

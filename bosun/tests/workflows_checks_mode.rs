@@ -28,9 +28,8 @@ fn the_signer_is_on_only_with_checks_mode_and_the_gate_app() {
 #[test]
 fn checks_mode_has_the_ruleset_pins_and_the_verdict_record_permission() {
     let c = config();
-    if c["checks"]["mode"].as_str() != Some("checks") {
-        return;
-    }
+    // This repo runs in checks mode (spec §15 step 7); a move back to `dual` edits this test.
+    assert_eq!(c["checks"]["mode"].as_str(), Some("checks"));
     let slug = c["checks"]["app_slug"].as_str().unwrap().to_string();
     let hoist: toml::Value = toml::from_str(&root("hoist.toml")).unwrap();
     let checks = hoist["github"]["required_checks"].as_array().unwrap();
@@ -44,7 +43,8 @@ fn checks_mode_has_the_ruleset_pins_and_the_verdict_record_permission() {
     for ctx in ["risk-check", "review-verdict", "main-open"] {
         assert_eq!(pin(ctx)["app"].as_str(), Some(slug.as_str()), "{ctx}");
     }
-    // ci-ok stays GitHub Actions' (ci.yml's job); the gate App's mirror is the signer's input only.
+    // ci-ok stays GitHub Actions' (ci.yml's job); the gate App's mirror (`bosun-ci-ok`) is the
+    // signer's input only and never named `ci-ok`.
     assert_eq!(pin("ci-ok")["integration_id"].as_integer(), Some(15368));
     assert!(
         root(".github/workflows/verdict.yml").contains("permission-pull-requests: write"),

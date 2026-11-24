@@ -69,7 +69,13 @@ pub fn merge_chunk_verdicts(
             let rank = |r: &Result<Verdict, String>| match r {
                 Ok(v) if v.pr == pr && v.head_sha == head_sha => {
                     let bad = v.verdict != "approve" || is_serious(v);
-                    (u8::from(bad), -v.confidence)
+                    // A NaN confidence is the worst: it ranks below every number.
+                    let c = if v.confidence.is_nan() {
+                        f64::NEG_INFINITY
+                    } else {
+                        v.confidence
+                    };
+                    (u8::from(bad), -c)
                 }
                 _ => (2, 0.0),
             };
@@ -87,7 +93,12 @@ pub fn merge_chunk_verdicts(
                 if v.verdict != "approve" || is_serious(v) {
                     merged.verdict = "request-changes".into();
                 }
-                merged.confidence = merged.confidence.min(v.confidence);
+                // A NaN confidence is no confidence (f64::min would skip it).
+                merged.confidence = if v.confidence.is_nan() {
+                    0.0
+                } else {
+                    merged.confidence.min(v.confidence)
+                };
                 merged.escalate_risk |= v.escalate_risk;
                 for l in &v.lessons_hit {
                     if !merged.lessons_hit.contains(l) {
@@ -251,7 +262,19 @@ mod tests {
         ];
         let m = merge_chunk_verdicts(1, "h", 1, &r);
         assert_eq!(m.confidence, 0.0);
-        assert!(m.chunks_reviewed.is_empty());
+        assert!(m.chunks_reviewed.is_empty()); // A NaN confidence is the worst approval, whatever the order: it merges as 0.
+        for r in [
+            [
+                (1, Ok(ver("approve", f64::NAN, &[]))),
+                (1, Ok(ver("approve", 0.95, &[]))),
+            ],
+            [
+                (1, Ok(ver("approve", 0.95, &[]))),
+                (1, Ok(ver("approve", f64::NAN, &[]))),
+            ],
+        ] {
+            assert_eq!(merge_chunk_verdicts(1, "h", 1, &r).confidence, 0.0);
+        }
     }
 
     #[test]

@@ -1529,7 +1529,7 @@ const APP_TOKEN_ACTION: &str =
     "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510";
 
 /// What is wrong with a job that holds the App key (environment `bosun-app`, spec §15).
-fn app_job_problems(file: &str, yaml: &str, job: &str) -> Vec<String> {
+fn app_job_problems(file: &str, id: &str, yaml: &str, job: &str) -> Vec<String> {
     let mut out = Vec::new();
     for e in events(yaml) {
         let ok = [
@@ -1594,9 +1594,9 @@ fn app_job_problems(file: &str, yaml: &str, job: &str) -> Vec<String> {
                 .map(str::trim)
                 .filter(|l| l.starts_with("permission-"))
                 .collect();
-            // The App writes check runs; in checks mode (spec §15 step 7) verdict.yml's App also
-            // writes the verdict record comment, and no other job asks for more.
-            let allowed: &[&str] = if file == "verdict.yml" {
+            // The App writes check runs; in checks mode (spec §15 step 7) verdict.yml's `verdict`
+            // job's App also writes the verdict record comment, and no other job asks for more.
+            let allowed: &[&str] = if file == "verdict.yml" && id == "verdict" {
                 &[
                     "permission-checks: write",
                     "permission-pull-requests: write",
@@ -1680,7 +1680,7 @@ fn the_gate_jobs_get_the_app_token_and_nothing_else_does() {
             if !job.contains("      deployment: false") {
                 problems.push(format!("{path} job {id}: deployment not false"));
             }
-            for p in app_job_problems(&name, &yaml, &job) {
+            for p in app_job_problems(&name, &id, &yaml, &job) {
                 problems.push(format!("{path} job {id}: {p}"));
             }
         }
@@ -1725,7 +1725,7 @@ fn the_app_job_scan_catches_each_problem() {
     let job = |on: &str, steps: &str| {
         let yaml = format!("name: x\non:\n{on}\njobs:\n  j:\n    runs-on: x\n    steps:\n{steps}");
         let (jobs, _) = jobs_of(&yaml);
-        app_job_problems("x.yml", &yaml, &jobs[0].1)
+        app_job_problems("x.yml", &jobs[0].0, &yaml, &jobs[0].1)
     };
     let token = format!(
         "      - id: app\n        uses: {APP_TOKEN_ACTION}\n        with:\n          client-id: ${{{{ vars.BOSUN_APP_CLIENT_ID }}}}\n          private-key: ${{{{ secrets.BOSUN_APP_KEY }}}}\n          permission-checks: write\n        continue-on-error: true\n"
@@ -1738,6 +1738,15 @@ fn the_app_job_scan_catches_each_problem() {
     assert!(job("  pull_request:\n", &good)[0].contains("runs on pull_request"));
     let head = good.replace("pull_request.base.sha", "pull_request.head.sha");
     assert!(job(target, &head)[0].contains("checkout"));
+    let wide = good.replace(
+        "permission-checks: write\n",
+        "permission-checks: write\n          permission-pull-requests: write\n",
+    );
+    assert!(
+        job(target, &wide)[0].contains("not downscoped"),
+        "{:?}",
+        job(target, &wide)
+    );
     let stray = format!("{good}      - run: echo ${{{{ secrets.BOSUN_APP_KEY }}}}\n");
     assert!(job(target, &stray)[0].contains("key outside"));
     let leak = format!(

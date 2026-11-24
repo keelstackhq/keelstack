@@ -45,15 +45,18 @@ fn read_token_blocking() -> std::io::Result<Zeroizing<String>> {
     Ok(line)
 }
 
-/// The terminal's settings (`stty -g`) when stdin is a terminal, before the hidden prompt turns
-/// echo off; `None` otherwise or when `stty` is unavailable.
+/// The settings of the controlling terminal (`stty -g` on /dev/tty, which rpassword reads) when
+/// stdin is a terminal, before the hidden prompt turns echo off; `None` otherwise or when
+/// /dev/tty or `stty` is unavailable.
 fn tty_settings() -> Option<String> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
+    // rpassword reads /dev/tty: save the settings of that terminal, not of whatever stdin is.
+    let tty = std::fs::File::open("/dev/tty").ok()?;
     let out = std::process::Command::new("stty")
         .arg("-g")
-        .stdin(std::process::Stdio::inherit())
+        .stdin(std::process::Stdio::from(tty))
         .stderr(std::process::Stdio::null())
         .output()
         .ok()
@@ -64,11 +67,14 @@ fn tty_settings() -> Option<String> {
         .then_some(saved)
 }
 
-/// Restore the terminal settings `tty_settings` saved (echo back on).
+/// Restore the settings `tty_settings` saved on /dev/tty (echo back on).
 fn restore_tty(saved: &str) {
+    let Ok(tty) = std::fs::File::open("/dev/tty") else {
+        return;
+    };
     let _ = std::process::Command::new("stty")
         .arg(saved)
-        .stdin(std::process::Stdio::inherit())
+        .stdin(std::process::Stdio::from(tty))
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();

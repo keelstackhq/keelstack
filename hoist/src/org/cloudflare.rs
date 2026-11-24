@@ -72,6 +72,21 @@ pub(super) fn validate(cfg: &CloudflareCfg) -> Result<(), String> {
                     r.name, z.name
                 ));
             }
+            // Cloudflare holds one record per type, name and content: two declared records that
+            // differ only in `proxied` cannot both exist (a create would be rejected).
+            if r.ty != "TXT"
+                && z.records.iter().any(|o| {
+                    o.ty == r.ty
+                        && name_key(&o.name) == name_key(&r.name)
+                        && norm(&o.ty, &o.content) == norm(&r.ty, &r.content)
+                        && o.proxied != r.proxied
+                })
+            {
+                return Err(format!(
+                    "[cloudflare] record {} `{}` {} is declared twice with different `proxied`; Cloudflare holds one such record: declare it once",
+                    r.ty, r.name, r.content
+                ));
+            }
             if r.ty == "TXT" && r.proxied {
                 return Err(format!(
                     "[cloudflare] TXT record `{}` cannot be proxied",
@@ -266,11 +281,11 @@ fn twins(declared: &[Record]) -> Vec<bool> {
 /// Undeclared live records are never touched.
 fn match_records(
     declared: &[Record],
-    live: &std::collections::HashMap<&str, &Vec<Live>>,
+    live: &std::collections::HashMap<String, &Vec<Live>>,
 ) -> Vec<Match> {
     let none = Vec::new();
     let live_of = |r: &Record| -> Vec<&Live> {
-        live.get(r.name.as_str())
+        live.get(&name_key(&r.name))
             .copied()
             .unwrap_or(&none)
             .iter()
@@ -453,21 +468,23 @@ pub(crate) fn read(
                 (None, why)
             }
         };
-        let mut lives: std::collections::HashMap<&str, Fetch<Vec<Live>>> =
+        // Keyed by the DNS name as compared (any case, no trailing dot), as twins are: one read
+        // per name.
+        let mut lives: std::collections::HashMap<String, Fetch<Vec<Live>>> =
             std::collections::HashMap::new();
         if id.is_some() {
             for r in &z.records {
-                if !lives.contains_key(r.name.as_str()) {
-                    let l = records(http, id.as_deref().unwrap_or_default(), &r.name)?;
-                    lives.insert(r.name.as_str(), l);
+                if let std::collections::hash_map::Entry::Vacant(e) = lives.entry(name_key(&r.name))
+                {
+                    e.insert(records(http, id.as_deref().unwrap_or_default(), &r.name)?);
                 }
             }
         }
         // Names whose read failed are absent here and reported unknown below.
-        let by_name: std::collections::HashMap<&str, &Vec<Live>> = lives
+        let by_name: std::collections::HashMap<String, &Vec<Live>> = lives
             .iter()
             .filter_map(|(k, v)| match v {
-                Fetch::Got(l) => Some((*k, l)),
+                Fetch::Got(l) => Some((k.clone(), l)),
                 Fetch::Unknown(_) => None,
             })
             .collect();
@@ -476,7 +493,7 @@ pub(crate) fn read(
             let key = record_key(r);
             let twin = matches!(plans[i], Match::Twin);
             let unreadable =
-                id.is_none() || matches!(lives.get(r.name.as_str()), Some(Fetch::Unknown(_)));
+                id.is_none() || matches!(lives.get(&name_key(&r.name)), Some(Fetch::Unknown(_)));
             if twin && unreadable {
                 // The first record already says why it is unknown.
                 continue;
@@ -491,7 +508,7 @@ pub(crate) fn read(
                 ));
                 continue;
             };
-            if let Some(Fetch::Unknown(why)) = lives.get(r.name.as_str()) {
+            if let Some(Fetch::Unknown(why)) = lives.get(&name_key(&r.name)) {
                 p.items
                     .push(item("cloudflare", "dns_record", &key, Action::Unknown, why));
                 continue;

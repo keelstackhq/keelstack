@@ -7,9 +7,10 @@ name: signer
 # (environment bosun-signer: deployment branches limited to the default branch, secret
 # BOSUN_SIGNER_KEY) and never the App key; `judge` holds the App key and never the signer key,
 # because a comment posted with GITHUB_TOKEN starts no workflow. `mirror` (App key, before
-# `sign`) posts the gate App's `ci-ok` check run from the `ci-ok` job of the newest ci.yml run on
-# the PR head (`bosun gate ci-ok`): the signer counts only the gate App's `ci-ok`, since any
-# workflow can post a GitHub Actions run named `ci-ok`. `bosun approve --as signer` signs only
+# `sign`) posts the gate App's `bosun-ci-ok` check run from the `ci-ok` job of the newest ci.yml
+# run on the PR head (`bosun gate ci-ok`; never for a PR that changes ci.yml): the signer counts
+# only that run, since any workflow can post a GitHub Actions run named `ci-ok`. Its own name
+# keeps it apart from the required `ci-ok`. `bosun approve --as signer` signs only
 # under the quorum or autonomous policy with `[checks] mode = "checks"`, for the PR's current
 # head, after every D-017 check and a green ci-ok. Event data reaches `run:` lines through `env:`
 # only, never as `${{ }}` in a script.
@@ -42,7 +43,7 @@ permissions:
   contents: read
 
 jobs:
-  # The gate App's ci-ok for the head (spec §8): mirrors the ci-ok job of the newest ci.yml run
+  # The gate App's bosun-ci-ok for the head (spec §8): mirrors the ci-ok job of the newest ci.yml run
   # on the PR head, read from the API (a run of any other workflow file never counts). App key
   # only, never the signer key. A head whose ci.yml has not finished posts nothing and fails, so
   # `sign` does not run.

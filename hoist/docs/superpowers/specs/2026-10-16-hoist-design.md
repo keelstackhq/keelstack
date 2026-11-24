@@ -1657,10 +1657,12 @@ the state after the run.
   value (hoist then manages it) and is never deleted; "never deletes" holds for every record.
   Identical declared records are one: the repeat is `ok` ("repeat of an identical declared
   record; claims nothing") and claims nothing. Identical means the same type, name (any case, no
-  trailing dot), normalised content and, except for TXT, `proxied`; two records that differ only
-  in `proxied` are two records. When the zone or the record list cannot be read, the repeat adds
+  trailing dot), normalised content and, except for TXT, `proxied`. Two declared records that
+  differ only in `proxied` are a config error (exit 3): Cloudflare holds one record per type,
+  name and content. Live records are read once per name as compared (any case, no trailing dot). When the zone or the record list cannot be read, the repeat adds
   no second `unknown` item. A TXT value compares joined: a live `"a" "b"` (quoted chunks) matches
-  a declared `ab`.
+  a declared `ab`. A record list without `result_info` is read page by page until an empty, short,
+  repeated or failed page (404, 403, 5xx, no list), keeping what was read; a 401 is still exit 3.
   A declined prompt writes nothing, marks each pending create/update `not applied: declined` and
   exits 1 (the would-be writes stay drift).
 - **Search Console** (per site, in order): if not verified, `POST /sv/token`

@@ -118,22 +118,29 @@ fn an_identical_repeat_is_reported_ok_and_claims_nothing() {
 }
 
 #[test]
-fn records_that_differ_in_proxied_are_no_twins() {
-    // One live record, two declared that differ only in `proxied`: the first is present, the
-    // second is no repeat of it, so it is created (it never patches the claimed live record).
+fn records_that_differ_only_in_proxied_are_a_config_error() {
+    // Cloudflare holds one record per type, name and content, so two declared records that
+    // differ only in `proxied` cannot both exist: a create would repeat the live record and be
+    // rejected. It is a config error (exit 3, naming the record) before any read.
     let api = api(LIVE_A);
     let d = dir(&toml(&[
         ("A", "www.example.dev", "1.1.1.1", false),
-        ("A", "www.example.dev", "1.1.1.1", true),
+        ("A", "WWW.example.dev", "1.1.1.1", true),
     ]));
-    let r = run(&["plan"], &d, &env(&api), 0);
-    let both = records(&r, "A www.example.dev 1.1.1.1");
-    assert_eq!(both.len(), 2, "{r:#}");
-    let actions: Vec<&str> = both.iter().map(|i| i["action"].as_str().unwrap()).collect();
+    let out = hoist()
+        .current_dir(d.path())
+        .envs(env(&api))
+        .args(["--json", "org", "plan"])
+        .assert()
+        .code(3)
+        .get_output()
+        .clone();
+    let err = String::from_utf8_lossy(&out.stdout);
     assert!(
-        actions.contains(&"ok") && actions.contains(&"create"),
-        "{actions:?}"
+        err.contains("www.example.dev") && err.contains("proxied"),
+        "{err}"
     );
+    assert!(api.requests().is_empty(), "no read, no write");
 }
 
 #[test]
@@ -255,4 +262,83 @@ fn a_record_list_without_result_info_is_read_past_page_1() {
         .filter(|q| q.path == "/zones/z1/dns_records")
         .count();
     assert_eq!(reads, 2, "page 1 and its repeat");
+}
+
+#[test]
+fn without_result_info_a_failed_or_short_later_page_keeps_what_was_read() {
+    let p1 = r#"{"success":true,"result":[{"id":"r0","type":"A","name":"www.example.dev","content":"1.1.1.1","proxied":false},{"id":"r1","type":"A","name":"www.example.dev","content":"2.2.2.2","proxied":false}]}"#;
+    let short = r#"{"success":true,"result":[{"id":"r2","type":"A","name":"www.example.dev","content":"3.3.3.3","proxied":false}]}"#;
+    let d = dir(&toml(&[("A", "www.example.dev", "1.1.1.1", false)]));
+    // Page 2 fails: page 1's records still count, no unknown.
+    for (status, body) in [(404, r#"{"success":false}"#), (500, r#"{"success":false}"#)] {
+        let api = start(&[
+            zone_route(),
+            (
+                "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+                200,
+                p1,
+            ),
+            (
+                "GET /zones/z1/dns_records?name=www.example.dev&page=2",
+                status,
+                body,
+            ),
+        ]);
+        let r = run(&["check"], &d, &env(&api), 0);
+        assert_eq!(
+            records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
+            "ok",
+            "{status}: {r:#}"
+        );
+    }
+    // A page shorter than the one before is the last: no page 3 is asked for.
+    let api = start(&[
+        zone_route(),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+            200,
+            p1,
+        ),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=2",
+            200,
+            short,
+        ),
+    ]);
+    let d3 = dir(&toml(&[("A", "www.example.dev", "3.3.3.3", false)]));
+    let r = run(&["check"], &d3, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 3.3.3.3")[0]["action"],
+        "ok",
+        "{r:#}"
+    );
+    let pages: Vec<String> = (api.requests().iter())
+        .filter(|q| q.path == "/zones/z1/dns_records")
+        .map(|q| q.url.clone())
+        .collect();
+    assert_eq!(pages.len(), 2, "{pages:?}");
+}
+
+#[test]
+fn names_that_differ_only_in_case_read_the_records_once() {
+    let api = api(LIVE_A);
+    let d = dir(&toml(&[
+        ("A", "www.example.dev", "1.1.1.1", false),
+        ("A", "WWW.example.dev", "2.2.2.2", false),
+    ]));
+    let r = run(&["plan"], &d, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
+        "ok",
+        "{r:#}"
+    );
+    assert_eq!(
+        records(&r, "A WWW.example.dev 2.2.2.2")[0]["action"],
+        "create",
+        "{r:#}"
+    );
+    let reads = (api.requests().iter())
+        .filter(|q| q.path == "/zones/z1/dns_records")
+        .count();
+    assert_eq!(reads, 1, "one read per DNS name");
 }

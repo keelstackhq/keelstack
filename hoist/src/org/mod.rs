@@ -341,7 +341,8 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             report.exit_code = 2;
         }
     }
-    // Nothing was written: the would-be writes stay drift (exit 1), whatever else the run found.
+    // Nothing was written, so the run never reads as in sync: the exit code is at least 1 (the
+    // would-be writes stay drift); a higher one the items gave is kept.
     if declined {
         report.exit_code = report.exit_code.max(1);
     }

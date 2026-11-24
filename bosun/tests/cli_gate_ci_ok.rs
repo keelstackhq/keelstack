@@ -1,5 +1,7 @@
-//! `bosun gate ci-ok --pr N` (spec §8, keyless fast lane): the gate App's `ci-ok` check run
-//! mirrors the `ci-ok` job of the newest ci.yml run on the PR head; no status, no other file.
+//! `bosun gate ci-ok --pr N` (spec §8, keyless fast lane): the gate App's `bosun-ci-ok` check
+//! run mirrors the `ci-ok` job of the newest ci.yml run on the PR head; no status, no other file,
+//! never a run named `ci-ok` (the required check stays GitHub Actions' alone). A PR that changes
+//! a workflow file the mirror trusts gets no mirror.
 
 mod common;
 
@@ -61,8 +63,14 @@ fn mirror(fake: &FakeGithub, mode: &str, token: bool) -> (i32, Value) {
 fn ci_ok_runs(fake: &FakeGithub) -> Vec<Value> {
     fake.check_runs_of(HEAD)
         .into_iter()
-        .filter(|r| r["name"] == "ci-ok")
+        .filter(|r| r["name"] == "bosun-ci-ok")
         .collect()
+}
+
+fn named_ci_ok(fake: &FakeGithub) -> usize {
+    (fake.check_runs_of(HEAD).iter())
+        .filter(|r| r["name"] == "ci-ok")
+        .count()
 }
 
 #[test]
@@ -78,6 +86,32 @@ fn a_green_ci_yml_run_posts_the_apps_green_ci_ok_and_no_status() {
     assert_eq!(runs[0]["conclusion"], "success");
     assert_eq!(runs[0]["app"]["id"], 4242, "{runs:?}");
     assert!(fake.statuses_of(HEAD).is_empty(), "no status");
+    assert_eq!(named_ci_ok(&fake), 0, "never a run under the required name");
+}
+
+#[test]
+fn a_pr_that_changes_ci_yml_gets_no_mirror() {
+    for (file, prev) in [
+        (".github/workflows/ci.yml", None),
+        (
+            ".github/workflows/renamed.yml",
+            Some(".github/workflows/ci.yml"),
+        ),
+    ] {
+        let fake = pr();
+        fake.pull_file(1, file, "modified", 1, 0, Some("@@ -0,0 +1,1 @@\n+x"));
+        if let Some(p) = prev {
+            fake.renamed_from(1, p);
+        }
+        fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
+        let (code, v) = mirror(&fake, "checks", true);
+        assert_eq!(code, 1, "{file}: {v}");
+        assert!(
+            v["error"]["message"].as_str().unwrap().contains("ci.yml"),
+            "{file}: {v}"
+        );
+        assert!(ci_ok_runs(&fake).is_empty(), "{file}");
+    }
 }
 
 #[test]

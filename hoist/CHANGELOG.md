@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- `hoist org` Cloudflare records (#68 follow-ups): a repeated identical record is one (`ok`, claims nothing), keyed on type, name (any case), normalised content and `proxied`; records that differ only in `proxied` are a config error (exit 3); records are read once per name; a multi-chunk TXT value matches its joined value; a list without `result_info` is read past page 1 until an empty, short, repeated or failed page, keeping what was read; a declined prompt exits at least 1 (`HOIST_ASSUME_TTY` drives it in tests).
+- Tests pin crates.io's bare token on GETs and `Bearer` on writes.
+
 ## 0.22.1 (2026-11-24)
 
 - Lockstep release with keel-bosun's packaging fix (#70); no hoist changes.

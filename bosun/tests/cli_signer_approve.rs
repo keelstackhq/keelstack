@@ -58,9 +58,9 @@ fn checkout(checks: bool) -> std::path::PathBuf {
     dir
 }
 
-/// The gate App's green `ci-ok` run on HEAD.
+/// The gate App's green `bosun-ci-ok` run on HEAD (signer.yml `mirror`, `bosun gate ci-ok`).
 fn ci_ok(fake: &FakeGithub) {
-    fake.app_run(HEAD, "ci-ok", "success", "ok", "gate-app", 4242);
+    fake.app_run(HEAD, "bosun-ci-ok", "success", "ok", "gate-app", 4242);
 }
 
 /// PR 1 by `author` (Closes #7, leased by `session_w`) at HEAD changing src/a.rs; owner `ada`;
@@ -199,7 +199,20 @@ fn only_the_gate_apps_newest_ci_ok_run_counts() {
     // A ci-ok status never counts, however green.
     let fake = pr(&k, "signer", "autonomous", "octocat");
     fake.status(HEAD, "ci-ok", "success", "ok");
+    fake.status(HEAD, "bosun-ci-ok", "success", "ok");
     assert_eq!(sign(&fake, &k, &AS_SIGNER).0, 1, "a status");
+    // The gate App's run under the required check's name is not the mirror: it never counts,
+    // so the mirror can never satisfy or block the required `ci-ok`.
+    let fake = pr(&k, "signer", "autonomous", "octocat");
+    fake.check_run_app(
+        HEAD,
+        "ci-ok",
+        "completed",
+        Some("success"),
+        "gate-app",
+        4242,
+    );
+    assert_eq!(sign(&fake, &k, &AS_SIGNER).0, 1, "gate App run named ci-ok");
     for (what, runs, want) in [
         ("missing", vec![], 1),
         (
@@ -242,7 +255,7 @@ fn only_the_gate_apps_newest_ci_ok_run_counts() {
                 "github-actions" => 15368,
                 _ => 7,
             };
-            fake.check_run_app(HEAD, "ci-ok", st, *c, app, id);
+            fake.check_run_app(HEAD, "bosun-ci-ok", st, *c, app, id);
         }
         let before = fake.comments_of(1).len();
         let (code, v) = sign(&fake, &k, &AS_SIGNER);

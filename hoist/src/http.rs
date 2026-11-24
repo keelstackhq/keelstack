@@ -427,7 +427,7 @@ impl Http {
     /// All pages of a list endpoint as one JSON array. GitHub follows `Link: rel="next"`;
     /// `array_key` names the array inside an object body (else the body is the array).
     /// Cloudflare concatenates `result` across `result_info.page/total_pages`; a list without
-    /// `result_info` is read page by page until an empty page or a repeat of the last one.
+    /// `result_info` is read page by page until an empty, short, failed or repeated page.
     pub fn get_all(&self, path: &str, array_key: Option<&str>) -> Result<Fetched, HttpError> {
         match self.service {
             Service::Cloudflare => self.get_all_cloudflare(path),
@@ -472,23 +472,36 @@ impl Http {
         let mut last: Option<Vec<Value>> = None;
         loop {
             let current = with_query(path, &format!("page={page}"));
-            let resp = match self.fetch(&current)? {
-                Err(fetched) => return Ok(fetched),
-                Ok(resp) => resp,
+            // Past page 1 of a list without `result_info` (`last` is set), whether there is a
+            // next page is a guess: a page that fails (404, 403, a 5xx, a body that is no list)
+            // ends the list and keeps what was read. A 401 is still an error.
+            let guessing = last.is_some();
+            let resp = match self.fetch(&current) {
+                Ok(Ok(resp)) => resp,
+                Ok(Err(_)) | Err(HttpError::Status { .. }) if guessing => break,
+                Ok(Err(fetched)) => return Ok(fetched),
+                Err(e) => return Err(e),
             };
-            let body = self.parse(&current, &resp.body)?;
-            let info = body.get("result_info");
-            let more = match body.get("result") {
+            let parsed = self.parse(&current, &resp.body);
+            let more = match parsed.as_ref().ok().and_then(|b| b.get("result")) {
                 Some(Value::Array(more)) => more.clone(),
-                _ => return Err(self.invalid(&current)),
+                _ if guessing => break,
+                _ => return Err(parsed.err().unwrap_or_else(|| self.invalid(&current))),
             };
-            // No `result_info`: the page count is unknown, so read on until an empty page, or a
-            // page equal to the last one (an endpoint that ignores `page` answers it again).
+            let body = parsed?;
+            let info = body.get("result_info");
+            // No `result_info`: the page count is unknown, so read on until an empty page, a
+            // page shorter than the last one (the last page), or a page equal to the last one
+            // (an endpoint that ignores `page` answers it again).
             if info.is_none() {
                 if more.is_empty() || last.as_ref() == Some(&more) {
                     break;
                 }
+                let short = last.as_ref().is_some_and(|l| more.len() < l.len());
                 items.extend(more.iter().cloned());
+                if short {
+                    break;
+                }
                 last = Some(more);
                 if page >= self.max_pages {
                     return Err(self.page_limit(&current));

@@ -158,6 +158,12 @@ pub fn sleep_interruptible(d: Duration) {
 /// already buffered, so only a grandchild that keeps the pipes open can make it wait this long.
 pub const PIPE_GRACE: Duration = Duration::from_secs(10);
 
+#[cfg(test)]
+thread_local! {
+    /// Tests only: a shorter grace after a normal exit.
+    static TEST_GRACE: std::cell::Cell<Option<Duration>> = const { std::cell::Cell::new(None) };
+}
+
 /// The one deadline (from now) for reading both pipes once the child is gone.
 fn pipe_grace(timed_out: bool, forwarded: bool) -> Duration {
     if timed_out {
@@ -165,7 +171,29 @@ fn pipe_grace(timed_out: bool, forwarded: bool) -> Duration {
     } else if forwarded {
         Duration::from_secs(2)
     } else {
+        #[cfg(test)]
+        if let Some(g) = TEST_GRACE.get() {
+            return g;
+        }
         PIPE_GRACE
+    }
+}
+
+/// Wait for a pipe reader's EOF signal until `until`, in short slices, and stop at once when
+/// `interrupted` says so (Ctrl-C during the after-exit wait must not hold keel).
+fn wait_eof(rx: &mpsc::Receiver<()>, until: Instant, interrupted: &dyn Fn() -> bool) {
+    loop {
+        if interrupted() {
+            return;
+        }
+        let left = until.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        match rx.recv_timeout(left.min(Duration::from_millis(50))) {
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            _ => return,
+        }
     }
 }
 
@@ -291,15 +319,15 @@ impl Runner for SystemRunner {
         };
         // The child is gone; a grandchild may still hold the pipes. One deadline covers both
         // pipes: after a kill 1 s, after a forwarded signal 2 s (keel must exit soon), after a
-        // normal exit `PIPE_GRACE` (what the child wrote is already in the pipes).
+        // normal exit `PIPE_GRACE` (what the child wrote is already in the pipes). An interrupt
+        // ends the wait at once.
         let until = Instant::now() + pipe_grace(timed_out, forwarded);
         type Drain = (
             std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
             mpsc::Receiver<()>,
         );
         let got = |(buf, rx): Drain| {
-            let left = until.saturating_duration_since(Instant::now());
-            let _ = rx.recv_timeout(left);
+            wait_eof(&rx, until, &|| interrupted().is_some());
             buf.lock().map_or_else(
                 |_| String::new(),
                 |b| String::from_utf8_lossy(&b).into_owned(),
@@ -426,15 +454,38 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_grandchild_holding_the_pipes_delays_an_untimed_call_by_one_bounded_grace() {
-        // The child exits at once; its background grandchild keeps stdout and stderr open for
-        // 30 s. keel reads both pipes against ONE deadline (`PIPE_GRACE`), not one per pipe.
+        // The child exits at once; its background grandchild keeps stdout and stderr open.
+        // keel reads both pipes against ONE deadline, not one per pipe, and keeps the output.
+        // A short grace for the test (the real one is `PIPE_GRACE`); the orphan is killed after.
+        TEST_GRACE.set(Some(Duration::from_millis(300)));
+        let dir = tempfile::tempdir().unwrap();
+        let pidfile = dir.path().join("orphan.pid");
+        let script = format!("sleep 30 & echo $! > {}; echo hi", pidfile.display());
         let started = Instant::now();
-        let c = Cmd::new("sh", &["-c", "sleep 30 & echo hi"]);
-        let out = SystemRunner.run(&c);
+        let out = SystemRunner.run(&Cmd::new("sh", &["-c", &script]));
         let took = started.elapsed();
+        TEST_GRACE.set(None);
+        if let Ok(pid) = std::fs::read_to_string(&pidfile) {
+            let _ = Command::new("kill").args(["-9", pid.trim()]).status();
+        }
         assert_eq!((out.code, out.stdout.as_str()), (0, "hi\n"));
-        assert!(took >= PIPE_GRACE, "{took:?}");
-        assert!(took < PIPE_GRACE + Duration::from_secs(4), "{took:?}");
+        assert!(took >= Duration::from_millis(300), "{took:?}");
+        assert!(
+            took < Duration::from_millis(550),
+            "one deadline, not two: {took:?}"
+        );
+    }
+
+    #[test]
+    fn an_interrupt_ends_the_pipe_wait_at_once() {
+        let (_tx, rx) = mpsc::channel::<()>();
+        let started = Instant::now();
+        wait_eof(&rx, Instant::now() + Duration::from_secs(10), &|| true);
+        assert!(started.elapsed() < Duration::from_millis(200));
+        // Not interrupted: it waits for the deadline.
+        let started = Instant::now();
+        wait_eof(&rx, Instant::now() + Duration::from_millis(150), &|| false);
+        assert!(started.elapsed() >= Duration::from_millis(150));
     }
 
     #[test]

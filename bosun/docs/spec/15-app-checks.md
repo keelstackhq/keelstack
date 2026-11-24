@@ -13,6 +13,15 @@ order is the Transition's: the owner runs `hoist apply --area github` from the P
 (step 6, while main is still `dual`, so the App's runs already satisfy the pins) and only then
 merges the PR (step 7). The CI signer (§8, `[approvals] signer = true`) needs this mode.
 
+Step 7 never before step 6, enforced: in `checks` mode risk-check (a required check) and `bosun
+approve --as signer` first read `GET /rules/branches/<default>` (`gate::require_pinned`; read
+access is enough, the risk workflow's `contents: read` token has it). While risk-check,
+review-verdict or main-open is not pinned to `[checks] app_id`, or the read is refused (403),
+they fail closed: risk-check posts its failing run and exits 1, the signer signs nothing, and
+the fix names `hoist apply --area github` (or `mode = "dual"` until then). So a merge of
+`mode = "checks"` before the owner pins the ruleset blocks every PR (the owner's bypass or the
+pin ends it) instead of trusting unpinned gates.
+
 **The problem.** `risk-check`, `review-verdict` and `main-open` are commit statuses that the
 workflows post with `GITHUB_TOKEN`, as the github-actions app (D32). Any `on: pull_request`
 workflow that a same-repo PR adds or edits runs the PR's copy of that file and gets a
@@ -65,10 +74,11 @@ the risk workflow)"; for main-open and review-verdict, re-run that workflow).
 `main-open`. A status (from any token) or a check run from github-actions or any other App then
 never satisfies them. `ci-ok` stays pinned to GitHub Actions (`integration_id` 15368): it must
 come from a workflow, but any workflow counts, the PR's rewritten ci.yml or a new file with a
-job named `ci-ok` included. So `ci-ok` means "the PR's own CI passed", never more. The gate App also posts a `ci-ok` check run, only when the CI signer asks
+job named `ci-ok` included. So `ci-ok` means "the PR's own CI passed", never more. The gate App also posts a `bosun-ci-ok` check run, only when the CI signer asks
 (signer.yml job `mirror`, `bosun gate ci-ok`, §8): it mirrors the `ci-ok` job of ci.yml's newest
 run on the head, read from the API by workflow file, so the signer never counts a `ci-ok` that
-another workflow file posted. The ruleset ignores it (pinned to 15368). risk-check
+another workflow file posted. Its own name keeps it out of the required `ci-ok` before and
+after the pin. risk-check
 covers the rest: such a PR edits `.github/workflows/**`, which is R-ci and on the critical floor
 (§8), so it needs the owner, and that owner gate can no longer be forged. ci.yml grants no write
 scope, so PR code it runs (tests, build scripts) cannot post either.

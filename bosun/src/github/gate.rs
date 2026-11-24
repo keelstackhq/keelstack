@@ -238,6 +238,51 @@ pub fn trusted_app_id() -> Option<u64> {
     trusted_app().map(|(id, _)| *id)
 }
 
+/// The gate contexts the ruleset must pin to the gate App before `checks` mode can be trusted.
+pub const PINNED_GATES: [&str; 3] = ["risk-check", "review-verdict", "main-open"];
+
+/// The gates of [`PINNED_GATES`] that `pins` (`(context, integration_id)` of the default branch's
+/// required checks) does not pin to App `app_id`.
+pub fn unpinned_gates(pins: &[(String, Option<u64>)], app_id: u64) -> Vec<&'static str> {
+    PINNED_GATES
+        .into_iter()
+        .filter(|g| !pins.iter().any(|(c, id)| c == g && *id == Some(app_id)))
+        .collect()
+}
+
+/// Spec §15, Transition step 7 "never before step 6", enforced: in `checks` mode the statuses
+/// stop, so the gates are only trustworthy (and only required) as the gate App's check runs once
+/// the default branch's ruleset pins them to it. Until then fail closed. The read is
+/// `GET /rules/branches/<default>`, which needs only read access (`contents: read`, the risk
+/// workflow's token has it); a 403 also fails closed.
+pub fn require_pinned(gh: &dyn Github, app_id: u64) -> Result<()> {
+    let fix = String::from(
+        "the owner pins the gates in hoist.toml (`{ context = \"risk-check\", app = \"<app_slug>\" }`, the same for review-verdict and main-open) and runs `hoist apply --area github`; then re-run the risk workflow (or set `[checks] mode = \"dual\"` until then)",
+    );
+    let branch = crate::app::default_branch(gh)?;
+    let missing = match gh.ruleset_pins(&branch)? {
+        Some(pins) => unpinned_gates(&pins, app_id),
+        None => {
+            return Err(BosunError::error(
+                format!(
+                    "checks mode: cannot read the rulesets of `{branch}` (403), so the gates may not be pinned to the gate App (integration_id {app_id}); failing closed"
+                ),
+                fix,
+            ));
+        }
+    };
+    if missing.is_empty() {
+        return Ok(());
+    }
+    Err(BosunError::error(
+        format!(
+            "checks mode: {} not pinned to the gate App (integration_id {app_id}) in the rulesets of `{branch}`; a status or another App's run could pass them, so the gates fail closed",
+            missing.join(", ")
+        ),
+        fix,
+    ))
+}
+
 /// Whether `[checks] mode = "checks"` is in force for this process.
 pub fn checks_mode() -> bool {
     trusted_app().is_some()
