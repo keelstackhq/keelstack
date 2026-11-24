@@ -87,11 +87,21 @@ fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {
 /// read and hash of the bump script). Main's repeat-lock counts in it, as on main. A panic in
 /// it denies ([`guarded`]). The only exception is a
 /// Bash command that is exactly an enumerated intended allow ([`intended::allow`]) whose pinned
-/// script, if any, is unchanged; the new rules judge it (and every call legacy allows).
+/// script, if any, is unchanged; the new rules judge it (and every call legacy allows). On that
+/// exception legacy's repeat-lock result still applies: a repeat deny is returned, a warning
+/// note goes to the new rules.
 fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
-    let old = super::pre_tool_use_legacy::judge(cwd, input);
-    if old.as_deref().is_some_and(is_deny) && !intended_override(cwd, input) {
-        return old;
+    let (old, repeat) = super::pre_tool_use_legacy::judge_parts(cwd, input);
+    if old.as_deref().is_some_and(is_deny) {
+        if !intended_override(cwd, input) {
+            return old;
+        }
+        // Legacy's deny is overridden, but its repeat-lock still counts: a repeat deny stands,
+        // a warning note goes on to the new rules.
+        if repeat.as_deref().is_some_and(is_deny) {
+            return repeat;
+        }
+        return judge_new(cwd, input, repeat);
     }
     // Legacy counted the call (main's repeat-lock); its note, if any, goes to the new rules.
     judge_new(cwd, input, old.filter(|o| !is_deny(o)))
@@ -951,6 +961,38 @@ mod tests {
         std::fs::write(d.join("scripts/y.sh"), "echo ok\n").unwrap();
         let fifth = judge(Some(d), &input).unwrap_or_default();
         assert!(is_deny(&fifth) && fifth.contains("repeat-lock"), "{fifth}");
+    }
+
+    #[test]
+    fn an_intended_allow_that_legacy_denies_is_still_repeat_limited() {
+        use crate::core::repeat::{DENY_AT, WARN_AT};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "feature"])
+            .arg(d)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok);
+        std::fs::write(d.join("s.sh"), "git push -f origin main\n").unwrap();
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash -n s.sh"},
+            "session_id": "S-intended"});
+        assert_eq!(intended::allow("bash -n s.sh"), Some("parse-only"));
+        let legacy = super::super::pre_tool_use_legacy::judge(Some(d), &input);
+        assert!(legacy.as_deref().is_some_and(is_deny), "legacy must deny");
+        // The legacy call above counted once; reset by using a fresh session for the run.
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash -n s.sh"},
+            "session_id": "S-intended-2"});
+        for n in 1..=DENY_AT + 1 {
+            let out = judge(Some(d), &input).unwrap_or_default();
+            if n == WARN_AT {
+                assert!(!is_deny(&out) && out.contains("repeat-lock"), "{n}: {out}");
+            } else if n >= DENY_AT {
+                assert!(is_deny(&out) && out.contains("repeat-lock"), "{n}: {out}");
+            } else {
+                assert!(!is_deny(&out) && !out.contains("repeat-lock"), "{n}: {out}");
+            }
+        }
     }
 
     #[test]

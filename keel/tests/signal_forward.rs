@@ -61,7 +61,10 @@ fn check(sig: &str) {
         .args([&format!("-{sig}"), &keel.id().to_string()])
         .status()
         .unwrap();
-    keel.wait().unwrap();
+    let status = keel.wait().unwrap();
+    // The signal stops keel through the normal error path: exit 128 + signal, not a raw kill.
+    let want = if sig == "INT" { 130 } else { 143 };
+    assert_eq!(status.code(), Some(want), "exit code after {sig}");
     let t = Instant::now();
     while alive(&pid) {
         assert!(
@@ -80,4 +83,93 @@ fn sigterm_stops_child() {
 #[test]
 fn sigint_stops_child() {
     check("INT");
+}
+
+/// A signal with no child running (the `--wait` poll sleep) stops keel promptly with the
+/// interrupted exit code and its `--json` error object, after an earlier subprocess finished.
+#[test]
+fn sigint_during_wait_poll_exits_130_with_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join("polled");
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let stub = format!(
+        r#"#!/bin/sh
+case "$(basename "$0") $*" in
+  "node --version") echo v24.1.0;;
+  "git --version") echo "git version 2.47.0";;
+  "git rev-parse --is-inside-work-tree") echo true;;
+  "git remote get-url origin") echo https://github.com/owner/name.git;;
+  "git rev-parse --abbrev-ref HEAD") echo keel/bootstrap;;
+  "gh auth status"*) ;;
+  "gh repo view"*) echo '{{"defaultBranchRef":{{"name":"main"}}}}';;
+  "splice --version") echo "splice 0.6.0";;
+  "bosun --version") echo "bosun 0.21.0";;
+  "hoist --version") echo "hoist 0.5.1";;
+  "berth --version") echo "berth 0.2.1";;
+  "gh api user --jq .login") echo octo;;
+  "gh api user/installations --paginate"*)
+    echo '{{"id":1,"app_slug":"claude","repository_selection":"all"}}'
+    : > {marker};;
+esac
+exit 0
+"#,
+        marker = marker.display()
+    );
+    for tool in ["git", "node", "gh", "splice", "bosun", "hoist", "berth"] {
+        let p = bin.join(tool);
+        std::fs::write(&p, &stub).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = std::fs::File::create(dir.path().join("out.json")).unwrap();
+    let mut keel = Command::new(env!("CARGO_BIN_EXE_keel"))
+        .args([
+            "-C",
+            dir.path().to_str().unwrap(),
+            "--json",
+            "up",
+            "--repo",
+            "owner/name",
+            "--template",
+            "rust",
+            "--pieces",
+            "rust-cli:my-cli",
+            "--wait=600",
+        ])
+        .env("HOME", dir.path())
+        .env("KEEL_POLL_SECS", "300")
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .stdin(Stdio::null())
+        .stdout(out)
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let t = Instant::now();
+    while !marker.exists() {
+        assert!(t.elapsed() < Duration::from_secs(10), "poll never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Let the subprocess finish and the poll sleep begin (the flag is checked either way).
+    std::thread::sleep(Duration::from_millis(500));
+    let sent = Instant::now();
+    Command::new("kill")
+        .args(["-INT", &keel.id().to_string()])
+        .status()
+        .unwrap();
+    let status = loop {
+        if let Some(st) = keel.try_wait().unwrap() {
+            break st;
+        }
+        if sent.elapsed() > Duration::from_secs(5) {
+            let _ = keel.kill();
+            panic!("keel ignored SIGINT during the --wait poll");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(130));
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("out.json")).unwrap())
+            .unwrap();
+    assert_eq!(json["exit_code"], 130);
+    assert_eq!(json["ok"], false);
 }

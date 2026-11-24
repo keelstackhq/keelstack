@@ -24,7 +24,7 @@ pub struct Site {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SearchConsoleCfg {
-    /// Else env `HOIST_SEARCH_CONSOLE_BRIDGE`.
+    /// The env `HOIST_SEARCH_CONSOLE_BRIDGE` wins when set; this is the fallback.
     pub bridge: Option<String>,
     #[serde(default)]
     pub sites: Vec<Site>,

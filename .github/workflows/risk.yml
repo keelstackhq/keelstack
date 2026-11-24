@@ -46,23 +46,23 @@ on:
   push:
     branches: [main]
 
-# A relay run with a PR (`workflow_run.pull_requests[0].number`, grouping only, never judging)
-# shares the PR's judge group (`risk-<n>-judge`), so a stale judge run cannot overwrite the relay's
-# result. With no PR in the list it is grouped by its head sha (`relay-<sha>`), apart from every
-# judge run. A relay judges only a PR whose head is still exactly its sha (nothing when stale).
+# A relay run (workflow_run caused by `pull_request_review`) has its own group per PR number and
+# head sha (`risk-<n>-relay-<sha>-judge`) and is never cancelled, so it cannot cancel the judge run of
+# a newer head (`risk-<n>-judge`, cancel-in-progress). A relay judges only a PR whose head is
+# still exactly its sha (nothing when stale).
 # A comment that is neither an approval nor a recheck by the repo's people, and an edit that
 # changes neither body nor base, get a group of their own: their runs are skipped and must never
 # cancel the run that judges a new head.
 concurrency:
   group: >-
-    risk-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || 'main' }}${{ github.event_name == 'workflow_run' && !github.event.workflow_run.pull_requests[0].number && format('-relay-{0}', github.event.workflow_run.head_sha) || '' }}-${{
+    risk-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || 'main' }}${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request_review' || !github.event.workflow_run.pull_requests[0].number) && format('-relay-{0}', github.event.workflow_run.head_sha) || '' }}-${{
     ((github.event_name == 'workflow_run' && github.event.workflow_run.event != 'pull_request_review') ||
     (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/bosun approve')
     && !(contains(github.event.comment.body, '/bosun recheck') &&
     contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     || (github.event.action == 'edited' && !github.event.changes.body && !github.event.changes.base))
     && github.run_id || 'judge' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review') }}
 
 # Least privilege: statuses for the verdict; pull-requests: write only because risk-check writes
 # the Risk note into the PR body (spec §8); read for the base files, comments and linked issues.

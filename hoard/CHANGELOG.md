@@ -6,7 +6,7 @@ Newest first. The version in `Cargo.toml` is the last release; "Unreleased" ship
 
 ## 0.22.0 — 2026-11-23
 
-- Docs: version pins (README, CircleCI guide, agent skill, `scripts/install.sh` examples) moved to 0.6.1.
+- Docs: version pins (README, CircleCI guide, agent skill, `scripts/install.sh` examples) moved to 0.22.0.
 
 ## 0.6.1 — 2026-11-16
 

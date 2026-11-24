@@ -9,6 +9,14 @@ pub enum Mode {
     Plan,
 }
 
+/// A signal that arrived while a step ran stops keel through the normal error path.
+fn bail_if_interrupted() -> Result<(), KeelError> {
+    match crate::exec::interrupted() {
+        Some(sig) => Err(KeelError::Interrupted(sig)),
+        None => Ok(()),
+    }
+}
+
 /// Run the steps in order. `Up`: check, apply what is todo, stop at the first human or failed
 /// step. `Plan`: check only, `would-run` for work, stop at a human or failed step.
 pub fn run_steps(cx: &mut Ctx, steps: &[Box<dyn Step>], mode: Mode) -> Result<Report, KeelError> {
@@ -19,11 +27,15 @@ pub fn run_steps(cx: &mut Ctx, steps: &[Box<dyn Step>], mode: Mode) -> Result<Re
     let mut would_run = false;
     for step in steps {
         let id = step.id();
-        let mut outcome = step.check(cx)?;
+        let outcome = step.check(cx);
+        bail_if_interrupted()?;
+        let mut outcome = outcome?;
         if mode == Mode::Up
             && let Check::Todo(_) = outcome
         {
-            outcome = match step.apply(cx)? {
+            let applied = step.apply(cx);
+            bail_if_interrupted()?;
+            outcome = match applied? {
                 Check::Done(d) => {
                     results.push(StepResult {
                         id: id.into(),

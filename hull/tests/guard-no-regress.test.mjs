@@ -43,6 +43,8 @@ const ALLOWED = {
     `${PULLS} -F body=@docs/pr.md`,
     "gh api --method POST repos/o/r/pulls -f title=t -f head=feat -f base=main",
     "gh api repos/o/r/pulls -X POST -f title=release-notes -f head=feat -f base=main -f draft=true",
+    "gh api -XPOST /repos/o/r/pulls -f title=t -f head=feat -f base=main",
+    "gh api --method=POST /repos/o/r/pulls -f title=t -f head=feat -f base=main",
     "gh api -X POST /repos/o/r/pulls --raw-field title=t --raw-field head=feat --raw-field base=main",
   ],
 };

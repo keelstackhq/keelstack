@@ -130,6 +130,49 @@ fn item<'a>(r: &'a Value, kind: &str, key: &str) -> &'a Value {
         .unwrap_or_else(|| panic!("no {kind} {key} in {r:#}"))
 }
 
+/// No token value reaches stdout or stderr, in the JSON report or with `-v` (request lines).
+#[test]
+fn org_output_never_contains_token_values_with_json_or_verbose() {
+    const SENTINELS: [(&str, &str); 5] = [
+        ("GITHUB_TOKEN", "SENTINEL-gh-7f3a9c1e"),
+        ("CLOUDFLARE_API_TOKEN", "SENTINEL-cf-5b2d8e40"),
+        ("NPM_TOKEN", "SENTINEL-npm-9a1c6d72"),
+        ("CARGO_REGISTRY_TOKEN", "SENTINEL-cio-3e8f4b15"),
+        ("HOIST_SEARCH_CONSOLE_TOKEN", "SENTINEL-sc-c4d07a68"),
+    ];
+    let gh = gh_api(gh_routes(200));
+    let cf = start(&cf_routes());
+    let d = dir(&format!("{GH_TOML}{CF_TOML}"));
+    for flags in [&["--json"][..], &["-v"][..], &["--json", "-v"][..]] {
+        for sub in ["check", "plan"] {
+            let mut c = hoist();
+            c.env("HOIST_GITHUB_API", gh.url())
+                .env("HOIST_CLOUDFLARE_API", cf.url());
+            for (k, v) in SENTINELS {
+                c.env(k, v);
+            }
+            let out = c
+                .current_dir(d.path())
+                .args(flags)
+                .args(["org", sub])
+                .output()
+                .unwrap();
+            let all = format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout),
+                String::from_utf8_lossy(&out.stderr)
+            );
+            assert!(!all.is_empty(), "{flags:?} org {sub}: no output");
+            for (k, v) in SENTINELS {
+                assert!(
+                    !all.contains(v),
+                    "{k} value leaked with {flags:?} org {sub}: {all}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn missing_file_is_exit_3_naming_the_path() {
     let d = tempfile::tempdir().unwrap();

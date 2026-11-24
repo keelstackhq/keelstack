@@ -29,6 +29,23 @@ use super::pre_tool_use::{deny, is_deny};
 
 /// Main's judge (see the module doc for the three omissions).
 pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
+    judge_parts(cwd, input).0
+}
+
+/// Main's judge with its repeat-lock result alongside: `(verdict, repeat)`. `repeat` is the
+/// repeat-lock's output for the call (a warning note or a deny) when it was counted, even if
+/// a later rule denied; the live hook uses it when an intended allow overrides that deny.
+pub fn judge_parts(cwd: Option<&Path>, input: &Value) -> (Option<String>, Option<String>) {
+    let mut repeat_seen = None;
+    let out = judge_inner(cwd, input, &mut repeat_seen);
+    (out, repeat_seen)
+}
+
+fn judge_inner(
+    cwd: Option<&Path>,
+    input: &Value,
+    repeat_seen: &mut Option<String>,
+) -> Option<String> {
     let tool = input.get("tool_name").and_then(Value::as_str)?;
     let tool_input = input.get("tool_input").cloned().unwrap_or(Value::Null);
     let dir = cwd
@@ -95,6 +112,7 @@ pub fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
             }
         }
         let repeat = repeat_lock(&dir, input, &tool_input);
+        *repeat_seen = repeat.clone();
         let read = |p: &str| read_script(&dir, p);
         if let Some(why) = script_rules(command, &read, &branch_at, &default) {
             return Some(deny(&why));

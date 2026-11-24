@@ -3,7 +3,8 @@ use std::io::{Read, Write};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, mpsc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, Once, mpsc};
 use std::time::{Duration, Instant};
 use zeroize::Zeroizing;
 
@@ -110,6 +111,49 @@ fn signal_child(sig: &str, pid: u32, group: bool) {
         .status();
 }
 
+/// The last SIGINT/SIGTERM number keel received (0: none). Set by handlers registered once per
+/// process and never unregistered, so Ctrl-C never falls back to being ignored.
+#[cfg(unix)]
+fn got_sig() -> &'static std::sync::Arc<AtomicUsize> {
+    static SIG: std::sync::OnceLock<std::sync::Arc<AtomicUsize>> = std::sync::OnceLock::new();
+    SIG.get_or_init(|| std::sync::Arc::new(AtomicUsize::new(0)))
+}
+
+/// Register the SIGINT/SIGTERM handlers (once per process). They only record the signal.
+pub fn install_signal_handlers() {
+    static HANDLERS: Once = Once::new();
+    HANDLERS.call_once(|| {
+        #[cfg(unix)]
+        for s in [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM] {
+            let _ = signal_hook::flag::register_usize(s, got_sig().clone(), s as usize);
+        }
+    });
+}
+
+/// The signal number keel was interrupted by, if any (its exit code is 128 + that number).
+pub fn interrupted() -> Option<i32> {
+    #[cfg(unix)]
+    {
+        let s = got_sig().load(Ordering::SeqCst);
+        if s != 0 {
+            return Some(s as i32);
+        }
+    }
+    None
+}
+
+/// Sleep `d` in short slices; returns early once keel is interrupted.
+pub fn sleep_interruptible(d: Duration) {
+    let end = Instant::now() + d;
+    while interrupted().is_none() {
+        let left = end.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        std::thread::sleep(left.min(Duration::from_millis(50)));
+    }
+}
+
 /// Runs real subprocesses. Stdin is piped only when the call has some; it is never logged.
 pub struct SystemRunner;
 
@@ -139,14 +183,12 @@ impl Runner for SystemRunner {
         if grouped {
             c.process_group(0);
         }
-        // SIGINT/SIGTERM sent to keel are forwarded to the child, so it is never orphaned.
-        #[cfg(unix)]
-        let got_sig = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        #[cfg(unix)]
-        let sig_ids: Vec<_> = [signal_hook::consts::SIGINT, signal_hook::consts::SIGTERM]
-            .into_iter()
-            .filter_map(|s| signal_hook::flag::register_usize(s, got_sig.clone(), s as usize).ok())
-            .collect();
+        // SIGINT/SIGTERM sent to keel are forwarded to the child, so it is never orphaned. Once
+        // interrupted, no new child starts: the engine turns the flag into an error.
+        install_signal_handlers();
+        if interrupted().is_some() {
+            return Out::with(-1, "", "interrupted");
+        }
         let mut child = match c.spawn() {
             Ok(ch) => ch,
             Err(e) => return Out::with(-1, "", &e.to_string()),
@@ -183,6 +225,9 @@ impl Runner for SystemRunner {
         );
         let deadline = cmd.timeout.map(|t| Instant::now() + t);
         let mut timed_out = false;
+        #[cfg(unix)]
+        let mut forwarded = false;
+        let mut kill_at: Option<Instant> = None;
         let status = loop {
             match child.try_wait() {
                 Ok(Some(st)) => break Ok(st),
@@ -190,18 +235,22 @@ impl Runner for SystemRunner {
                 Err(e) => break Err(e),
             }
             #[cfg(unix)]
-            {
-                let s = got_sig.load(std::sync::atomic::Ordering::SeqCst);
-                if s != 0 {
-                    let name = if s == signal_hook::consts::SIGINT as usize {
-                        "INT"
-                    } else {
-                        "TERM"
-                    };
-                    signal_child(name, child.id(), grouped);
-                    let _ = child.wait();
-                    std::process::exit(128 + s as i32);
-                }
+            if !forwarded && let Some(sig) = interrupted() {
+                let name = if sig == signal_hook::consts::SIGINT {
+                    "INT"
+                } else {
+                    "TERM"
+                };
+                signal_child(name, child.id(), grouped);
+                forwarded = true;
+                // Wait for the child below, bounded: it may ignore the signal.
+                kill_at = Some(Instant::now() + Duration::from_secs(5));
+            }
+            if kill_at.is_some_and(|k| Instant::now() >= k) {
+                #[cfg(unix)]
+                signal_child("KILL", child.id(), grouped);
+                let _ = child.kill();
+                kill_at = None;
             }
             if deadline.is_some_and(|d| Instant::now() >= d) {
                 timed_out = true;
@@ -212,10 +261,6 @@ impl Runner for SystemRunner {
             }
             std::thread::sleep(Duration::from_millis(10));
         };
-        #[cfg(unix)]
-        for id in sig_ids {
-            signal_hook::low_level::unregister(id);
-        }
         // After a kill a grandchild may still hold the pipes: wait only briefly for them.
         let grace = if timed_out {
             Duration::from_secs(1)

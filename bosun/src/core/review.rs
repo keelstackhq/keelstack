@@ -32,6 +32,13 @@ pub fn chunks(files: &[(String, usize)], max_bytes: usize) -> Vec<Vec<String>> {
     out
 }
 
+/// Whether a verdict has a blocker or major finding (severity compared case-insensitively).
+fn is_serious(v: &Verdict) -> bool {
+    v.findings.iter().any(|f| {
+        f.severity.eq_ignore_ascii_case("blocker") || f.severity.eq_ignore_ascii_case("major")
+    })
+}
+
 /// Merge the verdicts of the review chunks of one PR head into one (CI review of a big PR).
 /// `results` holds, per chunk number (1-based), its verdict or why it was not reviewed; `total`
 /// is the number of chunks of the pack. Fail closed: the merge approves only when all `total`
@@ -55,14 +62,22 @@ pub fn merge_chunk_verdicts(
         chunks_reviewed: vec![],
     };
     for k in 1..=total {
-        match results.iter().find(|(n, _)| *n == k).map(|(_, r)| r) {
+        // Several results for one chunk: the worst one wins (fail closed), the first on a tie.
+        let bad = |r: &Result<Verdict, String>| match r {
+            Ok(v) if v.pr == pr && v.head_sha == head_sha => {
+                v.verdict != "approve" || is_serious(v)
+            }
+            _ => true,
+        };
+        let pick = results
+            .iter()
+            .filter(|(n, _)| *n == k)
+            .map(|(_, r)| r)
+            .reduce(|best, r| if !bad(best) && bad(r) { r } else { best });
+        match pick {
             Some(Ok(v)) if v.pr == pr && v.head_sha == head_sha => {
                 merged.chunks_reviewed.push(k);
-                let serious = v
-                    .findings
-                    .iter()
-                    .any(|f| f.severity == "blocker" || f.severity == "major");
-                if v.verdict != "approve" || serious {
+                if v.verdict != "approve" || is_serious(v) {
                     merged.verdict = "request-changes".into();
                 }
                 merged.confidence = merged.confidence.min(v.confidence);
@@ -179,6 +194,31 @@ mod tests {
                 "{sev}"
             );
         }
+    }
+
+    #[test]
+    fn merge_lets_a_worse_result_of_the_same_chunk_win_over_an_approve() {
+        let r = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (1, Ok(ver("request-changes", 0.9, &[]))),
+        ];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+        let r = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (1, Ok(ver("approve", 0.95, &["Major"]))),
+        ];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+        let r = [(1, Ok(ver("approve", 0.95, &["BLOCKER"])))];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
     }
 
     #[test]

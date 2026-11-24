@@ -165,6 +165,24 @@ fn applied_yields(
         && relayed_by.as_deref() == comment_relayed_by(&a.body)
 }
 
+/// Whether the verdict job has the step `name` with no `completed_at` yet (still running).
+fn step_pending(jobs: &[RunJob], name: &str) -> bool {
+    jobs.iter().any(|j| {
+        j.name == JOB
+            && j.steps
+                .iter()
+                .any(|s| s.name == name && s.completed_at.trim().is_empty())
+    })
+}
+
+/// Drop one cached job list so the next read asks GitHub again.
+fn forget_jobs(key: &(String, u64, u64)) {
+    let mut guard = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(c) = guard.as_mut() {
+        c.jobs.remove(key);
+    }
+}
+
 /// Whether `at` (RFC 3339) lies in the step's `started_at..=completed_at`: the record is written
 /// by the recording step itself.
 fn in_step(step: &crate::github::RunStep, at: &str) -> bool {
@@ -242,12 +260,18 @@ fn verify(
     };
     let jobs = cached(
         |m| &mut m.jobs,
-        (repo, run, attempt),
+        (repo.clone(), run, attempt),
         &format!("jobs of verdict run {run} attempt {attempt}"),
         || gh.run_attempt_jobs(run, attempt).map(Some),
     );
     let pr = c.issue_url.rsplit('/').next().unwrap_or("");
     let step = format!("{STEP} {pr} {applied}");
+    // A step still running has no `completed_at`: the record may be fresh, read too early. It is
+    // pending, not unverified: do not keep this job list in the cache.
+    if jobs.as_ref().is_some_and(|js| step_pending(js, &step)) {
+        forget_jobs(&(repo, run, attempt));
+        return false;
+    }
     let ran = jobs.is_some_and(|js| {
         js.iter().any(|j| {
             j.name == JOB
@@ -269,5 +293,49 @@ fn verify(
             );
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::github::RunStep;
+
+    fn job(completed_at: &str) -> RunJob {
+        RunJob {
+            name: JOB.into(),
+            steps: vec![RunStep {
+                name: "bosun verdict record 1 2".into(),
+                conclusion: String::new(),
+                started_at: "2026-01-01T00:00:00Z".into(),
+                completed_at: completed_at.into(),
+            }],
+        }
+    }
+
+    #[test]
+    fn an_unset_completed_at_is_pending_and_never_cached() {
+        let running = job("");
+        assert!(!in_step(&running.steps[0], "2026-01-01T00:00:01Z"));
+        assert!(step_pending(
+            std::slice::from_ref(&running),
+            "bosun verdict record 1 2"
+        ));
+        assert!(!step_pending(
+            &[job("2026-01-01T00:00:02Z")],
+            "bosun verdict record 1 2"
+        ));
+        let key = ("o/r-pending".to_string(), 1, 1);
+        let read = cached(
+            |m| &mut m.jobs,
+            key.clone(),
+            "jobs",
+            || Ok(Some(vec![running])),
+        );
+        assert!(read.is_some());
+        forget_jobs(&key);
+        let again = cached(|m| &mut m.jobs, key.clone(), "jobs", || Ok(None));
+        assert!(again.is_none(), "the pending list must not stay cached");
+        forget_jobs(&key);
     }
 }

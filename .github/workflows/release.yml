@@ -948,15 +948,17 @@ jobs:
             fi
             # One E404 is not trusted: re-ask up to 3 times (2, 4, 8 s apart) before skipping.
             found=0
+            if out=$(npm view "$name" name 2>&1 </dev/null); then
+              found=1
+            fi
             for wait in 2 4 8; do
-              if out=$(npm view "$name" name 2>&1 </dev/null); then
-                found=1
-                break
-              fi
-              if ! grep -q E404 <<<"$out"; then
+              if [ "$found" = 1 ] || ! grep -q E404 <<<"$out"; then
                 break
               fi
               sleep "$wait"
+              if out=$(npm view "$name" name 2>&1 </dev/null); then
+                found=1
+              fi
             done
             if [ "$found" = 1 ]; then
               :

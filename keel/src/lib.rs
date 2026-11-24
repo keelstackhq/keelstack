@@ -36,7 +36,7 @@ impl Runner for Verbose<'_> {
     }
 }
 
-fn read_token() -> std::io::Result<Zeroizing<String>> {
+fn read_token_blocking() -> std::io::Result<Zeroizing<String>> {
     if std::io::stdin().is_terminal() {
         return rpassword::read_password().map(Zeroizing::new);
     }
@@ -45,9 +45,34 @@ fn read_token() -> std::io::Result<Zeroizing<String>> {
     Ok(line)
 }
 
+/// Read the token on a helper thread so a signal can stop the wait: the engine then returns
+/// `KeelError::Interrupted`, and the token (zeroized on drop) never outlives the read.
+fn read_token() -> std::io::Result<Zeroizing<String>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let _ = tx.send(read_token_blocking());
+    });
+    loop {
+        if exec::interrupted().is_some() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "interrupted",
+            ));
+        }
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(r) => return r,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(std::io::ErrorKind::BrokenPipe.into());
+            }
+        }
+    }
+}
+
 /// Run a parsed command line with the real tools.
 pub fn run(cli: Cli) -> Result<Report, KeelError> {
-    let sleep = |d: Duration| std::thread::sleep(d);
+    exec::install_signal_handlers();
+    let sleep = |d: Duration| exec::sleep_interruptible(d);
     run_with(cli, &SystemRunner, &sleep, &read_token)
 }
 

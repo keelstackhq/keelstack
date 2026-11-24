@@ -1676,7 +1676,10 @@ const CHDIR_FLAG_RE =
  * `--work-tree=`, `cp -t`, `unzip -d`, `curl -o`). */
 function chdirs(tokens) {
   const out = [];
+  const isGh = base(tokens[0] ?? "") === "gh" && tokens[1] === "api";
   for (let i = 0; i < tokens.length; i++) {
+    // `gh api -XPOST ...`: -X is the method (value glued on), not a directory flag.
+    if (isGh && /^-X[A-Za-z]+$/.test(tokens[i])) continue;
     const m = CHDIR_FLAG_RE.exec(tokens[i]);
     if (!m) continue;
     const v = m[1] ?? m[2] ?? tokens[++i];
