@@ -314,3 +314,58 @@ fn a_base_config_that_does_not_parse_fails_closed_whatever_main_says() {
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["data"]["owner_delegation"], false, "{v}");
 }
+
+/// A plain owner-role signature comment (v1, or v2 after `review`) by `k1` on HEAD.
+fn post_plain_sig(fake: &FakeGithub, k: &Key, review: Option<u64>) {
+    let (msg, first) = match review {
+        None => (
+            format!("bosun-approve v1 acme/widget#1 {HEAD}"),
+            format!("/bosun approve {HEAD}"),
+        ),
+        Some(id) => (
+            format!("bosun-approve v2 acme/widget#1 {HEAD} after-review {id}"),
+            format!("/bosun approve {HEAD} after-review {id}"),
+        ),
+    };
+    let s = b64::encode(k.0.sign(msg.as_bytes()).as_ref());
+    fake.comment_by(1, "claude", &format!("{first}\nbosun-sig ed25519 k1 {s}"));
+    fake.last_comment(|c| c.via_app = Some("claude".into()));
+}
+
+#[test]
+fn on_risk_check_counts_no_plain_signature_on_the_trust_root() {
+    for file in TRUST_ROOT {
+        // v1 with two clean verdicts.
+        let k = key();
+        let fake = on(&k, file);
+        post_verdicts(&fake, &["session_r", "session_s"], HEAD);
+        post_plain_sig(&fake, &k, None);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{file} v1: {v}");
+        assert!(v["data"]["approved_by"].is_null(), "{file} v1: {v}");
+        assert!(
+            description(&fake).contains("orchestrator signature needed"),
+            "{file} v1"
+        );
+        // The quorum form still approves next to the refused plain one.
+        post_sig(&fake, &k);
+        let (code, v) = check(&fake);
+        assert_eq!(code, 0, "{file} v1 + quorum: {v}");
+        assert!(
+            (v["data"]["approved_by"].as_str().unwrap())
+                .starts_with("key k1 (quorum with owner delegation"),
+            "{file}: {v}"
+        );
+        // v2 bound to a dismissed owner review, with two clean verdicts.
+        let k = key();
+        let fake = on(&k, file);
+        fake.review(1, "ada", "CHANGES_REQUESTED", HEAD);
+        fake.review(1, "ada", "DISMISSED", HEAD);
+        fake.dismiss_event(1, 2, "2026-10-22T10:30:00Z");
+        post_verdicts(&fake, &["session_r", "session_s"], HEAD);
+        post_plain_sig(&fake, &k, Some(2));
+        let (code, v) = check(&fake);
+        assert_eq!(code, 5, "{file} v2: {v}");
+        assert!(v["data"]["approved_by"].is_null(), "{file} v2: {v}");
+    }
+}

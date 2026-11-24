@@ -394,7 +394,9 @@ High-risk PRs:
   one that adds the key rejects it (fail closed, owner only): pin first, then set it. Plain `--sign-key` (a v1 or v2 signature, no
   `--bootstrap`) never covers the trust root under delegation: it refuses (exit 1) on a PR whose
   quorum trust root or trust files are not empty, so only the autonomous form, with its check of
-  the default branch, signs there. risk-check reads the setting at the base only: a default branch
+  the default branch, signs there. risk-check enforces the same itself: under delegation a plain
+  owner-role v1 or v2 signature on such a PR counts for nothing (nor clears a dismissal: the
+  owner acts), only the autonomous/bootstrap (or signer) form with its verdict floor. risk-check reads the setting at the base only: a default branch
   that drops it does not revoke an open PR whose base still has it, but `bosun approve` no longer
   signs one. Workflow and action changes are covered too: a workflow the PR adds can comment as
   `github-actions[bot]`, but a verdict record counts only when bound to the default branch's
