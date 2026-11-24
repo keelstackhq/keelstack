@@ -399,4 +399,10 @@ grep -qF "needs.crates.outputs.skipped == '' && needs.npm.outputs.skipped == ''"
   bad "release.yml major: moves the tag while a crate or package is skipped"
 [ "$fail" = 1 ] || ok "release.yml: a new crate or npm package is skipped with a bootstrap notice, the rest publish"
 
+# ci-repo packages every publishable crate (verify on) when Rust is affected.
+cr="$(job_text "$wf/ci.yml" ci-repo)"
+grep -qF 'run: cargo package --workspace --exclude keel-splice --locked' <<<"$cr" || bad "ci.yml ci-repo: no 'cargo package --workspace' step"
+grep -qF "needs.detect.outputs.rust == 'true'" <<<"$(grep -B2 'cargo package --workspace' <<<"$cr")" || bad "ci.yml ci-repo: cargo package is not gated on Rust being affected"
+[ "$fail" = 1 ] || ok "ci.yml: ci-repo runs cargo package --workspace --locked when Rust is affected"
+
 exit "$fail"
