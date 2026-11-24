@@ -1375,12 +1375,20 @@ fn two_live_a_one_declared_patches_only_the_first_live_by_id() {
 fn a_matching_live_a_is_ok_and_the_other_declared_patches_the_unmatched_live() {
     let api = cf_per_id_api(&["2.2.2.2", "9.9.9.9"]);
     let d = dir(&a_toml(&["1.1.1.1", "2.2.2.2"]));
-    let r = run(&["apply", "--yes"], &d, &cf_env(&api), 1);
+    let r = run(&["plan"], &d, &cf_env(&api), 0);
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 2.2.2.2")["action"],
+        "ok"
+    );
+    assert_eq!(
+        item(&r, "dns_record", "A example.dev 1.1.1.1")["action"],
+        "update"
+    );
+    run(&["apply", "--yes"], &d, &cf_env(&api), 1);
     assert_eq!(
         writes(&api),
         vec![("PATCH".to_string(), "/zones/z1/dns_records/r1".to_string())]
     );
-    let _ = r;
 }
 
 #[test]

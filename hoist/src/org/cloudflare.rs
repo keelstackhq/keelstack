@@ -192,6 +192,8 @@ enum Match {
     /// Live record id and the reason text.
     Patch(String, String),
     Create,
+    /// A repeat of an earlier identical declared record: not reported again.
+    Twin,
 }
 
 /// Pairs each declared record with a live one, per (name, type), so no live record is used twice.
@@ -216,11 +218,12 @@ fn match_records(
     let mut claimed: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut out: Vec<Option<Match>> = declared.iter().map(|_| None).collect();
     // An identical declared record (same type, name, normalised content) is the first one's
-    // twin: it claims nothing and is `Present`, so one live record is claimed once.
+    // twin: it claims nothing and is reported once (by the first), so one live record is
+    // claimed once.
     for (i, r) in declared.iter().enumerate() {
         let key = |r: &Record| (r.ty.clone(), r.name.clone(), norm(&r.ty, &r.content));
         if declared[..i].iter().any(|e| key(e) == key(r)) {
-            out[i] = Some(Match::Present);
+            out[i] = Some(Match::Twin);
         }
     }
     for pass in 0..2 {
@@ -430,6 +433,7 @@ pub(crate) fn read(
             }
             let m = &plans[i];
             let (action, reason, op) = match m {
+                Match::Twin => continue,
                 Match::Present => (Action::Ok, "present".to_string(), None),
                 Match::Patch(l, reason) => (
                     Action::Update,
