@@ -16,3 +16,8 @@ role = "owner"
 id = "delegate-2026-10"
 ed25519 = "eY7+H4GGfi5VIijIl1b4D18VIW94AYnBgdoaf4KYEhc="
 role = "delegate"
+
+[[key]]
+id = "signer-ci"
+ed25519 = "E6R4HrBsIBPLLwQlVk8IiRHIvfm3CA3dFb14W2BF5rY="
+role = "signer"
