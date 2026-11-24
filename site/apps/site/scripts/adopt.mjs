@@ -97,6 +97,19 @@ const pending = releasing
   ? `\nUntil hull ${hullTok} and splice {{ks.splice}} are tagged, step 1 works but steps 3 and 4 do not yet:
 stop after step 2 and tell me.`
   : "";
+// The guide's hosted assess URL, its sha256 and the hull tag it names render from the same keys as
+// the prompt (versions.hull's hosted copy), so the page never names another assess tag.
+const tokenize = (text) =>
+  text
+    .replace(
+      /https:\/\/keelstack\.dev\/assess\/v\d+\.\d+\.\d+\.mjs/g,
+      "https://keelstack.dev{{ks.assess.url}}",
+    )
+    .replace(/[0-9a-f]{64}(  \/tmp\/assess\.mjs)/g, "{{ks.assess.sha}}$1")
+    .replace(
+      /hull v\d+\.\d+\.\d+'s `template\/pieces\/base\/files\/scripts\/ready\.mjs`/g,
+      "hull {{ks.hull}}'s `template/pieces/base/files/scripts/ready.mjs`",
+    );
 const note = releasing
   ? ` hull ${hullTok} and splice {{ks.splice}} are releasing now; until they are tagged, this follows hull's main.`
   : "";
@@ -158,7 +171,7 @@ Adopt this repo into keelstack. Work step by step, and ask me before anything th
 
 ## The guide
 
-${doc.replace(/^# .*\n\n/, "")}`;
+${tokenize(doc.replace(/^# .*\n\n/, ""))}`;
 writeFileSync(new URL("../docs-src/adopt.md", import.meta.url), page);
 // Re-render the pages (and run vp fmt) through the same path as `pnpm gen`.
 execFileSync("node", ["scripts/gen-docs.ts"], {

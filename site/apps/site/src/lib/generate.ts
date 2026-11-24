@@ -25,11 +25,19 @@ export const outPath = (p: string): string =>
 /** Repo-relative (to apps/site) output path -> rendered content, before formatting. */
 export function generate(): Map<string, string> {
   const adopt = JSON.parse(readFileSync(join(root, "src/data/hull/adopt.json"), "utf8")) as {
-    assess: { url: string; sha256: string };
+    hosted: Record<string, { ref: string; sha256: string }>;
   };
+  // The prompt pins the assessment of the hull tag the page shows (a legacy tag before the
+  // first release), not whichever one was copied last.
+  const hosted = adopt.hosted[versions.hull];
+  if (!hosted) {
+    throw new Error(
+      `generate: hull ${versions.hull} is not hosted in src/data/hull/adopt.json (hosted: ${Object.keys(adopt.hosted).join(", ")})`,
+    );
+  }
   const ctx = buildCtx(undefined, {
-    assessUrl: adopt.assess.url,
-    assessSha: adopt.assess.sha256,
+    assessUrl: `/assess/${versions.hull}.mjs`,
+    assessSha: hosted.sha256,
   });
   const out = new Map<string, string>();
   const srcDir = join(root, "docs-src");

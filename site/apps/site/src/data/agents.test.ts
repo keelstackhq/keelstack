@@ -36,11 +36,11 @@ const site = join(dirname(fileURLToPath(import.meta.url)), "../..");
 const repo = join(site, "../..");
 const doc = readFileSync(join(repo, "agents/README.md"), "utf8");
 const adopt = JSON.parse(readFileSync(join(site, "src/data/hull/adopt.json"), "utf8")) as {
-  assess: { url: string; sha256: string };
+  hosted: Record<string, { sha256: string }>;
 };
 const ctx = buildCtx(undefined, {
-  assessUrl: adopt.assess.url,
-  assessSha: adopt.assess.sha256,
+  assessUrl: `/assess/${versions.hull}.mjs`,
+  assessSha: adopt.hosted[versions.hull]!.sha256,
 });
 
 const fenced = (s: string): string[] =>

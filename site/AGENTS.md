@@ -29,13 +29,13 @@ pnpm --dir site --filter @keelstackhq/site dev
 change in one runs `ci-site`. `.github/workflows/deploy-site.yml` deploys on pushes to main that
 touch `site/` or a dependency and after `release.yml` (`deploy-site-release.yml` dispatches it), so the site is always main's state. Version facts
 (version, install commands, `@vX` sources) come from the latest `vX.Y.Z` tag reachable from the built
-commit, never from an untagged Cargo version: job `decide` resolves it, the build reads it as
-`RELEASED_VERSION` (`loadFacts(root, released)`; `""` = nothing released, so the legacy pins; unset =
-the workspace version, as in `ci-site`). Jobs: `decide`, `build` (no secrets), `deploy` (secrets, only
-wrangler on the sha256-verified artifact). Never deploy by hand. With a `RELEASED_VERSION` set the
-generated docs must match it (`generated.test.ts`). The bump PR regenerates them for the new version
-(`ci-site` has no input), so the bump push's own deploy run, built with the previous tag, fails closed
-on that drift; the release run's completion deploys the new state.
+commit whose npm packages are all published, never from an untagged Cargo version: job `decide` lists the reachable
+tags (`candidates`), the build's `Published release` step picks the first fully published one
+(`apps/site/scripts/published.ts`; none = legacy pins) and sets `RELEASED_VERSION` (`loadFacts(root, released)`;
+`""` = nothing released, so the legacy pins; unset = the workspace version, as in `ci-site`), then regenerates the
+docs for it (`gen-docs.ts`), so the deploy is green whatever the release state (a bump push deploys the previous
+facts). Jobs: `decide`, `build` (no secrets), `deploy` (secrets, only wrangler on the sha256-verified artifact).
+Never deploy by hand.
 
 ## Not done yet
 
