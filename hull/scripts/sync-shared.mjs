@@ -13,6 +13,7 @@ export const SHARED = [
   "scripts/deny.mjs",
   "scripts/licenses.mjs",
   ".claude/hooks/guard.mjs",
+  ".claude/hooks/guard-legacy.mjs",
   ".github/scripts/workflows.mjs",
   ".claude/skills/ready/SKILL.md",
   ".claude/agents/explore.md",

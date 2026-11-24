@@ -1,1 +1,0 @@
-- 2026-11-18 · bosun#676 port: settings-lock · PreToolUse guard denies edits of .claude/settings*.json, ~/.claude and disableAllHooks · this PR

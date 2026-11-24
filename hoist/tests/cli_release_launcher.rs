@@ -919,3 +919,51 @@ fn launcher_dry_run_names_the_build_once() {
         .collect();
     assert_eq!(builds, ["@acme/tool-linux-x64@0.3.0"], "{v:#}");
 }
+
+/// When the first platform package is already on npm (skipped), the dry run names the build on
+/// the first step that really publishes, not on the skipped one.
+#[test]
+fn launcher_dry_run_names_the_build_on_the_first_real_publish() {
+    let mut p = pub_setup();
+    let d = p.repo.path();
+    write(
+        d,
+        "npm/tool/hoist.toml",
+        b"[publish]\nnpm = { launcher = true, build = \"make npm\" }\n",
+    );
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: build"]);
+    p.head = out(d, &["rev-parse", "HEAD"]).trim().to_string();
+    let api = api(
+        &p.head,
+        &[
+            (LINUX_V, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = hoist()
+        .arg("-C")
+        .arg(p.repo.path())
+        .args(["release", "publish", "--dry-run", "--json", "--assets"])
+        .arg(p.assets.path())
+        .env("HOIST_GITHUB_API", api.url())
+        .env("HOIST_NPM_REGISTRY", api.url())
+        .env("HOIST_CRATES_API", api.url())
+        .env("GITHUB_TOKEN", "test-token")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    let builds: Vec<&str> = v["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|i| i["reason"].as_str().unwrap_or("").contains("after build"))
+        .map(|i| i["key"].as_str().unwrap())
+        .collect();
+    assert_eq!(builds, ["@acme/tool-darwin-arm64@0.3.0"], "{v:#}");
+}

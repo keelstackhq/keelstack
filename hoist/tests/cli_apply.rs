@@ -1869,3 +1869,31 @@ fn immutable_releases_unset_is_never_read() {
     apply(&api, dir.path(), 0);
     assert!(!api.requests().iter().any(|r| r.path.contains("immutable")));
 }
+
+#[test]
+fn an_unresolvable_check_app_slug_exits_3_with_no_write() {
+    let dir = repo();
+    let toml = dir.path().join("hoist.toml");
+    let text = std::fs::read_to_string(&toml).unwrap_or_default();
+    std::fs::write(
+        &toml,
+        format!(
+            "{text}\n[github]\nrequired_checks = [{{ context = \"ci-ok\", app = \"no-such-app\" }}]\n"
+        ),
+    )
+    .unwrap();
+    let api = Routes::synced()
+        .set("GET /apps/no-such-app", 404, r#"{"message":"Not Found"}"#)
+        .start();
+    for cmd in ["plan", "apply"] {
+        let args = [cmd, "--yes", "--json"];
+        let args: &[&str] = if cmd == "plan" {
+            &["plan", "--json"]
+        } else {
+            &args
+        };
+        let r = run(&api, dir.path(), args, 3);
+        assert!(r.stderr.contains("no-such-app"), "{}", r.stderr);
+    }
+    assert_eq!(writes(&api), Vec::<String>::new());
+}

@@ -199,7 +199,12 @@ jobs:
           git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
             rm -rf -- "$p"
           done
+          top="$(pwd -P)"
           git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            case "$(realpath -m -- "$(dirname -- "$p")")" in
+              "$top"|"$top"/*) ;;
+              *) echo "::error::$p: its directory links outside the checkout"; exit 1 ;;
+            esac
             mkdir -p -- "$(dirname -- "$p")"
             git show "$BASE:$p" > "$p"
           done
@@ -218,7 +223,7 @@ jobs:
         run: cargo build --release --locked -p keel-bosun --bin bosun
       - id: binhash
         run: echo "sha256=$(sha256sum "$RUNNER_TEMP/base/target/release/bosun" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
-      # The kinds test-integrity may allow come from the PR's linked task (the plan's `allow:`).
+      # The kinds test-integrity may allow come from the PR's linked tasks (each task's `allow:`, per file it touches).
       # Only known kinds pass; any failure allows nothing.
       - if: github.event_name == 'pull_request'
         id: allow
@@ -229,9 +234,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           BOSUN_REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number }}
+          BASE: ${{ steps.base.outputs.gate_base }}
         run: |
           echo "$BOSUN_SHA256  $BOSUN" | sha256sum -c --quiet || { echo "::error::$BOSUN changed"; exit 1; }
-          kinds="$("$BOSUN" test-integrity --pr "$PR" 2>/dev/null \
+          kinds="$("$BOSUN" test-integrity --pr "$PR" --base "$BASE" 2>/dev/null \
             | jq -r '[.data.allow // [] | .[] | select(IN("delete-test","skip","only","fewer-asserts"))] | join(",")' 2>/dev/null)" || kinds=""
           echo "test-integrity allows: ${kinds:-nothing}"
           echo "kinds=$kinds" >> "$GITHUB_OUTPUT"
@@ -657,9 +663,9 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - run: cargo fmt -p keel-cli --check
-      - run: cargo clippy -p keel-cli --all-targets --locked -- -D warnings
-      - run: cargo test -p keel-cli --locked
+      - run: cargo fmt -p keelstack-cli --check
+      - run: cargo clippy -p keelstack-cli --all-targets --locked -- -D warnings
+      - run: cargo test -p keelstack-cli --locked
       - name: Launcher tests
         working-directory: keel
         run: |

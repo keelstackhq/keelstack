@@ -8,7 +8,7 @@ use crate::github::Fetch;
 use crate::http::{Fetched, Http, seg};
 
 /// npm's form of a scoped name: `@scope%2Fname` (the `@` stays, the `/` is encoded).
-fn npm_name(name: &str) -> String {
+pub(crate) fn npm_name(name: &str) -> String {
     match name.strip_prefix('@') {
         Some(rest) => format!("@{}", seg(rest)),
         None => seg(name),

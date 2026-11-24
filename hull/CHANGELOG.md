@@ -7,7 +7,7 @@ Releases are automatic: merging a change to `main` whose top heading is a new da
 `v<version>` and publishes the GitHub release after the owner approves the `release` environment.
 Keep `unreleased` while changes accumulate.
 
-## v0.14.0 — unreleased
+## v0.22.0 — 2026-11-23
 
 - template-rust bootstrap friction (client feedback): `pins.toml` + `scripts/pins.mjs` are the one
   source of tool versions (rust, nextest, cargo-deny, splice, bosun, hoist); CI and release.yml read
@@ -55,6 +55,11 @@ Keep `unreleased` while changes accumulate.
   `AGENTS.md` adds crate-graph guidance and local opt-in sccache. `template/` crates now get line
   tables instead of full dev debug info (`CARGO_PROFILE_DEV_DEBUG=true` restores it). CircleCI's Rust
   cache key also hashes the root `Cargo.toml`. Spec §15 "Build speed".
+- guard: agents open PRs with `gh api -X POST repos/<o>/<r>/pulls` (merge, auto-merge, reviews, tags and releases stay refused) and the `gh api` refusal names that route; a `$(...)` in a `gh api -f key=` value or a `gh pr|issue create|edit|comment --body/--title` value is data (still judged); a quoted `<>` or `>` is not a redirect; `find <guarded dir> -delete` / `-exec <writer> {}` is a write; proxy-ca.sh honours PROXY_CA_UPDATE only with PROXY_CA_STORE (#64, #46).
+- guard: reads the shell scripts a command runs (`bash f`, `source f`, `./f`) and judges them like typed commands; a closed `$(...)` no longer swallows the rest of the line; `gh api` dispatch of a non-release workflow and run/job re-runs pass like their `gh` verbs; a push to a `$VAR` refspec is refused.
+- guard (review): the `gh api` endpoint is the first positional (a `--jq`/`--template` value no longer passes a write); `-F x=@file` and `--input` are refused; a script the guard cannot read in full is refused (size, NUL, missing inside a script, stdin/pipe into a shell, variable path, > 32 scripts); comments are found by the tokenizer; nested scripts share the chain and bind `$1`/`$@`; `env -S`/`busybox` shebangs, PATH dirs, `find -exec bash {}` aliases, shell functions, `bash -s < f`, `/dev/fd/N`, `BASH_ENV`/`ENV`/`--rcfile` and `source name` via PATH are covered; release, publish and deploy workflows (or `GUARD_RELEASE_WORKFLOWS`) never start from here.
+- guard (round 3, fail closed on what it cannot parse): `gh api` flags are parsed like pflag (`-iXPUT`, `-iF k=@f`), unknown flags refused; a script missing at hook time, or run after a command in the same call that may write files it cannot name (download, archive, decoder, patch, build, interpreter, a write racing via `&`/`|`), is refused with "run it in a separate call"; redirects before the command name (`< f bash`, `bash<f`); any shell by basename (`rbash`, `mksh`, `bash5.2`), a shell binary under another name, an unknown `#!` interpreter; wrappers (`coproc`, `trap`, `flock`, `taskset`, `chrt`, `unshare`, `script -c`, `su -c`, `sudo -s`, `exec -a`, `xargs -a`, `if`/`while`); a `cd` it cannot follow; code from `$(...)` or a variable (`eval`, `bash -c "$X"`); git program config (`core.sshCommand`, `GIT_SSH_COMMAND`, `GIT_CONFIG_*`) and `.git/hooks`, `.git/config` edits. `bash -n` passes; `source ~/.bashrc` names its fix; `$(npm bin)` in PATH is known.
+- guard (round 4): a comment or heredoc inside `$(...)` no longer ends it early; runners are read (`git rebase --exec`, `git bisect run`, `git submodule foreach`, `npm exec`, `at`, `expect -c`, `nix-shell --run`, `nix develop -c`); a valid host binary after a build tool passes (a fake ELF/Mach-O header is read as a script); PATH entries from `${X:-w}` and literal assignments (venv `activate`) are followed.
 
 ## v0.13.0 — 2026-11-17
 

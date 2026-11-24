@@ -1,6 +1,8 @@
 //! What a reviewer needs besides the diff (spec §7): the use cases of the task's epic. The
 //! lessons come from `core::lessons`.
 
+use crate::core::verdict::{Finding, Verdict};
+
 /// The `- UC-…` lines of an epic body.
 pub fn use_cases(body: &str) -> Vec<String> {
     body.lines()
@@ -30,6 +32,102 @@ pub fn chunks(files: &[(String, usize)], max_bytes: usize) -> Vec<Vec<String>> {
     out
 }
 
+/// Whether a verdict has a blocker or major finding (severity compared case-insensitively).
+fn is_serious(v: &Verdict) -> bool {
+    v.findings.iter().any(|f| {
+        f.severity.eq_ignore_ascii_case("blocker") || f.severity.eq_ignore_ascii_case("major")
+    })
+}
+
+/// Merge the verdicts of the review chunks of one PR head into one (CI review of a big PR).
+/// `results` holds, per chunk number (1-based), its verdict or why it was not reviewed; `total`
+/// is the number of chunks of the pack. Fail closed: the merge approves only when all `total`
+/// chunks were reviewed and every one approves. Confidence is the minimum (0 when a chunk is
+/// missing), findings are the union tagged `[chunk N]`, `chunks_reviewed` lists the chunks that
+/// really produced a verdict.
+pub fn merge_chunk_verdicts(
+    pr: u64,
+    head_sha: &str,
+    total: u32,
+    results: &[(u32, Result<Verdict, String>)],
+) -> Verdict {
+    let mut merged = Verdict {
+        pr,
+        head_sha: head_sha.to_string(),
+        verdict: "approve".into(),
+        confidence: 1.0,
+        findings: vec![],
+        lessons_hit: vec![],
+        escalate_risk: false,
+        chunks_reviewed: vec![],
+    };
+    for k in 1..=total {
+        // Several results for one chunk: the worst one wins (fail closed), the first on a tie.
+        let bad = |r: &Result<Verdict, String>| match r {
+            Ok(v) if v.pr == pr && v.head_sha == head_sha => {
+                v.verdict != "approve" || is_serious(v)
+            }
+            _ => true,
+        };
+        let pick = results
+            .iter()
+            .filter(|(n, _)| *n == k)
+            .map(|(_, r)| r)
+            .reduce(|best, r| if !bad(best) && bad(r) { r } else { best });
+        match pick {
+            Some(Ok(v)) if v.pr == pr && v.head_sha == head_sha => {
+                merged.chunks_reviewed.push(k);
+                if v.verdict != "approve" || is_serious(v) {
+                    merged.verdict = "request-changes".into();
+                }
+                merged.confidence = merged.confidence.min(v.confidence);
+                merged.escalate_risk |= v.escalate_risk;
+                for l in &v.lessons_hit {
+                    if !merged.lessons_hit.contains(l) {
+                        merged.lessons_hit.push(l.clone());
+                    }
+                }
+                merged.findings.extend(v.findings.iter().map(|f| Finding {
+                    claim: format!("[chunk {k}] {}", f.claim),
+                    ..f.clone()
+                }));
+            }
+            other => {
+                let why = match other {
+                    Some(Err(e)) => e.as_str(),
+                    Some(Ok(_)) => "verdict is for a different pr or head",
+                    _ => "no review result",
+                };
+                merged.verdict = "request-changes".into();
+                merged.confidence = 0.0;
+                merged.findings.push(Finding {
+                    severity: "major".into(),
+                    file: String::new(),
+                    line: None,
+                    claim: format!("[chunk {k}] chunk {k} of {total} was not reviewed"),
+                    evidence: why.to_string(),
+                });
+            }
+        }
+    }
+    if let Some((n, _)) = results.iter().find(|(n, _)| *n == 0 || *n > total) {
+        merged.verdict = "request-changes".into();
+        merged.confidence = 0.0;
+        merged.findings.push(Finding {
+            severity: "major".into(),
+            file: String::new(),
+            line: None,
+            claim: format!("[chunk {n}] chunk number outside 1..={total}"),
+            evidence: "a result for a chunk the pack does not have".into(),
+        });
+    }
+    if total == 0 {
+        merged.verdict = "request-changes".into();
+        merged.confidence = 0.0;
+    }
+    merged
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -38,6 +136,132 @@ mod tests {
     fn use_case_lines() {
         let body = "Epic\n- UC-M1-1: a\n  - UC-M1-2: b\n* not\n";
         assert_eq!(use_cases(body), ["- UC-M1-1: a", "- UC-M1-2: b"]);
+    }
+
+    fn ver(v: &str, conf: f64, sev: &[&str]) -> Verdict {
+        Verdict {
+            pr: 1,
+            head_sha: "h".into(),
+            verdict: v.into(),
+            confidence: conf,
+            findings: sev
+                .iter()
+                .map(|s| Finding {
+                    severity: s.to_string(),
+                    file: "a.rs".into(),
+                    line: Some(1),
+                    claim: "c".into(),
+                    evidence: "e".into(),
+                })
+                .collect(),
+            lessons_hit: vec![],
+            escalate_risk: false,
+            chunks_reviewed: vec![],
+        }
+    }
+
+    #[test]
+    fn merge_approves_only_when_every_chunk_approves_and_takes_min_confidence() {
+        let ok = [
+            (1, Ok(ver("approve", 0.95, &["minor"]))),
+            (2, Ok(ver("approve", 0.88, &["nit"]))),
+        ];
+        let m = merge_chunk_verdicts(1, "h", 2, &ok);
+        assert_eq!((m.verdict.as_str(), m.confidence), ("approve", 0.88));
+        assert_eq!(m.chunks_reviewed, [1, 2]);
+        assert_eq!(m.findings.len(), 2);
+        assert!(m.findings[1].claim.starts_with("[chunk 2] "));
+        let one_no = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (2, Ok(ver("request-changes", 0.9, &["blocker"]))),
+        ];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 2, &one_no).verdict,
+            "request-changes"
+        );
+    }
+
+    #[test]
+    fn merge_requests_changes_when_an_approving_chunk_has_a_blocker_or_major() {
+        for sev in ["blocker", "major"] {
+            let r = [
+                (1, Ok(ver("approve", 0.95, &[]))),
+                (2, Ok(ver("approve", 0.95, &[sev]))),
+            ];
+            assert_eq!(
+                merge_chunk_verdicts(1, "h", 2, &r).verdict,
+                "request-changes",
+                "{sev}"
+            );
+        }
+    }
+
+    #[test]
+    fn merge_lets_a_worse_result_of_the_same_chunk_win_over_an_approve() {
+        let r = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (1, Ok(ver("request-changes", 0.9, &[]))),
+        ];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+        let r = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (1, Ok(ver("approve", 0.95, &["Major"]))),
+        ];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+        let r = [(1, Ok(ver("approve", 0.95, &["BLOCKER"])))];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+    }
+
+    #[test]
+    fn merge_fails_closed_on_a_failed_or_missing_chunk() {
+        let r = [
+            (1, Ok(ver("approve", 0.95, &[]))),
+            (2, Err("API down".to_string())),
+        ];
+        let m = merge_chunk_verdicts(1, "h", 3, &r);
+        assert_eq!((m.verdict.as_str(), m.confidence), ("request-changes", 0.0));
+        assert_eq!(m.chunks_reviewed, [1]);
+        let claims: Vec<&str> = m.findings.iter().map(|f| f.claim.as_str()).collect();
+        assert_eq!(claims.len(), 2, "{claims:?}");
+        assert!(m.findings.iter().all(|f| f.severity == "major"));
+        assert!(merge_chunk_verdicts(1, "h", 0, &[]).verdict == "request-changes");
+    }
+
+    #[test]
+    fn merge_rejects_a_chunk_number_above_total_or_zero() {
+        for bad in [3, 0] {
+            let r = vec![
+                (1, Ok(ver("approve", 0.9, &[]))),
+                (2, Ok(ver("approve", 0.9, &[]))),
+                (bad, Ok(ver("approve", 0.9, &[]))),
+            ];
+            let m = merge_chunk_verdicts(1, "h", 2, &r);
+            assert_eq!(m.verdict, "request-changes", "chunk {bad}");
+            assert_eq!(m.confidence, 0.0);
+        }
+    }
+
+    #[test]
+    fn merge_rejects_a_chunk_verdict_for_another_pr_or_head() {
+        let mut other_head = ver("approve", 0.95, &[]);
+        other_head.head_sha = "old".into();
+        let mut other_pr = ver("approve", 0.95, &[]);
+        other_pr.pr = 2;
+        for bad in [other_head, other_pr] {
+            let r = [(1, Ok(ver("approve", 0.95, &[]))), (2, Ok(bad))];
+            let m = merge_chunk_verdicts(1, "h", 2, &r);
+            assert_eq!((m.verdict.as_str(), m.confidence), ("request-changes", 0.0));
+            assert_eq!(m.chunks_reviewed, [1]);
+        }
     }
 
     fn f(v: &[(&str, usize)]) -> Vec<(String, usize)> {

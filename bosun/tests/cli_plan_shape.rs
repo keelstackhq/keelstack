@@ -206,6 +206,7 @@ fn a_gated_task_over_400_lines_is_no_plan_error() {
             !v.to_string().contains("changed lines for a gated task"),
             "{cmd}: {v}"
         );
-        assert_ne!(code, 1, "{cmd}: {v}");
+        assert_eq!(code, 0, "{cmd}: {v}");
+        assert!(v["data"]["errors"].is_null(), "{cmd}: {v}");
     }
 }

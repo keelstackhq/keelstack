@@ -42,7 +42,10 @@ pub fn apply(
     }
     // The R2 credential sink (spec §6.2): a bad combination is refused before anything is read.
     let sink = sink_opts.parse()?;
-    let state = run_with_state(dir, areas, verbose, "apply", adopt)?;
+    let mut state = run_with_state(dir, areas, verbose, "apply", adopt)?;
+    if prune {
+        prune_reasons(&mut state.report.items);
+    }
     let opts = ChangeOpts {
         prune,
         areas: areas.to_vec(),
@@ -199,6 +202,15 @@ pub fn apply(
         mark_reviewer_pending(&mut report, d);
     }
     Ok(report)
+}
+
+/// Under `--prune` a stray's plan reason no longer says to pass `--prune`: it is deleted.
+fn prune_reasons(items: &mut [Item]) {
+    for i in items.iter_mut().filter(|i| i.kind == "dns_record") {
+        i.reason = i
+            .reason
+            .replace("pass --prune to delete", "deleted by --prune");
+    }
 }
 
 fn not_read(area: &str) -> HoistError {
@@ -459,6 +471,21 @@ mod tests {
         assert_eq!(report.items.len(), 1);
         assert_eq!(report.items[0].reason, "not applied: declined");
         assert_eq!(report.items[0].action, Action::Create);
+    }
+
+    #[test]
+    fn prune_rewrites_the_stray_reason() {
+        let mut items = vec![Item {
+            area: "cloudflare".into(),
+            kind: "dns_record".into(),
+            key: "k".into(),
+            action: Action::Drift,
+            reason: "not a target; pass --prune to delete".into(),
+            source: "hoist.toml".into(),
+            verify: None,
+        }];
+        prune_reasons(&mut items);
+        assert_eq!(items[0].reason, "not a target; deleted by --prune");
     }
 
     #[test]

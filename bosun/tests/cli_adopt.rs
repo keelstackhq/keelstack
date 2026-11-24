@@ -533,8 +533,30 @@ fn adopt_writes_signer_workflow_and_deny_toml_only_for_rust() {
 
     // Without CI, no workflow lands (spec §11), signer included.
     let none = common::git_tempdir();
-    // Exit 2: human steps remain (the owner enrols keys).
+    // `[ci] provider` needs bosun 0.22.0 or later (the pinned version is this binary's): it passes,
+    // and the owner's steps (key enrolment) are listed, not an error.
     let (code, v) = adopt(&fake, none.path(), &["--stack", "rust", "--ci", "none"]);
+    assert_eq!(code, 0, "{v}");
+    assert!(
+        !v["data"]["owner_steps"].as_array().unwrap().is_empty(),
+        "{v}"
+    );
+    // An older pin cannot parse `[ci] provider`: usage error, nothing written.
+    let old = common::git_tempdir();
+    let (code, v) = adopt(
+        &fake,
+        old.path(),
+        &[
+            "--stack",
+            "rust",
+            "--ci",
+            "none",
+            "--bosun-version",
+            "0.21.0",
+        ],
+    );
     assert_eq!(code, 2, "{v}");
+    assert_eq!(v["error"]["kind"], "usage", "{v}");
+    assert!(!old.path().join(".bosun/bosun.toml").exists());
     assert!(!none.path().join(".github/workflows/signer.yml").exists());
 }

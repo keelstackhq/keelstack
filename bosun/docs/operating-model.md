@@ -35,6 +35,18 @@ widen them on measured evidence, never on confidence or on agents agreeing with 
 3. **Agents never merge, tag or force-push.** The PreToolUse hook (merge-lock in
    `src/core/guard.rs`) denies it in shell commands and in the GitHub MCP merge and auto-merge
    tools. bosun only turns on auto-merge.
+   **Owner switch "agents open PRs".** Agents open their own PRs: `bosun pr` (a planned task) or
+   `bosun pr --one-off` (an unplanned fix), and in cloud sessions, where `gh api` is the only
+   GitHub route, `gh api -X POST repos/<owner>/<repo>/pulls -f title=... -f head=<branch> -f
+   base=<default> -F body=@<file>` with every word literal, run from the repo root (no `cd`) and `<file>` a regular,
+   non-secret file at a relative repo path (the hull guard allows this one write; a `$`, a
+   backtick, a `GH_*`/token variable or `-R` is refused). A one-off may
+   edit the autonomous allow set plus the base's `apps/**`, `crates/**` and `packages/**` (their
+   manifests and agent rules excepted). The one switch that lets agents open PRs on more paths is
+   `[approvals] oneoff_allow` in `.bosun/bosun.toml` on the default branch: the owner adds the
+   globs (`oneoff_allow = ["site/**"]`) in an owner-approved PR, and a refused one-off names the
+   glob and this key. Opening is all it grants: merges, tags and releases stay as above, and
+   risk-check still asks the owner for gated paths.
 4. **Answer decisions, not transcripts.** Agents ask with `bosun ask`; human-only steps go to
    `bosun prereqs`. An approval counts only on the exact head SHA: an owner review approval, a
    plain owner comment, or an ed25519-signed `/bosun approve <head_sha>` comment

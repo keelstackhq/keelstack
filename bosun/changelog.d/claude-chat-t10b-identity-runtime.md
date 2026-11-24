@@ -1,1 +1,0 @@
-- `bosun merge`, `approve --chat`, `verdict` and `join --origin` refuse (exit 5) a `BOSUN_SESSION` that is not the session's own id or `<own>/<task>`.

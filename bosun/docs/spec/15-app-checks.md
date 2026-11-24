@@ -147,6 +147,7 @@ key goes only to the token step, the token only to the bosun step. main-health's
   defused (`<!--` and `/bosun` are broken up in the text; the record line is JSON-escaped, `\u002f` and `\u003c`, so it reads back the same) so it can never start a keyed job (UC-B2-7). This closes the §8
   residual "a workflow can post a record as github-actions[bot]". Older records stop counting at
   the switch; an open PR's reviewer posts the verdict comment again.
+- verdict.yml uses `verdict apply --check` and `--require` (bosun 0.22.0 and later). When `.bosun/version` pins an older bosun, the step compares `bosun --version` with 0.22.0 (`sort -V`) and falls back to plain `bosun verdict apply`, so older pins keep working.
 - `bosun verdict post` (a session's own token) cannot make the App's check run: in `checks` mode
   it is exit 1 with the fix `bosun verdict comment`. `bosun approve --main-open` (the owner's PAT)
   cannot either: in `checks` mode it is exit 3 with the fix "re-run the main-open workflow" (O4).

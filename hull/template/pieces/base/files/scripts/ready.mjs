@@ -579,7 +579,7 @@ export const CLASH = {
   template: {
     owned:
       ".claude/agents/ci-fixer.md .claude/agents/explore.md .claude/agents/implementer.md .claude/agents/reviewer.md " +
-      ".claude/hooks/guard.mjs .claude/hooks/session-start.sh .claude/hooks/stop-checks.sh " +
+      ".claude/hooks/guard-legacy.mjs .claude/hooks/guard.mjs .claude/hooks/session-start.sh .claude/hooks/stop-checks.sh " +
       ".claude/loop.md .claude/settings.json .claude/skills/add-piece/SKILL.md " +
       ".claude/skills/docs-lookup/SKILL.md .claude/skills/ready/SKILL.md " +
       ".claude/skills/verify/SKILL.md .claude/statusline.sh .github/scripts/affected.mjs " +
@@ -598,7 +598,7 @@ export const CLASH = {
   "template-rust": {
     owned:
       ".claude/agents/ci-fixer.md .claude/agents/explore.md .claude/agents/implementer.md .claude/agents/reviewer.md " +
-      ".claude/hooks/guard.mjs .claude/hooks/session-start.sh .claude/hooks/stop-checks.sh " +
+      ".claude/hooks/guard-legacy.mjs .claude/hooks/guard.mjs .claude/hooks/session-start.sh .claude/hooks/stop-checks.sh " +
       ".claude/loop.md .claude/settings.json .claude/skills/add-piece/SKILL.md " +
       ".claude/skills/ready/SKILL.md .claude/skills/verify/SKILL.md .claude/statusline.sh " +
       ".config/nextest.toml .github/scripts/advisory-issue.mjs .github/scripts/docs-only.mjs " +

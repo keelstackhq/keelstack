@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 use types::RawGitCommit;
 pub use types::{
     CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label, PrFile, Pull,
-    Review, RunState, Status, TreeEntry,
+    Review, RunJob, RunState, RunStep, Status, TreeEntry, WorkflowRun,
 };
 
 pub use crate::output::BosunError;
@@ -138,6 +138,9 @@ pub trait Github {
     fn tree(&self, sha: &str) -> Result<Option<GitTree>>;
     /// The shas of the pull request's commits (GitHub lists at most 250).
     fn pull_commits(&self, number: u64) -> Result<Vec<String>>;
+    /// The messages of the pull request's commits, in one paged list (GitHub lists at most 250).
+    /// An entry without a message is an error: a caller that reads closing refs fails closed.
+    fn pull_commit_messages(&self, number: u64) -> Result<Vec<String>>;
     /// The first parent of commit `sha`; `None` when GitHub has no such commit or it has no parent.
     fn first_parent(&self, sha: &str) -> Result<Option<String>>;
     /// `draft` opens the pull request as a draft (REST `draft` field).
@@ -192,6 +195,21 @@ pub trait Github {
     fn repo_info(&self) -> Result<Option<RepoInfo>>;
     /// The owner (user or org) of the repository this client talks to.
     fn repo_owner(&self) -> &str;
+    /// The slugs of the child teams of org team `org/slug` (`GET /orgs/{org}/teams/{slug}/teams`,
+    /// every page). Any 403, 404, error or page that is no list is an error: the caller treats
+    /// the team as unreadable (spec §16, fail closed).
+    fn team_child_teams(&self, org: &str, slug: &str) -> Result<Vec<String>>;
+    /// The member logins of org team `org/slug` (`GET /orgs/{org}/teams/{slug}/members?per_page=100`,
+    /// every page, role ignored). A 403, 404, error, bad page or more than 1000 members is an error.
+    fn team_members(&self, org: &str, slug: &str) -> Result<Vec<String>>;
+    /// Workflow run `id` (`GET /actions/runs/{id}`); `None` on 404. Any other failure is an error.
+    fn workflow_run(&self, id: u64) -> Result<Option<WorkflowRun>>;
+    /// Attempt `n` of workflow run `id` (`GET /actions/runs/{id}/attempts/{n}`); `None` on 404.
+    fn workflow_run_attempt(&self, id: u64, n: u64) -> Result<Option<WorkflowRun>>;
+    /// The jobs of attempt `n` of run `id`, with their steps; a 404 is an error.
+    fn run_attempt_jobs(&self, id: u64, n: u64) -> Result<Vec<RunJob>>;
+    /// The repository name this client talks to.
+    fn repo_name(&self) -> &str;
     /// The login the token belongs to (`GET /user`); `None` when GitHub will not say.
     fn current_user(&self) -> Result<Option<String>>;
     /// The newest published release; `None` when there is none.
@@ -465,6 +483,20 @@ impl LiveGithub {
     }
 }
 
+/// Pages of 100 read for a team: one more than 1000 members need (the extra page is the cap check).
+const TEAM_PAGES: usize = 11;
+/// A bound on pages read (GitHub lists at most 250 commits of a PR, 100 per page; the caller
+/// treats 250 as a cut list). Generous so a smaller page size never trips it.
+const COMMIT_PAGES: usize = 130;
+const TEAM_MEMBERS_MAX: usize = 1000;
+
+fn team_error(org: &str, slug: &str, what: &str) -> BosunError {
+    BosunError::error(
+        format!("team {org}/{slug}: {what}"),
+        "give the bosun App Members read and pass BOSUN_APP_TOKEN, or list the owner by login in governance/owners.toml",
+    )
+}
+
 impl Github for LiveGithub {
     fn current_user(&self) -> Result<Option<String>> {
         Ok(self.own_login())
@@ -474,11 +506,80 @@ impl Github for LiveGithub {
         &self.owner
     }
 
+    fn team_child_teams(&self, org: &str, slug: &str) -> Result<Vec<String>> {
+        let path = format!("/orgs/{}/teams/{}/teams?per_page=100", enc(org), enc(slug));
+        let (items, more) = self.http.get_pages_strict(&path, TEAM_PAGES)?;
+        if more {
+            return Err(team_error(org, slug, "too many child teams"));
+        }
+        items
+            .iter()
+            .map(|t| {
+                t["slug"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| team_error(org, slug, "a child team without a slug"))
+            })
+            .collect()
+    }
+
+    fn team_members(&self, org: &str, slug: &str) -> Result<Vec<String>> {
+        let path = format!(
+            "/orgs/{}/teams/{}/members?per_page=100",
+            enc(org),
+            enc(slug)
+        );
+        let (items, more) = self.http.get_pages_strict(&path, TEAM_PAGES)?;
+        if more || items.len() > TEAM_MEMBERS_MAX {
+            return Err(team_error(org, slug, "more than 1000 members"));
+        }
+        items
+            .iter()
+            .map(|m| {
+                m["login"]
+                    .as_str()
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .ok_or_else(|| team_error(org, slug, "a member without a login"))
+            })
+            .collect()
+    }
+
     fn repo_info(&self) -> Result<Option<RepoInfo>> {
         match self.http.get_json(&self.path(""))? {
             Some(v) => Ok(Some(self.parse("repository", v)?)),
             None => Ok(None),
         }
+    }
+
+    fn workflow_run(&self, id: u64) -> Result<Option<WorkflowRun>> {
+        match self
+            .http
+            .get_json(&self.path(&format!("/actions/runs/{id}")))?
+        {
+            Some(v) => Ok(Some(self.parse("workflow run", v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn workflow_run_attempt(&self, id: u64, n: u64) -> Result<Option<WorkflowRun>> {
+        let path = self.path(&format!("/actions/runs/{id}/attempts/{n}"));
+        match self.http.get_json(&path)? {
+            Some(v) => Ok(Some(self.parse("workflow run attempt", v)?)),
+            None => Ok(None),
+        }
+    }
+
+    fn run_attempt_jobs(&self, id: u64, n: u64) -> Result<Vec<RunJob>> {
+        let path = self.path(&format!(
+            "/actions/runs/{id}/attempts/{n}/jobs?per_page=100"
+        ));
+        self.parse_all("job", self.http.get_all_in(&path, "jobs")?)
+    }
+
+    fn repo_name(&self) -> &str {
+        &self.repo
     }
 
     fn latest_release(&self) -> Result<Option<Release>> {
@@ -789,6 +890,31 @@ impl Github for LiveGithub {
             .iter()
             .filter_map(|c| c["sha"].as_str().map(String::from))
             .collect())
+    }
+
+    fn pull_commit_messages(&self, number: u64) -> Result<Vec<String>> {
+        let path = self.path(&format!("/pulls/{number}/commits?per_page=100"));
+        let (commits, more) = self.http.get_pages_strict(&path, COMMIT_PAGES)?;
+        if more {
+            return Err(BosunError::error(
+                format!("PR #{number} has more commits than bosun reads"),
+                "rerun; closing refs in later commits cannot be ruled out",
+            ));
+        }
+        commits
+            .iter()
+            .map(|c| {
+                c["commit"]["message"]
+                    .as_str()
+                    .map(String::from)
+                    .ok_or_else(|| {
+                        BosunError::error(
+                            format!("GitHub listed a commit of PR #{number} without its message"),
+                            "rerun; GitHub's commit list was incomplete",
+                        )
+                    })
+            })
+            .collect()
     }
 
     fn compare(&self, base: &str, head: &str) -> Result<Compare> {
@@ -1188,5 +1314,43 @@ mod refusal_tests {
         )));
         assert!(!is_ccr_refusal(&e("GitHub GET /pulls/1: 403 Forbidden")));
         assert!(!is_ccr_refusal(&e("GitHub POST /graphql: 500 boom")));
+    }
+}
+
+#[cfg(test)]
+mod commit_list_tests {
+    use super::*;
+    use std::io::{Read, Write};
+
+    fn serve(body: &'static str) -> LiveGithub {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", l.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in l.incoming().take(1) {
+                let mut c = conn.unwrap();
+                let mut buf = [0u8; 2048];
+                let _ = c.read(&mut buf);
+                let _ = write!(
+                    c,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        LiveGithub {
+            http: Http::new(&url, "", 0),
+            owner: "o".into(),
+            repo: "r".into(),
+            login: std::sync::OnceLock::new(),
+            collab_blocked: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    #[test]
+    fn a_non_list_commit_page_is_an_error_not_no_commits() {
+        let gh = serve(r#"{"message":"Server Error"}"#);
+        assert!(gh.pull_commit_messages(1).is_err());
+        let gh = serve(r#"[{"sha":"a","commit":{"message":"Closes #3"}}]"#);
+        assert_eq!(gh.pull_commit_messages(1).unwrap(), ["Closes #3"]);
     }
 }

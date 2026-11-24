@@ -582,7 +582,8 @@ fn adopt_and_prune_together_are_refused() {
             "cloudflare",
         ])
         .assert()
-        .code(3);
+        .code(3)
+        .stderr(predicates::str::contains("drop --prune"));
 }
 
 #[test]

@@ -10,6 +10,7 @@ fn convert(res: Res) -> Check {
     match res {
         Res::Ok => Check::Done("hoist check: no drift".into()),
         Res::Drift => Check::Todo("hoist check reports drift".into()),
+        Res::NoItems => Check::Todo("hoist check reports no items".into()),
         Res::Human {
             title,
             url,
@@ -220,6 +221,18 @@ mod tests {
             Settings.check(&mut cx)
         }
         .unwrap()
+    }
+
+    #[test]
+    fn no_items_has_its_own_message() {
+        let Check::Todo(m) = convert(Res::NoItems) else {
+            panic!("expected Todo")
+        };
+        assert_eq!(m, "hoist check reports no items");
+        let Check::Todo(d) = convert(Res::Drift) else {
+            panic!("expected Todo")
+        };
+        assert_eq!(d, "hoist check reports drift");
     }
 
     #[test]

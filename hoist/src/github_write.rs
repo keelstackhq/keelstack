@@ -51,9 +51,21 @@ fn execute_github_plain(http: &Http, d: &Desired, change: &Change) -> Result<(),
             merge_queue,
             admin_bypass,
         } => {
-            let fresh = ruleset_body(required_checks, *merge_queue, *admin_bypass);
+            crate::diff::ensure_pins_resolved(d)?;
+            let pins: Vec<(String, u64)> = d
+                .github
+                .ruleset
+                .check_pins
+                .iter()
+                .filter_map(|p| Some((p.context.clone(), p.id?)))
+                .collect();
+            let mut fresh = ruleset_body(required_checks, *merge_queue, *admin_bypass);
+            pin_checks(&mut fresh, &pins);
             let merge = |live: &Value| {
-                merged_ruleset_body(live, required_checks, *merge_queue, *admin_bypass)
+                let mut body =
+                    merged_ruleset_body(live, required_checks, *merge_queue, *admin_bypass);
+                pin_checks(&mut body, &pins);
+                body
             };
             write_ruleset(http, &repo, *existing_id, RULESET_NAME, &fresh, merge)
         }
@@ -584,6 +596,30 @@ fn ruleset_body(required_checks: &[String], merge_queue: bool, admin_bypass: boo
     };
     body.insert("bypass_actors".into(), Value::Array(actors));
     Value::Object(body)
+}
+
+/// Set `integration_id` on each pinned check of the body's `required_status_checks` rule
+/// (spec §6.1); unpinned entries keep whatever they have.
+fn pin_checks(body: &mut Value, pins: &[(String, u64)]) {
+    let Some(rules) = body.get_mut("rules").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for rule in rules
+        .iter_mut()
+        .filter(|r| r["type"] == "required_status_checks")
+    {
+        let Some(entries) = rule
+            .pointer_mut("/parameters/required_status_checks")
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        for e in entries {
+            if let Some((_, id)) = pins.iter().find(|(c, _)| e["context"] == c.as_str()) {
+                e["integration_id"] = json!(id);
+            }
+        }
+    }
 }
 
 fn queue_rule() -> Value {

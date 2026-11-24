@@ -245,7 +245,12 @@ jobs:
           git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
             rm -rf -- "$p"
           done
+          top="$(pwd -P)"
           git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            case "$(realpath -m -- "$(dirname -- "$p")")" in
+              "$top"|"$top"/*) ;;
+              *) echo "::error::$p: its directory links outside the checkout"; exit 1 ;;
+            esac
             mkdir -p -- "$(dirname -- "$p")"
             git show "$BASE:$p" > "$p"
           done
@@ -638,7 +643,12 @@ jobs:
           git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
             rm -rf -- "$p"
           done
+          top="$(pwd -P)"
           git ls-tree -r -z --name-only "$BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+            case "$(realpath -m -- "$(dirname -- "$p")")" in
+              "$top"|"$top"/*) ;;
+              *) echo "::error::$p: its directory links outside the checkout"; exit 1 ;;
+            esac
             mkdir -p -- "$(dirname -- "$p")"
             git show "$BASE:$p" > "$p"
           done
@@ -688,7 +698,7 @@ jobs:
           for d in $TS_PATHS; do
             if [ -f "$d/pnpm-lock.yaml" ]; then (cd "$d" && pnpm install --frozen-lockfile); fi
           done
-      - uses: keelstackhq/hoard@v0
+      - uses: keelstackhq/keelstack/hoard@v0
         if: needs.bosun-trusted.outputs.pr_gates != '' && needs.bosun-trusted.outputs.ts_lock == 'true'
 {% endraw %}{% raw %}      # The gates bosun-trusted left (fmt, lint, test), in order; the first failure stops the job.
       - if: needs.bosun-trusted.outputs.pr_gates != ''

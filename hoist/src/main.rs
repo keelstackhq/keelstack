@@ -136,7 +136,7 @@ fn command_name(args: &[String]) -> String {
                 break;
             }
             words.push(a);
-            let group = matches!(words[0], "auth" | "release" | "secrets");
+            let group = matches!(words[0], "auth" | "release" | "secrets" | "org");
             if words.len() == 2 || !group {
                 break;
             }
@@ -145,6 +145,6 @@ fn command_name(args: &[String]) -> String {
     words.join(" ")
 }
 
-const KNOWN: [&str; 9] = [
-    "explain", "plan", "apply", "check", "import", "init", "auth", "release", "secrets",
+const KNOWN: [&str; 10] = [
+    "explain", "plan", "apply", "check", "import", "init", "auth", "release", "secrets", "org",
 ];

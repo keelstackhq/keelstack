@@ -41,6 +41,9 @@ mkdir -p "$copy"
 old=$(awk -F'"' '/^\[/ { s = ($0 == "[workspace.package]") } s && /^version *=/ { print $2; exit }' "$copy/Cargo.toml")
 new=9.8.7
 [ "$old" != "$new" ] || { echo "test needs a repo not at $new" >&2; exit 1; }
+# Seed an Unreleased entry in hoard's copy: right after a release the real one is empty.
+awk '{ print } $0 == "## Unreleased" && !d { print ""; print "- Test: seeded unreleased entry."; d = 1 }' \
+  "$copy/hoard/CHANGELOG.md" >"$tmp/hoard-cl" && cat "$tmp/hoard-cl" >"$copy/hoard/CHANGELOG.md"
 snapshot() { (cd "$1" && find . -type f -not -path './target/*' -not -path '*/node_modules/*' -print0 | LC_ALL=C sort -z | xargs -0 sha256sum); }
 snapshot "$copy" >"$tmp/before.sum"
 
@@ -156,8 +159,8 @@ for f in bosun hoard; do
   if [ -n "$u" ] && [ -n "$h" ] && [ "$u" -lt "$h" ]; then ok "$f: Unreleased above $new"; else fail "$f: Unreleased/$new order ($u/$h)"; fi
 done
 if grep -qi '^## .*unreleased' hull/CHANGELOG.md; then fail "hull/CHANGELOG.md still has an unreleased heading"; else ok "hull: unreleased heading renamed"; fi
-# the entries that were under Unreleased follow the new heading (hoard has one)
-if awk -v h="## $new — 2031-02-03" '$0 == h { f = 1; next } /^## / { f = 0 } f && /^- Docs: version pins/ { found = 1 } END { exit !found }' hoard/CHANGELOG.md; then
+# the entries that were under Unreleased follow the new heading (hoard has the seeded one)
+if awk -v h="## $new — 2031-02-03" '$0 == h { f = 1; next } /^## / { f = 0 } f && /^- Test: seeded unreleased entry\./ { found = 1 } END { exit !found }' hoard/CHANGELOG.md; then
   ok "hoard: Unreleased entries moved under $new"
 else
   fail "hoard: Unreleased entry not under $new"
@@ -257,6 +260,19 @@ if grep -q '^version = "^2.0.0"$' "$syn/a/Cargo.toml"; then ok "table-form path 
 if grep -q '^version = "=1.13.1"$' "$syn/a/Cargo.toml"; then ok "table-form registry dependency untouched"; else fail "table-form registry dependency was changed"; fi
 if [ "$(grep -c '^version = "2.0.0"$' "$syn/Cargo.lock")" = 2 ] && grep -q '^version = "1.0.229"$' "$syn/Cargo.lock"; then ok "synthetic Cargo.lock"; else fail "synthetic Cargo.lock"; fi
 if [ -z "$(bash "$syn/scripts/bump-version.sh" 2.0.0)" ]; then ok "synthetic second run is a no-op"; else fail "synthetic second run changed files"; fi
+
+# A member name with sed metacharacters is rejected before any file is touched.
+bad="$tmp/bad"
+mkdir -p "$bad/scripts" "$bad/a"
+cp "$root/scripts/bump-version.sh" "$bad/scripts/"
+printf '[workspace]\nmembers = ["a#b"]\n\n[workspace.package]\nversion = "1.0.0"\n' >"$bad/Cargo.toml"
+if out=$(bash "$bad/scripts/bump-version.sh" 2.0.0 2>&1); then
+  fail "member name with '#' was accepted"
+elif grep -q 'invalid workspace member' <<<"$out"; then
+  ok "member name with '#' is rejected"
+else
+  fail "member name rejected without the expected message: $out"
+fi
 
 # --- shell hygiene -------------------------------------------------------------------------------
 for s in scripts/bump-version.sh scripts/bump-version.test.sh; do

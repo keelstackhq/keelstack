@@ -71,7 +71,12 @@ environment:
         git ls-tree -r -z --name-only HEAD | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
           rm -rf -- "$p"
         done
+        top="$(pwd -P)"
         git ls-tree -r -z --name-only "$BOSUN_BASE" | { grep -zE "$pat" || true; } | while IFS= read -r -d '' p; do
+          case "$(realpath -m -- "$(dirname -- "$p")")" in
+            "$top"|"$top"/*) ;;
+            *) echo "$p: its directory links outside the checkout"; exit 1 ;;
+          esac
           mkdir -p -- "$(dirname -- "$p")"
           git show "$BOSUN_BASE:$p" > "$p"
         done

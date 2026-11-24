@@ -1,1 +1,0 @@
-- `bosun merge`: the helper git and cargo calls (stamps, test-integrity, base lookup, `cargo metadata`, the nextest probe) now run with the same isolated environment as the gates.

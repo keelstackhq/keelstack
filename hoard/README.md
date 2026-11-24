@@ -329,7 +329,7 @@ is ignored for `r2` (see [spec §6.5](docs/superpowers/specs/2026-10-14-hoard-de
 
 CircleCI has no GitHub cache: use `fs` or `r2`. [docs/circleci.md](docs/circleci.md) has a full
 `config.yml` (copy `circleci/hoard.yml` in as the `hoard` command; it installs a verified release,
-runs `serve --detach` and `stop`). Elsewhere: `HOARD_VERSION=0.6.1 sh scripts/install.sh`,
+runs `serve --detach` and `stop`). Elsewhere: `HOARD_VERSION=0.22.0 sh scripts/install.sh`,
 `hoard serve --detach`, `eval "$(hoard env)"`, build, `hoard stop`.
 Security: CircleCI caches are not branch-scoped, so pass `restore: false` on the default branch
 (its builds are cold with `fs`; `r2` keeps them warm).

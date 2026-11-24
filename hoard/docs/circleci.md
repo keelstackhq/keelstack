@@ -21,18 +21,18 @@ jobs:
       - checkout
       - run: sudo corepack enable   # pnpm/yarn: see "Corepack" below
       - run: pnpm install --frozen-lockfile
-      - hoard: {step: start, version: 0.6.1}
+      - hoard: {step: start, version: 0.22.0}
       - run: pnpm turbo run build test
-      - hoard: {step: stop, version: 0.6.1}
+      - hoard: {step: stop, version: 0.22.0}
   build-main:        # main only: cold build, saves the cache (see Trust)
     docker: [{image: cimg/node:24.0}]
     steps:
       - checkout
       - run: sudo corepack enable
       - run: pnpm install --frozen-lockfile
-      - hoard: {step: start, version: 0.6.1, restore: false}
+      - hoard: {step: start, version: 0.22.0, restore: false}
       - run: pnpm turbo run build test
-      - hoard: {step: stop, version: 0.6.1}
+      - hoard: {step: stop, version: 0.22.0}
 workflows:
   ci:
     jobs:
@@ -108,5 +108,5 @@ builds and strict setups use `r2` with read-only tokens and the restricted read-
 
 ## Plain shell
 
-`HOARD_VERSION=0.6.1 sh scripts/install.sh`, `hoard serve --detach --storage fs --fs-root DIR`,
+`HOARD_VERSION=0.22.0 sh scripts/install.sh`, `hoard serve --detach --storage fs --fs-root DIR`,
 `eval "$(hoard env)"`, the build, and `hoard stop --summary markdown`.

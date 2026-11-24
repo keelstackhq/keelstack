@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "keel-berth"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "keel-bosun"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1906,26 +1906,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-cli"
-version = "0.21.0"
-dependencies = [
- "assert_cmd",
- "base64",
- "clap",
- "predicates",
- "rpassword",
- "serde",
- "serde_json",
- "sha2 0.11.1",
- "tempfile",
- "thiserror",
- "toml",
- "zeroize",
-]
-
-[[package]]
 name = "keel-hoard"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "anyhow",
  "aws-sdk-s3",
@@ -1952,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "keel-hoist"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "assert_cmd",
  "base64",
@@ -1981,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "keel-splice"
-version = "0.21.0"
+version = "0.22.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -2003,6 +1985,25 @@ dependencies = [
  "toml_edit",
  "walkdir",
  "yaml_serde",
+]
+
+[[package]]
+name = "keelstack-cli"
+version = "0.22.0"
+dependencies = [
+ "assert_cmd",
+ "base64",
+ "clap",
+ "predicates",
+ "rpassword",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "signal-hook",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "zeroize",
 ]
 
 [[package]]

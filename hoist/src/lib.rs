@@ -19,6 +19,7 @@ pub mod github;
 pub mod github_write;
 pub mod http;
 pub mod ops;
+pub mod org;
 pub mod r2;
 pub mod release;
 pub mod repo;
@@ -104,6 +105,7 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
             },
             cli.verbose,
         ),
+        Command::Org { ref command } => org::run(&dir, command, cli.verbose),
         Command::Secrets {
             command:
                 cli::SecretsCommand::Set {
@@ -210,7 +212,8 @@ pub fn exec(cli: Cli) -> Result<i32, (i32, String)> {
 
 /// Whether stdout is a pipe (a FIFO). `--emit-secrets` writes only there: a terminal would
 /// keep the credentials in scrollback and a regular file would keep them on disk. Without
-/// Unix file types, anything but a terminal passes.
+/// Unix file types a file cannot be told from a pipe, so non-Unix builds refuse
+/// `--emit-secrets` (use `--secrets-to`).
 #[cfg(unix)]
 fn stdout_is_pipe() -> bool {
     use std::os::fd::AsFd;
@@ -224,5 +227,5 @@ fn stdout_is_pipe() -> bool {
 
 #[cfg(not(unix))]
 fn stdout_is_pipe() -> bool {
-    !std::io::IsTerminal::is_terminal(&std::io::stdout())
+    false
 }

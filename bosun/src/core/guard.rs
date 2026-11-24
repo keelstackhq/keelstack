@@ -15,10 +15,22 @@ mod interp;
 mod literals;
 mod prose;
 mod settings;
-pub use interp::{Script, script_rules};
+pub use interp::script_rules;
+pub use interp::{Script, host_binary, interpreter_name};
 pub use settings::settings_rule;
 mod writes;
 pub use writes::bash_writes;
+pub mod intended;
+#[allow(dead_code, clippy::all)]
+pub(crate) mod legacy;
+// The new guard's rules. The live hook runs the legacy judge (main's hook and guard, vendored
+// in `hooks::pre_tool_use_legacy` and `legacy`) first and these only when it allows.
+#[cfg(test)]
+mod feedback_tests;
+#[cfg(test)]
+mod round3_tests;
+#[cfg(test)]
+mod round4_tests;
 
 const MERGE_FIX: &str = "agents never merge, tag or force-push (spec D13): open the PR with \
     `bosun pr <issue>` and let `bosun pr <issue> --auto-merge` hand it to GitHub after the gates \
@@ -905,14 +917,21 @@ fn too_deep() -> String {
     )
 }
 
+/// Every rule judges the command as written and, when `open_bodies` rewrites it, the rewritten
+/// text too: either one denying denies, so a misread rewrite can only add refusals.
 fn bash_rules(command: &str, branch_at: BranchAt, default_branch: &str) -> Option<String> {
+    let opened = &open_bodies(command);
+    let label = |text: &str| {
+        let prose = prose::strip_prose(text);
+        (prose.contains(STATE) && !read_only(&prose, 0)).then(label_reason)
+    };
     decrypt_rule(command, 0)
+        .or_else(|| decrypt_rule(opened, 0))
         .or_else(|| destructive_rule(command, 0))
+        .or_else(|| destructive_rule(opened, 0))
         .or_else(|| check(command, branch_at, default_branch, 0, None))
-        .or_else(|| {
-            let prose = prose::strip_prose(command);
-            (prose.contains(STATE) && !read_only(&prose, 0)).then(label_reason)
-        })
+        .or_else(|| label(command))
+        .or_else(|| label(opened))
 }
 
 /// A `git push` the merge-lock lets through (push-gates, spec §7).
@@ -986,21 +1005,76 @@ fn check(
     depth: usize,
     sinks: Option<&Sinks>,
 ) -> Option<String> {
+    check_in(command, branch_at, default_branch, depth, sinks, true)
+}
+
+/// [`check`]; `globs`: whether this text is run by a shell that expands globs (a `( )` group
+/// inside single quotes, as in a regex, is not, unless a shell runs the string).
+fn check_in(
+    command: &str,
+    branch_at: BranchAt,
+    default_branch: &str,
+    depth: usize,
+    sinks: Option<&Sinks>,
+    globs: bool,
+) -> Option<String> {
     if depth > MAX_DEPTH {
         return Some(too_deep());
     }
-    // A fetch or pull next to other shell commands reads an environment the guard cannot see.
-    if let Some(why) = fetch_not_plain(command)
-        .filter(|_| depth == 0)
-        .or_else(|| glob_rule(command, depth == 0))
-    {
-        return Some(format!("`{}` is refused ({why})", command.trim()));
-    }
-    for inner in nested(command) {
-        if let Some(why) = check(&inner, branch_at, default_branch, depth + 1, sinks) {
+    // The text as written and the text with `case` arms and function bodies opened are both
+    // judged: either one denying denies (the rewrite only adds separators, and a misread one
+    // must never hide what the written text runs).
+    let opened = open_bodies(command);
+    let texts: Vec<&str> = if opened == command {
+        vec![command]
+    } else {
+        vec![command, &opened]
+    };
+    for &command in &texts {
+        // A fetch or pull next to other shell commands reads an environment the guard cannot see.
+        if let Some(why) = fetch_not_plain(command)
+            .filter(|_| depth == 0)
+            .or_else(|| glob_rule(command, depth == 0).filter(|_| globs))
+        {
+            return Some(format!("`{}` is refused ({why})", command.trim()));
+        }
+        if globs && let Some(why) = interp::indirect_rule(command) {
             return Some(why);
         }
     }
+    // The groups bash runs: substitutions and `( )` outside quotes (also in unquoted heredoc
+    // bodies) and the strings of `sh -c`, `eval`, `env -S`. Each group is judged once.
+    let mut judged: Vec<(String, bool)> = Vec::new();
+    for &command in &texts {
+        let (code, mut runs) = split_heredocs(command);
+        runs.extend(substitutions(&strip_comments(&code), false));
+        runs.extend(word_scripts(command));
+        for inner in nested(command) {
+            let run = globs && runs.contains(&inner);
+            // Quoted text (an awk or regex group) is judged too, but its depth refuses nothing.
+            if !run && depth + 1 > MAX_DEPTH || judged.iter().any(|j| j.0 == inner && j.1 == run) {
+                continue;
+            }
+            if let Some(why) = check_in(&inner, branch_at, default_branch, depth + 1, sinks, run) {
+                return Some(why);
+            }
+            judged.push((inner, run));
+        }
+    }
+    texts
+        .iter()
+        .find_map(|t| check_segments(t, branch_at, default_branch, depth, sinks))
+}
+
+/// The commands of one text of [`check_in`] (its nested groups are judged there): interpreter
+/// code, `cd`s, built command names, piped shells and [`merge_rule`].
+fn check_segments(
+    command: &str,
+    branch_at: BranchAt,
+    default_branch: &str,
+    depth: usize,
+    sinks: Option<&Sinks>,
+) -> Option<String> {
     let here = Target {
         dir: Some(&[]),
         alone: false,
@@ -1666,15 +1740,56 @@ fn word_scripts(command: &str) -> Vec<String> {
                 .take_while(|w| *w != SEP)
                 .collect();
             out.push(rest.join(" "));
-        } else if matches!(name, "sh" | "bash" | "zsh" | "dash" | "ksh") {
-            let flag = words[i + 1..]
+        } else if name == "trap" {
+            // `trap CODE SIG..`: CODE runs on the signal.
+            let code = words[i + 1..]
                 .iter()
                 .take_while(|w| **w != SEP)
-                .position(|w| w.starts_with('-') && !w.starts_with("--") && w.contains('c'));
-            if let Some(f) = flag
-                && let Some(script) = words.get(i + 2 + f)
-            {
-                out.push(script.clone());
+                .find(|w| !w.starts_with('-'));
+            out.extend(code.cloned());
+        } else if matches!(name, "su" | "runuser" | "script") {
+            // `su -c CMD`, `--command CMD`, `--command=CMD`; `script -qc CMD`.
+            let args: Vec<&String> = words[i + 1..].iter().take_while(|w| **w != SEP).collect();
+            for (k, a) in args.iter().enumerate() {
+                if let Some(v) = a.strip_prefix("--command=") {
+                    out.push(v.to_string());
+                } else if *a == "--command"
+                    || a.starts_with('-') && !a.starts_with("--") && a.ends_with('c')
+                {
+                    out.extend(args.get(k + 1).map(|v| (*v).clone()));
+                } else if a.starts_with('-') && !a.starts_with("--") && a.contains('c') {
+                    out.push(a[a.find('c').unwrap_or(0) + 1..].to_string());
+                }
+            }
+        } else if matches!(
+            name,
+            "sh" | "bash" | "zsh" | "dash" | "ksh" | "rbash" | "mksh" | "ash" | "posh" | "yash"
+        ) {
+            // `-c` anywhere among the options; the code is the first operand after them all
+            // (`bash -c -- 'x'`, `bash -ec 'x'`, `bash -c -o pipefail 'x'`).
+            let args: Vec<&String> = words[i + 1..].iter().take_while(|w| **w != SEP).collect();
+            let (mut k, mut c, mut opts) = (0, false, true);
+            while let Some(a) = args.get(k) {
+                k += 1;
+                if opts && *a == "--" {
+                    opts = false;
+                } else if opts
+                    && matches!(
+                        a.as_str(),
+                        "--rcfile" | "--init-file" | "-rcfile" | "-init-file"
+                    )
+                {
+                    k += 1;
+                } else if opts && a.starts_with("--") {
+                } else if opts && a.len() > 1 && a.starts_with(['-', '+']) {
+                    c |= a.starts_with('-') && a.contains('c');
+                    k += usize::from(a[1..].contains(['o', 'O']));
+                } else {
+                    if c {
+                        out.push((*a).clone());
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1723,7 +1838,13 @@ const SEP: &str = "\u{0}";
 /// Split into words with shell quoting (`'..'`, `".."`, backslash); `;`, `&`, `|` and
 /// newlines become `SEP` words.
 fn shell_words(s: &str) -> Vec<String> {
+    shell_words_seps(s).0
+}
+
+/// [`shell_words`] and, for each `SEP` word in order, the character it stands for.
+fn shell_words_seps(s: &str) -> (Vec<String>, Vec<char>) {
     let (mut words, mut cur, mut quote, mut started) = (Vec::new(), String::new(), None, false);
+    let mut seps = Vec::new();
     let mut chars = s.chars();
     while let Some(c) = chars.next() {
         match (quote, c) {
@@ -1751,6 +1872,7 @@ fn shell_words(s: &str) -> Vec<String> {
                 }
                 if !c.is_whitespace() || c == '\n' {
                     words.push(SEP.to_string());
+                    seps.push(c);
                 }
             }
             (None, c) => {
@@ -1762,13 +1884,13 @@ fn shell_words(s: &str) -> Vec<String> {
     if started {
         words.push(cur);
     }
-    words
+    (words, seps)
 }
 
 /// Words that run the next word as a command (`sudo gh ...`) or open a shell group.
 const WRAPPERS: &[&str] = &[
     "env", "command", "sudo", "nohup", "time", "exec", "nice", "{", "!", "then", "do", "else",
-    "if", "while", "until", "builtin",
+    "if", "while", "until", "builtin", "coproc",
 ];
 
 /// Commands that run the command after their options: name, options with a separate value,
@@ -1788,6 +1910,7 @@ const RUNNERS: &[(&str, &[&str], usize, &[&str])] = &[
     // `-c` takes no value: the mask positional is the cpu list then.
     ("taskset", &[], 1, &[]),
     ("watch", &["-n", "--interval", "-q", "--equexit"], 0, &[]),
+    ("runuser", &["-u", "--user", "-g", "--group", "-G", "--supp-group", "-s", "--shell", "-w", "--whitelist-environment"], 0, &[]),
     // `FILE -c CMD`: `-c` is a flag here, so its value is the command.
     ("flock", &["-w", "--timeout", "--wait", "-E", "--conflict-exit-code"], 1, &[]),
     ("strace", &["-a", "-b", "-e", "-E", "-I", "-o", "-O", "-p", "-P", "-s", "-S", "-u", "-U", "-X", "--output", "--attach", "--string-limit", "--user", "--env", "--detach-on", "--columns", "--overhead", "--summary-sort-by", "--trace-path", "--summary-columns", "--const-print-style", "--trace", "--trace-fds", "--signal", "--signals", "--status", "--abbrev", "--verbose", "--raw", "--read", "--write", "--fault", "--inject", "--kvm", "--decode-pids"], 0, &[]),
@@ -1973,8 +2096,13 @@ fn merge_rule(words: &[&str], segment: &str, target: &Target) -> Option<&'static
     // after a wrapper or runner (whose option values the guard may misread), as the command word
     // when its first word is git, gh, a shell, a wrapper or a runner, or in a git or gh command.
     let (mut grown, mut ex, mut unread) = (false, Vec::new(), Vec::new());
-    for w in words {
-        match braces(w, 0, 0) {
+    for (w, from) in words.iter().zip(unquoted_from(words)) {
+        // A word inside a quote opened by an earlier word (`-m "note {,] here"`) is text.
+        let Some(from) = from else {
+            ex.push(w.to_string());
+            continue;
+        };
+        match braces(w, from, 0) {
             Some(Ok(more)) => {
                 ex.extend(more.into_iter().filter(|m| !m.is_empty()));
                 grown = true;
@@ -2025,12 +2153,22 @@ fn merge_rule(words: &[&str], segment: &str, target: &Target) -> Option<&'static
     }
     let (mut words, mut xargs, mut moved) = (words, false, false);
     loop {
-        let skip = words
-            .iter()
-            .take_while(|w| {
-                (w.contains('=') && !w.starts_with('-')) || (WRAPPERS.contains(w) && !runner(w))
-            })
-            .count();
+        let mut skip = 0;
+        while let Some(w) = words.get(skip) {
+            if (w.contains('=') && !w.starts_with('-')) || (WRAPPERS.contains(w) && !runner(w)) {
+                skip += 1;
+                // `coproc NAME { ..; }`: NAME names the coprocess of the compound command.
+                if *w == "coproc"
+                    && words
+                        .get(skip + 1)
+                        .is_some_and(|n| *n == "{" || n.starts_with('('))
+                {
+                    skip += 1;
+                }
+            } else {
+                break;
+            }
+        }
         let (cmd, dirs, _) = unwrap_runners(&words[skip..]);
         let ran = &words[skip..words.len() - cmd.len()];
         xargs |= ran.iter().any(|w| w.rsplit('/').next() == Some("xargs"));
@@ -2118,6 +2256,33 @@ fn plain_braces(w: &str) -> bool {
         })
 }
 
+/// For each blank-split word, the offset where no quote is open: 0, or just past the quote an
+/// earlier word opened; `None` when that quote does not close in the word.
+fn unquoted_from(words: &[&str]) -> Vec<Option<usize>> {
+    let mut open: Option<char> = None;
+    words
+        .iter()
+        .map(|w| {
+            let mut from = open.is_none().then_some(0);
+            let mut esc = false;
+            for (i, c) in w.char_indices() {
+                match (open, c) {
+                    _ if std::mem::take(&mut esc) => {}
+                    (Some(q), c) if c == q => {
+                        open = None;
+                        from.get_or_insert(i + 1);
+                    }
+                    (Some('\''), _) => {}
+                    (_, '\\') => esc = true,
+                    (None, '\'' | '"') => open = Some(c),
+                    _ => {}
+                }
+            }
+            from
+        })
+        .collect()
+}
+
 /// Commands that run another command: `find -exec`, `fd -x`, and `awk system()`.
 fn exec_rule(
     first: Option<&str>,
@@ -2126,10 +2291,14 @@ fn exec_rule(
     target: &Target,
 ) -> Option<&'static str> {
     match first {
-        Some("find" | "fd" | "fdfind") => {
-            let at = words.iter().position(|w| {
+        // A later group of a find cut at its `\;` (`find . -exec a {} \; -exec b {} \;`) starts
+        // its own segment with the action word.
+        Some(f @ ("find" | "fd" | "fdfind" | "-exec" | "-execdir" | "-ok" | "-okdir")) => {
+            // Every `-exec`/`-execdir`/`-ok`/`-okdir` (`fd -x`/`-X`) group runs a command:
+            // each one is judged, not only the first.
+            let marker = |w: &str| {
                 matches!(
-                    *w,
+                    w,
                     "-exec"
                         | "-execdir"
                         | "-ok"
@@ -2139,14 +2308,32 @@ fn exec_rule(
                         | "--exec"
                         | "--exec-batch"
                 )
-            })?;
-            let end = words[at + 1..]
+            };
+            words
                 .iter()
-                .position(|w| matches!(*w, ";" | "+" | "\\;"))
-                .map_or(words.len(), |e| at + 1 + e);
-            let inner = &words[at + 1..end];
-            // `{}` stands for names find adds: judged like the command without them.
-            merge_rule(inner, &inner.join(" "), target)
+                .enumerate()
+                .filter(|(_, w)| marker(w))
+                .find_map(|(at, _)| {
+                    let end = words[at + 1..]
+                        .iter()
+                        .position(|w| matches!(*w, ";" | "+" | "\\;"))
+                        .map_or(words.len(), |e| at + 1 + e);
+                    let inner = &words[at + 1..end];
+                    // The found files themselves run (`-exec {} ;`, `-exec ./x.sh {} ;`), or a
+                    // shell or interpreter is handed them (`-exec sh -n {} ;`, `fd -X bash`
+                    // appends them): unread, so refused, parse-only included.
+                    let (cmd, _, _) = unwrap_runners(inner);
+                    let named = cmd.first().is_some_and(|c| *c == "{}" || c.contains('/'));
+                    let shell = cmd
+                        .first()
+                        .is_some_and(|c| interp::is_runner(c) || SHELLS.contains(&base(c)))
+                        && (matches!(f, "fd" | "fdfind") || cmd[1..].contains(&"{}"));
+                    if named || shell {
+                        return Some(FIND_RUNS);
+                    }
+                    // `{}` stands for names find adds: judged like the command without them.
+                    merge_rule(inner, &inner.join(" "), target)
+                })
         }
         Some("awk" | "gawk" | "mawk" | "nawk") => {
             calls_system(segment).then_some("`awk` runs commands through system()")
@@ -2154,6 +2341,9 @@ fn exec_rule(
         _ => None,
     }
 }
+
+const FIND_RUNS: &str = "find runs the files it finds, which the guard cannot read: run each \
+    script by its path";
 
 /// Whether the text has `system` followed by optional blanks and `(`: an awk `system()` call.
 fn calls_system(s: &str) -> bool {
@@ -2555,6 +2745,36 @@ fn split_heredocs(command: &str) -> (String, Vec<String>) {
     (code, subs)
 }
 
+/// The text without shell comments: a `#` that starts a word outside quotes, to the end of its
+/// line (prose such as `upstream's` would open a quote).
+fn strip_comments(text: &str) -> String {
+    let (mut out, mut quote, mut esc, mut comment) = (String::new(), None, false, false);
+    let mut prev = ' ';
+    for c in text.chars() {
+        if comment {
+            if c != '\n' {
+                continue;
+            }
+            comment = false;
+        }
+        match (quote, c) {
+            _ if esc => esc = false,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => {}
+            (_, '\\') => esc = true,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '#') if prev.is_whitespace() || ";&|()".contains(prev) => {
+                comment = true;
+                continue;
+            }
+            _ => {}
+        }
+        out.push(c);
+        prev = c;
+    }
+    out
+}
+
 /// The `$( )`, backtick and (outside quotes) `( )` spans of a command line, quote-aware; in a
 /// heredoc `body` quotes are text and only `$( )` and backticks run.
 fn substitutions(text: &str, body: bool) -> Vec<String> {
@@ -2572,7 +2792,11 @@ fn substitutions(text: &str, body: bool) -> Vec<String> {
                 out.push(c[i + 1..end].iter().collect());
                 i = end;
             }
-            (q, '(') if (q.is_none() && !body) || (i > 0 && c[i - 1] == '$') => {
+            // An array value (`a=(..)`, `a+=(..)`) is data; a `$( )` in it is found inside.
+            (q, '(')
+                if (q.is_none() && !body && !(i > 0 && c[i - 1] == '='))
+                    || (i > 0 && c[i - 1] == '$') =>
+            {
                 let (mut level, mut j) = (1, i + 1);
                 while j < c.len() && level > 0 {
                     level += i32::from(c[j] == '(') - i32::from(c[j] == ')');
@@ -2643,8 +2867,8 @@ const GH_DATA: &[&str] = &["t", "title", "b", "body", "notes", "f", "F", "raw-fi
 const PAGERS_OK: &[&str] = &["less", "more", "most", "cat"];
 const VIEWERS_OK: &[&str] = &["vi", "vim", "nvim", "view", "nano", "emacs", "code"];
 const SHELLS: &[&str] = &[
-    "sh", "bash", "zsh", "dash", "ksh", "fish", "busybox", "python", "python3", "perl", "ruby",
-    "node", "deno", "bun", "php", "source", "xargs", "eval",
+    "sh", "bash", "zsh", "dash", "ksh", "rbash", "mksh", "ash", "posh", "yash", "fish", "busybox",
+    "python", "python3", "perl", "ruby", "node", "deno", "bun", "php", "source", "xargs", "eval",
 ];
 
 /// The files that `> f`, `>> f` and `tee f` write in these words.
@@ -2771,7 +2995,15 @@ fn key_root(word: &str) -> u8 {
 /// search recurses into `.config` or an ancestor (home or above only when it enters hidden dirs).
 fn key_search(roots: &[&str], recursive: bool, hidden: bool) -> bool {
     let root = roots.iter().map(|a| key_root(a)).max().unwrap_or(0);
-    roots.iter().any(|a| sops_dir(a)) || recursive && (root == 2 || root == 1 && hidden)
+    // An unquoted glob root expands to names the guard cannot see, a link to a home among them
+    // (a search follows the links it is given): a path (`src/*`) or a bare `*`; quotes are
+    // gone here, so `*.gz` may be an option value and passes.
+    let glob = |a: &&str| {
+        a.contains(['*', '?', '['])
+            && (a.contains('/') || a.chars().all(|c| matches!(c, '*' | '?')))
+    };
+    roots.iter().any(|a| sops_dir(a))
+        || recursive && (root == 2 || root == 1 && hidden || roots.iter().any(glob))
 }
 
 /// A redirect word: `>`, `>>`, `2>`, `&>`, `<`, `2>&1`, `>file`.
@@ -3592,7 +3824,23 @@ fn graphql_hidden(args: &[&str]) -> bool {
             _ if a.starts_with("--") => a
                 .strip_prefix("--field=")
                 .or_else(|| a.strip_prefix("--raw-field=")),
-            _ => a.strip_prefix("-f").or_else(|| a.strip_prefix("-F")),
+            // A short cluster read as pflag does: boolean letters (`-i`), then the first letter
+            // that takes a value takes the rest of the cluster or the next word (`-iF q=@f`).
+            _ if a.starts_with('-') => {
+                let cluster = &a[1..];
+                let at = cluster.find(|c: char| "fFHXqtp".contains(c));
+                at.and_then(|k| {
+                    let rest = &cluster[k + 1..];
+                    let v = if rest.is_empty() {
+                        i += 1;
+                        args.get(i - 1).copied()
+                    } else {
+                        Some(rest)
+                    };
+                    matches!(&cluster[k..=k], "f" | "F").then_some(v).flatten()
+                })
+            }
+            _ => None,
         };
         let Some(q) = value.and_then(|v| v.trim_start_matches(['\'', '"']).strip_prefix("query="))
         else {
@@ -3632,6 +3880,8 @@ fn alone_fix(words: &[&str]) -> String {
 
 const FETCH_PLAIN: &str = "a fetch or pull next to other shell commands, whose environment the guard cannot read, or a git command that runs a local command (`ext::`, `fd::`, `-c`, `--upload-pack`, `--exec-path` with a fetch); run a plain git fetch/pull as its own command (`cd` and other `git` commands may join it with `&&`)";
 
+const OPEN_QUOTE: &str = "a quote that is never closed (`\\\"` in `\"..\"`, `$'..'`), which the \
+    guard cannot read: close every quote";
 const GLOB_WORD: &str = "a glob (`*`, `?`, `[`) in a command name or a git word, which bash expands against files the guard cannot see; spell the command name and git words literally, or quote them";
 
 const FETCH_MOVES: &str = "a fetch into the default branch or into a ref the guard cannot read; name the branch literally";
@@ -3838,7 +4088,7 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
     if !text.split(cut).any(git) {
         return None;
     }
-    if text.contains("$'") || text.contains("$\"") {
+    if ansi_quote(&text) {
         return Some(FETCH_PLAIN);
     }
     // `ext::<cmd>` and `fd::` transports run a command or read a descriptor, in any git command
@@ -3894,9 +4144,13 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
                     }))
             }
             Some(&"cd") => w.len() <= 2,
-            Some(&("tail" | "head")) => {
-                w.len() == 2 && w[1].trim_start_matches('-').parse::<u32>().is_ok()
-            }
+            // Read-only commands set nothing a fetch reads (`$`, quotes-in-code, redirects and
+            // groups are refused above); `printf -v` assigns a variable.
+            Some(
+                &("ls" | "cat" | "head" | "tail" | "wc" | "grep" | "echo" | "pwd" | "true"
+                | "false" | "cut" | "tr" | "jq"),
+            ) => true,
+            Some(&"printf") => !w.iter().any(|a| a.starts_with("-v")),
             _ => false,
         }
     };
@@ -3911,6 +4165,211 @@ fn fetch_not_plain(command: &str) -> Option<&'static str> {
     .then_some(FETCH_PLAIN)
 }
 
+/// The text with a `;` after each `case` pattern (`a|b)`, `(*)`, `*"x y"*)`), after `NAME()`
+/// and after `function NAME`, so that the commands of `case` arms and function bodies start
+/// segments of their own and are judged like any command. Only separators are added (nothing
+/// is removed). `case` and `function` count only in command position (the start, after an
+/// unquoted `;`, `&`, `|`, newline or `(`, or after `then`, `do`, `!`, `{` .. there), never
+/// after an assignment, an argument or a `( )`/`$( )`. Callers judge the original text too and
+/// deny if either text is denied, so a misread rewrite can only add refusals.
+pub(super) fn open_bodies(text: &str) -> String {
+    if !(text.contains("case") || text.contains("()") || text.contains("function")) {
+        return text.to_string();
+    }
+    let c: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len() + 8);
+    // `state`: 0 plain, 1 after `case`, 2 after its word, 3 a pattern is next, 4 in a pattern,
+    // 5 after `function`.
+    let (mut i, mut quote, mut state, mut depth) = (0, None::<char>, 0u8, 0usize);
+    let (mut word, mut cmd_pos, mut parens) = (String::new(), true, 0usize);
+    // 1 after `time` (its options keep the command position), 2 after `coproc` (so does NAME).
+    let mut prefix = 0u8;
+    let delim = |ch: char| ch.is_whitespace() || ";&|()<>".contains(ch);
+    let close = |out: &mut String, next: Option<&char>| {
+        if next != Some(&';') {
+            out.push(';');
+        }
+    };
+    while i < c.len() {
+        let ch = c[i];
+        out.push(ch);
+        i += 1;
+        if let Some(q) = quote {
+            if ch == '\\' && q != '\'' {
+                if let Some(&n) = c.get(i) {
+                    out.push(n);
+                    i += 1;
+                }
+            } else if ch == q {
+                quote = None;
+            }
+            continue;
+        }
+        if state == 3 && !ch.is_whitespace() {
+            let esac: String = c[i - 1..].iter().take(4).collect();
+            if esac == "esac" && c.get(i + 3).is_none_or(|n| delim(*n)) {
+                out.extend(&c[i..i + 3]);
+                i += 3;
+                (state, depth, cmd_pos) = (0, depth.saturating_sub(1), false);
+                continue;
+            }
+            state = 4;
+            // The optional `(` before a pattern.
+            if ch == '(' {
+                continue;
+            }
+        }
+        match ch {
+            '\\' => {
+                if let Some(&n) = c.get(i) {
+                    out.push(n);
+                    word.push(n);
+                    i += 1;
+                }
+                continue;
+            }
+            '\'' if word.ends_with('$') => {
+                // `$'..'`: a backslash escapes the next character.
+                while i < c.len() {
+                    let d = c[i];
+                    out.push(d);
+                    i += 1;
+                    if d == '\\' {
+                        if let Some(&n) = c.get(i) {
+                            out.push(n);
+                            i += 1;
+                        }
+                    } else if d == '\'' {
+                        break;
+                    }
+                }
+                word.push('x');
+                continue;
+            }
+            '\'' | '"' => {
+                quote = Some(ch);
+                word.push('x');
+                continue;
+            }
+            _ => {}
+        }
+        if state == 4 {
+            match ch {
+                '(' => parens += 1,
+                ')' if parens > 0 => parens -= 1,
+                ')' => {
+                    close(&mut out, c.get(i));
+                    (state, cmd_pos) = (0, true);
+                }
+                _ => {}
+            }
+            continue;
+        }
+        if !delim(ch) {
+            word.push(ch);
+            continue;
+        }
+        let w = std::mem::take(&mut word);
+        if !w.is_empty() {
+            match (state, w.as_str()) {
+                (0, "case") if cmd_pos => (state, depth) = (1, depth + 1),
+                (0, "function") if cmd_pos => state = 5,
+                (5, _) => {
+                    if ch != ';' {
+                        out.push(';');
+                    }
+                    state = 0;
+                }
+                (1, _) => state = 2,
+                (2, "in") => state = 3,
+                (0, "esac") if depth > 0 => depth -= 1,
+                _ => {}
+            }
+            // A reserved word is one only in command position, and only these leave the next
+            // word there too; after an assignment (`x=1 function`) or an argument it is a word.
+            // `time` and its options (`-p`, `--`) and `coproc` with an optional NAME are
+            // prefixes: the command after them is in command position too.
+            let was = cmd_pos;
+            cmd_pos =
+                was && matches!(
+                    w.as_str(),
+                    "then"
+                        | "do"
+                        | "else"
+                        | "elif"
+                        | "if"
+                        | "while"
+                        | "until"
+                        | "!"
+                        | "{"
+                        | "time"
+                        | "coproc"
+                ) || prefix == 1 && w.starts_with('-')
+                    || prefix == 2;
+            prefix = match w.as_str() {
+                "time" if was => 1,
+                _ if prefix == 1 && w.starts_with('-') => 1,
+                "coproc" if was => 2,
+                _ => 0,
+            };
+        }
+        if matches!(ch, ';' | '&' | '|' | '\n' | '(' | ')') {
+            prefix = 0;
+        }
+        // `function` must name its function on the same command, and `case WORD` finds its
+        // `in` before any `;`, `&` or `|`: a separator first means no keyword was read.
+        if matches!(ch, ';' | '&' | '|' | '\n') && state == 5 {
+            state = 0;
+        }
+        if matches!(ch, ';' | '&' | '|') && matches!(state, 1 | 2) {
+            (state, depth) = (0, depth.saturating_sub(1));
+        }
+        match ch {
+            ';' if matches!(c.get(i), Some(';' | '&')) => {
+                out.push(c[i]);
+                i += 1;
+                if c.get(i) == Some(&'&') {
+                    out.push('&');
+                    i += 1;
+                }
+                if depth > 0 {
+                    state = 3;
+                }
+                cmd_pos = true;
+            }
+            '(' if c.get(i) == Some(&')') => {
+                out.push(')');
+                close(&mut out, c.get(i + 1));
+                i += 1;
+                cmd_pos = true;
+            }
+            // After a `( )` group or a `$( )` the next word is an argument or a redirection.
+            ')' => cmd_pos = false,
+            ';' | '&' | '|' | '(' | '\n' => cmd_pos = true,
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Whether the text has `$'..'` or `$".."` quoting outside single quotes (`'\.rs$'` has none).
+fn ansi_quote(text: &str) -> bool {
+    let (mut quote, mut esc, mut prev) = (None, false, ' ');
+    for c in text.chars() {
+        match (quote, c) {
+            _ if esc => esc = false,
+            (None, '\'' | '"') if prev == '$' => return true,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('\''), _) => {}
+            (_, '\\') => esc = true,
+            (None, '\'' | '"') => quote = Some(c),
+            _ => {}
+        }
+        prev = c;
+    }
+    false
+}
+
 /// An unquoted `*`, `?` or `[` in a command word or any git word (`/usr/bin/gi[t]`, `git f?tch`);
 /// `[` and `[[` alone are the test builtin.
 fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
@@ -3918,12 +4377,23 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         (vec![Vec::new()], String::new(), false, None, false);
     // Words with whether they hold an unquoted glob and whether any part was quoted.
     let mut quoted = false;
+    // A `#` that starts a word starts a comment (prose: `upstream's` opens no quote).
+    let mut comment = false;
     for c in split_heredocs(command).0.chars().chain([' ']) {
+        if comment && c != '\n' {
+            continue;
+        }
+        comment = false;
         match (quote, c) {
+            (None, '#') if !esc && word.is_empty() && !glob && !quoted => comment = true,
             _ if esc => (esc, _) = (false, word.push(c)),
+            // In `".."` and `$'..'` a backslash escapes the quote.
+            (Some('"' | '$'), '\\') => esc = true,
+            (Some('$'), '\'') => quote = None,
             (Some(q), c) if c == q => quote = None,
             (Some(_), c) => word.push(c),
             (None, '\\') => esc = true,
+            (None, '\'') if word.ends_with('$') => (quote, quoted) = (Some('$'), true),
             (None, '\'' | '"') => (quote, quoted) = (Some(c), true),
             (None, c) if c.is_whitespace() || matches!(c, ';' | '&' | '|' | '(' | ')') => {
                 if !word.is_empty() || glob || quoted {
@@ -3937,6 +4407,11 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
             }
             (None, c) => (glob, _) = (glob || matches!(c, '*' | '?' | '['), word.push(c)),
         }
+    }
+    // An open quote at the end: bash would not run the text as typed, and the scan above
+    // cannot tell what is quoted.
+    if top && quote.is_some() {
+        return Some(OPEN_QUOTE);
     }
     static VAR: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r"^\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*))$").expect("static regex")
@@ -3956,10 +4431,17 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         Regex::new(&format!("^{re}$")).is_ok_and(|r| r.is_match(name))
     };
     let names_git = |w: &str| names(w, "git");
+    let assign = |w: &(String, bool, bool)| w.0.contains('=') && !w.0.starts_with('-');
     segs.iter().find_map(|seg| {
-        let git = seg
+        let cmd_at = seg
             .iter()
-            .any(|w| w.0.rsplit('/').next() == Some("git") || w.1 && names_git(&w.0));
+            .position(|w| !assign(w) && !WRAPPERS.contains(&&*w.0));
+        // A glob that can expand to `git` (`g?t`, `*`) may run git wherever it sits: any
+        // program can run a later word (`fakeroot g?t push ..`), and no list of runners is
+        // complete. Such a segment names git, and its git-like glob is refused (`ls *` too:
+        // write `ls`, or a glob that cannot be `git`, as `ls *.md`).
+        let git_like = seg.iter().any(|w| w.1 && names_git(&w.0));
+        let git = git_like || seg.iter().any(|w| w.0.rsplit('/').next() == Some("git"));
         // A fetch, pull or update word in a quoted or `=` value of a git command runs a fetch
         // the guard cannot place (`rebase -x 'cd x && git fetch'`, `-c core.editor=..`); a
         // message or search value (`-m`, `--grep`, `--format`) is prose.
@@ -4048,12 +4530,30 @@ fn glob_rule(command: &str, top: bool) -> Option<&'static str> {
         {
             return Some(FETCH_PLAIN);
         }
-        let assign = |w: &&(String, bool, bool)| w.0.contains('=') && !w.0.starts_with('-');
-        let cmd = seg
-            .iter()
-            .find(|w| !assign(w) && !WRAPPERS.contains(&&*w.0));
+        let cmd = cmd_at.map(|i| &seg[i]);
         let cmd_glob = cmd.is_some_and(|(c, g, _)| *g && c != "[" && c != "[[");
-        (cmd_glob && top || git && seg.iter().any(|w| w.1)).then_some(GLOB_WORD)
+        // A pathspec glob after a literal `git <subcommand>` that writes no ref and moves no
+        // branch names files, but only where no expansion can be an option: after a literal
+        // `--` (`git diff -- *.md`), or a word that starts with a plain name and has a `/`
+        // before its first glob character (`git add src/*.rs`). A bare `*` can expand to a
+        // planted `-O<cmd>` file that `git grep` runs.
+        const PATHSPEC: [&str; 10] = [
+            "add", "diff", "log", "show", "status", "ls-files", "grep", "blame", "rm", "restore",
+        ];
+        let paths = g < sub
+            && seg
+                .get(sub)
+                .is_some_and(|s| !s.1 && PATHSPEC.contains(&s.0.as_str()))
+            && seg[..=sub].iter().all(|w| !w.1)
+            && seg.iter().enumerate().skip(sub + 1).all(|(i, w)| {
+                let dashes = seg[sub + 1..i].iter().any(|p| p.0 == "--" && !p.1);
+                let first_glob = w.0.find(['*', '?', '[']).unwrap_or(w.0.len());
+                let plain = w.0.starts_with(|c: char| c.is_ascii_alphanumeric() || "._".contains(c))
+                    && w.0[..first_glob].contains('/');
+                !w.1 || dashes || plain
+            });
+        let git_glob = git_like || seg.iter().any(|w| w.1) && !paths;
+        (cmd_glob && top || git && git_glob).then_some(GLOB_WORD)
     })
 }
 
@@ -5034,7 +5534,8 @@ mod tests {
             let (asked, why) = in_worktree(cmd);
             assert_eq!(why, None, "{cmd}: asked {asked:?}");
         }
-        let (asked, _) = in_worktree("cd /wt && git -C sub commit -m x");
+        let (mut asked, _) = in_worktree("cd /wt && git -C sub commit -m x");
+        asked.dedup(); // the legacy judge asks the same
         assert_eq!(asked, vec![vec!["-C", "/wt", "-C", "sub"]]);
         // The hook's own directory is on main.
         assert!(in_worktree("git commit -m x").1.is_some());

@@ -1,1 +1,0 @@
-- 2026-11-22 · cloud orchestrator check: the child flag is no evidence in a cloud session; the registry decides · src/ctx.rs, src/cli/merge.rs, src/registry.rs, spec §4 · this PR

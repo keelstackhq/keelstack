@@ -12,6 +12,9 @@ use crate::core::shape::Shape;
 pub struct Plan {
     pub title: String,
     pub project: Option<String>,
+    /// `pr: one` in the header: the whole plan lands as one PR (every item is `single`).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub pr_one: bool,
     pub items: Vec<Item>,
     pub warnings: Vec<PlanError>,
 }
@@ -219,6 +222,7 @@ pub fn parse_to_compare(text: &str) -> Result<Plan, Vec<PlanError>> {
 fn parse_inner(text: &str, done: Option<&HashSet<String>>) -> Result<Plan, Vec<PlanError>> {
     let (mut errs, mut warns): (Vec<PlanError>, Vec<PlanError>) = (vec![], vec![]);
     let (mut title, mut project) = (None, None);
+    let mut pr_one: Option<bool> = None;
     let mut items: Vec<Item> = Vec::new();
     let mut has_tasks: Vec<bool> = Vec::new();
     let (mut sec, mut open, mut seen_item) = (Sec::Other, false, false);
@@ -298,6 +302,15 @@ fn parse_inner(text: &str, done: Option<&HashSet<String>>) -> Result<Plan, Vec<P
         if !seen_item {
             if let Some(p) = line.strip_prefix("project:") {
                 project = Some(p.trim().to_string());
+            } else if let Some(v) = line.strip_prefix("pr:") {
+                if pr_one.is_some() {
+                    bad!(errs, n; "keep one `pr:` line in the header" => "`pr:` is given twice");
+                } else if v.trim() == "one" {
+                    pr_one = Some(true);
+                } else {
+                    pr_one = Some(false);
+                    bad!(errs, n; "use `pr: one` or leave the line out" => "pr `{}` is not valid", v.trim());
+                }
             }
             continue;
         }
@@ -595,6 +608,14 @@ fn parse_inner(text: &str, done: Option<&HashSet<String>>) -> Result<Plan, Vec<P
             }
         }
     }
+    if pr_one == Some(true) {
+        for it in items.iter_mut() {
+            if it.shape == Some(Shape::Split) {
+                bad!(errs, it.line; "remove `shape: split` (or `pr: one`) from the plan" => "item {} has `shape: split`, but the plan says `pr: one`", it.id);
+            }
+            it.shape = Some(Shape::Single);
+        }
+    }
     errs.sort_by_key(|e| e.line);
     if errs.is_empty() {
         touch_warnings(&items, done, &mut warns);
@@ -610,6 +631,7 @@ fn parse_inner(text: &str, done: Option<&HashSet<String>>) -> Result<Plan, Vec<P
         Some(title) if errs.is_empty() => Ok(Plan {
             title,
             project,
+            pr_one: pr_one == Some(true),
             items,
             warnings: warns,
         }),
@@ -797,6 +819,22 @@ mod tests {
         for h in ["## Notes", "## Open questions", "## Milestone one"] {
             assert_eq!(parse(&format!("{OK}\n{h}\n\n- not a task\n")).unwrap().items.len(), 1, "{h}");
         }
+    }
+
+    #[test]
+    fn pr_one_makes_every_item_single() {
+        let one = OK.replace("project: x\n", "project: x\npr: one\n");
+        let p = parse(&one).unwrap();
+        assert!(p.pr_one);
+        assert!(p.items.iter().all(|i| i.shape == Some(Shape::Single)));
+        assert!(!parse(OK).unwrap().pr_one);
+        let e = parse(&OK.replace("project: x\n", "project: x\npr: many\n")).unwrap_err();
+        assert!(e[0].message.contains("pr `many` is not valid"), "{e:?}");
+        let e = parse(&OK.replace("project: x\n", "project: x\npr: one\npr: one\n")).unwrap_err();
+        assert!(e[0].message.contains("`pr:` is given twice"), "{e:?}");
+        let split = one.replace("depends: seed", "depends: seed\nshape: split");
+        let e = parse(&split).unwrap_err();
+        assert!(e[0].message.contains("item M1 has `shape: split`"), "{e:?}");
     }
 
     #[test]

@@ -288,6 +288,12 @@ pub struct Approvals {
     /// paths, gated ones included: risk-check still asks the owner for those. Read at the base.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub oneoff_allow: Option<Vec<String>>,
+    /// Let `bosun pr <lead> --bundle N...` bundle tasks of other single-shape epics into one PR
+    /// ("one big PR"). Off by default; read from the default branch, never the PR or the
+    /// checkout. Any `[approvals]` change is the owner's (R-weaken). The bundle still needs the
+    /// union of its tasks' grants and the strictest risk class (risk-check reads every task).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bundle_across_epics: bool,
     /// `policy` came from the `[mode]` preset, not from this table.
     #[serde(skip)]
     pub policy_preset: bool,

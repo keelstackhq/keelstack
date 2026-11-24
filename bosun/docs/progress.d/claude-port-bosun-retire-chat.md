@@ -1,1 +1,0 @@
-- Retire chat approvals (D-025): removed `approve --chat`, the chat record and its risk-check counting; `[approvals] chat` kept as an ignored deprecated key; spec 04, 08, 14 updated.

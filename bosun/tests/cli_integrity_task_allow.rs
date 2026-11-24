@@ -146,7 +146,10 @@ fn a_decoy_task_first_does_not_lend_its_allow() {
     fake.issue(7, "M1/T1", &[], &task("[]"));
     let (code, v) = check(&fake, &root);
     assert_eq!(code, 1, "{v}");
-    assert_eq!(v["data"]["task"], 7);
+    // Both tasks are the PR's (their touch together covers it), but #99's `allow` reaches only
+    // its own touch: the deleted test stays refused.
+    assert_eq!(v["data"]["tasks"], json!([99, 7]));
+    assert_eq!(v["data"]["findings"][0]["allowed"], false);
     assert_eq!(v["data"]["allow"], json!([]));
 }
 
@@ -214,4 +217,16 @@ fn an_added_file_outside_the_touch_borrows_nothing() {
     fake.issue(7, "M1/T1", &[], &task(r#"["delete-test"]"#));
     let (code, v) = check(&fake, &root);
     assert_eq!((code, &v["data"]["task"]), (1, &Value::Null), "{v}");
+}
+
+#[test]
+fn a_closed_task_does_not_lend_its_allow() {
+    let (_tmp, root) = repo_without_its_test();
+    let fake = FakeGithub::start();
+    pr(&fake, "Closes #7");
+    fake.issue(7, "M1/T1: drop", &[], &task(r#"["delete-test"]"#));
+    fake.close_issue(7, "2026-01-01T00:00:00Z");
+    let (code, v) = check(&fake, &root);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(v["data"]["allow"], json!([]), "{v}");
 }

@@ -5,12 +5,14 @@ name: risk
 # collaborator: it only re-judges; anyone else's runs no job, which limits CI minutes only, since
 # an outsider's `/bosun approve` still re-judges, harmlessly). A recheck from an owner with private
 # org membership or from an app (author_association NONE) is dropped too: re-run the workflow.
-# An owner's GitHub review is read on the next run (a push, `/bosun recheck` or a re-run): there
-# is no review trigger, because `pull_request_review` runs the PR's own copy of this file, with
-# this token, so a PR could rewrite the job and post its own `risk-check`. So a withdrawal
-# changes nothing by itself: to withdraw, request changes or dismiss the approval, then comment
-# `/bosun recheck` (or re-run the risk workflow; it re-judges and fails); turning off auto-merge
-# also stops a merge.
+# An owner's GitHub review (submitted or dismissed) is judged at once through a relay:
+# review-relay.yml runs on `pull_request_review` (the PR's own copy, so it holds no permission,
+# secret, environment or checkout) and its completion fires the `workflow_run` trigger below,
+# which runs THIS file from the default branch. The run trusts nothing in the payload but the
+# head sha, passed through `env:`; it finds the open PRs of that sha through the API. A spoofed
+# relay (a PR adding its own workflow named review-relay) can only cause a harmless re-judge by
+# base code. Withdrawing still works the same way: dismiss or request changes, and the relay
+# re-judges; `/bosun recheck` or a re-run remain as fallbacks.
 #
 # pull_request_target and issue_comment run this file from the base (default) branch, so a PR
 # cannot rewrite the job that judges it. The job never checks out or runs PR-head code: it builds
@@ -24,6 +26,11 @@ name: risk
 # Config: bosun reads `<git top level>/.bosun/*` (ctx.rs, `git rev-parse --show-toplevel`): the
 # monorepo's root .bosun/ of the checked-out commit (bosun.toml with [[folders]], risk.toml, ...).
 on:
+  # The review relay finished (any conclusion): re-judge the PRs of its head sha. The job `if`
+  # accepts only a relay run caused by `pull_request_review`.
+  workflow_run:
+    workflows: [review-relay]
+    types: [completed]
   pull_request_target:
     branches: [main]
     types: [opened, synchronize, reopened, edited, ready_for_review]
@@ -39,18 +46,23 @@ on:
   push:
     branches: [main]
 
+# A relay run (workflow_run caused by `pull_request_review`) has its own group per PR number and
+# head sha (`risk-<n>-relay-<sha>-judge`) and is never cancelled, so it cannot cancel the judge run of
+# a newer head (`risk-<n>-judge`, cancel-in-progress). A relay judges only a PR whose head is
+# still exactly its sha (nothing when stale).
 # A comment that is neither an approval nor a recheck by the repo's people, and an edit that
 # changes neither body nor base, get a group of their own: their runs are skipped and must never
 # cancel the run that judges a new head.
 concurrency:
   group: >-
-    risk-${{ github.event.pull_request.number || github.event.issue.number || 'main' }}-${{
-    ((github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/bosun approve')
+    risk-${{ github.event.pull_request.number || github.event.issue.number || github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_sha || 'main' }}${{ github.event_name == 'workflow_run' && (github.event.workflow_run.event == 'pull_request_review' || !github.event.workflow_run.pull_requests[0].number) && format('-relay-{0}', github.event.workflow_run.head_sha) || '' }}-${{
+    ((github.event_name == 'workflow_run' && github.event.workflow_run.event != 'pull_request_review') ||
+    (github.event_name == 'issue_comment' && !contains(github.event.comment.body, '/bosun approve')
     && !(contains(github.event.comment.body, '/bosun recheck') &&
     contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)))
     || (github.event.action == 'edited' && !github.event.changes.body && !github.event.changes.base))
     && github.run_id || 'judge' }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !(github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review') }}
 
 # Least privilege: statuses for the verdict; pull-requests: write only because risk-check writes
 # the Risk note into the PR body (spec §8); read for the base files, comments and linked issues.
@@ -69,6 +81,7 @@ jobs:
     # a draft still judges, as before.
     if: >-
       github.event_name == 'push' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request_review') ||
       (github.event_name == 'pull_request_target' && github.event.pull_request.draft == false &&
       (github.event.action != 'edited' || github.event.changes.body || github.event.changes.base)) ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request && (contains(github.event.comment.body, '/bosun approve') ||
@@ -80,7 +93,8 @@ jobs:
       name: bosun-app
       deployment: false
     steps:
-      # The PR's base commit (never its head); on a comment or a push, the default branch head.
+      # The PR's base commit (never its head); on a comment, a push or a relay (workflow_run), the
+      # default branch head (github.sha).
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.pull_request.base.sha || github.sha }}
@@ -120,11 +134,23 @@ jobs:
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           GH_TOKEN: ${{ github.token }}
           EVENT: ${{ github.event_name }}
+          # The only payload field trusted from the relay; an empty value on other events.
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         # Exit 5 (needs-human) is the verdict, carried by the status; only errors fail the job.
         # On a push to main: every open PR against main is judged again (the base moved).
         run: |
           if [ "$EVENT" = "push" ]; then
             prs="$(gh api --paginate "repos/$BOSUN_REPO/pulls?state=open&base=main&per_page=100" --jq '.[] | select(.draft | not) | .number')"
+            rc=0
+            for n in $prs; do
+              ./target/release/bosun risk-check "$n" || test $? -eq 5 || rc=1
+            done
+            exit $rc
+          elif [ "$EVENT" = "workflow_run" ]; then
+            # A fork PR's head may list no PR (`commits/{sha}/pulls`): then nothing is re-judged and
+            # `/bosun recheck` is the fallback.
+            # The relay's head sha: judge the open, non-draft PRs against main whose head is exactly it.
+            prs="$(gh api --paginate "repos/$BOSUN_REPO/commits/$HEAD_SHA/pulls" --jq '.[] | select(.state == "open" and .base.ref == "main" and (.draft | not) and .head.sha == env.HEAD_SHA) | .number')"
             rc=0
             for n in $prs; do
               ./target/release/bosun risk-check "$n" || test $? -eq 5 || rc=1

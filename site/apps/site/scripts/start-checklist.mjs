@@ -4,28 +4,43 @@
 // (a tag or a commit; the source records the commit). The test start-checklist.test.ts checks both.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
-const { tagCommits, versions } = await import("../src/data/versions.ts");
+const { released, tagCommits, versions } = await import("../src/data/versions.ts");
+const { facts } = await import("../src/data/facts.ts");
 
 const ref = process.argv[2];
 if (!ref) throw new Error("usage: node scripts/start-checklist.mjs <hull tag or commit>");
-const repo = "keelstackhq/hull";
-const path = "docs/start-checklist.md";
+// Once the monorepo has a release, hull's file is read from this checkout (hull/ at HEAD, no
+// network); before that it comes from the archived keelstackhq/hull repo at <ref>.
+const local = released && ref === versions.hull;
+const repo = local ? facts.repoSlug : "keelstackhq/hull";
+const path = `${local ? "hull/" : ""}docs/start-checklist.md`;
+const root = new URL("../../../../", import.meta.url);
 
-const line = execFileSync("git", ["ls-remote", `https://github.com/${repo}`, ref, `${ref}^{}`], {
-  encoding: "utf8",
-})
-  .trim()
-  .split("\n")
-  .filter(Boolean)
-  .pop();
-const commit = /^[0-9a-f]{40}$/.test(ref) ? ref : line?.split("\t")[0];
+const line = local
+  ? ""
+  : execFileSync("git", ["ls-remote", `https://github.com/${repo}`, ref, `${ref}^{}`], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .pop();
+const commit = local
+  ? execFileSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" }).trim()
+  : /^[0-9a-f]{40}$/.test(ref)
+    ? ref
+    : line?.split("\t")[0];
 if (!commit) throw new Error(`no hull ref ${ref}`);
 
-const res = await fetch(`https://raw.githubusercontent.com/${repo}/${commit}/${path}`);
-if (!res.ok) throw new Error(`fetch ${path}@${commit}: ${res.status}`);
-const copy = await res.text();
+let copy;
+if (local) copy = readFileSync(new URL(path, root), "utf8");
+else {
+  const res = await fetch(`https://raw.githubusercontent.com/${repo}/${commit}/${path}`);
+  if (!res.ok) throw new Error(`fetch ${path}@${commit}: ${res.status}`);
+  copy = await res.text();
+}
 const sha256 = createHash("sha256").update(copy).digest("hex");
 
 const dir = new URL("../src/data/hull/", import.meta.url);
@@ -37,23 +52,21 @@ writeFileSync(
 
 const isCommit = /^[0-9a-f]{40}$/.test(ref);
 // The current hull release is a token ({{ks.*}}) so a bump re-renders it; any other ref stays literal.
-const isCurrent = ref === versions.hull && commit === tagCommits.hull;
+const isCurrent = ref === versions.hull && (released || commit === tagCommits.hull);
 const label = isCommit
   ? `commit \`${commit.slice(0, 7)}\``
   : `\`${isCurrent ? "{{ks.hull}}" : ref}\``;
 // The current release links its commit in the monorepo (hull/legacy-tags.txt); any other ref its source.
 const docUrl = isCurrent
-  ? `{{ks.link.hull}}/${path}`
+  ? `{{ks.link.hull}}/${path.replace(/^hull\//, "")}`
   : `https://github.com/${repo}/blob/${commit}/${path}`;
 // "(not tagged yet)" only while hull has no v0.5.0 tag: ask the remote, never assume.
 const sinceTag = "v0.5.0";
-const tagged = execFileSync(
-  "git",
-  ["ls-remote", "--tags", `https://github.com/${repo}`, sinceTag],
-  {
-    encoding: "utf8",
-  },
-).trim();
+const tagged = local
+  ? sinceTag
+  : execFileSync("git", ["ls-remote", "--tags", `https://github.com/${repo}`, sinceTag], {
+      encoding: "utf8",
+    }).trim();
 const since = tagged ? `hull ${sinceTag}` : `hull ${sinceTag} (not tagged yet)`;
 const NOTE = `
 ---

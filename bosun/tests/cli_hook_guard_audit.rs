@@ -124,15 +124,12 @@ fn quoted_expansion_in_command_position_is_denied() {
 
 #[test]
 fn expanded_names_that_cannot_be_gh_or_git_pass() {
-    for c in [
-        "$HOME/.cargo/bin/cargo test",
-        "${CARGO:-cargo} test",
-        "$PYTHON -m pytest",
-        "$EDITOR x",
-        "$(git rev-parse --show-toplevel)/scripts/x.sh",
-        "\"$HOME/bin/tool\" --flag",
-    ] {
+    for c in ["$HOME/.cargo/bin/cargo test", "\"$HOME/bin/tool\" --flag"] {
         allow(c);
+    }
+    // A whole command name in a variable can be `gh` with any arguments (word splitting).
+    for c in ["${CARGO:-cargo} test", "$PYTHON -m pytest", "$EDITOR x"] {
+        deny(c);
     }
 }
 

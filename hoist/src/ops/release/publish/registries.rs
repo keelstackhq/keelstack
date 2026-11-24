@@ -341,40 +341,35 @@ pub(super) fn dry_run(
                 None,
             ));
         }
-        Step::Npm | Step::Platform(_) => {
-            let build = job
-                .pkg
-                .publish
-                .npm
-                .as_ref()
-                .and_then(|n| n.build.as_deref());
-            // The build runs once, before the job's first npm step: a launcher's first
-            // platform package (its own npm step comes last), else the package's npm step.
-            let first = match step {
-                Step::Platform(i) => i == 0,
-                _ => job
-                    .pkg
-                    .launcher
-                    .as_ref()
-                    .is_none_or(|l| l.platforms.is_empty()),
-            };
-            match build {
-                Some(b) if first => {
-                    format!("npm publish --access {} after build: {b}", access(pkg))
-                }
-                _ => format!("npm publish --access {}", access(pkg)),
-            }
-        }
+        Step::Npm | Step::Platform(_) => format!("npm publish --access {}", access(pkg)),
         _ => format!("cargo publish -p {} --locked", pkg.name),
     };
     Ok(match precheck(client(c, step), pkg) {
         Ok(Some(Outcome::Done(why))) => (Action::Ok, why, None),
         Ok(Some(Outcome::Pending(why, human))) => (Action::Pending, why, Some(human)),
-        Ok(None) => (
-            Action::Create,
-            format!("would publish {} with `{what}`", pkg.version.value),
-            None,
-        ),
+        Ok(None) => {
+            // As in `npm`: the build runs once, before the first npm step that really
+            // publishes; a step skipped as already published never carries it.
+            let build = match step {
+                Step::Npm | Step::Platform(_) => job
+                    .pkg
+                    .publish
+                    .npm
+                    .as_ref()
+                    .and_then(|n| n.build.as_deref())
+                    .filter(|_| !job.built.replace(true)),
+                _ => None,
+            };
+            let what = match build {
+                Some(b) => format!("{what} after build: {b}"),
+                None => what,
+            };
+            (
+                Action::Create,
+                format!("would publish {} with `{what}`", pkg.version.value),
+                None,
+            )
+        }
         Err(e) => (Action::Unknown, e.to_string(), None),
     })
 }

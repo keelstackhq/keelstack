@@ -81,14 +81,39 @@ jobs:
           client-id: ${{ vars.BOSUN_APP_CLIENT_ID }}
           private-key: ${{ secrets.BOSUN_APP_KEY }}
           permission-checks: write
-      - name: bosun verdict apply
+      # Two steps: this one only judges the comment (`--check` writes nothing) and says whether
+      # the next step may run. A neutral refusal leaves that step skipped.
+      - name: bosun verdict check
+        id: check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BOSUN_REPO: ${{ github.repository }}
+          BOSUN_SESSION: verdict-workflow
+          COMMENT: ${{ github.event.comment.id }}
+        run: |
+          out="$(./target/release/bosun verdict apply "$COMMENT" --check)"
+          printf '%s\n' "$out"
+          if printf '%s' "$out" | jq -e '.data.accepted == true' >/dev/null; then
+            echo "accepted=true" >> "$GITHUB_OUTPUT"
+          fi
+      # The one step that writes the verdict record. Its name carries the PR and the comment of
+      # this event (trusted numbers), and it succeeds only if a record was written (`--require`
+      # exits 1 on a refusal): readers count a record only if it names this run and was created
+      # inside this step's window, so a run of another PR or comment, or a forged record posted
+      # while a run refuses, never binds (spec section 8).
+      - name: bosun verdict record ${{ github.event.issue.number }} ${{ github.event.comment.id }}
+        if: steps.check.outputs.accepted == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           BOSUN_APP_TOKEN: ${{ steps.app.outputs.token }}
           BOSUN_REPO: ${{ github.repository }}
           BOSUN_SESSION: verdict-workflow
           COMMENT: ${{ github.event.comment.id }}
-        run: ./target/release/bosun verdict apply "$COMMENT"
+          # The run the record names: readers count a record only if this run is the verdict
+          # workflow's, so a comment from any other workflow never counts (spec section 8).
+          BOSUN_RUN_ID: ${{ github.run_id }}
+          BOSUN_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: ./target/release/bosun verdict apply "$COMMENT" --require
       # A verdict record written with GITHUB_TOKEN starts no other workflow, so judge the PR
       # again here: two verdicts can turn `risk-check` green (spec §8). Exit 5 (needs-human) is
       # the verdict, carried by the status; other non-zero exits fail the job.

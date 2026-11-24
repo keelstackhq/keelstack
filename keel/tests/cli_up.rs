@@ -557,3 +557,64 @@ fn cloudflare_dns_and_backup_use_the_area_flag_and_the_fly_sink() {
         "{t}"
     );
 }
+
+/// A signal while keel waits on the token stdin read (held open, never written) exits 128 + the
+/// signal number instead of hanging on the blocked read.
+fn signal_during_token_read(sig: &str, want: i32) {
+    use std::process::Stdio;
+    let env = Env::new();
+    env.rendered();
+    let a = up("up", &["--token-stdin"]);
+    let mut c = std::process::Command::new(assert_cmd::cargo::cargo_bin("keel"));
+    c.env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", env.stubs.display()))
+        .env("HOME", &env.home)
+        .env("TMPDIR", &env.home)
+        .env("KEEL_LOG", &env.log)
+        .env("KEEL_SCENARIO", "token")
+        .env("KEEL_PINS", &env.pins)
+        .env("KEEL_POLL_SECS", "1")
+        .arg("-C")
+        .arg(&env.repo)
+        .args(&a)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut keel = c.spawn().unwrap();
+    // The token step's check calls the secrets API; the stdin read follows at once.
+    let t = std::time::Instant::now();
+    while !env.read("calls.log").contains("/secrets/") {
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(10),
+            "token step never reached"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    std::process::Command::new("kill")
+        .args([&format!("-{sig}"), &keel.id().to_string()])
+        .status()
+        .unwrap();
+    let t = std::time::Instant::now();
+    let status = loop {
+        if let Some(st) = keel.try_wait().unwrap() {
+            break st;
+        }
+        if t.elapsed() > std::time::Duration::from_secs(5) {
+            let _ = keel.kill();
+            panic!("keel hung in the token read after SIG{sig}");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(status.code(), Some(want));
+}
+
+#[test]
+fn sigterm_during_token_read_exits_143() {
+    signal_during_token_read("TERM", 143);
+}
+
+#[test]
+fn sigint_during_token_read_exits_130() {
+    signal_during_token_read("INT", 130);
+}

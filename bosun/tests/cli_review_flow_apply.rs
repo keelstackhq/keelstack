@@ -369,7 +369,10 @@ fn another_authors_newer_comment_never_replaces_a_bot_verdict() {
     let (code, v) = apply(&fake, id);
     assert_eq!(code, 0, "{v}");
     assert!(v["data"].get("refused").is_none(), "{v}");
-    assert_eq!(fake.statuses_of("sha42")[0]["state"], "success");
+    // Applied, not replaced: but the writer's request-changes on the same head is another
+    // session's latest verdict, so the aggregate stays red (#52).
+    assert_eq!(v["data"]["approved"], true, "{v}");
+    assert_eq!(fake.statuses_of("sha42")[0]["state"], "failure");
 }
 
 #[test]

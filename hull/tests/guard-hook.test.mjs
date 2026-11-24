@@ -416,7 +416,11 @@ test("guard imports only node: built-ins", () => {
   const src = readFileSync(GUARD, "utf8");
   const specs = [...src.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)].map((m) => m[1]);
   assert.ok(specs.length > 0);
-  for (const s of specs) assert.match(s, /^node:/);
+  // the one local import: the legacy judge next to it (the no-regression rule)
+  for (const s of specs) assert.match(s, /^node:|^\.\/guard-legacy\.mjs$/);
+  const legacy = readFileSync(GUARD.replace(/guard\.mjs$/, "guard-legacy.mjs"), "utf8");
+  for (const m of legacy.matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g))
+    assert.match(m[1], /^node:/);
 });
 
 test("rendered base tree contains .github/workflows/release.yml, the file the guard's publish reason names", async () => {
@@ -510,7 +514,6 @@ test("evasion constructs without a risky word are allowed", () => {
   for (const cmd of [
     'eval "$(ssh-agent -s)"',
     "X=1; $X",
-    "echo ls | sh",
     "python3 -c 'print(open(\"README.md\").read())'",
   ])
     assert.equal(decide(bash(cmd), ctx), null, cmd);
@@ -868,6 +871,9 @@ test("chdir flags and globs into a guarded dir are treated like cd", () => {
 // Client feedback 2026-11-18: judge the command that runs, not text inside heredocs or strings.
 test("false positives from a client repo: scripts, GET API reads, interpreter text, piped pushes", () => {
   const c = repoOn("feat/x");
+  // the script exists: a missing one is refused (the guard reads a script before it runs)
+  mkdirSync(join(c.projectDir, "scripts/tests"), { recursive: true });
+  writeFileSync(join(c.projectDir, "scripts/tests/dev-slack-test.sh"), "#!/bin/bash\necho ok\n");
   for (const cmd of [
     "bash scripts/tests/dev-slack-test.sh",
     "bash scripts/tests/dev-slack-test.sh 2>&1 | tail -20",

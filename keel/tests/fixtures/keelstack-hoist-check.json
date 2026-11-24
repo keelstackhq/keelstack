@@ -34,9 +34,9 @@
     {
       "area": "crates",
       "kind": "first_publish",
-      "key": "keel-cli",
+      "key": "keelstack-cli",
       "action": "pending",
-      "reason": "keel-cli is not on the registry yet",
+      "reason": "keelstack-cli is not on the registry yet",
       "source": "Cargo.toml:9",
       "verify": null
     },
@@ -70,7 +70,7 @@
     {
       "area": "crates",
       "kind": "trusted_publisher",
-      "key": "keel-cli",
+      "key": "keelstack-cli",
       "action": "unknown",
       "reason": "registered by a person; hoist cannot read it with a CI token",
       "source": "Cargo.toml:9",
@@ -1435,13 +1435,13 @@
       "status": "pending"
     },
     {
-      "id": "crates-trust:keel-cli",
-      "title": "add a trusted publisher to crate keel-cli: repository keelstackhq/keelstack, workflow release.yml, environment release",
-      "url": "https://crates.io/crates/keel-cli/settings",
+      "id": "crates-trust:keelstack-cli",
+      "title": "add a trusted publisher to crate keelstack-cli: repository keelstackhq/keelstack, workflow release.yml, environment release",
+      "url": "https://crates.io/crates/keelstack-cli/settings",
       "status": "pending"
     },
     {
-      "id": "first-publish:keel-cli",
+      "id": "first-publish:keelstack-cli",
       "title": "publish the first version with `hoist release bootstrap` (spec \u00a79.6: it publishes from this checkout and registers the trusted publisher), or by hand (`cargo publish`, or a placeholder 0.0.0), then register the trusted publisher",
       "url": "https://doc.rust-lang.org/cargo/commands/cargo-publish.html",
       "status": "pending"

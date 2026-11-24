@@ -297,7 +297,7 @@ jobs:
           CC_aarch64_unknown_linux_musl: musl-gcc
         run: |
           set -euo pipefail
-          for pair in bosun:keel-bosun splice:keel-splice hoist:keel-hoist berth:keel-berth keel:keel-cli; do
+          for pair in bosun:keel-bosun splice:keel-splice hoist:keel-hoist berth:keel-berth keel:keelstack-cli; do
             cargo build -p "${pair#*:}" --bin "${pair%%:*}" --locked --release --target "$TARGET"
           done
       - name: Build hoard
@@ -701,6 +701,10 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # Crates skipped because they are not on crates.io yet (`hoist release bootstrap`); job
+    # major does not move the Action's tag while any is missing.
+    outputs:
+      skipped: ${{ steps.publish.outputs.skipped }}
     concurrency:
       group: release-crates-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
@@ -723,6 +727,7 @@ jobs:
           toolchain: "1.97"
       # No build cache in the jobs that hold an OIDC token.
       - name: Publish the crates, dependencies first
+        id: publish
         run: |
           set -euo pipefail
           api=https://crates.io/api/v1
@@ -744,26 +749,59 @@ jobs:
                   if d.get("path") and d["name"] in pk:
                       visit(d["name"])
               if n in want:
-                  out.append(n)
+                  # cargo publish strips a path dev-dependency: it never holds a crate back.
+                  deps = sorted({d["name"] for d in pk[n]["dependencies"]
+                                 if d.get("path") and d["name"] in want and d.get("kind") != "dev"})
+                  out.append(" ".join([n] + deps))
           for n in sorted(pk):
               visit(n)
           print("\n".join(out))
           ')
-          echo "publish order: $(echo "$order" | tr '\n' ' ')"
-          todo=()
-          for c in $order; do
+          echo "publish order: $(cut -d' ' -f1 <<<"$order" | tr '\n' ' ')"
+          # A crate not on crates.io yet cannot be created by trusted publishing: its first
+          # version is the owner's local step (`hoist release bootstrap`). It is skipped with a
+          # notice, and so is every crate that depends on it; all other crates still publish, so
+          # a version-bump merge never stops half way. Any other answer from crates.io fails.
+          todo=() new=()
+          while read -r c deps; do
+            [ -n "$c" ] || continue
+            held=""
+            for d in $deps; do
+              if [[ " ${new[*]} " == *" $d "* ]]; then held=$d; fi
+            done
+            if [ -n "$held" ]; then
+              echo "::notice::skip $c $VERSION: it depends on $held, which is not on crates.io yet; run \`hoist release bootstrap\` locally, then re-run this workflow"
+              new+=("$c")
+              continue
+            fi
             code=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c/$VERSION")
             if [ "$code" = 200 ]; then
               echo "skip $c $VERSION: already on crates.io"
               continue
             fi
+            # One 404 is not trusted: re-ask up to 3 times (2, 4, 8 s apart) before skipping.
             exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
-            if [ "$exists" != 200 ]; then
-              echo "::error::$c is not on crates.io yet; trusted publishing cannot create a crate. Publish its first version by hand (cargo publish -p $c), add its trusted publisher (keelstackhq/keelstack, release.yml, environment release), then run this workflow again"
+            for wait in 2 4 8; do
+              [ "$exists" = 404 ] || break
+              sleep "$wait"
+              exists=$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" "$api/crates/$c")
+            done
+            if [ "$exists" = 404 ]; then
+              echo "::notice::skip $c $VERSION: $c is not on crates.io yet and trusted publishing cannot create a crate. Its first publish is the owner's local step: run \`hoist release bootstrap\` (publishes it and adds its trusted publisher: keelstackhq/keelstack, release.yml, environment release), then re-run this workflow"
+              echo "::warning::skipped $c $VERSION: not on crates.io yet (run \`hoist release bootstrap\`)"
+              [ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "- skipped $c $VERSION: not on crates.io yet (run \`hoist release bootstrap\`)" >>"$GITHUB_STEP_SUMMARY"
+              new+=("$c")
+              continue
+            elif [ "$exists" != 200 ]; then
+              echo "::error::crates.io answered $exists for $c (want 200 or 404): re-run this workflow"
               exit 1
             fi
             todo+=("$c")
-          done
+          done <<<"$order"
+          echo "skipped=${new[*]}" >>"${GITHUB_OUTPUT:-/dev/null}"
+          if [ "${#new[@]}" -gt 0 ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "crates.io: not published yet (run \`hoist release bootstrap\`): ${new[*]}" >>"$GITHUB_STEP_SUMMARY"
+          fi
           [ "${#todo[@]}" -gt 0 ] || { echo "nothing to publish"; exit 0; }
           # Trusted publishing: an Actions OIDC token for audience crates.io, exchanged for a
           # short-lived crates.io token (the same exchange rust-lang/crates-io-auth-action does),
@@ -789,6 +827,10 @@ jobs:
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    # Packages skipped because they are not on npm yet (`hoist release bootstrap`); job major
+    # does not move the Action's tag while any is missing.
+    outputs:
+      skipped: ${{ steps.publish.outputs.skipped }}
     concurrency:
       group: release-npm-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
@@ -865,6 +907,7 @@ jobs:
             --artifacts "$PWD/art" --out "$RUNNER_TEMP/splice-npm" >>publish-dirs.txt
           cat publish-dirs.txt
       - name: Publish (trusted publishing, provenance), platform packages before their launcher
+        id: publish
         run: |
           set -euo pipefail
           [ -s publish-dirs.txt ] || { echo "::error::no packages to publish"; exit 1; }
@@ -878,14 +921,54 @@ jobs:
             dist_tag="v${VERSION%.*}-latest"
             echo "::notice::newest stable tag is ${newest:-none}, not $TAG: npm dist-tag $dist_tag, latest not moved"
           fi
+          # A package not on npm yet cannot be created by trusted publishing: its first version
+          # is the owner's local step (`hoist release bootstrap`). It is skipped with a notice, and
+          # so is a launcher that names it in optionalDependencies; all others still publish.
+          new=()
           while read -r dir; do
             name=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).name" "$dir")
             got=$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).version" "$dir")
             [ "$got" = "$VERSION" ] || { echo "::error::$name in $dir is $got, not $VERSION"; exit 1; }
+            held=""
+            opt=$(node -p "Object.keys(JSON.parse(require('fs').readFileSync(process.argv[1] + '/package.json', 'utf8')).optionalDependencies ?? {}).join(' ')" "$dir")
+            for d in $opt; do
+              if [[ " ${new[*]} " == *" $d "* ]]; then held=$d; fi
+            done
+            if [ -n "$held" ]; then
+              echo "::notice::skip $name@$VERSION: it depends on $held, which is not on npm yet; run \`hoist release bootstrap\` locally, then re-run this workflow"
+              new+=("$name")
+              continue
+            fi
             if out=$(npm view "$name@$VERSION" version 2>&1 </dev/null); then
               echo "skip $name@$VERSION: already published"
               continue
             elif ! grep -q E404 <<<"$out"; then
+              echo "$out" >&2
+              exit 1
+            fi
+            # One E404 is not trusted: re-ask up to 3 times (2, 4, 8 s apart) before skipping.
+            found=0
+            if out=$(npm view "$name" name 2>&1 </dev/null); then
+              found=1
+            fi
+            for wait in 2 4 8; do
+              if [ "$found" = 1 ] || ! grep -q E404 <<<"$out"; then
+                break
+              fi
+              sleep "$wait"
+              if out=$(npm view "$name" name 2>&1 </dev/null); then
+                found=1
+              fi
+            done
+            if [ "$found" = 1 ]; then
+              :
+            elif grep -q E404 <<<"$out"; then
+              echo "::notice::skip $name@$VERSION: $name is not on npm yet and trusted publishing cannot create a package. Its first publish is the owner's local step: run \`hoist release bootstrap\`, then re-run this workflow"
+              echo "::warning::skipped $name@$VERSION: not on npm yet (run \`hoist release bootstrap\`)"
+              [ -z "${GITHUB_STEP_SUMMARY:-}" ] || echo "- skipped $name@$VERSION: not on npm yet (run \`hoist release bootstrap\`)" >>"$GITHUB_STEP_SUMMARY"
+              new+=("$name")
+              continue
+            else
               echo "$out" >&2
               exit 1
             fi
@@ -897,15 +980,21 @@ jobs:
             )
             npm publish "$dir" --provenance --access public --tag "$dist_tag" </dev/null
           done <publish-dirs.txt
+          echo "skipped=${new[*]}" >>"${GITHUB_OUTPUT:-/dev/null}"
+          if [ "${#new[@]}" -gt 0 ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "npm: not published yet (run \`hoist release bootstrap\`): ${new[*]}" >>"$GITHUB_STEP_SUMMARY"
+          fi
 
   # The Action's major tag follows the newest stable release, and only moves once the release,
   # crates.io and npm all have it (the splice Action installs `@keelstackhq/splice` at its
-  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist.
+  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist. A
+  # crate or package skipped as new (`hoist release bootstrap`) holds the tag until a re-run.
   major:
     needs: [plan, release, crates, npm]
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
       needs.crates.result == 'success' && needs.npm.result == 'success' &&
+      needs.crates.outputs.skipped == '' && needs.npm.outputs.skipped == '' &&
       (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 5

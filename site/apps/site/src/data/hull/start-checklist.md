@@ -63,7 +63,7 @@ Configure each App → add the new repo:
 
 - Claude.
 - Renovate: add the repo to the Renovate App. `renovate.json` extends
-  `github>keelstackhq/hull//renovate/default`. TODO(owner): which Renovate App installation.
+  `github>keelstackhq/keelstack//hull/renovate/default`. TODO(owner): which Renovate App installation.
 - Update bot (splice), pick one (the generated `README.md`, section "Update bot"; template-rust: "pick a token mode"):
   an App with Contents, Pull requests and Workflows write, with variable `SPLICE_APP_CLIENT_ID`
   and secret `SPLICE_APP_KEY` in environment `splice-bot`; or a PAT `SPLICE_BOT_TOKEN` in that
@@ -89,6 +89,29 @@ Attach the repo. The setup script installs Node 24, pnpm 12 (the `packageManager
 `package.json`), splice, plus Rust (`rust-toolchain.toml`) with Rust pieces, hoist with the
 `secrets` piece and bosun when adopted. TODO(owner): the network policy (npm, crates.io and
 GitHub hosts at least) and the install commands for hoist and bosun.
+
+Tool versions (template-rust): `pins.toml` at the repo root is the one source for rust,
+cargo-nextest, cargo-deny, splice, bosun and hoist; CI reads it, and a setup script reads it with
+`eval "$(node scripts/pins.mjs --shell)"` (`PIN_SPLICE='0.6.0'`, ...; every pin must be an exact
+`X.Y.Z`, else it exits 1; agents cannot edit `pins.toml`: the guard treats it as a rail) instead of its own numbers.
+Run `node scripts/ready.mjs` only after the setup script installed the tools: it needs Node 24 and
+splice on PATH and stops early (exit 3) otherwise. Unattended, answer in one call:
+`node scripts/ready.mjs --answer pieces=cli ci=github bosun=yes apps=claude,renovate`.
+
+`docker build` behind the cloud agent proxy (template-rust): containers cannot reach the proxy on
+127.0.0.1 and do not trust its CA. Add `bash scripts/proxy-ca.sh install` to the setup script (as
+root: trusts `PROXY_CA_BUNDLE` or the agent proxy's own `/root/.ccr/ca-bundle.crt` system-wide,
+so the daemon pulls images, and restarts docker only when the CA changed; the session-start hook
+runs it too), and build with
+`bash scripts/proxy-ca.sh docker build -t app .` (host network, proxy build args, the CA as build
+context `proxy-ca`). The Dockerfile takes the CA in its first stages (empty without the proxy):
+
+```dockerfile
+FROM scratch AS proxy-ca
+FROM rust:1 AS build
+COPY --from=proxy-ca / /usr/local/share/ca-certificates/
+RUN update-ca-certificates
+```
 
 Check: the tools are on PATH; node major ≥ 24; pnpm major matches `packageManager`.
 
@@ -136,6 +159,27 @@ tags = Selected. `release` gets the owner as required reviewer (D-008) and, in `
 `splice-bot` (update bot), `preview` (web pieces), `prod` (`secrets` piece), and in template-rust
 `release-pr` (only with `release` = `yes`).
 TODO(owner): reviewers on `prod` (`preview` and `splice-bot` run unattended, so no reviewer).
+
+Create `splice-bot` (branch `main` only) from a terminal logged in as the owner (`gh auth login`);
+agents cannot: the guard refuses `gh api` writes to environments. Set `R=keelstackhq/<repo>`:
+
+```bash
+echo '{"deployment_branch_policy":{"protected_branches":false,"custom_branch_policies":true}}' |
+  gh api -X PUT "repos/$R/environments/splice-bot" --input -
+gh api -X POST "repos/$R/environments/splice-bot/deployment-branch-policies" -f name=main -f type=branch
+gh secret set SPLICE_BOT_TOKEN --env splice-bot --repo "$R"   # PAT mode: paste the token at the prompt
+gh api "repos/$R/environments/splice-bot/deployment-branch-policies" --jq '.branch_policies[].name'  # main
+```
+
+The same two `gh api` calls with another name create `release-pr`, `preview` and `prod`.
+
+PAT mode (`update_bot` = `pat`) is legacy (see org decision D-014 for the preferred mode); for repos
+that still use it, `SPLICE_BOT_TOKEN` is a fine-grained personal access token,
+resource owner `keelstackhq`, repository access "Only select repositories" = this repo, with
+repository permissions Contents, Pull requests and Workflows: Read and write (GitHub adds
+Metadata: Read). Nothing else. Pre-filled form (pick the repo by hand and check the three
+permissions on the form before you generate it):
+<https://github.com/settings/personal-access-tokens/new?name=splice-bot&description=splice%20update%20bot&target_name=keelstackhq&expires_in=90&contents=write&pull_requests=write&workflows=write>
 
 Check: each named environment exists; `release` has a required reviewer and deploys from tag
 `*-v*` (template/) or branch `main` (template-rust); the others deploy from branch `main`. With
@@ -193,7 +237,7 @@ Check: with `bosun` = `yes`, `bosun doctor` passes (the owner also runs `bosun d
 ### 9. Render the hull template · phone · ready: auto · required
 
 Ask the first agent to render it, or do it on a computer:
-`pnpm dlx @keelstackhq/splice new gh:keelstackhq/hull//template <repo> --ref vX.Y.Z --piece <id>[:<name>] ...`
+`pnpm dlx @keelstackhq/splice new gh:keelstackhq/keelstack//hull/template <repo> --ref vX.Y.Z --piece <id>[:<name>] ...`
 (base is always rendered), then commit `.splice/lock.toml` with the files and push.
 
 Check: `.splice/lock.toml` lists the pieces the `pieces` and `ci` answers need, and
@@ -219,8 +263,8 @@ Check: a `.md` file in either directory, or a `## Steps` list in `docs/agents/pr
 
 ### 11. Confirm how approvals work · phone · ready: auto · required
 
-D-012: owner approvals are asked as a Claude Code chat form naming repo, PR and head SHA; the
-orchestrator posts the signed bosun approval. Bootstrap mode until 2026-11-30 UTC: the
+D-025: a chat reply approves nothing. The owner approves a head with a `/bosun approve <sha>`
+PR comment or review; under quorum (D-022) the orchestrator signs after two reviewer verdicts. Bootstrap mode until 2026-11-30 UTC: the
 orchestrator may approve gated PRs itself after green checks and an independent review of that
 head; environments, tags, releases, decisions merges, branch rules and secrets still need the
 owner (release-environment taps on the phone).

@@ -102,7 +102,8 @@ per entry.
 ## Exit codes
 
 0 done · 1 a step failed or drift remains · 2 usage error (clap errors too) · 3 manifest,
-environment or API error · 5 a human step is pending. `keel --json --help` prints one JSON object.
+environment or API error · 5 a human step is pending · 130/143 interrupted by
+SIGINT/SIGTERM (the `--json` error object is still printed). `keel --json --help` prints one JSON object.
 
 ## JSON
 

@@ -1,1 +1,0 @@
-- `bosun approve --list` gives each ready PR an `ask` and returns the owner question in `next` (AskUserQuestion, or a Claude Tag post).

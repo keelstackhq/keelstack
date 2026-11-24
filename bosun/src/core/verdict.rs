@@ -149,6 +149,11 @@ pub fn closes_issue(body: &str) -> Option<u64> {
     linked_issues(body).first().copied()
 }
 
+/// Every issue a PR body links, in order of first mention (see [`linked_issues`]).
+pub fn closes_issues(body: &str) -> Vec<u64> {
+    linked_issues(body)
+}
+
 /// Marks a PR comment that carries a verdict for `bosun verdict apply` (spec §7).
 pub const COMMENT_MARKER: &str = "<!-- bosun:verdict -->";
 
@@ -459,6 +464,11 @@ mod tests {
     fn closes_is_found() {
         assert_eq!(closes_issue("Closes #12\n\nx"), Some(12));
         assert_eq!(closes_issue("this fixes #7."), Some(7));
+        assert_eq!(
+            closes_issues("Closes #12, closes #3\nFixes #12 and #9"),
+            [12, 3]
+        );
+        assert!(closes_issues("nothing").is_empty());
         assert_eq!(closes_issue("no link"), None);
         assert_eq!(closes_issue("Fixes other/repo#40"), None);
     }

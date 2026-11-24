@@ -24,9 +24,36 @@ pub struct Request<'a> {
     /// Finding kinds the task allows: `delete-test`, `skip`, `only`, `fewer-asserts`.
     /// `delete-test` also allows `fewer-tests`.
     pub allow: &'a [String],
+    /// Per-task grants of a PR that closes several tasks (`test-integrity --pr`, `bosun merge`):
+    /// a kind a grant lists is allowed only on a file its own `touch` covers (both names of a
+    /// rename). Never widens `allow`, which applies to every file.
+    pub grants: &'a [Grant],
     /// The default branch's view, when the caller has one (`bosun merge`, which has only the PR's
     /// head and base fetched): the template waivers are judged there, not at the base.
     pub default: Option<&'a DefaultView>,
+}
+
+/// One closed task's `allow:` kinds and the `touch:` globs they apply to.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Grant {
+    pub task: u64,
+    pub touch: Vec<String>,
+    pub allow: Vec<String>,
+}
+
+impl Grant {
+    /// Whether this grant allows `kind` on every one of `paths`. A glob that does not parse
+    /// covers nothing.
+    pub fn allows(&self, kind: &str, paths: &[&str]) -> bool {
+        let globs: Vec<Glob> = self
+            .touch
+            .iter()
+            .filter_map(|g| Glob::parse(g).ok())
+            .collect();
+        self.allow.iter().any(|a| a == kind)
+            && !paths.is_empty()
+            && paths.iter().all(|p| globs.iter().any(|g| g.matches(p)))
+    }
 }
 
 /// What the default branch says about the template waivers. An API error is `has_bosun_toml: true`
@@ -375,7 +402,9 @@ pub fn run(req: &Request) -> CmdResult {
     let assertions = |p: &str, t: &str| kit_for(&kits, p).assertions(p, t);
     let only_count = |p: &str, t: &str| kit_for(&kits, p).only_count(p, t);
     let waiver = template_waiver(req.root, req.base, req.default);
-    let allows = |name: &str| req.allow.iter().any(|a| a == name);
+    let allows_on = |name: &str, paths: &[&str]| {
+        req.allow.iter().any(|a| a == name) || req.grants.iter().any(|g| g.allows(name, paths))
+    };
     let mut findings: Vec<Value> = Vec::new();
     let mut checked: std::collections::BTreeSet<String> = Default::default();
 
@@ -422,6 +451,11 @@ pub fn run(req: &Request) -> CmdResult {
                 change.old.as_deref().unwrap_or(file),
                 change.new.as_deref().unwrap_or(file),
             );
+            let names: Vec<&str> = [change.old.as_deref(), change.new.as_deref()]
+                .into_iter()
+                .flatten()
+                .collect();
+            let allows = |name: &str| allows_on(name, &names);
             let base_text = old_text.as_deref().filter(|_| was_test);
             let base_asserts = base_text.map_or(0, |t| assertions(old_path, t));
 

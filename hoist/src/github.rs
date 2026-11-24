@@ -683,6 +683,40 @@ fn read_homes(
     Ok(Some(Fetch::Got(found)))
 }
 
+/// Resolve each pinned required check's `app` slug to the App's id with `GET /apps/{slug}`
+/// (once per slug). Any failure is exit 3: hoist never writes a check unpinned because its App
+/// did not resolve (spec §6.1).
+pub fn resolve_check_pins(http: &Http, d: &mut Desired) -> Result<(), HoistError> {
+    let mut seen: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+    for pin in &mut d.github.ruleset.check_pins {
+        let crate::config::CheckApp::Slug(slug) = &pin.app else {
+            continue;
+        };
+        if let Some(id) = seen.get(slug) {
+            pin.id = Some(*id);
+            continue;
+        }
+        let fail = |why: String| {
+            HoistError::Usage(format!(
+                "GitHub App `{slug}` (required check `{}`) cannot be resolved ({why}); check the \
+                 slug, or for a private App use a token that can see it, or pin it with \
+                 `integration_id`",
+                pin.context
+            ))
+        };
+        let id = match http.get_json(&format!("/apps/{}", crate::http::seg(slug))) {
+            Ok(Fetched::Ok(v)) => v.get("id").and_then(Value::as_u64),
+            Ok(Fetched::NotFound) => return Err(fail("404".into())),
+            Ok(Fetched::Forbidden(hint)) => return Err(fail(hint)),
+            Err(e) => return Err(fail(e.to_string())),
+        };
+        let id = id.ok_or_else(|| fail("no id in the answer".into()))?;
+        seen.insert(slug.clone(), id);
+        pin.id = Some(id);
+    }
+    Ok(())
+}
+
 /// Read the live GitHub state for the desired repo. Errors on transport or response-shape
 /// failures, a 401, or a 404 on the repo itself; other 403/404 become `Fetch::Unknown` (or
 /// "absent" where 404 means so).

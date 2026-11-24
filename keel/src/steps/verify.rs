@@ -95,6 +95,12 @@ impl Step for Verify {
                     run.status, cx.opts.wait_secs, run.url
                 )));
             }
+            Ok(Some(run)) if run.conclusion == "cancelled" && run.newer_url.is_some() => {
+                return Ok(Check::Failed(format!(
+                    "the deploy workflow for {short} cancelled; a newer run exists: {} (then rerun `keel up`)",
+                    run.newer_url.unwrap_or_default()
+                )));
+            }
             Ok(Some(run)) if run.conclusion != "success" => {
                 return Ok(Check::Failed(format!(
                     "the deploy workflow for {short} {}: {}",
@@ -374,6 +380,78 @@ mod tests {
                 .iter()
                 .all(|c| c.args.get(1).map(String::as_str) != Some("run"))
         );
+    }
+
+    #[test]
+    fn a_cancelled_deploy_points_to_the_newer_run() {
+        let d = tempfile::tempdir().unwrap();
+        // A newer push cancelled the merge commit's run: name the newer run, not just "cancelled".
+        let list = format!(
+            "[{},{}]",
+            r#"{"status":"completed","conclusion":"success","url":"https://gh/run/12","headSha":"newer5678","databaseId":12}"#,
+            r#"{"status":"completed","conclusion":"cancelled","url":"https://gh/run/11","headSha":"deadbeef1234567890","databaseId":11}"#
+        );
+        let r = base().on(&["gh", "run", "list"], runs(&list));
+        let (c, _, _) = go(&r, d.path(), 0);
+        let Check::Failed(m) = c else { panic!("{c:?}") };
+        assert!(
+            m.contains("cancelled") && m.contains("newer run") && m.contains("https://gh/run/12"),
+            "{m}"
+        );
+        // Nothing newer: the plain message stays.
+        let only = r#"[{"status":"completed","conclusion":"cancelled","url":"https://gh/run/11","headSha":"deadbeef1234567890"}]"#;
+        let r = base().on(&["gh", "run", "list"], runs(only));
+        let (c, _, _) = go(&r, d.path(), 0);
+        assert!(matches!(c, Check::Failed(m) if m.contains("cancelled") && !m.contains("newer")));
+    }
+
+    /// A runner that really runs `scripts/smoke.sh` and fakes everything else.
+    struct SmokeReal<'a>(&'a FakeRunner);
+    impl crate::exec::Runner for SmokeReal<'_> {
+        fn run(&self, c: &Cmd) -> Out {
+            if c.program == SMOKE {
+                crate::exec::SystemRunner.run(c)
+            } else {
+                self.0.run(c)
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hanging_smoke_script_times_out_and_fails_the_step() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("scripts")).unwrap();
+        let p = d.path().join(SMOKE);
+        std::fs::write(&p, "#!/bin/sh\nsleep 30\n").unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let fake = base()
+            .on(&["gh", "run", "list"], runs(OK_RUN))
+            .on(&["curl"], Out::ok("200"));
+        let r = SmokeReal(&fake);
+        let opts = Opts {
+            tool_timeout_secs: 1,
+            ..Opts::default()
+        };
+        let mut cx = ctx(
+            &fake,
+            d.path().into(),
+            fly_manifest(),
+            PINS,
+            opts,
+            &no_sleep,
+            &no_stdin,
+        );
+        cx.runner = &r;
+        let t = std::time::Instant::now();
+        let c = Verify.check(&mut cx).unwrap();
+        assert!(t.elapsed() < Duration::from_secs(10));
+        assert!(
+            matches!(&c, Check::Failed(m) if m.contains("timed out after 1 s")),
+            "{c:?}"
+        );
+        assert_eq!(cx.verify.unwrap().smoke, Smoke::Failed);
     }
 
     #[test]

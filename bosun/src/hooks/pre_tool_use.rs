@@ -11,12 +11,12 @@ use crate::cli::stamps;
 use crate::config::Config;
 use crate::core::guard::{
     ChildTask, Script, answers_lock, bash_writes, bosun_dir_lock, child_task_create,
-    config_fetch_risk, edit_lock, edited_path, foreign_lock, prereqs_lock, prereqs_lock_for,
-    pushes, script_rules, settings_rule, subagent_lock, tool_rules,
+    config_fetch_risk, edit_lock, edited_path, foreign_lock, intended, prereqs_lock,
+    prereqs_lock_for, pushes, script_rules, settings_rule, subagent_lock, tool_rules,
 };
 use crate::core::lease::leases_of;
 use crate::core::mode::PushGates;
-use crate::core::repeat::{Verdict as Repeat, is_poll, repeat_key, repeat_step, repeat_verdict};
+use crate::core::repeat::repeat_key;
 use crate::core::stamps::gate_loop;
 use crate::core::touch::{is_plan_file, is_plan_tick};
 use crate::core::verdict::{Verdict, comment_json};
@@ -80,7 +80,100 @@ fn guarded(f: impl FnOnce() -> Option<String>) -> Option<String> {
     })
 }
 
+/// The no-regression rule, by construction: main's hook (vendored with main's guard and script
+/// reader in [`super::pre_tool_use_legacy`]) judges the call first, on the same hook input, and
+/// its deny is returned at once: the new rules never run after it, so a call main denies costs
+/// main's work plus only the intended-allow check (a word-shape test, and for the bump shape a
+/// read and hash of the bump script). Main's repeat-lock counts in it, as on main. A panic in
+/// it denies ([`guarded`]). The only exception is a
+/// Bash command that is exactly an enumerated intended allow ([`intended::allow`]) whose pinned
+/// script, if any, is unchanged; the new rules judge it (and every call legacy allows). On that
+/// exception main's repeat-lock still applies: legacy's result when it counted the call, else
+/// (legacy denied before its repeat-lock, e.g. a pathspec glob) the same lock run here on the
+/// same state file, so the count is main's; a repeat deny is returned, a warning note goes to
+/// the new rules.
 fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
+    let (old, mut repeat, counted) = super::pre_tool_use_legacy::judge_parts(cwd, input);
+    if old.as_deref().is_some_and(is_deny) {
+        if !intended_override(cwd, input) {
+            return old;
+        }
+        // Legacy's deny is overridden, but its repeat-lock still counts: a repeat deny stands,
+        // a warning note goes on to the new rules.
+        if !counted
+            && let Some(dir) = cwd
+                .map(Path::to_path_buf)
+                .or_else(|| std::env::current_dir().ok())
+        {
+            repeat = super::pre_tool_use_legacy::repeat_lock(&dir, input, &input["tool_input"]);
+        }
+        if repeat.as_deref().is_some_and(is_deny) {
+            return repeat;
+        }
+        return judge_new(cwd, input, repeat);
+    }
+    // Legacy counted the call (main's repeat-lock); its note, if any, goes to the new rules.
+    judge_new(cwd, input, old.filter(|o| !is_deny(o)))
+}
+
+/// Whether the call is a Bash command that is exactly an enumerated intended allow, with its
+/// pinned script (`bump-version`) unchanged. Residual: the pin is read here and the script runs
+/// later, so a concurrent swap of the file between the two (TOCTOU) is not seen; main has the
+/// same gap for every script it reads and allows.
+fn intended_override(cwd: Option<&Path>, input: &Value) -> bool {
+    if input.get("tool_name").and_then(Value::as_str) != Some("Bash") {
+        return false;
+    }
+    let command = input["tool_input"]["command"].as_str().unwrap_or("");
+    let Some(name) = intended::allow(command) else {
+        return false;
+    };
+    let Some(dir) = cwd
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())
+    else {
+        return false;
+    };
+    match read_script(&dir, intended::BUMP_SCRIPT.0) {
+        Some(Script::Text(t)) => intended::script_pinned(name, intended::BUMP_SCRIPT.0, &t),
+        _ => intended::script_pinned(name, "", ""),
+    }
+}
+
+/// Tests: the live hook's judgement of a Bash `cmd` in a fresh git checkout on branch `feature`
+/// holding `files` (relative path, text). Absolute paths in `files` are skipped.
+#[cfg(test)]
+pub(crate) fn hook_bash(files: &[(&str, &str)], cmd: &str) -> Option<String> {
+    let dir = tempfile::tempdir().unwrap();
+    let d = dir.path();
+    let ok = std::process::Command::new("git")
+        .args(["init", "-q", "-b", "feature"])
+        .arg(d)
+        .status()
+        .is_ok_and(|s| s.success());
+    assert!(ok, "git init");
+    for (path, text) in files.iter().filter(|f| !f.0.starts_with('/')) {
+        let f = d.join(path);
+        std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+        std::fs::write(f, text).unwrap();
+    }
+    judge(
+        Some(d),
+        &json!({"tool_name": "Bash", "tool_input": {"command": cmd}}),
+    )
+    .filter(|o| is_deny(o))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many times the new rules ran (tests: a legacy deny never reaches them).
+    static NEW_RUNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The new guard's judge; runs only when the legacy judge allows (see [`judge`]).
+fn judge_new(cwd: Option<&Path>, input: &Value, repeat: Option<String>) -> Option<String> {
+    #[cfg(test)]
+    NEW_RUNS.with(|n| n.set(n.get() + 1));
     let tool = input.get("tool_name").and_then(Value::as_str)?;
     let tool_input = input.get("tool_input").cloned().unwrap_or(Value::Null);
     let dir = cwd
@@ -134,7 +227,7 @@ fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
     }
     if tool == "Bash" {
         // Edit-lock for the files a command plainly writes (`> f`, `tee f`, `cp .. f`, `sed -i`),
-        // then repeat-lock; script files are read last, after every other lock.
+        // (repeat-lock counted in the legacy judge); script files are read last.
         let command = tool_input
             .get("command")
             .and_then(Value::as_str)
@@ -146,7 +239,6 @@ fn judge(cwd: Option<&Path>, input: &Value) -> Option<String> {
                 Err(e) => eprintln!("bosun: warning: edit-lock skipped: {e}"),
             }
         }
-        let repeat = repeat_lock(&dir, input, &tool_input);
         let read = |p: &str| read_script(&dir, p);
         if let Some(why) = script_rules(command, &read, &branch_at, &default) {
             return Some(deny(&why));
@@ -603,7 +695,11 @@ fn stale_verdict(p: &Pushed) -> Result<Option<String>, String> {
 fn read_script(dir: &Path, path: &str) -> Option<Script> {
     use std::io::Read;
     const MAX: u64 = 1 << 20;
-    let file = dir.join(path);
+    // `~/x` (also `$HOME/x` in the command): the home of the user the hook runs as.
+    let file = match path.strip_prefix("~/") {
+        Some(rest) => Path::new(&std::env::var_os("HOME")?).join(rest),
+        None => dir.join(path),
+    };
     let meta = std::fs::metadata(&file).ok()?;
     if meta.is_dir() {
         return None;
@@ -640,11 +736,48 @@ fn read_script(dir: &Path, path: &str) -> Option<Script> {
     }
     let mut buf = Vec::new();
     let read = opened.and_then(|f| f.take(MAX + 1).read_to_end(&mut buf));
+    // A binary is a program this host's kernel runs (a valid ELF or Mach-O header and a NUL
+    // in the first line); any other file is read as text: a kernel that refuses it leaves it
+    // to `sh`, and a shell runs a script with a NUL past its first line.
+    let binary = crate::core::guard::host_binary(&buf);
     match read {
         Err(_) => Some(Script::Unreadable("it cannot be opened")),
+        Ok(_) if binary && interpreter_binary(&real, meta.len()) => Some(Script::Unreadable(
+            "a shell or interpreter program, by its name or its bytes",
+        )),
+        Ok(n) if binary => Some(Script::Binary(
+            (n as u64 <= MAX).then(|| String::from_utf8_lossy(&buf).into_owned()),
+        )),
         Ok(n) if n as u64 > MAX => Some(Script::Unreadable("larger than 1 MiB")),
         Ok(_) => Some(Script::Text(String::from_utf8_lossy(&buf).into_owned())),
     }
+}
+
+/// Whether a program (its resolved path, `len` bytes) is a shell or interpreter: its own name
+/// (a symlink to `/bin/bash`), or the same bytes as one in `/bin`, `/usr/bin` or
+/// `/usr/local/bin` (a copy).
+fn interpreter_binary(real: &Path, len: u64) -> bool {
+    let name = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+    if name(real).is_some_and(|n| crate::core::guard::interpreter_name(&n)) {
+        return true;
+    }
+    let mut mine: Option<Vec<u8>> = None;
+    ["/bin", "/usr/bin", "/usr/local/bin"].iter().any(|d| {
+        std::fs::read_dir(d)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|e| {
+                let p = e.path();
+                if !name(&p).is_some_and(|n| crate::core::guard::interpreter_name(&n))
+                    || !std::fs::metadata(&p).is_ok_and(|m| m.is_file() && m.len() == len)
+                {
+                    return false;
+                }
+                let ours = mine.get_or_insert_with(|| std::fs::read(real).unwrap_or_default());
+                std::fs::read(&p).is_ok_and(|b| &b == ours)
+            })
+    })
 }
 
 /// `<git common dir>/bosun/repeat/<key>.json` of the session, agent and directory; `None`
@@ -657,32 +790,6 @@ fn repeat_file(dir: &Path, input: &Value) -> Option<std::path::PathBuf> {
     let key = repeat_key(&session, &agent, &dir.to_string_lossy());
     let common = git_out(dir, &["rev-parse", "--git-common-dir"])?;
     Some(dir.join(common).join(format!("bosun/repeat/{key}.json")))
-}
-
-/// repeat-lock: count a Bash call that is not a poll (written atomically); a warning at the
-/// third run in a row, a deny from the fifth. Any I/O failure skips the lock.
-fn repeat_lock(dir: &Path, input: &Value, tool_input: &Value) -> Option<String> {
-    let command = tool_input.get("command").and_then(Value::as_str)?;
-    let file = (!is_poll(command))
-        .then(|| repeat_file(dir, input))
-        .flatten()?;
-    let prev = serde_json::from_slice(&std::fs::read(&file).unwrap_or_default()).ok();
-    let step = repeat_step(prev, command);
-    let tmp = file.with_extension(format!("json.tmp{}", std::process::id()));
-    let wrote = (file.parent().map_or(Ok(()), std::fs::create_dir_all))
-        .and_then(|()| std::fs::write(&tmp, serde_json::to_vec(&step)?))
-        .and_then(|()| std::fs::rename(&tmp, &file));
-    if let Err(e) = wrote {
-        eprintln!("bosun: warning: repeat-lock skipped: {e}");
-        return None;
-    }
-    match repeat_verdict(step.count)? {
-        Repeat::Deny(why) => Some(deny(&why)),
-        Repeat::Warn(why) => Some(
-            json!({"hookSpecificOutput": {"hookEventName": "PreToolUse", "additionalContext": why}})
-                .to_string(),
-        ),
-    }
 }
 
 /// Whether this session is a registered child for `write.epic`: the epic carries a live lease
@@ -839,6 +946,116 @@ fn repo_relative(root: &Path, cwd: &Path, path: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// The no-regression rule by construction: a call the legacy judge (main's hook) denies is
+    /// denied without running the new rules; an allowed call runs them once.
+    #[test]
+    fn repeats_denied_by_a_later_lock_still_count_as_on_main() {
+        // Opus hunt on #66: main counts a Bash call before its script, push and fetch locks;
+        // the fifth same command is the repeat-lock's deny even after the script turned benign.
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "feature"])
+            .arg(d)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok);
+        std::fs::create_dir_all(d.join("scripts")).unwrap();
+        std::fs::write(d.join("scripts/y.sh"), "git push -f origin main\n").unwrap();
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash scripts/y.sh"},
+            "session_id": "S1"});
+        for _ in 0..4 {
+            assert!(judge(Some(d), &input).as_deref().is_some_and(is_deny));
+        }
+        std::fs::write(d.join("scripts/y.sh"), "echo ok\n").unwrap();
+        let fifth = judge(Some(d), &input).unwrap_or_default();
+        assert!(is_deny(&fifth) && fifth.contains("repeat-lock"), "{fifth}");
+    }
+
+    #[test]
+    fn an_intended_allow_that_legacy_denies_is_still_repeat_limited() {
+        use crate::core::repeat::{DENY_AT, WARN_AT};
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let ok = std::process::Command::new("git")
+            .args(["init", "-q", "-b", "feature"])
+            .arg(d)
+            .status()
+            .is_ok_and(|s| s.success());
+        assert!(ok);
+        std::fs::write(d.join("s.sh"), "git push -f origin main\n").unwrap();
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash -n s.sh"},
+            "session_id": "S-intended"});
+        assert_eq!(intended::allow("bash -n s.sh"), Some("parse-only"));
+        let legacy = super::super::pre_tool_use_legacy::judge(Some(d), &input);
+        assert!(legacy.as_deref().is_some_and(is_deny), "legacy must deny");
+        // The legacy call above counted once; reset by using a fresh session for the run.
+        let input = json!({"tool_name": "Bash", "tool_input": {"command": "bash -n s.sh"},
+            "session_id": "S-intended-2"});
+        for n in 1..=DENY_AT + 1 {
+            let out = judge(Some(d), &input).unwrap_or_default();
+            if n == WARN_AT {
+                assert!(!is_deny(&out) && out.contains("repeat-lock"), "{n}: {out}");
+            } else if n >= DENY_AT {
+                assert!(is_deny(&out) && out.contains("repeat-lock"), "{n}: {out}");
+            } else {
+                assert!(!is_deny(&out) && !out.contains("repeat-lock"), "{n}: {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn every_intended_allow_is_repeat_locked_at_main_thresholds() {
+        use crate::core::repeat::DENY_AT;
+        for (name, cmd) in intended::EXAMPLES {
+            let dir = tempfile::tempdir().unwrap();
+            let d = dir.path();
+            let ok = std::process::Command::new("git")
+                .args(["init", "-q", "-b", "feature"])
+                .arg(d)
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(ok);
+            let script = std::fs::read_to_string(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../scripts/bump-version.sh"),
+            );
+            if let Ok(t) = script {
+                std::fs::create_dir_all(d.join("scripts")).unwrap();
+                std::fs::write(d.join("scripts/bump-version.sh"), t).unwrap();
+            }
+            let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd},
+                "session_id": format!("S-{name}")});
+            for n in 1..=6 {
+                let out = judge(Some(d), &input).unwrap_or_default();
+                let denied = is_deny(&out) && out.contains("repeat-lock");
+                assert_eq!(denied, n >= DENY_AT, "{name} run {n}: {out}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_legacy_deny_never_runs_the_new_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let run_new = |input: Value| {
+            NEW_RUNS.with(|n| n.set(0));
+            let out = judge(Some(d), &input);
+            (out, NEW_RUNS.with(|n| n.get()))
+        };
+        for cmd in [
+            "git push --force origin main",
+            "gh pr merge 1",
+            &format!("bash -c '{}git push -f origin main'", "eval ".repeat(50)),
+        ] {
+            let (out, runs) = run_new(json!({"tool_name": "Bash", "tool_input": {"command": cmd}}));
+            assert!(out.as_deref().is_some_and(is_deny), "{cmd}");
+            assert_eq!(runs, 0, "new rules ran after a legacy deny: {cmd}");
+        }
+        let (out, runs) = run_new(json!({"tool_name": "Bash", "tool_input": {"command": "ls"}}));
+        assert!(!out.as_deref().is_some_and(is_deny));
+        assert_eq!(runs, 1);
+    }
+
     #[test]
     fn only_a_checkbox_tick_in_a_plan_skips_the_edit_lock() {
         let edit = |o: &str, n: &str| json!({"old_string": o, "new_string": n});
@@ -922,5 +1139,47 @@ mod tests {
         assert_eq!(guarded(|| None), None);
         assert_eq!(guarded(|| Some("x".into())), Some("x".into()));
         assert!(guarded(|| panic!("again")).is_some());
+    }
+
+    /// Reviewer C and D on #66 (head ee9e6bd allowed these, main denied): a copy of or symlink
+    /// to git/gh run directly, and inline interpreter code that runs an argv file. The legacy
+    /// judge (main's guard) holds them now.
+    #[test]
+    fn copied_git_and_interpreter_argv_files_are_refused_as_on_main() {
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        let git = ["/usr/bin/git", "/bin/git"]
+            .into_iter()
+            .find(|p| Path::new(p).is_file());
+        std::fs::write(
+            d.join("evil.sh"),
+            "#!/bin/sh\ngit push --force origin main\n",
+        )
+        .unwrap();
+        let bash = |cmd: &str| {
+            let input = json!({"tool_name": "Bash", "tool_input": {"command": cmd}});
+            judge(Some(d), &input)
+        };
+        let mut cmds = vec![
+            "python3 -c 'import subprocess,sys; subprocess.run([\"bash\",sys.argv[1]])' evil.sh",
+            "node -e 'require(\"child_process\").execFileSync(\"bash\",[process.argv[1]])' evil.sh",
+            "perl -e 'system(\"bash\", $ARGV[0])' evil.sh",
+        ];
+        if let Some(git) = git {
+            std::fs::copy(git, d.join("g")).unwrap();
+            #[cfg(unix)]
+            std::os::unix::fs::symlink(git, d.join("gl")).unwrap();
+            cmds.extend(["./g push --force origin main", "./g push --tags"]);
+            #[cfg(unix)]
+            cmds.push("./gl push --force origin main");
+        }
+        assert!(!bash("ls").as_deref().is_some_and(is_deny));
+        for cmd in cmds {
+            let why = bash(cmd).unwrap_or_else(|| panic!("allowed: {cmd}"));
+            assert!(
+                is_deny(&why) && !why.contains("cannot read git config"),
+                "{cmd}: {why}"
+            );
+        }
     }
 }

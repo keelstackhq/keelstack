@@ -12,7 +12,7 @@ One monorepo for the keelstackhq tools (D-023). Agents write all the code; bosun
 | `hoist/` | GitHub/Cloudflare provisioning, release + secrets actions | `keel-hoist` |
 | `hoard/` | CI cache server + GitHub Action (`hoard/action`) | `keel-hoard` |
 | `berth/` | per-agent workspaces | `keel-berth` |
-| `keel/` | bootstrap CLI | `keel-cli` (binary `keel`) |
+| `keel/` | bootstrap CLI | `keelstack-cli` (binary `keel`) |
 | `site/` | landing page (keelstack.dev), own pnpm workspace; every fact on it is generated from the folders above (D-024) | `pnpm --dir site run ci` |
 | `decisions/` | org decisions, read in place: `decisions/DECISIONS.md` | `bash decisions/scripts/check-index.sh` |
 

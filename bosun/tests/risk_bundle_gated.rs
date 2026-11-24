@@ -114,9 +114,34 @@ fn a_commit_list_at_the_cap_fails_closed_to_the_owner() {
     }
     let (_, v) = run(&fake, "session_test", NOW, &["risk-check", "1"]);
     needs_owner_by_plan(&v);
-    // An unreadable commit (an API error) is skipped, not escalated.
+    // The messages come with the commit list (#49): no per-commit read, so a commit GitHub has
+    // no `git/commits` object for is no escalation.
     let fake = high_world("change", "Closes #7");
     fake.pull_commit_shas(1, &["gone"]);
     let (code, v) = run(&fake, "session_test", NOW, &["risk-check", "1"]);
     assert_eq!(code, 0, "{v}");
+    assert!(
+        !fake
+            .requests()
+            .iter()
+            .any(|r| r.path.contains("/git/commits/gone")),
+        "one paged list, no per-commit reads"
+    );
+}
+
+#[test]
+fn an_unreadable_commit_list_fails_closed_to_the_owner() {
+    // #49: an API error (a rate limit the author can provoke) on the commit list is no skip.
+    for status in [403, 429, 500] {
+        let fake = high_world("change", "Closes #7");
+        fake.fail_path("/pulls/1/commits", status);
+        let (code, v) = run(&fake, "session_test", NOW, &["risk-check", "1"]);
+        assert_eq!(code, 5, "{status}: {v}");
+        needs_owner_by_plan(&v);
+        let why = v["data"]["matches"].to_string();
+        assert!(
+            why.contains("commit messages could not all be read"),
+            "{why}"
+        );
+    }
 }

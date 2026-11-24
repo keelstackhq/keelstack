@@ -14,7 +14,7 @@ pub use fake::{FakeApi, RouteSpec};
 pub use stub_tool::{stub, write_script};
 
 /// Env vars that could reach a real API; every test child runs without them (ruling R2).
-pub const SCRUBBED_ENV: [&str; 8] = [
+pub const SCRUBBED_ENV: [&str; 12] = [
     "GITHUB_ACTIONS",
     "HOIST_RELEASE_TOKEN",
     "HOIST_RELEASE_APP_ID",
@@ -23,6 +23,10 @@ pub const SCRUBBED_ENV: [&str; 8] = [
     "GH_TOKEN",
     "CLOUDFLARE_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
+    "HOIST_SEARCH_CONSOLE_TOKEN",
+    "HOIST_SEARCH_CONSOLE_BRIDGE",
+    "NPM_TOKEN",
+    "CARGO_REGISTRY_TOKEN",
 ];
 
 /// `name:` of `.github/workflows/ci.yml`, the only workflow that installs sops and age-keygen
@@ -60,6 +64,7 @@ pub fn hoist() -> Command {
     cmd.env("HOIST_GITHUB_UPLOADS", "http://127.0.0.1:9");
     cmd.env("HOIST_NPM_REGISTRY", "http://127.0.0.1:9");
     cmd.env("HOIST_CRATES_API", "http://127.0.0.1:9");
+    cmd.env("HOIST_SEARCH_CONSOLE_BRIDGE", "http://127.0.0.1:9");
     // `check` probes the Pages URL; it must never leave the machine.
     cmd.env("HOIST_PAGES_BASE", "http://127.0.0.1:9");
     // No real `fly` either; tests that need one set HOIST_FLY.

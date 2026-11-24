@@ -34,9 +34,9 @@ tests/           cli_*.rs integration tests with stub tool scripts on PATH
 
 ```bash
 export PATH=/root/.cargo/bin:$PATH
-cargo fmt --all --check && cargo clippy -p keel-cli --all-targets --locked -- -D warnings
-cargo test -p keel-cli --locked     # unit + integration
-cargo test -p keel-cli --locked --test cli_up   # one file
+cargo fmt --all --check && cargo clippy -p keelstack-cli --all-targets --locked -- -D warnings
+cargo test -p keelstack-cli --locked     # unit + integration
+cargo test -p keelstack-cli --locked --test cli_up   # one file
 node --test keel/npm/keel/test/*.test.js        # launcher
 ```
 

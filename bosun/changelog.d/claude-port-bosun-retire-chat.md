@@ -1,1 +1,0 @@
-- Chat approvals are retired (D-025): `bosun approve --chat` is removed and risk-check no longer counts a chat approval record; the owner approves with their own `/bosun approve <sha>` comment, a GitHub review or a signed approval. `[approvals] chat` is deprecated and ignored (still parsed).

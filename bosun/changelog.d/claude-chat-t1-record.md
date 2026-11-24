@@ -1,1 +1,0 @@
-- Core chat approval record (`chat_comment`, `parse_chat_record`, orchestrator rule) and `[approvals] chat` key (default on, not counted yet; D-018).

@@ -1,8 +1,10 @@
 ## 16. Owner teams (B4)
 
-Status: the schema and `bosun owners set` are built; expansion is designed, not built (plan
-`docs/superpowers/plans/2026-10-28-app-checks-team-owners.md`, item B4, after B2's App exists).
-Until it is, a team entry counts no member (fail closed): only user entries are owners.
+Status: built (#24 schema and fail-closed commands, #25 expansion). `bosun` expands each team
+per run (below) and risk-check counts readable members as owners everywhere; a team that cannot
+be read counts no member and its possible members' withdrawals block (the OWNER/MEMBER/
+COLLABORATOR filter on a review's `author_association`, read from the review; a review without
+the field counts as a possible member).
 
 **`bosun owners set <login|org/slug>...`** opens one draft owner PR (branch
 `bosun/owners-<timestamp>`, clean tree on the default branch, pushed, never merged) that
@@ -16,7 +18,9 @@ branch and the local checkout on it (open the PR by hand or delete the branch).
 **Bus factor.** One human owner is a bus-factor-1 risk. When the only owner is unavailable,
 nothing that needs an owner merges: high-risk PRs stay red, a delegate cannot stand in on the
 critical floor (§8), and an owner's open halt issue stays open. That is the intended fail-closed
-behaviour, not a fault. List at least two owners, or a team.
+behaviour, not a fault. List at least two owners, or a team (a team alone may be unreadable, so list at least one owner
+by login too). `governance/owners.toml` and the channel's template carry this note and a
+commented-out team entry.
 
 **Schema.** `governance/owners.toml` takes team entries beside user entries:
 
@@ -50,7 +54,9 @@ do. So in session-run commands (the kill switch of every command, `bosun approve
 token can read the org's members (an org member's token with `read:org` or Members read).
 
 **Caching.** Within one process, once per `org/slug`, behind the owner reader
-(`owner_logins`), so risk-check's several owner reads cost one expansion. Never on disk and never
+(`owner_view`, so also `owner_logins`), so risk-check's several owner reads cost one expansion
+(one members read; the unreadable line is printed once). A page that is no list, more than 11
+pages or more than 1000 members is an error. Never on disk and never
 across runs: a membership change counts from the next run.
 
 **Failure: fail closed.** Child teams, or a 403, 404, error or bad page in either read, means no member of that
@@ -68,7 +74,9 @@ any other owner's withdrawal. Residual: GitHub may report a member whose org mem
 private as CONTRIBUTOR to a token that cannot see it, so their withdrawal is missed while the
 team is unreadable; team members should make their membership public. The kill
 switch is the inverse: an open `bosun:halt` issue by a login that is no listed user while a team
-is unreadable halts (exit 4), as any error reading the owners does today. Since sessions usually
+is unreadable halts (exit 4), as any error reading the owners does today. `bosun approve` (board, withdrawn, signer) and the `carry_*_in` helpers apply this; risk-check wires it too
+(`data.owner_teams_unreadable`, the fix on a failed check, the status suffix, and the withdrawal for
+reviews, delegates, signed approvals and carried approvals). Since sessions usually
 cannot read a team, a halt issue by any non-user then halts sessions: list at least one owner
 by login so an owner's own halt issue is judged without the team.
 
@@ -83,10 +91,14 @@ an owner:
 - `bosun approve` with `BOSUN_OWNER_TOKEN`: the PAT's login must be a user entry or a member
   (the PAT then needs organization Members read); otherwise exit 5 with the fix above.
 - `bosun ask` and `notify` mention users and `@<org>/<slug>`; Slack IDs come from user entries only.
+  `ask` data has `owner_teams` and `owner_teams_unreadable` (plus `owner_teams_fix` when one is);
+  `approve --list` data has `owner_teams_unreadable` (and the fix) when a team is listed.
 
 **Residual.** Team membership is set in the org, not in a PR: an org owner or a maintainer of
 the team who adds someone makes them a bosun owner without an R-gov PR. Use a team without child
-teams whose maintainers are the owners themselves.
+teams whose maintainers are the owners themselves. While a team is unreadable a review
+without `author_association` counts as a possible member's, so only reviews that carry
+CONTRIBUTOR or NONE are ignored.
 
 **Tests (fake GitHub).** Parse: user, team, both, neither, `slack` on a team, another org.
 Expansion: two pages, case; a team with a child team counts no members. One members call per run with several owner

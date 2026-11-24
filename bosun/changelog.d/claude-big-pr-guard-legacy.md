@@ -1,0 +1,1 @@
+- bosun guard: no-regression rule — deny when the new guard or the vendored legacy judge (main's guard) denies, except three enumerated literal allows (bump-version, parse-only, pathspec-glob); differential test over every review probe.

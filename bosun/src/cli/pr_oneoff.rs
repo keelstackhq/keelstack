@@ -10,9 +10,10 @@ use serde_json::json;
 
 use super::{ClaimArgs, PrArgs};
 use crate::app::{App, base_files, default_branch, gated_from_default, kill_switch};
+use crate::config::CONFIG_FILE;
 use crate::core::glob::Glob;
 use crate::core::meta::TaskMeta;
-use crate::core::risk::autonomous_allow_globs;
+use crate::core::risk::{AUTONOMOUS_DENIED, autonomous_allow_globs};
 use crate::core::shape::{ONE_OFF_ITEM, touch_gated_in};
 use crate::core::state::State;
 use crate::output::{BosunError, CmdResult, Outcome};
@@ -103,13 +104,23 @@ pub fn run(dir: Option<&Path>, a: &PrArgs) -> CmdResult {
 }
 
 /// Every touch glob lies inside the autonomous allow set of the default branch (`[approvals]
-/// autonomous_allow`, else the built-in set) and overlaps no gated path of its risk rules: work
-/// nobody planned never reaches what the plan or the owner decides. Nothing is created before.
+/// autonomous_allow`, else the built-in set plus the workspace dirs `apps/**`, `crates/**`,
+/// `packages/**` the base has) or the owner's `[approvals] oneoff_allow`, and overlaps no gated
+/// path of its risk rules unless `oneoff_allow` names it: work nobody planned never reaches what
+/// the plan or the owner decides. Nothing is created before.
 fn check_touch(app: &App, touch: &[String]) -> Result<(), BosunError> {
     let gh = app.gh.as_ref();
     let base = default_branch(gh).unwrap_or_else(|_| "main".to_string());
     let allow = super::risk_check::autonomous_allow(gh, &base)?;
+    let files = base_files(gh)?;
+    let layout = match allow {
+        None => workspace_globs(files.as_deref()),
+        Some(_) => Vec::new(),
+    };
     let allow = autonomous_allow_globs(allow.as_deref());
+    let denied: Vec<Glob> = (AUTONOMOUS_DENIED.iter())
+        .filter_map(|g| Glob::parse(g).ok())
+        .collect();
     let gated = gated_from_default(gh)?;
     // The owner's `[approvals] oneoff_allow`: such a glob may reach a gated path too (README,
     // .github, Cargo.toml); risk-check still asks the owner for it.
@@ -121,22 +132,40 @@ fn check_touch(app: &App, touch: &[String]) -> Result<(), BosunError> {
             continue;
         }
         rest.push(raw.clone());
-        if !allow.iter().any(|a| a.covers(&g)) {
+        // A workspace dir counts only away from the owner's files (manifests, CI, agent rules).
+        let in_layout = layout.iter().any(|a| a.covers(&g))
+            && touch_gated_in(std::slice::from_ref(raw), &denied, files.as_deref()) == Ok(false);
+        if !in_layout && !allow.iter().any(|a| a.covers(&g)) {
             return Err(BosunError::conflict(
                 format!("--touch `{raw}` is outside the paths a one-off may edit on {base}"),
-                "a one-off covers only the autonomous allow set (src/**, tests/**, docs/**, changelog.d/**, .changeset/*.md, or the owner's `[approvals] autonomous_allow`) and the owner's `[approvals] oneoff_allow`: plan the work instead (`bosun plan import`)",
+                format!(
+                    "a one-off covers only the autonomous allow set (src/**, tests/**, docs/**, changelog.d/**, .changeset/*.md, the base's apps/**, crates/**, packages/**, or the owner's `[approvals] autonomous_allow`) and the owner's `[approvals] oneoff_allow`: the owner adds `{raw}` to `[approvals] oneoff_allow` in {CONFIG_FILE} on {base} (an owner-approved PR), or plan the work (`bosun plan import`)"
+                ),
             ));
         }
     }
     // As a plan task: a gated glob over the touch, wildcards resolved against the base's files.
-    let files = base_files(gh)?;
     let hit = touch_gated_in(&rest, &gated, files.as_deref())
         .map_err(|e| BosunError::conflict(e, "name the files the PR edits, without wildcards"))?;
     if hit {
         return Err(BosunError::conflict(
             "--touch reaches a gated path (a risk rule of the default branch)",
-            "gated work needs a planned task with the owner's approval: plan it (`bosun plan import`), or narrow --touch to files outside the gated paths",
+            format!(
+                "gated work needs a planned task with the owner's approval: plan it (`bosun plan import`), narrow --touch to files outside the gated paths, or the owner adds the glob to `[approvals] oneoff_allow` in {CONFIG_FILE} on {base}"
+            ),
         ));
     }
     Ok(())
+}
+
+/// Workspace dirs of the base (`apps/`, `crates/`, `packages/` with at least one file) as
+/// `<dir>/**`: ordinary product code a one-off may edit by default. Gated paths inside them stay
+/// gated. An unreadable tree adds nothing (fail closed).
+fn workspace_globs(files: Option<&[String]>) -> Vec<Glob> {
+    let files = files.unwrap_or_default();
+    ["apps", "crates", "packages"]
+        .iter()
+        .filter(|d| files.iter().any(|f| f.starts_with(&format!("{d}/"))))
+        .filter_map(|d| Glob::parse(&format!("{d}/**")).ok())
+        .collect()
 }

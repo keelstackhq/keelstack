@@ -67,9 +67,9 @@ run should say `>>> FULL TURBO`. A re-run of the same commit counts as a second 
 
 CircleCI has no GitHub cache: use `fs` or `r2`. Copy the command from
 `https://raw.githubusercontent.com/keelstackhq/keelstack/vX.Y.Z/hoard/circleci/hoard.yml` under `commands:
-hoard:` in `.circleci/config.yml`, then call `hoard: {step: start, version: 0.6.1}` before turbo and
-`hoard: {step: stop, version: 0.6.1}` after (the token is generated; no env to set). On `cimg/node` run `sudo corepack enable` before `pnpm install`. Run `main` in a
-separate job with `start` given `restore: false` (cache poisoning; CircleCI only). Full config: `docs/circleci.md` beside that file. Elsewhere: `HOARD_VERSION=0.6.1 sh scripts/install.sh`,
+hoard:` in `.circleci/config.yml`, then call `hoard: {step: start, version: 0.22.0}` before turbo and
+`hoard: {step: stop, version: 0.22.0}` after (the token is generated; no env to set). On `cimg/node` run `sudo corepack enable` before `pnpm install`. Run `main` in a
+separate job with `start` given `restore: false` (cache poisoning; CircleCI only). Full config: `docs/circleci.md` beside that file. Elsewhere: `HOARD_VERSION=0.22.0 sh scripts/install.sh`,
 `hoard serve --detach`, `eval "$(hoard env)"`, turbo, `hoard stop --summary markdown`.
 
 ## Rules
