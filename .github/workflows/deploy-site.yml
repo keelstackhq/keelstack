@@ -11,13 +11,16 @@ name: deploy-site
 #
 # What the page says about releases never comes from an untagged Cargo version: the version,
 # install commands and sources (`@vX`) come from the latest release tag vX.Y.Z reachable from the
-# built commit (RELEASED_VERSION, resolved by job `decide`; site/apps/site/src/data/facts.ts).
-# Before the first release above 0.21.0 there is none, and the page pins the old repos' last
-# releases (legacy.ts). A release commit sits on top of a main commit and only the tag reaches it
-# (release.yml), so a tag counts when its first parent is the built commit or an ancestor of it.
-# A version-bump push therefore builds with the previous release's facts (its generated docs, made
-# for the new version, fail the drift test: nothing is deployed); the release run's completion
-# deploys the new ones.
+# built commit whose npm packages (every launcher and platform package the page installs) are all
+# published; else the next lower release that is fully published; else the old repos' last
+# releases (legacy.ts). Job `decide` lists the reachable tags (`candidates`, highest first); job
+# `build` asks npm (site/apps/site/scripts/published.ts) and sets RELEASED_VERSION. A release
+# commit sits on top of a main commit and only the tag reaches it (release.yml), so a tag counts
+# when its first parent is the built commit or an ancestor of it.
+# The generated docs pages are regenerated in the build for that version (gen-docs.ts), so they
+# agree with it by construction: a version-bump push, or a release whose packages are not all on
+# npm yet, deploys the previous facts instead of failing. The release run's completion (also a
+# failed one, which may have published part of it) deploys again.
 #
 # Four jobs, so no secret meets code a site script could have touched:
 #   decide   resolves the commit (this run's: main's head) and the release tag.
@@ -67,6 +70,7 @@ jobs:
     outputs:
       sha: ${{ steps.release.outputs.sha }}
       released: ${{ steps.release.outputs.released }}
+      candidates: ${{ steps.release.outputs.candidates }}
     env:
       SITE_SHA: ${{ github.sha }}
     steps:
@@ -77,19 +81,36 @@ jobs:
         run: |
           [[ "$SITE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::'$SITE_SHA' is not a commit sha"; exit 1; }
           echo "sha=$SITE_SHA" >> "$GITHUB_OUTPUT"
-          refs="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref')"
+          # Read-only API calls retry (3 tries, RETRY_SLEEP seconds apart) and still fail closed.
+          ghr() {
+            local i
+            for i in 1 2 3; do
+              gh api "$@" && return 0
+              [ "$i" = 3 ] || sleep "${RETRY_SLEEP:-5}"
+            done
+            return 1
+          }
+          refs="$(ghr --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref')"
           # Release tags only: vX.Y.Z, highest first (version order, not text order).
           tags="$(grep -E '^refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$' <<<"$refs" | sed 's|^refs/tags/v||' | sort -V -r || true)"
           released=""
+          candidates=""
           for v in $tags; do
+            # From the reachable tag found on: it and every lower release tag (version order).
+            # Lower tags are older releases cut from main (release.yml), so they are candidates
+            # without a reachability check; npm decides in job `build` which one is published.
+            if [ -n "$released" ]; then
+              candidates="$candidates $v"
+              continue
+            fi
             # The release commit is only on the tag (a child of a main commit): the tag counts
             # when its first parent is the built commit or comes before it.
-            parent="$(gh api "repos/$GITHUB_REPOSITORY/commits/v$v" --jq '.parents[0].sha')"
+            parent="$(ghr "repos/$GITHUB_REPOSITORY/commits/v$v" --jq '.parents[0].sha')"
             [[ "$parent" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::tag v$v has no parent commit"; exit 1; }
-            status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$parent...$SITE_SHA" --jq .status)"
+            status="$(ghr "repos/$GITHUB_REPOSITORY/compare/$parent...$SITE_SHA" --jq .status)"
             if [ "$status" = ahead ] || [ "$status" = identical ]; then
               released="$v"
-              break
+              candidates="$v"
             fi
           done
           if [ -n "$released" ]; then
@@ -98,6 +119,7 @@ jobs:
             echo "::notice::no release tag reachable from $SITE_SHA: the page pins the legacy releases"
           fi
           echo "released=$released" >> "$GITHUB_OUTPUT"
+          echo "candidates=$candidates" >> "$GITHUB_OUTPUT"
 
   # Check and build the commit `decide` resolved. No secrets, no environment.
   build:
@@ -123,12 +145,29 @@ jobs:
       - name: Install
         working-directory: site
         run: pnpm install --frozen-lockfile --prefer-offline
-      # A page that disagrees with its sources is never deployed. The released version is the
-      # latest tag's, empty before the first release.
-      - name: Check and build
+      # The release the page shows: the first candidate (the latest reachable tag, then lower
+      # ones) whose npm packages are all published; empty = the legacy pins. The generated docs
+      # are rendered for it, so they cannot disagree with the facts.
+      - name: Published release
         working-directory: site
         env:
-          RELEASED_VERSION: ${{ needs.decide.outputs.released }}
+          CANDIDATES: ${{ needs.decide.outputs.candidates }}
+        run: |
+          # shellcheck disable=SC2086 # CANDIDATES is a space separated list of X.Y.Z
+          v="$(node apps/site/scripts/published.ts $CANDIDATES)"
+          [[ -z "$v" || "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$v' is not a release version"; exit 1; }
+          if [ -n "$v" ]; then
+            echo "::notice::the page shows v$v (candidates: ${CANDIDATES:-none})"
+          else
+            echo "::notice::no candidate is fully published (${CANDIDATES:-none}): the page pins the legacy releases"
+          fi
+          echo "RELEASED_VERSION=$v" >> "$GITHUB_ENV"
+      - name: Generate the docs for it
+        working-directory: site
+        run: node apps/site/scripts/gen-docs.ts
+      # A page that disagrees with its sources is never deployed.
+      - name: Check and build
+        working-directory: site
         run: pnpm run ci
       # Only the built site, packed. Wrangler is staged by job `wrangler`, never here: this job ran
       # every site script, so nothing it leaves may be run with the token.

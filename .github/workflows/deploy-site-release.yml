@@ -7,8 +7,10 @@ name: deploy-site-release
 # workflow that runs on workflow_run (bosun/tests/workflows.rs), and a dispatched run's github.sha
 # is main's head, which already contains the release's merge commit.
 #
-# Only this repository's dispatched release run counts, and only when it succeeded (a PR's `plan`
-# run and a fork's run never do).
+# Only this repository's dispatched release run counts, when it succeeded or failed (a failed run
+# may have tagged or published part of a release; deploy-site only shows a release whose npm
+# packages are all published, so an early dispatch is harmless). A PR's `plan` run and a fork's
+# run never count.
 #
 # D-007: Linux only, no comment/label/edit triggers, job-level `if:`.
 on:
@@ -28,7 +30,8 @@ permissions:
 jobs:
   dispatch:
     if: >-
-      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.conclusion == 'success' ||
+       github.event.workflow_run.conclusion == 'failure') &&
       github.event.workflow_run.event == 'workflow_dispatch' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest

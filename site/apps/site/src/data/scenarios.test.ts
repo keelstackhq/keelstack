@@ -38,7 +38,9 @@ const cloud = read("docs/cloud.md");
 const adopt = read("docs/adopt.md");
 const adoptSrc = JSON.parse(
   readFileSync(new URL("./hull/adopt.json", import.meta.url), "utf8"),
-) as { assess: { url: string; sha256: string } };
+) as { hosted: Record<string, { sha256: string }> };
+const assessUrl = `/assess/${versions.hull}.mjs`;
+const assessSha = adoptSrc.hosted[versions.hull]!.sha256;
 
 const lines = (block: string) => block.split("\n");
 
@@ -63,7 +65,7 @@ const section = (id: string): string => {
 test("each /docs/start block sits in its own scenario section, whole and in order", () => {
   const want: [string, string][] = [
     ["a", newRepoBlock(versions)],
-    ["b", adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256)],
+    ["b", adoptHullBlock(versions, assessUrl, assessSha)],
     ["b", adoptBosunBlock],
     [
       "c",
@@ -90,7 +92,7 @@ test("/docs/start carries the shared blocks", () => {
   const blocks = [
     newRepoBlock(versions),
     hoistBlock(versions),
-    adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256),
+    adoptHullBlock(versions, assessUrl, assessSha),
     adoptBosunBlock,
     cliBlock,
     SETUP_SHORT,
@@ -117,10 +119,7 @@ test("/docs/start carries the shared blocks", () => {
 
 test("/docs/adopt leads with the same assess, splice adopt and bosun adopt blocks", () => {
   const head = adopt.split("## Use Claude")[0] ?? "";
-  for (const b of [
-    adoptHullBlock(versions, adoptSrc.assess.url, adoptSrc.assess.sha256),
-    adoptBosunBlock,
-  ]) {
+  for (const b of [adoptHullBlock(versions, assessUrl, assessSha), adoptBosunBlock]) {
     expect(head).toContain(b);
   }
 });

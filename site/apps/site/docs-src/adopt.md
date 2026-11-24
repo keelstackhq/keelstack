@@ -77,12 +77,12 @@ follows [the start checklist](start-checklist.md) instead. This file is versione
 check its sha256 before running it, from the repo root:
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.22.0.mjs -o /tmp/assess.mjs
-echo "ee7933f0c2afff2098c91a158d7ffddf6f2300d3a40e7df0391a59d11e8f7ec6  /tmp/assess.mjs" | sha256sum -c
+curl -fsSL https://keelstack.dev{{ks.assess.url}} -o /tmp/assess.mjs
+echo "{{ks.assess.sha}}  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
 ```
 
-The sha256 is that of hull v0.22.0's `template/pieces/base/files/scripts/ready.mjs` (a hull test
+The sha256 is that of hull {{ks.hull}}'s `template/pieces/base/files/scripts/ready.mjs` (a hull test
 keeps it equal); never use an unpinned latest URL. With a hull clone, run that file directly. It
 reads files (regular files up to 1 MB, never symlinks) and writes nothing.
 

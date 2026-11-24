@@ -6,9 +6,10 @@
 #    pushes: budget-report's `reports` checkout).
 # 2. main-health's `report` job (it holds the App key) runs only for refs/heads/main.
 # 3. deploy-site: every push to main deploys main's site; `decide` resolves the commit (the
-#    release run's head_sha after a release) and the latest release tag vX.Y.Z reachable from it
-#    (version facts come from that tag, never an untagged Cargo version). `build` (no secrets)
-#    installs and checks, `deploy` (environment site) runs wrangler on the sha256-verified
+#    release run's head_sha after a release), the latest release tag vX.Y.Z reachable from it and
+#    that tag plus every lower one (`candidates`). `build` (no secrets) asks npm which candidate is
+#    fully published ('Published release' sets RELEASED_VERSION; none = legacy), regenerates the
+#    docs for it, installs and checks, `deploy` (environment site) runs wrangler on the sha256-verified
 #    artifact only. The workflow_run trigger counts only this repository's dispatched release runs.
 # 4. release.yml `plan`: only an absent workspace version at the first parent reads as empty; a
 #    git error (a missing object) fails the step. The plan checkout keeps no credentials.
@@ -97,7 +98,7 @@ build_job="$(job_text "$ds" build)"
 deploy="$(job_text "$ds" deploy)"
 # deploy-site.yml has no workflow_run trigger (bosun forbids naming a workflow_run head or
 # downloading an artifact there); deploy-site-release.yml dispatches it after a release, for this
-# repository's dispatched, successful release runs only.
+# repository's dispatched release runs that succeeded or failed.
 ! grep -q 'workflow_run' "$ds" || bad "deploy-site.yml: names workflow_run (bosun forbids head_sha and artifacts there)"
 grep -qF 'SITE_SHA: ${{ github.sha }}' <<<"$decide_job" || bad "deploy-site.yml: decide does not resolve github.sha"
 ! grep -q 'default_branch' "$ds" || bad "deploy-site.yml: resolves main's moving head by branch name"
@@ -105,7 +106,8 @@ dsr="$wf/deploy-site-release.yml"
 rel_if="$(awk '/^    if: /,/^    runs-on:/' <<<"$(job_text "$dsr" dispatch)")"
 for want in "github.event.workflow_run.event == 'workflow_dispatch'" \
   "github.event.workflow_run.head_repository.full_name == github.repository" \
-  "github.event.workflow_run.conclusion == 'success'"; do
+  "github.event.workflow_run.conclusion == 'success'" \
+  "github.event.workflow_run.conclusion == 'failure'"; do
   grep -qF "$want" <<<"$rel_if" || bad "deploy-site-release.yml dispatch if: lacks $want"
 done
 grep -qF 'gh workflow run deploy-site.yml' "$dsr" || bad "deploy-site-release.yml: does not dispatch deploy-site.yml"
@@ -116,7 +118,16 @@ grep -qF "github.ref == 'refs/heads/main'" <<<"$dd_if" || bad "deploy-site.yml: 
 grep -qF 'sha: ${{ steps.release.outputs.sha }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no sha output"
 grep -qF 'released: ${{ steps.release.outputs.released }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no released output"
 grep -qF 'ref: ${{ needs.decide.outputs.sha }}' <<<"$build_job" || bad "deploy-site.yml: build does not check out decide's sha"
-grep -qF 'RELEASED_VERSION: ${{ needs.decide.outputs.released }}' <<<"$build_job" || bad "deploy-site.yml: build does not pass RELEASED_VERSION"
+grep -qF 'candidates: ${{ steps.release.outputs.candidates }}' <<<"$decide_job" || bad "deploy-site.yml: decide has no candidates output"
+pub_step="$(step_run "$ds" build 'Published release')"
+[ -n "$pub_step" ] || bad "deploy-site.yml: build has no 'Published release' step"
+grep -qF 'CANDIDATES: ${{ needs.decide.outputs.candidates }}' <<<"$build_job" || bad "deploy-site.yml: build does not pass decide's candidates"
+grep -qF 'node apps/site/scripts/published.ts $CANDIDATES' <<<"$pub_step" || bad "deploy-site.yml: 'Published release' does not run published.ts"
+grep -qF 'RELEASED_VERSION=$v" >> "$GITHUB_ENV"' <<<"$pub_step" || bad "deploy-site.yml: 'Published release' does not write RELEASED_VERSION to GITHUB_ENV"
+grep -qF 'node apps/site/scripts/gen-docs.ts' <<<"$build_job" || bad "deploy-site.yml: build does not regenerate the docs"
+! grep -qE 'RELEASED_VERSION: \$\{\{' <<<"$build_job" || bad "deploy-site.yml: build takes RELEASED_VERSION from decide's tag, not from npm"
+order="$(grep -nE 'name: (Published release|Generate the docs for it|Check and build)' <<<"$build_job" | cut -d: -f2- | tr -s ' ' | tr '\n' '|')"
+[ "$order" = " - name: Published release| - name: Generate the docs for it| - name: Check and build|" ] || bad "deploy-site.yml: build steps are not Published release, gen-docs, Check and build: $order"
 ! grep -q 'SITE_REF' "$ds" || bad "deploy-site.yml: SITE_REF is back: a deploy must not wait for a tag"
 grep -q '^# ci-minutes: allow concurrency [a-z]' "$ds" || bad "deploy-site.yml: no ci-minutes allow comment with a reason"
 # build installs and tests with no secrets and no environment; deploy holds the secrets and only
@@ -179,31 +190,39 @@ FAKEGH
 chmod +x "$tmp/ghbin/gh"
 SHA_OK=0123456789abcdef0123456789abcdef01234567
 # release_case <name> <tag refs> <want: a version, "none" or "error"> [sha] [want sha]
+# WANT_CANDIDATES (optional, set per call): the exact `candidates=` line, else only checked to exist.
 release_case() {
   local d="$tmp/rel-$1" out="$tmp/rel-$1.out" want="$3" sha="${4-$SHA_OK}" wantsha="${5-${4-$SHA_OK}}"
   mkdir -p "$d"
   : >"$out"
   if (cd "$d" && PATH="$tmp/ghbin:$PATH" FAKE_GH_LOG="$d.log" FAKE_REFS="$2" FAKE_UNREACHABLE="${FAKE_UNREACHABLE:-}" FAKE_GH_FAIL="${FAKE_GH_FAIL:-}" \
     FAKE_MAIN="${FAKE_MAIN:-$sha}" FAKE_MAIN_STATUS="${FAKE_MAIN_STATUS:-}" GITHUB_EVENT_NAME="${EVENT:-push}" \
-    GITHUB_OUTPUT="$out" GITHUB_REPOSITORY=o/r GH_TOKEN=x SITE_SHA="$sha" bash -e -c "$rel_step") >"$d.stdout" 2>&1; then
+    GITHUB_OUTPUT="$out" GITHUB_REPOSITORY=o/r GH_TOKEN=x SITE_SHA="$sha" RETRY_SLEEP=0 bash -e -c "$rel_step") >"$d.stdout" 2>&1; then
     [ "$want" != error ] || { bad "release $1: passed, want a failure"; return; }
     [ "$want" != none ] || want=""
     grep -qx "released=$want" "$out" || bad "release $1: $(grep '^released=' "$out" || echo 'no released='), want '$want': $(cat "$d.stdout")"
+    if [ "${WANT_CANDIDATES+set}" = set ]; then
+      grep -qx "candidates=$WANT_CANDIDATES" "$out" || bad "release $1: $(grep '^candidates=' "$out" || echo 'no candidates='), want '$WANT_CANDIDATES'"
+    else
+      grep -q '^candidates=' "$out" || bad "release $1: no candidates= output"
+    fi
     grep -qx "sha=$wantsha" "$out" || bad "release $1: sha output is not $wantsha: $(cat "$out")"
   else
     [ "$want" = error ] || bad "release $1 failed: $(cat "$d.stdout")"
   fi
 }
-release_case none "" none
-release_case one "refs/tags/v0.22.0" 0.22.0
-release_case highest $'refs/tags/v0.21.9\nrefs/tags/v0.21.10\nrefs/tags/v0.9.0' 0.21.10
+WANT_CANDIDATES="" release_case none "" none
+WANT_CANDIDATES="0.22.0" release_case one "refs/tags/v0.22.0" 0.22.0
+WANT_CANDIDATES="0.21.10 0.21.9 0.9.0" release_case highest $'refs/tags/v0.21.9\nrefs/tags/v0.21.10\nrefs/tags/v0.9.0' 0.21.10
 release_case major $'refs/tags/v0.22.0\nrefs/tags/v1.0.0' 1.0.0
 release_case prerelease-ignored $'refs/tags/v0.22.0-rc.1\nrefs/tags/v0.22.0' 0.22.0
 release_case only-prerelease "refs/tags/v0.22.0-rc.1" none
 release_case other-suffix $'refs/tags/v0.22.0\nrefs/tags/v0.30.0x' 0.22.0
-FAKE_UNREACHABLE="v0.23.0" release_case unreachable-skipped $'refs/tags/v0.22.0\nrefs/tags/v0.23.0' 0.22.0
-FAKE_UNREACHABLE="v0.23.0" release_case all-unreachable "refs/tags/v0.23.0" none
+WANT_CANDIDATES="0.22.0" FAKE_UNREACHABLE="v0.23.0" release_case unreachable-skipped $'refs/tags/v0.22.0\nrefs/tags/v0.23.0' 0.22.0
+WANT_CANDIDATES="" FAKE_UNREACHABLE="v0.23.0" release_case all-unreachable "refs/tags/v0.23.0" none
 FAKE_GH_FAIL=1 release_case gh-fails "refs/tags/v0.22.0" error
+WANT_CANDIDATES="0.22.0 0.21.0" release_case lower-listed $'refs/tags/v0.21.0\nrefs/tags/v0.22.0' 0.22.0
+WANT_CANDIDATES="0.22.0 0.21.0" FAKE_UNREACHABLE="v0.23.0" release_case unreachable-not-listed $'refs/tags/v0.21.0\nrefs/tags/v0.22.0\nrefs/tags/v0.23.0' 0.22.0
 release_case bad-sha "" error notasha
 [ "$fail" = 1 ] || ok "deploy-site: latest reachable release tag, main's sha, guards; build (no secrets) and deploy split"
 

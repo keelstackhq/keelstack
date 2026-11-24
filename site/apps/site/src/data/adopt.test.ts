@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vite-plus/test";
 import { docs } from "./docs";
+import { facts } from "./facts";
 import { versions } from "./versions";
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), "utf8");
@@ -30,12 +31,14 @@ describe("Adopt an existing repo", () => {
     expect(source.assess.path).toBe("hull/template/pieces/base/files/scripts/ready.mjs");
   });
 
-  it("hosts the assessment at a versioned URL with the expected sha256", () => {
-    expect(source.assess.url).toBe(`/assess/${versions.hull}.mjs`);
-    expect(sha(hosted(versions.hull))).toBe(
-      "ee7933f0c2afff2098c91a158d7ffddf6f2300d3a40e7df0391a59d11e8f7ec6",
-    );
-    expect(source.assess.sha256).toBe(sha(hosted(versions.hull)));
+  it("hosts the copied assessment at the workspace version's URL, and the shown hull's too", () => {
+    // The copy is of this commit's hull (the workspace version); the page may show an older hull.
+    const own = `v${facts.workspaceVersion}`;
+    expect(source.assess.url).toBe(`/assess/${own}.mjs`);
+    expect(source.hosted[own]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
+    expect(sha(hosted(own))).toBe(source.assess.sha256);
+    expect(Object.keys(source.hosted)).toContain(versions.hull);
+    expect(sha(hosted(versions.hull))).toBe(source.hosted[versions.hull]!.sha256);
   });
 
   it("keeps every earlier assessment served byte for byte", () => {
@@ -73,7 +76,6 @@ describe("Adopt an existing repo", () => {
       ref: "76f6ae83356ab726a816e9ee07992dd54b9a30ec",
       sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
     });
-    expect(source.hosted[versions.hull]).toEqual({ ref: source.ref, sha256: source.assess.sha256 });
     expect(source.hosted["v0.9.0"]).toEqual({
       ref: "889acba094fa1b4a7c43b7ad0bcb9fab8e642c04",
       sha256: "cfb3ee4a11d17ec817c55d73f3aaf8cbb97c40822555a75c2576b9bac3274f87",
@@ -106,17 +108,53 @@ describe("Adopt an existing repo", () => {
   });
 
   it("is the copy without its H1, after a Use Claude prompt that pins the sha256", () => {
-    expect(page.endsWith(copy.replace(/^# .*\n\n/, ""))).toBe(true);
+    // Verbatim except the hosted assess URL, its sha256 and hull tag, which render from versions.hull.
+    const shown = source.hosted[versions.hull]!.sha256;
+    const guide = copy
+      .replace(/^# .*\n\n/, "")
+      .replace(
+        /https:\/\/keelstack\.dev\/assess\/v\d+\.\d+\.\d+\.mjs/g,
+        `https://keelstack.dev/assess/${versions.hull}.mjs`,
+      )
+      .replace(/[0-9a-f]{64}(  \/tmp\/assess\.mjs)/g, `${shown}$1`)
+      .replace(
+        /(hull )v\d+\.\d+\.\d+('s `template\/pieces\/base\/files\/scripts\/ready\.mjs`)/g,
+        `$1${versions.hull}$2`,
+      );
+    expect(page.endsWith(guide)).toBe(true);
     const prompt = page.split("```text\n")[1]?.split("```")[0] ?? "";
     expect(prompt).toContain(`https://keelstack.dev/assess/${versions.hull}.mjs`);
     expect(prompt).toContain("hull.assess/1");
-    expect(prompt).toContain(`${source.assess.sha256}  /tmp/assess.mjs" | sha256sum -c`);
+    expect(prompt).toContain(
+      `${source.hosted[versions.hull]!.sha256}  /tmp/assess.mjs" | sha256sum -c`,
+    );
     expect(prompt).toContain("node /tmp/assess.mjs --assess --json");
     expect(prompt).toContain(`@keelstackhq/splice@${versions.splice} adopt`);
     expect(prompt).toContain("--dry-run --json");
     expect(prompt).toContain("--force");
     expect(prompt).not.toMatch(/latest/);
     expect(prompt).toContain("keeping an owned base file (for example ci.yml) blocks adopt");
+  });
+
+  it("names no assess tag or sha256 other than the shown hull's, in any built docs page", () => {
+    const dirs = [
+      new URL("../pages/docs/", import.meta.url),
+      new URL("../../../../agents/", import.meta.url),
+    ];
+    const files = dirs.flatMap((d) =>
+      readdirSync(d)
+        .filter((f) => f.endsWith(".md"))
+        .map((f) => new URL(f, d)),
+    );
+    for (const f of files) {
+      const text = readFileSync(f, "utf8");
+      for (const m of text.matchAll(/keelstack\.dev\/assess\/(v[\d.]+)\.mjs/g)) {
+        expect(m[1], f.pathname).toBe(versions.hull);
+      }
+      for (const m of text.matchAll(/([0-9a-f]{64})  \/tmp\/assess\.mjs/g)) {
+        expect(m[1], f.pathname).toBe(source.hosted[versions.hull]!.sha256);
+      }
+    }
   });
 
   it("says TODO(owner) is hull's marker, not a step", () => {
