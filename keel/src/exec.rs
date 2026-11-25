@@ -186,6 +186,13 @@ fn interruptible_wait(forwarded: bool) -> bool {
     !forwarded
 }
 
+/// Whether the child stopped because of an interrupt: its signal was forwarded, or it died (the
+/// terminal's Ctrl-C reaches its process group too) between two 10 ms polls, before the loop saw
+/// the interrupt. Both get the short drain grace for trailing output instead of dropping it.
+fn stopped_by_interrupt(forwarded: bool, pending: Option<i32>) -> bool {
+    forwarded || pending.is_some()
+}
+
 /// Wait for a pipe reader's EOF signal until `until`, in short slices, and stop at once when
 /// `interrupted` says so (Ctrl-C during the after-exit wait must not hold keel).
 fn wait_eof(rx: &mpsc::Receiver<()>, until: Instant, interrupted: &dyn Fn() -> bool) -> bool {
@@ -329,6 +336,7 @@ impl Runner for SystemRunner {
         // pipes: after a kill 1 s, after a forwarded signal 2 s (keel must exit soon), after a
         // normal exit `PIPE_GRACE` (what the child wrote is already in the pipes). An interrupt
         // ends the wait at once.
+        let forwarded = stopped_by_interrupt(forwarded, interrupted());
         let until = Instant::now() + pipe_grace(timed_out, forwarded);
         type Drain = (
             std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -521,6 +529,20 @@ mod tests {
         let started = Instant::now();
         let _ = wait_eof(&rx, Instant::now() + Duration::from_millis(150), &|| false);
         assert!(started.elapsed() >= Duration::from_millis(150));
+    }
+
+    #[test]
+    fn a_child_killed_between_two_polls_still_gets_the_interrupt_drain_grace() {
+        // The interrupt is pending but the loop never forwarded it (the child was already gone).
+        assert!(stopped_by_interrupt(false, Some(2)));
+        assert!(stopped_by_interrupt(true, None));
+        assert!(!stopped_by_interrupt(false, None));
+        let forwarded = stopped_by_interrupt(false, Some(2));
+        assert_eq!(pipe_grace(false, forwarded), Duration::from_secs(2));
+        assert!(
+            !interruptible_wait(forwarded),
+            "trailing output is still read"
+        );
     }
 
     #[test]
