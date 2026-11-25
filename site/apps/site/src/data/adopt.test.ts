@@ -42,7 +42,9 @@ describe("Adopt an existing repo", () => {
   });
 
   it("keeps every earlier assessment served byte for byte", () => {
-    expect(Object.keys(source.hosted).toSorted()).toEqual([
+    // Releases only add to the list (scripts/release-pr.sh adds the new one): the tags below
+    // must stay hosted, and the directory must hold exactly the tags adopt.json records.
+    const kept = [
       "v0.10.0",
       "v0.11.0",
       "v0.12.0",
@@ -56,7 +58,8 @@ describe("Adopt an existing repo", () => {
       "v0.7.0",
       "v0.8.0",
       "v0.9.0",
-    ]);
+    ];
+    expect(Object.keys(source.hosted)).toEqual(expect.arrayContaining(kept));
     const files = readdirSync(new URL("./hull/assess/", import.meta.url));
     expect(files.map((f) => f.replace(/\.mjs\.txt$/, "")).toSorted()).toEqual(
       Object.keys(source.hosted).toSorted(),

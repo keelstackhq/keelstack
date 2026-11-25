@@ -1,1 +1,0 @@
-- 2026-11-24 · catch-up · mainfix #74 (signer-ci key test), CI signer on (checks mode, gate App ci-ok mirror, pinned ruleset), setup script 0.22.1, #68 and #70 review minors · PR #77

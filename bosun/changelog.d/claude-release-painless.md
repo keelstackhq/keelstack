@@ -1,1 +1,0 @@
-- docs/releasing.md: the former per-repo flow is replaced by a pointer to the monorepo's lockstep release (root docs/releasing.md); fragments are folded by `scripts/release-pr.sh`.

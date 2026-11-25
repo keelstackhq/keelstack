@@ -4,6 +4,14 @@ All notable changes to bosun. The format follows [Keep a Changelog](https://keep
 
 ## Unreleased
 
+## 0.23.0 (2026-11-25)
+
+- bosun guard: no-regression rule — deny when the new guard or the vendored legacy judge (main's guard) denies, except three enumerated literal allows (bump-version, parse-only, pathspec-glob); differential test over every review probe.
+- bosun: the CI signer is on in keelstack (`[approvals] signer = true`, `[checks] mode = "checks"`, hoist.toml pins the gates to the gate App); `bosun gate ci-ok --pr N` (signer.yml `mirror`) posts the gate App's `bosun-ci-ok` from ci.yml's `ci-ok` job (never for a PR that changes ci.yml); in checks mode risk-check and `approve --as signer` fail closed until the ruleset pins risk-check, review-verdict and main-open to the gate App; the signer covers the trust root under quorum with owner delegation (D-027); chunk-verdict merge takes the worst of equal results (NaN confidence is 0); a verdict job list read before its record step is not cached; the setup script pins bosun 0.22.1.
+- bosun: flow v2 (D-028): `[review] verdicts_needed` (default 2) and `[review] block_on = "major" | "blocker"` (default major) set how many clean verdicts approve and which findings block; `[main_health] block = false` makes a red main warn (main-open passes with a warning; claim, wave, spawn, heal and chat answers go on); new `bosun followups add|list` collects non-blocking findings in the rolling `bosun:followups` issue.
+- bosun: `[approvals] owner_delegation = "all"` (D-027): under quorum the orchestrator signature also approves the trust root and R-weaken, with the same floor (green checks, two clean verdicts on the exact head); read at base.
+- docs/releasing.md: the former per-repo flow is replaced by a pointer to the monorepo's lockstep release (root docs/releasing.md); fragments are folded by `scripts/release-pr.sh`.
+
 ## 0.22.1 (2026-11-24)
 
 - packaging: keel-bosun's `include` now ships `channel/pieces/rust/files` (embedded by `include_str!`), so `cargo publish` verifies; CI runs `cargo package --workspace --locked` when Rust is affected. (#70)

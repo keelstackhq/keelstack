@@ -1,1 +1,0 @@
-- 2026-11-24 · owner delegation · `[approvals] owner_delegation = "all"` (D-027), on in keelstack · PR #71
