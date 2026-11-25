@@ -40,6 +40,7 @@ if [ "${RELEASE_PR_NO_BRANCH:-}" != 1 ]; then
     die "branch $branch already exists"
   fi
   orig=$(git rev-parse --abbrev-ref HEAD)
+  [ "$orig" != HEAD ] || die "HEAD is detached: check out main (or another branch) first"
   git checkout -q -b "$branch"
   # The tree was clean, so a failure before the commit is undone completely: back on the
   # original branch, the half-made release branch gone.

@@ -35,7 +35,9 @@ apps = ["keelstackhq-bosun-gate"]
 # the secret RELEASE_TAG_KEY of environment `release-tags` (default branch only, no reviewers);
 # release.yml's job `release` pushes `vX.Y.Z` and `v0` over SSH with it. The key is not in
 # `release`: that environment is the owner's tap and the registry job `publish` runs dependency
-# code there, which must never run next to the key.
+# code there, which must never run next to the key. `release-tags` has no reviewer by design:
+# it deploys from main only (a workflow change there is an owner-approved .github change) and
+# the tag job runs no dependency code; the owner's one tap is on `release`.
 tags_bypass = "deploy_key"
 tags_key_environment = "release-tags"
 # The default-branch ruleset gets the repository-admin bypass in `pull_request` mode: only the

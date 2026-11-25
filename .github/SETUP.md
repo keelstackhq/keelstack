@@ -79,7 +79,9 @@ Computer steps first, then phone steps. Typical first run:
     disable the tags ruleset (its only bypass actor is the deploy key), or to use the deploy key. The repository stays public (npm provenance). `hoist apply` updates of
     `hoist: tags` keep owner-added includes and rules (hoist reads, merges, writes);
   - environments `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default branch only,
-    no reviewers (D-022), and so does `release-tags` (the tag deploy key's environment);
+    no reviewers (D-022), and so does `release-tags` (the tag deploy key's environment: no reviewers by design, since it
+    deploys from main only, where a workflow change is an owner-approved `.github` change, and
+    the job runs no dependency code; the owner's tap is on `release`);
     environment `release`: default branch only and the owner as required reviewer (`[release]
     reviewers` in hoist.toml, D-028);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);

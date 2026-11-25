@@ -95,8 +95,18 @@ fn command(tool: Tool, dir: &Path, args: &[&str], env: &[(&str, &Secret)]) -> Co
             "HOIST_RELEASE_TOKEN",
             "HOIST_RELEASE_APP_ID",
             "HOIST_RELEASE_APP_KEY",
+            "ACTIONS_RUNTIME_TOKEN",
+            "ACTIONS_CACHE_URL",
+            "ACTIONS_RESULTS_URL",
         ] {
             cmd.env_remove(name);
+        }
+        // The id-token request pair lets a process mint an OIDC token as this workflow. hoist
+        // mints crates.io's itself, so cargo never needs it; only `npm publish` does its own
+        // trusted-publishing exchange.
+        if !(tool == Tool::Npm && args.first() == Some(&"publish")) {
+            cmd.env_remove("ACTIONS_ID_TOKEN_REQUEST_TOKEN")
+                .env_remove("ACTIONS_ID_TOKEN_REQUEST_URL");
         }
     }
     for (name, value) in env {
@@ -199,6 +209,9 @@ pub fn run_build(dir: &Path, cmd: &str) -> Result<(), HoistError> {
         "HOIST_RELEASE_APP_KEY",
         "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
         "ACTIONS_ID_TOKEN_REQUEST_URL",
+        "ACTIONS_RUNTIME_TOKEN",
+        "ACTIONS_CACHE_URL",
+        "ACTIONS_RESULTS_URL",
     ] {
         c.env_remove(name);
     }

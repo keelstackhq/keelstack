@@ -488,7 +488,8 @@ pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<R
     let gh = Http::new(Service::Github, token.clone()).verbose(verbose);
     if !dry_run_only {
         let default = default_branch(&gh, &repo, local)?;
-        // Registry-only runs publish the checked-out release tag, not GITHUB_SHA.
+        // Registry-only runs (`--only`) need not be at GITHUB_SHA: the workflow may check out
+        // another commit than the one it started on (no tag is created at it).
         preflight(dir, &default, &model, &head, only.is_none())?;
     }
     let todo: Vec<(&Package, String)> = if only.is_some() {

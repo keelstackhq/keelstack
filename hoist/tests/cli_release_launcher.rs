@@ -967,3 +967,31 @@ fn launcher_dry_run_names_the_build_on_the_first_real_publish() {
         .collect();
     assert_eq!(builds, ["@acme/tool-darwin-arm64@0.3.0"], "{v:#}");
 }
+
+#[test]
+fn only_npm_holds_a_launcher_whose_crate_is_not_on_crates_io() {
+    let p = pub_setup();
+    let api = api(&p.head, &[(TOOL_V, 404, "", &[])]);
+    let output = publish_cmd(&p, &api)
+        .args(["--only", "npm"])
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(2), "{v:#}\n{}", stderr(&output));
+    for key in [
+        "@acme/tool-linux-x64@0.3.0",
+        "@acme/tool-darwin-arm64@0.3.0",
+        "@acme/tool@0.3.0",
+    ] {
+        let it = item(&v, "npm", key);
+        assert_eq!(it["action"], "pending", "{it:#}");
+        assert!(
+            it["reason"]
+                .as_str()
+                .unwrap()
+                .contains("waits for crate tool 0.3.0"),
+            "{it:#}"
+        );
+    }
+    assert!(published_dirs(&p).is_empty());
+}

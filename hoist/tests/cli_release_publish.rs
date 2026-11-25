@@ -1597,10 +1597,29 @@ fn tools_run_without_github_tokens() {
         .env("HOIST_RELEASE_TOKEN", "rel-test-token")
         .env("HOIST_RELEASE_APP_ID", "123")
         .env("HOIST_RELEASE_APP_KEY", "app-key-test")
+        .env("ACTIONS_RUNTIME_TOKEN", "runtime-test")
+        .env("ACTIONS_CACHE_URL", "http://cache.invalid/")
+        .env("ACTIONS_RESULTS_URL", "http://results.invalid/")
         .output()
         .unwrap();
     let v = json(&output);
     assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    // The Actions runtime and cache credentials reach no tool; the id-token request vars reach
+    // only `npm publish` (npm does the trusted-publishing exchange itself), never cargo or
+    // another npm command.
+    for tool in ["npm", "cargo"] {
+        for l in tool_log(&env, tool) {
+            for gone in [
+                "ACTIONS_RUNTIME_TOKEN",
+                "ACTIONS_CACHE_URL",
+                "ACTIONS_RESULTS_URL",
+            ] {
+                assert!(!l.contains(gone), "{tool}: {l}");
+            }
+            let id = l.contains("ACTIONS_ID_TOKEN_REQUEST");
+            assert_eq!(id, tool == "npm" && l.starts_with("publish"), "{tool}: {l}");
+        }
+    }
     for tool in ["npm", "cargo"] {
         let log = tool_log(&env, tool);
         assert!(

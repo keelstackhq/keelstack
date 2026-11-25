@@ -73,6 +73,8 @@ pub struct DesiredTagRuleset {
     pub bypass: crate::config::TagsBypass,
     /// The environment the release-tags deploy key's secret goes to (`[github] tags_key_environment`, else `[release] environment`).
     pub key_env: String,
+    /// `[release] environment`: where an earlier hoist sealed the key.
+    pub release_env: String,
 }
 
 impl DesiredTagRuleset {
@@ -703,6 +705,7 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
                 .tags_key_environment
                 .clone()
                 .unwrap_or_else(|| root.release.environment.clone()),
+            release_env: root.release.environment.clone(),
         }),
         actions_permissions: pick(
             &raw,

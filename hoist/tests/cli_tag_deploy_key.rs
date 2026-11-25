@@ -363,29 +363,25 @@ fn an_existing_key_and_secret_are_kept_on_a_rerun() {
 }
 
 #[test]
-fn a_key_without_its_secret_or_a_secret_without_its_key_is_drift() {
+fn a_secret_without_its_key_is_drift() {
     let (_sk, key) = keypair();
     let dir = repo(TOML);
-    for (keys, secrets, says) in [
-        (format!("[{OURS}]"), SECRET_NONE, "delete the deploy key"),
-        ("[]".to_string(), SECRET_THERE, "delete the secret"),
-    ] {
-        let api = Routes::fresh(&key)
-            .set(KEYS, 200, &keys)
-            .set(ENV_SECRETS, 200, secrets)
-            .set(
-                "GET /repos/acme/x/rulesets/12",
-                200,
-                &tags(DEPLOY_KEY_ACTOR),
-            )
-            .start();
-        let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
-        let k = item(&plan, "tag_deploy_key", "hoist: release tags");
-        assert_eq!(k["action"], "drift", "{k}");
-        assert!(k["reason"].as_str().unwrap().contains(says), "{k}");
-        run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
-        assert!(writes(&api).is_empty(), "never guesses: {:?}", writes(&api));
-    }
+    let (keys, secrets, says) = ("[]".to_string(), SECRET_THERE, "delete the secret");
+    let api = Routes::fresh(&key)
+        .set(KEYS, 200, &keys)
+        .set(ENV_SECRETS, 200, secrets)
+        .set(
+            "GET /repos/acme/x/rulesets/12",
+            200,
+            &tags(DEPLOY_KEY_ACTOR),
+        )
+        .start();
+    let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
+    let k = item(&plan, "tag_deploy_key", "hoist: release tags");
+    assert_eq!(k["action"], "drift", "{k}");
+    assert!(k["reason"].as_str().unwrap().contains(says), "{k}");
+    run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    assert!(writes(&api).is_empty(), "never guesses: {:?}", writes(&api));
 }
 
 #[test]
@@ -689,6 +685,72 @@ fn a_failed_write_after_the_policy_step_stops_and_the_tag_items_stay_pending() {
     );
 }
 
+/// The migration: the key exists and its secret sits in `release`; the key now belongs in
+/// `release-tags`. The plan says `update` (not drift) and `apply` re-keys.
+#[test]
+fn a_key_whose_secret_is_in_another_environment_is_re_keyed_by_apply() {
+    let (_sk, key) = keypair();
+    let old = OURS.replace("\"id\":77", "\"id\":55");
+    let tags_env = "/repos/acme/x/environments/release-tags";
+    let api = Routes::fresh(&key)
+        .set(
+            "GET /repos/acme/x/environments",
+            200,
+            r#"{"total_count":2,"environments":[{"name":"release"},{"name":"release-tags"}]}"#,
+        )
+        .set(KEYS, 200, &format!("[{old}]"))
+        .set(ENV_SECRETS, 200, SECRET_THERE)
+        .set(&format!("GET {tags_env}/secrets"), 200, SECRET_NONE)
+        .set(&format!("GET {tags_env}/secrets/public-key"), 200, &key)
+        .set(
+            &format!("PUT {tags_env}/secrets/RELEASE_TAG_KEY"),
+            201,
+            "{}",
+        )
+        .set("DELETE /repos/acme/x/keys/55", 204, "")
+        .set(
+            "DELETE /repos/acme/x/environments/release/secrets/RELEASE_TAG_KEY",
+            204,
+            "",
+        )
+        .start();
+    let dir = repo(
+        "[github]\ntags_bypass = \"deploy_key\"\ntags_key_environment = \"release-tags\"\n\n[github.environments.release-tags]\n\n[github.tag_ruleset]\npatterns = [\"v*\"]\n",
+    );
+    let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
+    let k = item(&plan, "tag_deploy_key", "hoist: release tags");
+    assert_eq!(k["action"], "update", "{k}");
+    assert!(k["reason"].as_str().unwrap().contains("re-key"), "{k}");
+    run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let w = writes(&api);
+    let pos = |s: &str| {
+        w.iter()
+            .position(|x| x == s)
+            .unwrap_or_else(|| panic!("{s}: {w:?}"))
+    };
+    let put = pos(&format!("PUT {tags_env}/secrets/RELEASE_TAG_KEY"));
+    assert!(pos(POST_KEY) < put, "{w:?}");
+    assert!(
+        put < pos("DELETE /repos/acme/x/keys/55"),
+        "the old key goes last: {w:?}"
+    );
+    pos("DELETE /repos/acme/x/environments/release/secrets/RELEASE_TAG_KEY");
+}
+
+#[test]
+fn tags_key_environment_must_be_declared() {
+    let api = FakeApi::start(&[]);
+    let dir = repo(
+        "[github]\ntags_bypass = \"deploy_key\"\ntags_key_environment = \"nope\"\n\n[github.tag_ruleset]\npatterns = [\"v*\"]\n",
+    );
+    let out = run(&api, dir.path(), &["plan", "--area", "github"], 3);
+    assert!(
+        out.stderr.contains("tags_key_environment") && out.stderr.contains("nope"),
+        "{}",
+        out.stderr
+    );
+}
+
 /// `[github] tags_key_environment`: the key's secret lives in that environment, not in the
 /// release one (the job that tags holds no registry credentials).
 #[test]
@@ -712,7 +774,7 @@ fn tags_key_environment_moves_the_secret_out_of_the_release_environment() {
         )
         .start();
     let dir = repo(
-        "[github]\ntags_bypass = \"deploy_key\"\ntags_key_environment = \"release-tags\"\n\n[github.tag_ruleset]\npatterns = [\"v*\"]\n",
+        "[github]\ntags_bypass = \"deploy_key\"\ntags_key_environment = \"release-tags\"\n\n[github.environments.release-tags]\n\n[github.tag_ruleset]\npatterns = [\"v*\"]\n",
     );
     let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
     let k = item(&plan, "tag_deploy_key", "hoist: release tags");

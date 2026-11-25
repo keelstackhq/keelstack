@@ -213,50 +213,52 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
     };
     let flags = &c.flags;
     // Provenance names the repository the workflow runs in; package.json must say the same.
-    // The file is put back after the publish, so the checkout is left as it was.
+    // The file is put back after the publish, and the copied binary removed, whether npm
+    // succeeded or not, so the checkout is left as it was (a failed restore is an error).
     let manifest = pkg_dir.join("package.json");
     let original = if flags.provenance {
         std::fs::read(&manifest).ok()
     } else {
         None
     };
-    let restore = |original: &Option<Vec<u8>>| {
-        if let Some(bytes) = original {
-            let _ = std::fs::write(&manifest, bytes);
+    let published: Result<String, HoistError> = (|| {
+        if flags.provenance {
+            let url = format!(
+                "repository.url=git+https://github.com/{}.git",
+                flags.repository
+            );
+            tool(
+                Tool::Npm,
+                &pkg_dir,
+                &["pkg", "set", "repository.type=git", &url],
+                &[],
+            )?;
+            if !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
+                let d = format!("repository.directory={}", pkg.dir.to_string_lossy());
+                tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[])?;
+            }
         }
+        let mut args = vec!["publish", "--access", access(pkg)];
+        if flags.provenance {
+            args.push("--provenance");
+        }
+        if let Some(t) = &flags.tag {
+            args.extend(["--tag", t]);
+        }
+        tool(Tool::Npm, &pkg_dir, &args, &[])
+    })();
+    let restored = match &original {
+        Some(bytes) => std::fs::write(&manifest, bytes).map_err(|e| {
+            HoistError::Io(format!(
+                "could not restore {}: {e}; restore it with git",
+                manifest.display()
+            ))
+        }),
+        None => Ok(()),
     };
-    if flags.provenance {
-        let url = format!(
-            "repository.url=git+https://github.com/{}.git",
-            flags.repository
-        );
-        let mut set = tool(
-            Tool::Npm,
-            &pkg_dir,
-            &["pkg", "set", "repository.type=git", &url],
-            &[],
-        );
-        if set.is_ok() && !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
-            let d = format!("repository.directory={}", pkg.dir.to_string_lossy());
-            set = tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[]);
-        }
-        if let Err(e) = set {
-            restore(&original);
-            return Err(e);
-        }
-    }
-    let mut args = vec!["publish", "--access", access(pkg)];
-    if flags.provenance {
-        args.push("--provenance");
-    }
-    if let Some(t) = &flags.tag {
-        args.extend(["--tag", t]);
-    }
-    let published = tool(Tool::Npm, &pkg_dir, &args, &[]);
-    restore(&original);
-    // The binary leaves the checkout again, whether npm succeeded or not.
     let removed = copied.map_or(Ok(()), CopiedBin::remove);
     published?;
+    restored?;
     removed?;
     let note = match drop_next_tag(&pkg_dir, pkg) {
         Ok(true) => "; removed the `next` dist-tag".to_string(),

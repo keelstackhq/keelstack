@@ -33,7 +33,8 @@ pub(super) fn require_actions() -> Result<(), HoistError> {
 }
 
 /// The other preflight conditions (Global Constraints): on the default branch, at
-/// `GITHUB_SHA`, in the release environment. Sends no request.
+/// `GITHUB_SHA` (unless `check_sha` is false, for `--only`), in the release environment.
+/// Sends no request.
 pub(super) fn preflight(
     dir: &Path,
     default: &str,

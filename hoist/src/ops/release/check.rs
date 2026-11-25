@@ -11,6 +11,7 @@ use crate::error::HoistError;
 use crate::github::Fetch;
 use crate::http::{Http, Service};
 use crate::release::registry::{latest_version, version_exists};
+use crate::release::semver::Version;
 use crate::release::{Package, PkgKind};
 use crate::report::{Action, HumanStep, Item, Report};
 use std::path::Path;
@@ -21,7 +22,12 @@ fn item(kind: &str, p: &Package, action: Action, reason: String) -> Item {
     Item {
         area: "release".to_string(),
         kind: kind.to_string(),
-        key: format!("{}@{}", p.name, p.version.value),
+        // A `[registry.*]` package has no version here.
+        key: if p.version.value.is_empty() {
+            p.name.clone()
+        } else {
+            format!("{}@{}", p.name, p.version.value)
+        },
         action,
         reason,
         source: p.version.source.clone(),
@@ -70,7 +76,12 @@ pub fn release_check(dir: &Path, verbose: bool) -> Result<Report, HoistError> {
         let want = &p.version.value;
         let reg = registry(p);
         let latest = latest_version(http, p)?;
-        let has = version_exists(http, p, want)?;
+        // A `[registry.*]` package is versioned by its own workflow: only its presence counts.
+        let has = if want.is_empty() {
+            Fetch::Got(true)
+        } else {
+            version_exists(http, p, want)?
+        };
         match (latest, has) {
             (Fetch::Got(None), _) => {
                 items.push(item(
@@ -86,14 +97,35 @@ pub fn release_check(dir: &Path, verbose: bool) -> Result<Report, HoistError> {
                 "registry",
                 p,
                 Action::Ok,
-                format!("on {reg} at {want} (newest {latest})"),
+                if want.is_empty() {
+                    format!("on {reg} (newest {latest}); published by its own workflow")
+                } else {
+                    format!("on {reg} at {want} (newest {latest})")
+                },
             )),
-            (Fetch::Got(Some(latest)), Fetch::Got(false)) => items.push(item(
-                "registry",
-                p,
-                Action::Update,
-                format!("newest on {reg} is {latest}, the workspace is at {want}: the release workflow publishes it"),
-            )),
+            (Fetch::Got(Some(latest)), Fetch::Got(false)) => {
+                // The registry ahead of the workspace is no pending release: say so.
+                let ahead = matches!(
+                    (Version::parse(&latest), Version::parse(want)),
+                    (Ok(l), Ok(w)) if l > w
+                );
+                let (action, why) = if ahead {
+                    (
+                        Action::Drift,
+                        format!(
+                            "{reg} has {latest}, newer than the workspace's {want}: the workspace version is behind the registry"
+                        ),
+                    )
+                } else {
+                    (
+                        Action::Update,
+                        format!(
+                            "newest on {reg} is {latest}, the workspace is at {want}: the release workflow publishes it"
+                        ),
+                    )
+                };
+                items.push(item("registry", p, action, why));
+            }
             (Fetch::Unknown(why), _) | (_, Fetch::Unknown(why)) => {
                 items.push(item(
                     "registry",

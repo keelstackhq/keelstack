@@ -20,17 +20,26 @@ workflow (trusted publishing).
 2. Open the PR, get it through CI and review, merge it. The merge changes the workspace version,
    which starts `release.yml` (`plan` reads the version, then dispatches the real run on `main`).
 3. Tap `release` once in the run's "Review deployments" box (the owner, D-028: the owner taps
-   `release` once per release). Only job `publish` uses that environment: after the tap it
-   publishes the crates and every npm package (trusted publishing, no token). Job `release`
-   then tags, publishes the GitHub release with every binary and moves the major tag (`v0`);
-   it runs in environment `release-tags` (no reviewers, it holds the tag deploy key and runs
-   no dependency code), so it asks for nothing. One release, one tap.
+   `release` once per release). The run is three stages. Job `draft` (no environment, no
+   dependency code) makes the draft GitHub release with every asset and `SHA256SUMS`. Job
+   `publish` is the only job in environment `release`: after the tap it publishes the crates and
+   every npm package (trusted publishing, no token) from the draft's assets, every file checked
+   against `SHA256SUMS`. Job `release` then makes the release commit from the draft's bundle,
+   pushes the tag, publishes the draft and moves the major tag (`v0`); it runs in environment
+   `release-tags` (default branch only, no reviewers by design: it holds the tag deploy key, runs
+   no dependency code, and a workflow on main is already an owner-approved `.github` change), so
+   it asks for nothing. One release, one tap.
 4. The run builds five targets first (no tap needed). `hoist release check` lists, per package,
    whether it is on its registry at the workspace version.
 5. Pin the new bosun in `.bosun/version` and the setup script when needed (`bosun/docs/releasing.md`).
 
 A failed run is re-run the same way (`gh workflow run release.yml --ref main -f sha=<merge commit>
--f version=X.Y.Z`): the tag, release, crates and npm skip what exists.
+-f version=X.Y.Z`): the run builds again, but if the draft release of the tag exists, the draft
+is reused as it is and the new build output is not used at all: the registries and the tag get the
+bytes the draft has (so npm and the GitHub release never differ), and crates, npm, the tag and the
+release skip what exists. To start over with new binaries, delete the draft first (`gh release
+delete vX.Y.Z`) before any registry was published from it; after a publish the version on the
+registries is final, so cut the next version instead.
 
 ### A new package or crate
 

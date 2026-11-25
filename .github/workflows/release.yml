@@ -6,6 +6,8 @@ name: release
 #   dispatch  a PR-triggered run starts the real release as workflow_dispatch on main (see below)
 #   build     bosun splice hoist berth keel hoard for 5 targets, one matrix row per target
 #   action    hoard's GitHub Action: bake the tarball checksums, rebuild hoard/action/dist
+#   draft     the draft GitHub release with every asset (SHA256SUMS), made once; no environment, no
+#             dependency code; its assets are what publish and release use, on a retry too
 #   publish   environment `release` (the owner's one tap): crates.io and npm through
 #             `hoist release publish --only`, trusted publishing; contents: read, no tag key
 #   release   environment `release-tags` (no reviewers): release commit (baked hoard checksums +
@@ -53,11 +55,11 @@ name: release
 #     Consumers: hoist/release/action.yml (hoist-<target> + SHA256SUMS), hoard/action/src/binary.ts,
 #     hoard/scripts/install.sh, hoard/circleci/hoard.yml and its hull copy
 #     hull/template/pieces/circleci/files/.circleci/src/commands/hoard.yml (hoard-<target>.tar.gz,
-#     checksums from hoard/action/src/checksums.generated.ts at the tag), the npm job below.
+#     checksums from hoard/action/src/checksums.generated.ts at the tag), job `publish` below.
 #   - Versions <= 0.21.0 are the old per-tool repositories' releases: the installers route them
 #     there, and `plan` refuses to release such a version from here.
-#   - The package.json `repository` of every launcher: this workflow rewrites
-#     repository.url/directory when it publishes (npm provenance requires this repository).
+#   - The package.json `repository` of every package: `hoist release publish --provenance`
+#     sets it to this repository for the publish and restores the file (npm provenance needs it).
 
 on:
   pull_request:
@@ -266,8 +268,13 @@ jobs:
       sha_x86_64_apple_darwin: ${{ steps.stage.outputs.sha_x86_64_apple_darwin }}
       sha_x86_64_pc_windows_msvc: ${{ steps.stage.outputs.sha_x86_64_pc_windows_msvc }}
       sha_x86_64_unknown_linux_musl: ${{ steps.stage.outputs.sha_x86_64_unknown_linux_musl }}
-      # The hoist binary job `publish` runs (the linux x64 leg only): checked against this.
-      hoist_sha_x86_64_unknown_linux_musl: ${{ steps.stage.outputs.hoist_sha_x86_64_unknown_linux_musl }}
+      # sha256 of each leg's MANIFEST (the digest of every asset it made), so job `draft` checks
+      # every downloaded file against the leg that built it, not only hoard's tarball.
+      manifest_sha_aarch64_apple_darwin: ${{ steps.stage.outputs.manifest_sha_aarch64_apple_darwin }}
+      manifest_sha_aarch64_unknown_linux_musl: ${{ steps.stage.outputs.manifest_sha_aarch64_unknown_linux_musl }}
+      manifest_sha_x86_64_apple_darwin: ${{ steps.stage.outputs.manifest_sha_x86_64_apple_darwin }}
+      manifest_sha_x86_64_pc_windows_msvc: ${{ steps.stage.outputs.manifest_sha_x86_64_pc_windows_msvc }}
+      manifest_sha_x86_64_unknown_linux_musl: ${{ steps.stage.outputs.manifest_sha_x86_64_unknown_linux_musl }}
     env:
       TARGET: ${{ matrix.target }}
       VERSION: ${{ needs.plan.outputs.version }}
@@ -385,10 +392,12 @@ jobs:
           sum=$( (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f") | cut -d' ' -f1)
           echo "$sum  $f"
           echo "sha_${TARGET//-/_}=$sum" >>"$GITHUB_OUTPUT"
-          if [ "$TARGET" = x86_64-unknown-linux-musl ]; then
-            f="out/hoist-$TARGET"
-            echo "hoist_sha_${TARGET//-/_}=$(sha256sum "$f" | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
-          fi
+          # The manifest: sha256 of every file this leg made, in the artifact next to them.
+          (cd out && for f in $(ls | LC_ALL=C sort); do (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"); done) >"MANIFEST-$TARGET.txt"
+          cat "MANIFEST-$TARGET.txt"
+          msum=$( (sha256sum "MANIFEST-$TARGET.txt" 2>/dev/null || shasum -a 256 "MANIFEST-$TARGET.txt") | cut -d' ' -f1)
+          echo "manifest_sha_${TARGET//-/_}=$msum" >>"$GITHUB_OUTPUT"
+          mv "MANIFEST-$TARGET.txt" out/
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ matrix.target }}
@@ -397,7 +406,7 @@ jobs:
           retention-days: 7
 
   # Runs dependency code (pnpm install, build, test) with a read-only token and no stored
-  # credentials. `release` gets only its result, as an artifact.
+  # credentials. `draft` gets only its result, as an artifact.
   action:
     needs: [plan, build]
     runs-on: ubuntu-latest
@@ -457,11 +466,193 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The assets of one release, made once. This job builds nothing and runs no dependency code:
+  # it takes this run's build artifacts (every file checked against the digest of the build leg
+  # that made it), writes SHA256SUMS, and creates the DRAFT GitHub release vX.Y.Z with them,
+  # plus the hoard action bundle (action-bundle.tar.gz) the release commit is made of. If a
+  # draft of that tag already exists (an earlier run got this far), the draft is reused as it
+  # is and this run's build output is not used at all. Either way the draft's assets are then
+  # downloaded and handed to the other jobs as the artifact `draft-assets`: the registries
+  # (job `publish`) and the tag (job `release`) get the same bytes, on a retry too.
+  draft:
+    needs: [plan, build, action]
+    if: >-
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
+      (needs.plan.outputs.released == 'true' ||
+      (needs.build.result == 'success' && needs.action.result == 'success'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: release-draft-${{ needs.plan.outputs.version }}
+      cancel-in-progress: false
+    permissions:
+      contents: write
+    outputs:
+      sums_sha: ${{ steps.assets.outputs.sums_sha }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      SHA: ${{ needs.plan.outputs.sha }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.released != 'true'
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.plan.outputs.released != 'true'
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.released != 'true'
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.released != 'true'
+        with:
+          name: action-bundle
+          path: release-bundle
+      - name: Check the assets and the action bundle
+        if: needs.plan.outputs.released != 'true'
+        env:
+          BUILD_OUTPUTS: ${{ toJSON(needs.build.outputs) }}
+        run: |
+          set -euo pipefail
+          # Exactly the 30 assets, nothing else.
+          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            ext=""; arch=tar.gz
+            case "$tgt" in *-windows-*) ext=.exe; arch=zip ;; esac
+            for t in bosun hoist berth keel; do echo "$t-$tgt$ext"; done
+            echo "splice-$tgt.$arch"
+            echo "hoard-$tgt.tar.gz"
+          done | LC_ALL=C sort >expected.txt
+          find release -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >actual.txt
+          # Every file against the build leg that made it: the leg's manifest (sha256 of each of
+          # its files) must match the digest the leg exported, and the files the manifest.
+          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            want=$(printf '%s' "$BUILD_OUTPUTS" | jq -r --arg k "manifest_sha_${tgt//-/_}" '.[$k] // ""')
+            got=$(sha256sum "release/MANIFEST-$tgt.txt" | cut -d' ' -f1)
+            if [ -z "$want" ] || [ "$want" != "$got" ]; then
+              echo "::error::MANIFEST-$tgt.txt has sha256 $got, the build leg exported '${want:-nothing}'"
+              exit 1
+            fi
+            (cd release && sha256sum -c "MANIFEST-$tgt.txt")
+          done
+          mkdir manifests
+          mv release/MANIFEST-*.txt manifests/
+          find release -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >actual.txt
+          diff expected.txt actual.txt || { echo "::error::the build artifacts are not the expected assets"; exit 1; }
+          # The files of every manifest are exactly this target's assets: 6 each.
+          [ "$(cat manifests/*.txt | wc -l)" -eq 30 ] || { echo "::error::the manifests do not list 30 files"; exit 1; }
+          # Trust nothing from the action job unchecked: the tarballs are the ones the build legs
+          # hashed, the checksums equal the ones computed here, and the bundle holds only regular
+          # files in two places.
+          mkdir dist-assets
+          cp release/hoard-*.tar.gz dist-assets/
+          bash hoard/scripts/verify-build-shas.sh dist-assets
+          if [ "$(find release-bundle -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ] \
+            || [ -n "$(find release-bundle ! -type f ! -type d)" ]; then
+            echo "::error::action-bundle must hold only dist/ and checksums.generated.ts, as regular files"
+            exit 1
+          fi
+          node hoard/scripts/write-checksums.mjs dist-assets "$VERSION"
+          diff hoard/action/src/checksums.generated.ts release-bundle/checksums.generated.ts \
+            || { echo "::error::action-bundle checksums differ from the release assets"; exit 1; }
+          size=$(du -sb release-bundle/dist | cut -f1)
+          echo "hoard/action/dist is $size bytes (limit 204800)"
+          [ "$size" -le 204800 ] || { echo "::error::hoard/action/dist is $size bytes, over the 200 KB limit"; exit 1; }
+          rm -rf hoard/action/dist
+          cp -r release-bundle/dist hoard/action/dist
+      - name: SHA256SUMS and release notes
+        if: needs.plan.outputs.released != 'true'
+        run: |
+          set -euo pipefail
+          # The hoard action bundle the release commit is made of travels with the draft, so a
+          # retry makes the release commit from the draft's bundle, not from a new build.
+          tar -C release-bundle -czf release/action-bundle.tar.gz dist checksums.generated.ts
+          # <hex>  <file>, one line per asset: what hoist's release action and the READMEs expect.
+          (cd release && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >../SHA256SUMS)
+          mv SHA256SUMS release/SHA256SUMS
+          cat release/SHA256SUMS
+          # The notes: the CHANGELOG section of each folder that has one, then GitHub's generated
+          # notes (appended by `gh release create --generate-notes`).
+          : >notes.md
+          for f in bosun hull hoist hoard; do
+            [ -f "$f/CHANGELOG.md" ] || continue
+            sec=$(awk -v v="$VERSION" '
+              /^## / { if (on) exit; h = substr($0, 4); gsub(/^\[/, "", h); gsub(/^v/, "", h)
+                       on = (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/); next }
+              on' "$f/CHANGELOG.md" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
+            if [ -n "$(printf '%s' "$sec" | tr -d '[:space:]')" ]; then
+              printf '### %s\n\n%s\n\n' "$f" "$sec" >>notes.md
+            fi
+          done
+          # The start of GitHub's generated notes: the highest stable vX.Y.Z below this one.
+          prev=$({ git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$TAG" || true; echo "$TAG"; } \
+            | sort -V | awk -v t="$TAG" '$0 == t { print p; exit } { p = $0 }')
+          echo "previous release: ${prev:-none}"
+          echo "PREVIOUS=$prev" >>"$GITHUB_ENV"
+      - name: The draft release (created, or an earlier run's reused)
+        if: needs.plan.outputs.released != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # Drafts included (the tag endpoint does not list them): "<id> <draft|published>".
+          found=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(if .draft then \"draft\" else \"published\" end)\"" | head -n1)
+          state=${found#* }
+          if [ "$state" = published ]; then
+            echo "::error::release $TAG is published but its tag is missing; fix it by hand (the release is immutable)"
+            exit 1
+          fi
+          if [ "$state" = draft ]; then
+            echo "::notice::a draft of $TAG exists (an earlier run's): it is reused as it is, this run's build output is not used"
+            exit 0
+          fi
+          start=()
+          if [ -n "$PREVIOUS" ]; then start=(--notes-start-tag "$PREVIOUS"); fi
+          # A draft creates no tag (GitHub creates a missing tag only when a release is
+          # published); --target pins the commit its notes are generated from.
+          gh release create "$TAG" --draft --target "$SHA" --title "$TAG" \
+            --notes-file notes.md --generate-notes "${start[@]}" release/*
+      - name: The assets of the release, checked
+        id: assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          found=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -n1)
+          [ -n "$found" ] || { echo "::error::no release (draft or published) for $TAG: delete the tag and run again"; exit 1; }
+          mkdir draft-assets
+          gh api "repos/$GH_REPO/releases/$found/assets" --paginate --jq '.[] | select(.state == "uploaded") | "\(.id) \(.name)"' |
+            while read -r id name; do
+              case "$name" in */* | .*) echo "::error::unexpected asset name $name"; exit 1 ;; esac
+              gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$id" >"draft-assets/$name"
+            done
+          # Every file is listed in SHA256SUMS and matches it, and SHA256SUMS lists no other.
+          (cd draft-assets && sha256sum -c SHA256SUMS)
+          [ "$(find draft-assets -type f | wc -l)" -eq "$(( $(wc -l <draft-assets/SHA256SUMS) + 1 ))" ] \
+            || { echo "::error::the release has files SHA256SUMS does not list"; ls draft-assets; exit 1; }
+          echo "sums_sha=$(sha256sum draft-assets/SHA256SUMS | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: draft-assets
+          path: draft-assets
+          if-no-files-found: error
+          retention-days: 7
+
   # The registries, in the one job that needs the owner's tap (environment `release`, the name
   # the trusted publishers on crates.io and npm pin, with this workflow file). It runs
   # `hoist release publish --only <registry>`, the same command a consumer repo's release
-  # workflow runs, with the hoist binary this run built (or, on a re-run, the release's, checked
-  # against SHA256SUMS). Dependency code runs here (cargo verifies a crate by building it, npm
+  # workflow runs, with the hoist binary and every asset of the draft release (job `draft`, checked against
+  # SHA256SUMS). Dependency code runs here (cargo verifies a crate by building it, npm
   # runs its scripts), so the job holds `contents: read` and `id-token: write` and nothing
   # else: no deploy key, no write token, and hoist removes GITHUB_TOKEN and GH_TOKEN from the
   # environment of every cargo and npm process it starts. The tag deploy key lives in the
@@ -472,11 +663,10 @@ jobs:
   # the major tag. `hoist release bootstrap` (local, owner) publishes it and registers the npm
   # trusted publisher; the crates.io trusted publisher is added by hand (docs/releasing.md).
   publish:
-    needs: [plan, build, action]
+    needs: [plan, draft]
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      (needs.plan.outputs.released == 'true' ||
-      (needs.build.result == 'success' && needs.action.result == 'success'))
+      needs.draft.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     # One run at a time per version for this job (see the top-level concurrency).
@@ -520,37 +710,23 @@ jobs:
             echo "::error::npm provenance needs a public repository: make $GH_REPO public, then re-run"
             exit 1
           fi
-      # The binaries in the npm packages and the hoist that publishes them: this run's build
-      # artifacts, or on a re-run (nothing was built) the release's assets.
-      - name: The build artifacts
-        if: needs.plan.outputs.released != 'true'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      # The binaries in the npm packages and the hoist that publishes them are the draft's
+      # assets, as job `draft` downloaded them: never this run's own build output, so a retry
+      # publishes the bytes the release has. Every file is checked against SHA256SUMS (all of
+      # them listed, none missing), and SHA256SUMS against the digest `draft` exported.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: release-*
+          name: draft-assets
           path: assets
-          merge-multiple: true
-      - name: The release assets (re-run)
-        if: needs.plan.outputs.released == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir assets
-          gh release download "$TAG" --dir assets --pattern SHA256SUMS \
-            --pattern 'bosun-*' --pattern 'hoist-*' --pattern 'berth-*' --pattern 'keel-*' --pattern 'splice-*'
-          (cd assets && sha256sum -c --ignore-missing SHA256SUMS)
       - name: Install hoist
         env:
-          BUILT_SHA: ${{ needs.build.outputs.hoist_sha_x86_64_unknown_linux_musl }}
-          RELEASED: ${{ needs.plan.outputs.released }}
+          SUMS_SHA: ${{ needs.draft.outputs.sums_sha }}
         run: |
           set -euo pipefail
-          # A first run checks the artifact against the digest its build leg computed; a re-run
-          # has checked every asset against SHA256SUMS above.
-          if [ "$RELEASED" != true ]; then
-            [ -n "$BUILT_SHA" ] || { echo "::error::the build job exported no sha256 for hoist"; exit 1; }
-            echo "$BUILT_SHA  assets/hoist-x86_64-unknown-linux-musl" | sha256sum -c -
-          fi
+          [ -n "$SUMS_SHA" ] && echo "$SUMS_SHA  assets/SHA256SUMS" | sha256sum -c -
+          (cd assets && sha256sum -c SHA256SUMS)
+          [ "$(find assets -type f | wc -l)" -eq "$(( $(wc -l <assets/SHA256SUMS) + 1 ))" ] \
+            || { echo "::error::assets has files SHA256SUMS does not list"; ls assets; exit 1; }
           [ "$(find assets -type f \( -name 'bosun-*' -o -name 'hoist-*' -o -name 'berth-*' -o -name 'keel-*' -o -name 'splice-*' \) | wc -l)" -eq 25 ] \
             || { echo "::error::expected the 25 tool assets"; ls assets; exit 1; }
           mkdir -p "$RUNNER_TEMP/bin"
@@ -625,19 +801,18 @@ jobs:
   # pushed to (no branch-protection bypass), and merges meanwhile are harmless. It holds the baked
   # hoard checksums and the rebuilt hoard/action/dist, so `uses: keelstackhq/keelstack/hoard@vX.Y.Z`
   # (and @v<major>) runs a dist that only accepts these tarballs. Order: draft release with every
-  # asset, then the tag, then publish. It runs after `publish` (the registries; a failure there
+  # asset (job `draft`), the registries (job `publish`), then here the tag and the publishing
+  # of the draft. It runs after `publish` (a failure there
   # stops the release before any tag exists) and holds the tag deploy key in its own environment
   # (`release-tags`: no required reviewers, default branch only), so no code of a dependency
   # (cargo, npm, a build script) ever runs next to that key: this job runs only repo scripts,
   # git, gh and node scripts of the checkout. A re-run finishes what a failed run left: it never
   # replaces published assets (the baked checksums would no longer match them).
   release:
-    needs: [plan, build, action, publish]
+    needs: [plan, draft, publish]
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      needs.publish.result == 'success' &&
-      (needs.plan.outputs.released == 'true' ||
-      (needs.build.result == 'success' && needs.action.result == 'success'))
+      needs.draft.result == 'success' && needs.publish.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     # One run at a time per version for this job (see the top-level concurrency).
@@ -656,8 +831,10 @@ jobs:
       SHA: ${{ needs.plan.outputs.sha }}
       GH_REPO: ${{ github.repository }}
     steps:
-      # No stored credentials, and no dependency code runs in this job: tags are pushed over SSH
-      # with the deploy key (RELEASE_TAG_KEY), which only the push steps load into ssh-agent.
+      # No stored credentials, and no dependency code runs in this job: it runs repo scripts,
+      # git, gh and node scripts of the checkout (hoard/scripts/write-checksums.mjs). Tags are
+      # pushed over SSH with the deploy key (RELEASE_TAG_KEY), which only the push steps load
+      # into ssh-agent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: needs.plan.outputs.released != 'true'
         with:
@@ -670,79 +847,40 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.plan.outputs.released != 'true'
         with:
-          pattern: release-*
-          path: release
-          merge-multiple: true
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.plan.outputs.released != 'true'
-        with:
-          name: action-bundle
-          path: release-bundle
-      - name: Check the assets and the action bundle
-        if: needs.plan.outputs.released != 'true'
+          name: draft-assets
+          path: draft-assets
+      - name: The draft's assets and the action bundle
         env:
-          BUILD_OUTPUTS: ${{ toJSON(needs.build.outputs) }}
+          SUMS_SHA: ${{ needs.draft.outputs.sums_sha }}
+          RELEASED: ${{ needs.plan.outputs.released }}
         run: |
           set -euo pipefail
-          # Exactly the 30 assets, nothing else.
-          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
-            ext=""; arch=tar.gz
-            case "$tgt" in *-windows-*) ext=.exe; arch=zip ;; esac
-            for t in bosun hoist berth keel; do echo "$t-$tgt$ext"; done
-            echo "splice-$tgt.$arch"
-            echo "hoard-$tgt.tar.gz"
-          done | LC_ALL=C sort >expected.txt
-          find release -mindepth 1 -maxdepth 1 -printf '%f\n' | LC_ALL=C sort >actual.txt
-          diff expected.txt actual.txt || { echo "::error::the build artifacts are not the expected assets"; exit 1; }
-          # Trust nothing from the action job unchecked: the tarballs are the ones the build legs
-          # hashed, the checksums equal the ones computed here, and the bundle holds only regular
-          # files in two places.
-          mkdir dist-assets
-          cp release/hoard-*.tar.gz dist-assets/
-          bash hoard/scripts/verify-build-shas.sh dist-assets
+          [ -n "$SUMS_SHA" ] && echo "$SUMS_SHA  draft-assets/SHA256SUMS" | sha256sum -c -
+          (cd draft-assets && sha256sum -c SHA256SUMS)
+          [ "$(find draft-assets -type f | wc -l)" -eq "$(( $(wc -l <draft-assets/SHA256SUMS) + 1 ))" ] \
+            || { echo "::error::draft-assets has files SHA256SUMS does not list"; exit 1; }
+          { awk '{ print $2 }' draft-assets/SHA256SUMS; echo SHA256SUMS; } | LC_ALL=C sort >expected.txt
+          [ "$RELEASED" != true ] || exit 0
+          # The release commit is made of the draft's bundle: only regular files, checksums equal
+          # the ones computed from the draft's own hoard tarballs, dist within its size limit.
+          mkdir release-bundle dist-assets
+          tar -xzf draft-assets/action-bundle.tar.gz -C release-bundle
           if [ "$(find release-bundle -mindepth 1 -maxdepth 1 | wc -l)" -ne 2 ] \
             || [ -n "$(find release-bundle ! -type f ! -type d)" ]; then
-            echo "::error::action-bundle must hold only dist/ and checksums.generated.ts, as regular files"
+            echo "::error::the action bundle must hold only dist/ and checksums.generated.ts, as regular files"
             exit 1
           fi
+          cp draft-assets/hoard-*.tar.gz dist-assets/
           node hoard/scripts/write-checksums.mjs dist-assets "$VERSION"
           diff hoard/action/src/checksums.generated.ts release-bundle/checksums.generated.ts \
-            || { echo "::error::action-bundle checksums differ from the release assets"; exit 1; }
+            || { echo "::error::the action bundle's checksums differ from the draft's hoard tarballs"; exit 1; }
           size=$(du -sb release-bundle/dist | cut -f1)
-          echo "hoard/action/dist is $size bytes (limit 204800)"
           [ "$size" -le 204800 ] || { echo "::error::hoard/action/dist is $size bytes, over the 200 KB limit"; exit 1; }
           rm -rf hoard/action/dist
           cp -r release-bundle/dist hoard/action/dist
-      - name: SHA256SUMS and release notes
-        if: needs.plan.outputs.released != 'true'
-        run: |
-          set -euo pipefail
-          # <hex>  <file>, one line per asset: what hoist's release action and the READMEs expect.
-          (cd release && find . -maxdepth 1 -type f -printf '%f\n' | LC_ALL=C sort | xargs sha256sum >../SHA256SUMS)
-          mv SHA256SUMS release/SHA256SUMS
-          cat release/SHA256SUMS
-          # The notes: the CHANGELOG section of each folder that has one, then GitHub's generated
-          # notes (appended by `gh release create --generate-notes`).
-          : >notes.md
-          for f in bosun hull hoist hoard; do
-            [ -f "$f/CHANGELOG.md" ] || continue
-            sec=$(awk -v v="$VERSION" '
-              /^## / { if (on) exit; h = substr($0, 4); gsub(/^\[/, "", h); gsub(/^v/, "", h)
-                       on = (index(h, v) == 1 && substr(h, length(v) + 1, 1) !~ /[0-9A-Za-z.+-]/); next }
-              on' "$f/CHANGELOG.md" | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}')
-            if [ -n "$(printf '%s' "$sec" | tr -d '[:space:]')" ]; then
-              printf '### %s\n\n%s\n\n' "$f" "$sec" >>notes.md
-            fi
-          done
-          # The start of GitHub's generated notes: the highest stable vX.Y.Z below this one.
-          prev=$({ git tag --list 'v[0-9]*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | grep -vxF "$TAG" || true; echo "$TAG"; } \
-            | sort -V | awk -v t="$TAG" '$0 == t { print p; exit } { p = $0 }')
-          echo "previous release: ${prev:-none}"
-          echo "PREVIOUS=$prev" >>"$GITHUB_ENV"
       # The tag deploy key (the tags ruleset's only bypass actor) goes into ssh-agent for the
-      # tag step only; the agent is stopped in an always() step. Same two steps as in `major`.
+      # tag step only; the agent is stopped in an always() step. The same two steps run again for the major tag below.
       - name: Load the tag deploy key
         if: needs.plan.outputs.released != 'true'
         env:
@@ -750,7 +888,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_TAG_KEY:-}" ]; then
-            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            echo "::error::secret RELEASE_TAG_KEY of the environment release-tags is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
             exit 1
           fi
           # github.com's published ed25519 host key, checked against its published fingerprint
@@ -830,10 +968,10 @@ jobs:
             # A draft of an earlier run: its assets are the original ones. Check them against the
             # checksums baked into the tag, then publish.
             gh api "repos/$GH_REPO/releases/$rid/assets" --paginate --jq '.[] | select(.state == "uploaded") | .name' | LC_ALL=C sort >draft.txt
-            { cat expected.txt; echo SHA256SUMS; } | LC_ALL=C sort | diff - draft.txt \
+            diff expected.txt draft.txt \
               || { echo "::error::draft release $TAG lacks assets: delete the draft and the tag, then run again"; exit 1; }
             mkdir draft-hoard
-            gh release download "$TAG" --dir draft-hoard --pattern 'hoard-*.tar.gz'
+            cp draft-assets/hoard-*.tar.gz draft-hoard/
             node hoard/scripts/write-checksums.mjs draft-hoard "$VERSION" draft-checksums.ts
             git show "$at:hoard/action/src/checksums.generated.ts" | diff - draft-checksums.ts \
               || { echo "::error::the draft's hoard tarballs differ from the checksums baked into $TAG: delete the draft and the tag, then run again"; exit 1; }
@@ -843,22 +981,17 @@ jobs:
             exit 0
           fi
 
-          # No tag yet. A draft without a tag is an earlier run's leftover: replace it.
-          if [ "$rstate" = draft ]; then gh api -X DELETE "repos/$GH_REPO/releases/$rid"; fi
+          # No tag yet: the draft (job `draft`, the one the registries were published from) is
+          # what gets tagged. It is never replaced here.
           if [ "$rstate" = published ]; then
             echo "::error::release $TAG is published but its tag is missing; fix it by hand (the release is immutable)"
             exit 1
           fi
+          [ "$rstate" = draft ] || { echo "::error::the draft release of $TAG is missing: run this workflow again"; exit 1; }
           git add hoard/action/src/checksums.generated.ts hoard/action/dist
           git commit -q --allow-empty -m "chore(release): $TAG"
           commit=$(git rev-parse HEAD)
           git tag -a "$TAG" -m "$TAG" "$commit"
-          start=()
-          if [ -n "$PREVIOUS" ]; then start=(--notes-start-tag "$PREVIOUS"); fi
-          # A draft creates no tag (GitHub creates a missing tag only when a release is
-          # published); --target pins the commit its notes are generated from.
-          gh release create "$TAG" --draft --target "$SHA" --title "$TAG" \
-            --notes-file notes.md --generate-notes "${start[@]}" release/*
           # The tag is created here, by git over SSH with the deploy key: only the tag, never
           # main. A plain (non-forced) push fails if the tag already exists.
           git push "$remote" "refs/tags/$TAG"
@@ -866,8 +999,6 @@ jobs:
           # creates (or re-points) the tag through the API.
           pushed=$(git ls-remote "$remote" "refs/tags/$TAG^{}" | awk '{ print $1 }')
           [ "$pushed" = "$commit" ] || { echo "::error::tag $TAG is at '${pushed:-nothing}' on the remote, not at $commit: not published"; exit 1; }
-          read -r rid _ <<<"$(find_release)" || true
-          [ -n "${rid:-}" ] || { echo "::error::the draft release of $TAG was not found after creating it"; exit 1; }
           publish "$rid"
           echo "released $TAG at $commit"
           echo "commit=$commit" >>"$GITHUB_OUTPUT"
@@ -879,9 +1010,8 @@ jobs:
         run: |
           set -euo pipefail
           gh release view "$TAG" --json assets -q '.assets[] | select(.state == "uploaded") | .name' | LC_ALL=C sort >live.txt
-          { cat expected.txt; echo SHA256SUMS; } | LC_ALL=C sort | diff - live.txt \
+          diff expected.txt live.txt \
             || { echo "::error::release $TAG does not have exactly the expected assets"; exit 1; }
-          [ "$(wc -l <live.txt)" -eq 31 ]
       - name: Stop the ssh-agent
         if: always()
         run: |
@@ -893,7 +1023,7 @@ jobs:
       # at its pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's
       # dist. A crate or package skipped as new (`hoist release bootstrap`) holds the tag until
       # a re-run. The deploy key is loaded again; the first agent was stopped above.
-      # Same two steps as in `release`: the deploy key in ssh-agent, stopped in an always() step.
+      # The deploy key again, in ssh-agent and stopped in an always() step (the same script as above).
       - name: Load the tag deploy key
         if: needs.publish.outputs.crates_skipped == '' && needs.publish.outputs.npm_skipped == ''
         env:
@@ -901,7 +1031,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_TAG_KEY:-}" ]; then
-            echo "::error::secret RELEASE_TAG_KEY of the environment release is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
+            echo "::error::secret RELEASE_TAG_KEY of the environment release-tags is missing: only that deploy key may push v* tags (tags ruleset). Write it with hoist (.github/SETUP.md), then re-run; nothing was tagged or released"
             exit 1
           fi
           # github.com's published ed25519 host key, checked against its published fingerprint

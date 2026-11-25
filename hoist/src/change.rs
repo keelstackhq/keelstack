@@ -55,6 +55,12 @@ pub enum Change {
     /// its private key into secret `RELEASE_TAG_KEY` of environment `env`.
     TagDeployKey {
         env: String,
+        /// Ids of the deploy keys already titled `hoist: release tags`: deleted once the new
+        /// key and its secret are in place (a re-key).
+        replace: Vec<u64>,
+        /// The release environment: a leftover `RELEASE_TAG_KEY` there is deleted after a
+        /// re-key into another environment.
+        old_env: Option<String>,
     },
     ActionsPermissions {
         default: String,
@@ -407,8 +413,20 @@ pub fn plan_changes(
     if let Some(t) = d.github.tag_ruleset.as_ref().filter(|t| t.deploy_key())
         && todo(&gh_items, "tag_deploy_key", crate::desired::TAG_KEY_TITLE).is_some()
     {
+        let replace = gh
+            .and_then(|l| l.deploy_keys.as_ref())
+            .and_then(|k| k.as_got().ok())
+            .map(|keys| {
+                keys.iter()
+                    .filter(|k| k.title == crate::desired::TAG_KEY_TITLE)
+                    .map(|k| k.id)
+                    .collect()
+            })
+            .unwrap_or_default();
         out.push(Change::TagDeployKey {
             env: t.key_env.clone(),
+            replace,
+            old_env: Some(t.release_env.clone()),
         });
     }
 

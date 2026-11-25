@@ -278,7 +278,7 @@ fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
         plan.contains("if [ \"$REF\" != refs/heads/main ]; then"),
         "{plan}"
     );
-    for name in ["build", "publish", "release"] {
+    for name in ["build", "draft", "publish", "release"] {
         let j = job(&text, name);
         assert!(
             j.contains(
@@ -316,7 +316,9 @@ fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
         );
     }
     // A job-level GH_TOKEN reaches every step of the job.
-    for name in ["plan", "dispatch", "build", "action", "publish", "release"] {
+    for name in [
+        "plan", "dispatch", "build", "action", "draft", "publish", "release",
+    ] {
         let j = job(&text, name);
         let head = &j[..j.find("\n    steps:\n").unwrap_or(j.len())];
         if head.contains("GH_TOKEN") {

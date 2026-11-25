@@ -423,7 +423,7 @@ pub struct TargetConfig {
 pub fn load_root(dir: &Path) -> Result<RootConfig, HoistError> {
     let cfg: RootConfig = load(dir)?;
     validate_variables(dir, &cfg.github)?;
-    validate_tag_ruleset(dir, &cfg.github)?;
+    validate_tag_ruleset(dir, &cfg.github, &cfg.release.environment)?;
     validate_checks(dir, &cfg.github)?;
     Ok(cfg)
 }
@@ -451,11 +451,20 @@ fn validate_checks(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
 
 /// `[github.tag_ruleset]`: at least one pattern; the bypass is `github-actions`, or, with
 /// `tags_bypass = "deploy_key"`, the release-tags deploy key (then `bypass` stays unset).
-fn validate_tag_ruleset(dir: &Path, g: &GithubCfg) -> Result<(), HoistError> {
+fn validate_tag_ruleset(dir: &Path, g: &GithubCfg, release_env: &str) -> Result<(), HoistError> {
     let bad = |message: String| HoistError::Config {
         file: dir.join(FILE_NAME).display().to_string(),
         message,
     };
+    if let Some(e) = &g.tags_key_environment
+        && e != release_env
+        && !g.environments.contains_key(e)
+    {
+        return Err(bad(format!(
+            "`github.tags_key_environment = {e:?}` names an environment that is not declared: \
+             add `[github.environments.{e}]` (or use `[release] environment`)"
+        )));
+    }
     let Some(t) = &g.tag_ruleset else {
         if g.tags_bypass == TagsBypass::DeployKey {
             return Err(bad(

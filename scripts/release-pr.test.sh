@@ -35,6 +35,11 @@ echo dirty >>README.md
 if bash scripts/release-pr.sh "$new" >/dev/null 2>&1; then fail "dirty tree accepted"; else ok "dirty tree refused"; fi
 git checkout -q -- README.md
 
+# A detached HEAD is refused before anything changes.
+git checkout -q --detach
+if bash scripts/release-pr.sh "$new" >/dev/null 2>&1; then fail "detached HEAD accepted"; else ok "detached HEAD refused"; fi
+git checkout -q main
+
 # A failure after the branch was made leaves nothing behind.
 echo "not a fragment" >"bosun/changelog.d/bad name.md"
 git add -A; git commit -q -m "bad fragment"

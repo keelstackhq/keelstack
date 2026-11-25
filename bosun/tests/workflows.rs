@@ -377,6 +377,18 @@ fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
             assert!(environment_of(body).is_none(), "{body}");
             continue;
         }
+        if id == "draft" {
+            // The draft release: contents: write, no environment, no dependency code.
+            assert_eq!(grants, ["contents:write"], "{id}");
+            assert!(environment_of(body).is_none(), "{body}");
+            assert!(
+                body.contains(
+                    "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"
+                ),
+                "{id} must run on the dispatched run only: {body}"
+            );
+            continue;
+        }
         assert!(
             ["publish", "release"].contains(&id.as_str()),
             "job `{id}` grants {grants:?}"

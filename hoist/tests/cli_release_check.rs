@@ -6,8 +6,15 @@ use serde_json::Value;
 const REMOTE: &str = "https://github.com/acme/x.git";
 
 fn run(routes: &[RouteSpec]) -> (std::process::Output, FakeApi, Value) {
+    run_with("", routes)
+}
+
+fn run_with(toml: &str, routes: &[RouteSpec]) -> (std::process::Output, FakeApi, Value) {
     let repo = fixture_repo("publish", REMOTE);
     let d = repo.path();
+    if !toml.is_empty() {
+        std::fs::write(d.join("hoist.toml"), toml).unwrap();
+    }
     git(d, &["checkout", "-q", "-b", "main"]);
     git(d, &["add", "-A"]);
     git(d, &["commit", "-q", "-m", "chore: init"]);
@@ -115,6 +122,7 @@ fn an_unreadable_registry_is_unknown_and_reads_send_no_authorization() {
         ("GET /api/v1/crates/tool/0.3.0", 200, "{}", &[]),
     ]);
     assert_eq!(o.status.code(), Some(0), "{v:#}");
+    api.assert_only_get();
     assert_eq!(item(&v, "registry", "@acme/lib@1.0.0")["action"], "unknown");
     assert_eq!(item(&v, "registry", "tool@0.3.0")["action"], "unknown");
     assert!(
@@ -137,4 +145,72 @@ fn an_unreadable_registry_is_unknown_and_reads_send_no_authorization() {
             r.auth
         );
     }
+}
+
+#[test]
+fn a_registry_ahead_of_the_workspace_is_drift_not_a_pending_release() {
+    let (o, api, v) = run(&[
+        (
+            "GET /@acme%2Flib",
+            200,
+            r#"{"dist-tags":{"latest":"2.0.0"}}"#,
+            &[],
+        ),
+        ("GET /@acme%2Flib/1.0.0", 404, "", &[]),
+        (
+            "GET /api/v1/crates/tool",
+            200,
+            r#"{"crate":{"max_stable_version":"0.3.0"}}"#,
+            &[],
+        ),
+        ("GET /api/v1/crates/tool/0.3.0", 200, "{}", &[]),
+    ]);
+    api.assert_only_get();
+    assert_eq!(o.status.code(), Some(1), "{v:#}");
+    let i = item(&v, "registry", "@acme/lib@1.0.0");
+    assert_eq!(i["action"], "drift");
+    assert!(
+        i["reason"]
+            .as_str()
+            .unwrap()
+            .contains("newer than the workspace"),
+        "{i}"
+    );
+}
+
+#[test]
+fn a_registry_entry_has_no_version_and_only_its_presence_counts() {
+    let (o, api, v) = run_with(
+        "[registry.npm.\"@acme/extra\"]\nworkflow = \"extra.yml\"\n",
+        &[
+            (
+                "GET /@acme%2Flib",
+                200,
+                r#"{"dist-tags":{"latest":"1.0.0"}}"#,
+                &[],
+            ),
+            ("GET /@acme%2Flib/1.0.0", 200, "{}", &[]),
+            (
+                "GET /@acme%2Fextra",
+                200,
+                r#"{"dist-tags":{"latest":"4.5.6"}}"#,
+                &[],
+            ),
+            (
+                "GET /api/v1/crates/tool",
+                200,
+                r#"{"crate":{"max_stable_version":"0.3.0"}}"#,
+                &[],
+            ),
+            ("GET /api/v1/crates/tool/0.3.0", 200, "{}", &[]),
+        ],
+    );
+    api.assert_only_get();
+    assert_eq!(o.status.code(), Some(0), "{v:#}");
+    let i = item(&v, "registry", "@acme/extra");
+    assert_eq!(i["action"], "ok", "{i}");
+    assert!(
+        i["reason"].as_str().unwrap().contains("its own workflow"),
+        "{i}"
+    );
 }

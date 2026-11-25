@@ -11,7 +11,8 @@ import { join } from "node:path";
 import { gitEnv, job, releaseYml, runStep, stepScript } from "./release-yml.mjs";
 
 const yml = releaseYml();
-const major = job(yml, "major");
+// The major tag is a step of job `release` (one tap: the registries are job `publish`).
+const major = job(yml, "release");
 const STEP = stepScript(major, "Move v<major> to the release commit");
 
 /**
@@ -177,21 +178,27 @@ test("the step leaves no repository or key behind in RUNNER_TEMP", () => {
 });
 
 test("release.yml moves the major tag only after the release, crates.io and npm", () => {
-  assert.match(major, /needs: \[plan, release, crates, npm\]/);
-  assert.match(major, /needs\.npm\.result == 'success'/);
-  assert.match(major, /needs\.crates\.result == 'success'/);
-  assert.match(major, /needs\.plan\.outputs\.released == 'true' \|\| needs\.release\.result == 'success'/);
+  assert.match(major, /needs: \[plan, draft, publish\]/);
+  assert.match(major, /needs\.publish\.result == 'success'/);
+  // Held back while crates.io or npm skipped a package that is not published yet.
+  const gate = "needs.publish.outputs.crates_skipped == '' && needs.publish.outputs.npm_skipped == ''";
+  const at = major.indexOf("      - name: Move v<major> to the release commit");
+  assert.ok(major.slice(at, at + 400).includes(gate), "the move step is gated on nothing being skipped");
+  assert.ok(
+    major.includes(`      - name: Load the tag deploy key\n        if: ${gate}`),
+    "the key is not even loaded when the major tag is held",
+  );
   assert.match(major, /github\.event_name == 'workflow_dispatch' && needs\.plan\.outputs\.release == 'true'/);
-  assert.match(major, /\n    environment: release\n/);
-  // The deploy key moves the tag: the job's token needs no permission at all.
-  assert.match(major, /\n    permissions: \{\}\n    env:/);
+  assert.match(major, /\n    environment: release-tags\n/);
   assert.match(major, /TAG: \$\{\{ needs\.plan\.outputs\.tag \}\}/);
-  assert.doesNotMatch(major, /github\.ref_name|github\.event\.|inputs\./);
+  assert.doesNotMatch(major, /github\.ref_name|github\.event\./);
   assert.match(major, /RELEASE_TAG_KEY: \$\{\{ secrets\.RELEASE_TAG_KEY \}\}/);
 });
 
-test("the major job moves a tag only: no checkout, no branch, one forced tag push over SSH", () => {
-  assert.doesNotMatch(major, /actions\/checkout|refs\/heads|gh api/);
+test("the major step moves a tag only: no branch, one forced tag push over SSH", () => {
+  const step = major.slice(major.indexOf("      - name: Move v<major> to the release commit"));
+  const stepText = step.slice(0, step.indexOf("      - name: Stop the ssh-agent"));
+  assert.doesNotMatch(stepText, /actions\/checkout|refs\/heads|gh api/);
   assert.match(STEP, /remote="git@github\.com:\$GH_REPO\.git"/);
   const pushes = STEP.split("\n").filter((l) => !/^\s*#/.test(l) && /\bgit\b.*\bpush\b/.test(l));
   assert.deepEqual(

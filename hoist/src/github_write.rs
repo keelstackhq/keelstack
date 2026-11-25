@@ -22,9 +22,14 @@ pub fn execute_github(
     d: &Desired,
     change: &Change,
 ) -> Result<Option<HumanStep>, HoistError> {
-    if let Change::TagDeployKey { env } = change {
+    if let Change::TagDeployKey {
+        env,
+        replace,
+        old_env,
+    } = change
+    {
         let repo = format!("/repos/{}/{}", seg(&d.repo.owner), seg(&d.repo.name));
-        return write_tag_key(http, d, &repo, env);
+        return write_tag_key(http, d, &repo, env, replace, old_env.as_deref());
     }
     execute_github_plain(http, d, change).map(|()| None)
 }
@@ -501,14 +506,17 @@ fn write_tag_key(
     d: &Desired,
     repo: &str,
     env: &str,
+    replace: &[u64],
+    old_env: Option<&str>,
 ) -> Result<Option<HumanStep>, HoistError> {
     let probe = format!("{repo}/environments/{}/secrets/public-key", seg(env));
     match http.get_json(&probe)? {
         Fetched::Ok(_) => {}
         Fetched::NotFound => {
             return Err(HoistError::Usage(format!(
-                "environment `{env}` has no Actions public key (404): create the environment \
-                 (`[release] environment`) and run `hoist apply` again; no deploy key was added"
+                "environment `{env}` has no Actions public key (404): create it (declare it \
+                 under `[github.environments]`, or it is `[release] environment`) and run \
+                 `hoist apply` again; no deploy key was added"
             )));
         }
         Fetched::Forbidden(hint) => {
@@ -545,6 +553,25 @@ fn write_tag_key(
     );
     drop(key);
     let Err(err) = sealed else {
+        // A re-key: the old key(s) go only now that the new one and its secret exist.
+        for old in replace.iter().filter(|o| Some(**o) != id) {
+            http.send_json(
+                Method::Delete,
+                &format!("{repo}/keys/{}", seg(&old.to_string())),
+                None,
+            )?;
+        }
+        // The secret a move to another environment leaves behind (404: none, fine).
+        if let Some(old_env) = old_env.filter(|o| *o != env && !replace.is_empty()) {
+            let _ = http.send_json(
+                Method::Delete,
+                &format!(
+                    "{repo}/environments/{}/secrets/{TAG_KEY_SECRET}",
+                    seg(old_env)
+                ),
+                None,
+            );
+        }
         return Ok(None);
     };
     // A key whose private half is lost is useless (and drift): take it back.
