@@ -1858,3 +1858,208 @@ fn dry_run_without_assets_plans_the_release_of_binaries() {
         "{reason}"
     );
 }
+
+// ---- `--only`: registry-only publishing (release.yml crates and npm jobs) ----
+
+/// `in_actions` for a registry-only run: the checkout is the release commit, not GITHUB_SHA.
+fn only_run(env: &Env, api: &FakeApi, extra: &[&str]) -> std::process::Output {
+    let mut c = in_actions(env, api);
+    c.env("GITHUB_SHA", "0000000000000000000000000000000000000000")
+        .args(["--only", "crates,npm"])
+        .args(extra);
+    c.output().unwrap()
+}
+
+#[test]
+fn only_publishes_registries_without_tags_or_github_writes() {
+    let env = setup();
+    cargo_stub(&env, "");
+    let api = api_done(
+        &env.head,
+        &[
+            (LIB_V, 404, "", &[]),
+            (LIB_V, 200, "{}", &[]),
+            (LIB_PKG, 200, "{}", &[]),
+            (TOOL_V, 404, "", &[]),
+            (TOOL_V, 200, "{}", &[]),
+            (TOOL_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = only_run(&env, &api, &["--provenance", "--npm-tag", "v1-latest"]);
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    let w = |m: &str, p: &str| (m.to_string(), p.to_string());
+    assert_eq!(
+        writes_and_cargo(&api),
+        vec![
+            w("POST", TOKENS),
+            w("GET", "/cargo-ran"),
+            w("DELETE", TOKENS)
+        ]
+    );
+    assert!(
+        !api.requests()
+            .iter()
+            .any(|r| r.path.contains("/git/ref") || r.path.contains("/releases")),
+        "{:?}",
+        api.requests()
+    );
+    assert_eq!(out(env.repo.path(), &["tag"]), "");
+    let log = tool_log(&env, "npm");
+    assert!(
+        has_line(
+            &log,
+            "pkg set repository.type=git repository.url=git+https://github.com/acme/x.git env:"
+        ),
+        "{log:?}"
+    );
+    assert!(
+        has_line(&log, "pkg set repository.directory=packages/lib env:"),
+        "{log:?}"
+    );
+    assert!(
+        has_line(
+            &log,
+            "publish --access public --provenance --tag v1-latest env:"
+        ),
+        "{log:?}"
+    );
+    assert_eq!(item(&v, "npm", "@acme/lib@1.0.0")["action"], "ok");
+    assert_eq!(item(&v, "crates", "tool@0.3.0")["action"], "ok");
+    assert!(
+        !v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "tag" || i["kind"] == "github_release")
+    );
+}
+
+#[test]
+fn only_rerun_with_everything_published_is_a_no_op() {
+    let env = setup();
+    let api = api_done(&env.head, &[]);
+    let output = only_run(&env, &api, &[]);
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    assert!(writes(&api).is_empty(), "{:?}", writes(&api));
+    assert!(
+        tool_log(&env, "npm")
+            .iter()
+            .all(|l| !l.starts_with("publish"))
+    );
+    assert!(tool_log(&env, "cargo").is_empty());
+}
+
+#[test]
+fn only_package_not_on_registry_is_pending_with_exit_2() {
+    let env = setup();
+    let api = api_done(&env.head, &[(LIB_V, 404, "", &[]), (LIB_PKG, 404, "", &[])]);
+    let output = only_run(&env, &api, &[]);
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(2), "{v:#}\n{}", stderr(&output));
+    assert_eq!(item(&v, "npm", "@acme/lib@1.0.0")["action"], "pending");
+    assert_eq!(item(&v, "crates", "tool@0.3.0")["action"], "ok");
+    assert!(
+        v["human_steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s["id"] == "first-publish:@acme/lib")
+    );
+    assert!(
+        tool_log(&env, "npm")
+            .iter()
+            .all(|l| !l.starts_with("publish"))
+    );
+}
+
+#[test]
+fn only_npm_dir_publishes_staged_packages_in_order_and_holds_a_launcher() {
+    let env = setup();
+    let staged = tempfile::tempdir().unwrap();
+    write(
+        staged.path(),
+        "plat/package.json",
+        br#"{"name":"@acme/staged-linux","version":"1.0.0"}"#,
+    );
+    write(
+        staged.path(),
+        "main/package.json",
+        br#"{"name":"@acme/staged","version":"1.0.0","optionalDependencies":{"@acme/staged-linux":"1.0.0"}}"#,
+    );
+    // The platform package is new: the launcher waits for it.
+    let api = api_done(
+        &env.head,
+        &[
+            ("GET /@acme%2Fstaged-linux/1.0.0", 404, "", &[]),
+            ("GET /@acme%2Fstaged-linux", 404, "", &[]),
+            ("GET /@acme%2Fstaged/1.0.0", 404, "", &[]),
+            ("GET /@acme%2Fstaged", 200, "{}", &[]),
+        ],
+    );
+    let plat = staged.path().join("plat");
+    let main = staged.path().join("main");
+    let output = only_run(
+        &env,
+        &api,
+        &[
+            "--npm-dir",
+            plat.to_str().unwrap(),
+            "--npm-dir",
+            main.to_str().unwrap(),
+        ],
+    );
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(2), "{v:#}\n{}", stderr(&output));
+    assert_eq!(
+        item(&v, "npm", "@acme/staged-linux@1.0.0")["action"],
+        "pending"
+    );
+    let held = item(&v, "npm", "@acme/staged@1.0.0");
+    assert_eq!(held["action"], "pending");
+    assert!(
+        held["reason"]
+            .as_str()
+            .unwrap()
+            .contains("waits for @acme/staged-linux")
+    );
+    assert!(
+        tool_log(&env, "npm")
+            .iter()
+            .all(|l| !l.starts_with("publish"))
+    );
+}
+
+#[test]
+fn only_rejects_unknown_registry_and_npm_dir_without_only() {
+    let env = setup();
+    let api = FakeApi::start(&[]);
+    let o = in_actions(&env, &api)
+        .args(["--only", "docker"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    let o = in_actions(&env, &api)
+        .args(["--npm-dir", "x"])
+        .output()
+        .unwrap();
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+}
+
+#[test]
+fn only_dry_run_is_get_only_and_ignores_tags() {
+    let env = setup();
+    git(env.repo.path(), &["tag", "@acme/lib@1.0.0"]);
+    git(env.repo.path(), &["tag", "tool@0.3.0"]);
+    let api = FakeApi::start(&ON_REGISTRIES);
+    let output = publish(&env, &api)
+        .args(["--dry-run", "--only", "crates,npm"])
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    api.assert_only_get();
+    assert_eq!(item(&v, "npm", "@acme/lib@1.0.0")["action"], "ok");
+    assert_eq!(item(&v, "crates", "tool@0.3.0")["action"], "ok");
+}

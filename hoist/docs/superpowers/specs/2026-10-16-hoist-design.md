@@ -89,6 +89,9 @@ hoist changeset status [--since REV]   each package changed since merge-base(REV
 hoist release plan    [--json]         next versions and changelogs, no writes
 hoist release prepare                  open/update the release PR (CI, push to main)
 hoist release publish [--assets DIR] [--dry-run]  tag, release, publish (CI, release PR merged)
+hoist release publish --only crates,npm [--npm-dir DIR]... [--npm-tag T] [--provenance]
+                                                    registry-only publish of every package (§9.3.1)
+hoist release check                                 read-only: per package published?, newest vs workspace, trust (§9.6.1)
 hoist release bootstrap [--dry-run] [--yes]       first publish + trusted publishers (local, once; §9.6)
 hoist export --tofu <dir>              M4
 ```
@@ -1036,6 +1039,35 @@ steps are `ok` (version there), `pending` (no package yet, with the human step),
 `unknown` (registry unreadable), deploys `create`; it always exits 0 (R17) apart from exit 3
 errors.
 
+#### 9.3.1 Registry-only mode (`--only`)
+
+`hoist release publish --only crates,npm` (either one, or both) is the publish a workflow that
+tags and releases by other means calls (keelstack's `release.yml` jobs `crates` and `npm`; a
+consumer repo whose tag step is its own). It skips the tag, GitHub Release and deploy steps and
+does not use local tags to decide what is pending: every package of the release model is looked
+at, each at its manifest version, so a re-run of the same version is a no-op (`ok`, "already on
+<registry>"). Items are keyed `<name>@<version>`. Rules:
+
+- Order: the model's order (dependencies first); a launcher's platform packages (binaries copied
+  from `--assets`, as in §9.3) before the launcher. `--dry-run` needs no `--assets`.
+- A package that is not on its registry yet is `pending` with the `first-publish:<name>` human
+  step (exit 2), as in §9.3; every package that depends on it (a crate on a crate, a launcher on
+  its platform packages) is `pending` too, "waits for <dep>", so nothing is published half way.
+  Everything else still publishes. Exit 2 therefore means "published all that could be; run
+  `hoist release bootstrap`, then re-run" (release.yml turns it into a `skipped` job output and
+  holds the major tag).
+- `--npm-dir DIR` (repeatable, needs `--only npm`) adds pre-staged npm packages after the
+  model's, in the given order (name and version from their `package.json`; its
+  `optionalDependencies` naming an earlier `--npm-dir` package make it wait for that one):
+  keelstack's splice packages, which a script stages from release assets.
+- `--provenance` first runs `npm pkg set repository.type=git repository.url=git+https://github.com/<o>/<r>.git`
+  (and `repository.directory=<dir>` for a package inside the repo) so the manifest names the
+  repository the workflow runs in, then `npm publish --provenance`; `--npm-tag T` adds `--tag T`
+  (a backport uses a `v<major>.<minor>-latest` tag so `latest` never moves back).
+- Preflight (§9.4) is the same except that `HEAD` need not equal `GITHUB_SHA`: the job checks out
+  the release tag, which is the release commit and not the commit the workflow started on. No
+  full-history requirement (nothing reads tags).
+
 ### 9.4 Safety
 
 Publishing runs only from the default branch in the `release` environment. Before anything else
@@ -1099,7 +1131,9 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
    on a TTY it runs `npm trust github <pkg> --file <workflow> --repo <o>/<r> --env <env>
    --allow-publish` with inherited stdio (npm prompts for the 2FA code); without a TTY it adds a
    human step with that exact command. For crates the crates.io trusted-publishing settings
-   link is a human step (no documented API, §13).
+   page `https://crates.io/crates/<name>/settings/new-trusted-publisher` is a human step (no
+   documented API, §13): bootstrap never adds it, the step text names the repository, workflow
+   file and environment to enter.
    Every npm trust item (registered now, `would register`, or the human step's `pending` reason)
    says `npm drops this trusted publisher unless a publish uses it by <now + 48 h, RFC 3339>:
    run <trigger>` (§13), where the trigger is `the <workflow> workflow` (for the release
@@ -1111,8 +1145,9 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
 5. **Report.** One item per package and step (`release/bootstrap_npm`, `release/bootstrap_crate`,
    `release/bootstrap_trust`), then a hint on stderr after the table (in `--json` it is not
    printed): when every package exists and every npm trusted publisher is registered (crate
-   trust, `unknown`, does not count) `next: re-run the failed "release publish" job at <tag>, or
-   run the release workflow`, because the CI publish needs the trusted publisher; otherwise
+   trust, `unknown`, does not count) `next: publish the release again with `gh workflow run
+   <workflow>` (a workflow with inputs takes `-f sha=<commit> -f version=<X.Y.Z>`), or re-run the
+   failed "release publish" job at <tag>`, because the CI publish needs the trusted publisher; otherwise
    `next: finish the steps above, then run bootstrap again`. A registration that `npm trust list`
    does not confirm afterwards is a failed write.
 
@@ -1121,6 +1156,18 @@ run (exit 1 with done / failed / not attempted); human steps alone exit 2; `--dr
 GETs and runs only read-only tool commands (`npm whoami`, `npm --version`, `npm trust list`,
 `git tag`, `cargo --version`). hoist never reads, stores or prints npm or crates.io
 credentials: `npm` and `cargo` use their own login state, and their output goes to stderr.
+
+### 9.6.1 Check (`hoist release check`)
+
+Read-only, GET requests only. For every registry package (the §9.6 set: model packages, launcher
+platform packages, `[registry.*]` entries) it reads the registry anonymously and reports
+`release/registry` `<name>@<version>`: `ok` when that version is on the registry ("on npm at X
+(newest Y)"), `update` when the package exists but not at the workspace version (the release
+workflow publishes it; exit 1), `pending` when the package is not on the registry at all (the
+`first-publish:<name>` human step, "run `hoist release bootstrap`"; exit 2), `unknown` when the
+registry cannot be read. Existing packages also get a `release/trusted_publisher` item,
+`unknown`: npm lists them only with a login (`npm trust list <pkg>`) and crates.io has no API
+(§13); `release bootstrap --dry-run` reads npm's with the maintainer's login.
 
 ### 9.7 Container images (a pattern, not a publish kind yet)
 

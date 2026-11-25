@@ -211,12 +211,32 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
         Step::Platform(i) => Some(copy_bin(job, i, &pkg_dir)?),
         _ => None,
     };
-    let published = tool(
-        Tool::Npm,
-        &pkg_dir,
-        &["publish", "--access", access(pkg)],
-        &[],
-    );
+    let flags = &c.flags;
+    if flags.provenance {
+        // Provenance names the repository the workflow runs in; package.json must say the same.
+        let url = format!(
+            "repository.url=git+https://github.com/{}.git",
+            flags.repository
+        );
+        tool(
+            Tool::Npm,
+            &pkg_dir,
+            &["pkg", "set", "repository.type=git", &url],
+            &[],
+        )?;
+        if !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
+            let d = format!("repository.directory={}", pkg.dir.to_string_lossy());
+            tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[])?;
+        }
+    }
+    let mut args = vec!["publish", "--access", access(pkg)];
+    if flags.provenance {
+        args.push("--provenance");
+    }
+    if let Some(t) = &flags.tag {
+        args.extend(["--tag", t]);
+    }
+    let published = tool(Tool::Npm, &pkg_dir, &args, &[]);
     // The binary leaves the checkout again, whether npm succeeded or not.
     let removed = copied.map_or(Ok(()), CopiedBin::remove);
     published?;

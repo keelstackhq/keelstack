@@ -5,6 +5,7 @@ use crate::http::{Fetched, Http, seg};
 use crate::repo::git::GithubRepo;
 
 pub mod bootstrap;
+pub mod check;
 pub mod plan;
 pub mod prepare;
 pub mod publish;

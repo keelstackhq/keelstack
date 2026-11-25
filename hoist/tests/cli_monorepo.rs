@@ -166,11 +166,12 @@ fn plan_names_a_trusted_publisher_step_for_every_package() {
 }
 
 #[test]
-fn the_release_environment_wants_no_reviewer_and_the_workflow_is_release_yml() {
+fn the_release_environment_wants_the_owner_as_reviewer_and_the_workflow_is_release_yml() {
     let r = run(&["explain"]);
     assert!(has(&r, "github", "environment", "release"));
     let src = std::fs::read_to_string(root().join("hoist.toml")).unwrap();
-    assert!(src.contains("reviewers = []"));
+    // The owner taps `release` (D-028).
+    assert!(src.contains("reviewers = [\"urbanisierung\"]"));
 }
 
 /// `explain` is offline and lists the desired model: a missing Cloudflare account id is an

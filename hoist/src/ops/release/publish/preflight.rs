@@ -39,6 +39,7 @@ pub(super) fn preflight(
     default: &str,
     model: &ReleaseModel,
     head: &str,
+    check_sha: bool,
 ) -> Result<(), HoistError> {
     let want = format!("refs/heads/{default}");
     let got = env("GITHUB_REF").unwrap_or_default();
@@ -49,6 +50,7 @@ pub(super) fn preflight(
         )));
     }
     match env("GITHUB_SHA") {
+        _ if !check_sha => {}
         Some(sha) if sha == head => {}
         sha => {
             return Err(refuse(format!(

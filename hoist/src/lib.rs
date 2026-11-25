@@ -89,8 +89,26 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
                 cli::ReleaseCommand::Publish {
                     ref assets,
                     dry_run,
+                    ref only,
+                    ref npm_dir,
+                    ref npm_tag,
+                    provenance,
                 },
-        } => ops::release::publish::release_publish(&dir, assets.as_deref(), dry_run, cli.verbose),
+        } => ops::release::publish::release_publish(
+            &dir,
+            ops::release::publish::PublishOpts {
+                assets: assets.as_deref(),
+                dry_run,
+                only,
+                npm_dirs: npm_dir,
+                npm_tag: npm_tag.as_deref(),
+                provenance,
+            },
+            cli.verbose,
+        ),
+        Command::Release {
+            command: cli::ReleaseCommand::Check,
+        } => ops::release::check::release_check(&dir, cli.verbose),
         Command::Release {
             command: cli::ReleaseCommand::Bootstrap { dry_run, yes },
         } => ops::release::bootstrap::release_bootstrap(

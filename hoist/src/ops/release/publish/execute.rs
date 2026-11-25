@@ -14,6 +14,15 @@ fn add_step(steps: &mut Vec<HumanStep>, step: HumanStep) {
     }
 }
 
+/// The first of `job`'s workspace dependencies that is still waiting to be published for the
+/// first time (a registry step cannot succeed before it).
+fn waits_on<'a>(job: &Job, step: Step, pending: &'a [String]) -> Option<&'a String> {
+    if !matches!(step, Step::Npm | Step::Crates) {
+        return None;
+    }
+    pending.iter().find(|n| job.pkg.deps.contains(n))
+}
+
 const PLATFORMS_PENDING: &str = "platform packages not published yet";
 
 /// R27: a launcher's own npm step waits while any of its platform packages is pending (npm
@@ -31,9 +40,19 @@ pub(super) fn dry_run(
 ) -> Result<Report, HoistError> {
     let mut items = Vec::new();
     let mut humans = Vec::new();
+    let mut pending_pkgs: Vec<String> = Vec::new();
     for job in jobs {
         let mut platform_pending = false;
         for step in job.steps() {
+            if let Some(dep) = waits_on(job, step, &pending_pkgs) {
+                items.push(item(
+                    job,
+                    step,
+                    Action::Pending,
+                    format!("waits for {dep}, which is not on its registry yet"),
+                ));
+                continue;
+            }
             if waits_for_platforms(job, step, platform_pending) {
                 items.push(item(
                     job,
@@ -52,6 +71,9 @@ pub(super) fn dry_run(
                 }
                 if matches!(step, Step::Platform(_)) && action == Action::Pending {
                     platform_pending = true;
+                }
+                if action == Action::Pending && !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
                 }
                 (action, why)
             };
@@ -90,11 +112,21 @@ pub(super) fn execute(
     let mut humans = Vec::new();
     let mut done = Vec::new(); // (item index, job, step) to verify
     let mut failed = false;
+    let mut pending_pkgs: Vec<String> = Vec::new();
     for job in jobs {
         let mut platform_pending = false;
         for step in job.steps() {
             if failed {
                 items.push(item(job, step, Action::Update, "not attempted".to_string()));
+                continue;
+            }
+            if let Some(dep) = waits_on(job, step, &pending_pkgs) {
+                items.push(item(
+                    job,
+                    step,
+                    Action::Pending,
+                    format!("waits for {dep}, which is not on its registry yet"),
+                ));
                 continue;
             }
             if waits_for_platforms(job, step, platform_pending) {
@@ -114,6 +146,9 @@ pub(super) fn execute(
                 }
                 Ok(Outcome::Pending(why, human)) => {
                     platform_pending |= matches!(step, Step::Platform(_));
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
                     add_step(&mut humans, human);
                     items.push(item(job, step, Action::Pending, why));
                 }

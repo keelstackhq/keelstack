@@ -160,7 +160,10 @@ fn dry_run_lists_missing_packages() {
     let t = item(&v, "bootstrap_trust", "tool");
     assert_eq!(t["action"], "unknown", "{t}");
     let s = human_step(&v, "crates-trust:tool");
-    assert_eq!(s["url"], "https://crates.io/crates/tool/settings");
+    assert_eq!(
+        s["url"],
+        "https://crates.io/crates/tool/settings/new-trusted-publisher"
+    );
     api.assert_only_get();
     let paths: Vec<String> = api.requests().iter().map(|r| r.path.clone()).collect();
     assert!(paths.contains(&"/@acme%2Flib".to_string()), "{paths:?}");
@@ -849,10 +852,13 @@ fn trust_runs_interactively_on_tty() {
     assert!(err.contains("MARKER-trust-otp"), "{err}");
     assert_eq!(read(env.tools.path().join("npm.otp")).trim(), "654321");
     assert!(
-        err.contains("next: re-run the failed \"release publish\" job at "),
+        err.contains("next: publish the release again with `gh workflow run "),
         "{err}"
     );
-    assert!(err.contains("or run the release workflow"), "{err}");
+    assert!(
+        err.contains("re-run the failed \"release publish\" job at "),
+        "{err}"
+    );
     assert!(
         !String::from_utf8_lossy(&out.stdout).contains("next:"),
         "the hint goes to stderr"
@@ -1021,7 +1027,10 @@ fn crates_trust_is_a_link() {
     let o = bootstrap(&env, &api, &["--dry-run"]).assert().code(0);
     let v = json(o.get_output());
     let s = human_step(&v, "crates-trust:keel-hoist");
-    assert_eq!(s["url"], "https://crates.io/crates/keel-hoist/settings");
+    assert_eq!(
+        s["url"],
+        "https://crates.io/crates/keel-hoist/settings/new-trusted-publisher"
+    );
     assert_eq!(
         item(&v, "bootstrap_trust", "keel-hoist")["action"],
         "unknown"
@@ -1107,8 +1116,7 @@ fn hint_after_success() {
     let api = FakeApi::start(&[]);
     let o = bootstrap_table(&env, &api, &["--yes"]).assert().code(0);
     let err = stderr(o.get_output());
-    let hint =
-        "next: re-run the failed \"release publish\" job at v0.1.0, or run the release workflow";
+    let hint = "or re-run the failed \"release publish\" job at v0.1.0";
     assert!(err.contains(hint), "{err}");
     assert!(
         !String::from_utf8_lossy(&o.get_output().stdout).contains("next:"),
@@ -1358,7 +1366,10 @@ fn existing_registry_crate_trust_is_a_link_with_its_workflow() {
         "unknown"
     );
     let s = human_step(&v, "crates-trust:acme-extra");
-    assert_eq!(s["url"], "https://crates.io/crates/acme-extra/settings");
+    assert_eq!(
+        s["url"],
+        "https://crates.io/crates/acme-extra/settings/new-trusted-publisher"
+    );
     assert!(s["title"].as_str().unwrap().contains("workflow extra.yml"));
     assert_eq!(item(&v, "bootstrap_npm", "@acme/extra")["action"], "ok");
 }
