@@ -358,7 +358,7 @@ impl Run<'_> {
             .filter(|m| m.parent.as_deref() == Some(me))
             .count() as u32;
         let input = SpawnInput {
-            main_red: main_red(gh)?.is_some(),
+            main_red: crate::app::main_red_blocking(app)?.is_some(),
             process_red: process_red(gh)?.is_some(),
             mainfix: false,
             process_fix: false,

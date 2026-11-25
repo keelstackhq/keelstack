@@ -12,7 +12,7 @@ use std::path::Path;
 use serde_json::{Value, json};
 
 use super::AnswerArgs;
-use crate::app::{App, default_branch, kill_switch, main_red, set_state, task_meta};
+use crate::app::{App, default_branch, kill_switch, set_state, task_meta};
 use crate::cli::approve::read_key;
 use crate::cli::intake::fence_text;
 use crate::cli::risk_check::{OWNERS_PATH, enrolled_keys, owner_slack_ids};
@@ -280,7 +280,7 @@ fn chat(app: &App, args: &AnswerArgs, issue: &Issue, ask: u64, text: &str) -> Cm
         || issue.labels.iter().any(|l| l == "bosun:kind/mainfix");
     if moves
         && !mainfix
-        && let Some(red) = main_red(gh)?
+        && let Some(red) = crate::app::main_red_blocking(app)?
     {
         return Err(BosunError::halted(
             format!(

@@ -32,7 +32,7 @@ use crate::core::ask;
 use crate::core::records::{PrHead, Record};
 use crate::core::risk;
 use crate::ctx::Ctx;
-use crate::gates::main_open::{is_mainfix, judge};
+use crate::gates::main_open::is_mainfix;
 use crate::github::{Github, IssueState, LiveGithub, Pull, b64};
 use crate::hooks::answers;
 use crate::output::{BosunError, CmdResult, Outcome};
@@ -549,7 +549,8 @@ fn post_main_open(gh: &dyn Github, n: u64) -> Result<PrHead> {
     }
     let red = main_red(gh)?;
     let mainfix = red.is_some() && is_mainfix(gh, &pull)?;
-    let v = judge(red, mainfix);
+    let warn = crate::gates::main_open::main_warns(gh)?;
+    let v = crate::gates::main_open::judge_warn(red, mainfix, warn);
     let state = if v.pass { "success" } else { "failure" };
     let description = format!("{} (posted by bosun approve --main-open)", v.description);
     gh.create_status(&pull.head_sha, "main-open", state, &description, None)?;
