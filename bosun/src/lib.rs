@@ -55,6 +55,7 @@ pub fn run(mut cli: Cli) -> CmdResult {
         Command::Hold(a) => cli::hold::run(dir, a),
         Command::Answer(a) => cli::answer::run(dir, a),
         Command::Lesson(a) => cli::lesson::run(dir, a),
+        Command::Followups(a) => cli::followups::run(dir, a),
         Command::Hook(a) => hooks::dispatch(dir, a),
         Command::Doctor(a) => cli::doctor::run_with(dir, a.remote, a.full, a.all),
         Command::Budget(a) => cli::budget::run(dir, a),

@@ -22,6 +22,7 @@ pub mod handoff;
 pub mod heal;
 pub mod intake;
 pub mod lease;
+pub mod followups;
 pub mod lessons;
 pub mod lockmerge;
 pub mod meta;
