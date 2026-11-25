@@ -393,7 +393,7 @@ jobs:
           echo "$sum  $f"
           echo "sha_${TARGET//-/_}=$sum" >>"$GITHUB_OUTPUT"
           # The manifest: sha256 of every file this leg made, in the artifact next to them.
-          (cd out && for f in $(ls | LC_ALL=C sort); do (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"); done) >"MANIFEST-$TARGET.txt"
+          (cd out && export LC_ALL=C && for f in *; do (sha256sum "$f" 2>/dev/null || shasum -a 256 "$f"); done) >"MANIFEST-$TARGET.txt"
           cat "MANIFEST-$TARGET.txt"
           msum=$( (sha256sum "MANIFEST-$TARGET.txt" 2>/dev/null || shasum -a 256 "MANIFEST-$TARGET.txt") | cut -d' ' -f1)
           echo "manifest_sha_${TARGET//-/_}=$msum" >>"$GITHUB_OUTPUT"

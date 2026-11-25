@@ -185,7 +185,9 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
     if (job.environment === undefined) continue;
     assert.match(job.if, /github\.event_name == 'workflow_dispatch'/, name);
   }
-  assert.ok(wf.jobs.major === undefined && wf.jobs.crates === undefined && wf.jobs.npm === undefined);
+  assert.ok(
+    wf.jobs.major === undefined && wf.jobs.crates === undefined && wf.jobs.npm === undefined,
+  );
   assert.ok(publish.needs.includes("draft"));
   assert.ok(release.needs.includes("publish") && release.needs.includes("draft"));
   assert.match(release.if, /needs\.plan\.outputs\.release == 'true'/);
@@ -193,7 +195,10 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   // The draft carries the release notes; the tag job pushes the tag and publishes the draft.
   assert.match(runOf(draft), /--notes-start-tag/);
   assert.doesNotMatch(runOf(release), /gh release create/);
-  assert.doesNotMatch(runOf(release), /cargo publish|cargo build|pnpm install|npm install|npm publish/);
+  assert.doesNotMatch(
+    runOf(release),
+    /cargo publish|cargo build|pnpm install|npm install|npm publish/,
+  );
   // The tag goes over SSH with the release-tags deploy key, not the job token.
   const run = runOf(release);
   assert.match(run, /remote="git@github\.com:\$GH_REPO\.git"/);
