@@ -238,6 +238,19 @@ for m in "${members[@]}" hull; do
   [ ! -f "$m/CHANGELOG.md" ] || apply "$m/CHANGELOG.md" set_changelog
 done
 
+# --- 6b. splice docs/PROGRESS.md Status names the lockstep version (splice/tests/docs.rs) ---------
+set_progress_status() {
+  sed -E "s/^splice [0-9]+\.[0-9]+\.[0-9]+([^ ]*)? is the workspace lockstep version/splice $ver is the workspace lockstep version/"
+}
+[ ! -f splice/docs/PROGRESS.md ] || apply splice/docs/PROGRESS.md set_progress_status
+
+# --- 6c. hull docs/adopt.md pins the hosted assess script to the release (hull/tests/adopt-doc) --
+set_adopt_pin() {
+  sed -E -e "s#keelstack\.dev/assess/v[0-9]+\.[0-9]+\.[0-9]+\.mjs#keelstack.dev/assess/v$ver.mjs#g" \
+    -e "s#hull v[0-9]+\.[0-9]+\.[0-9]+'s #hull v$ver's #g"
+}
+[ ! -f hull/docs/adopt.md ] || apply hull/docs/adopt.md set_adopt_pin
+
 # --- 7. check: the lock agrees with the manifests ----------------------------------------------
 if [ -f Cargo.lock ]; then
   for c in "${crates[@]}"; do

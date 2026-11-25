@@ -144,6 +144,19 @@ if grep -q "^    default: $new\$" splice/action/action.yml; then ok "splice acti
 if grep -n "\"$old\"" Cargo.toml >/dev/null 2>&1; then fail "$old remains in Cargo.toml"; else ok "no $old in Cargo.toml"; fi
 if grep -l "\"$old\"" "${npm_files[@]}" >/dev/null 2>&1; then fail "$old remains in: $(grep -l "\"$old\"" "${npm_files[@]}" | tr '\n' ' ')"; else ok "no $old in npm package.json files"; fi
 
+# splice docs/PROGRESS.md Status names the new version (splice/tests/docs.rs pins it)
+if grep -q "^splice $new is the workspace lockstep version" splice/docs/PROGRESS.md; then
+  ok "splice PROGRESS status names $new"
+else
+  fail "splice/docs/PROGRESS.md status does not name $new"
+fi
+
+if grep -q "keelstack.dev/assess/v$new.mjs" hull/docs/adopt.md && grep -q "hull v$new's" hull/docs/adopt.md; then
+  ok "hull adopt.md pins v$new"
+else
+  fail "hull/docs/adopt.md does not pin v$new"
+fi
+
 # CHANGELOG headings, each in the file's own style
 chk_heading() { # <file> <exact heading line>
   if grep -qxF -- "$2" "$1"; then ok "$1: $2"; else fail "$1 lacks heading '$2'"; fi
