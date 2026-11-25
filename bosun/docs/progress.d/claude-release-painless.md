@@ -1,1 +1,0 @@
-- 2026-11-25 · release painless · bosun/docs/releasing.md points at the lockstep flow (root docs/releasing.md) · this PR

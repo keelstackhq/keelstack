@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.23.0 (2026-11-25)
+
 - `hoist release publish --only crates,npm [--npm-dir DIR]... [--npm-tag T] [--provenance]`: registry-only publish of every package at its manifest version, no tags (release.yml's crates and npm jobs now run it instead of bash); a package that depends on one not on its registry yet waits (`pending`, exit 2). `hoist release check`: read-only per-package state (published, newest vs workspace, trusted publisher `unknown`). `release bootstrap`: the crates.io step links `/settings/new-trusted-publisher`, the final hint prints `gh workflow run <workflow>`. Spec §9.3.1, §9.6, §9.6.1. `[github] tags_key_environment` puts the tag deploy key's secret in another environment than `[release] environment`.
 - `hoist org` Cloudflare records (#68 follow-ups): a repeated identical record is one (`ok`, claims nothing), keyed on type, name (any case), normalised content and `proxied`; records that differ only in `proxied` are a config error (exit 3); records are read once per name; a multi-chunk TXT value matches its joined value; a list without `result_info.total_pages` is read past page 1 until a 404, empty, short or repeated page (other failures stay unknown or an error); a declined prompt exits at least 1 (`HOIST_ASSUME_TTY` drives it in tests).
 - Tests pin crates.io's bare token on GETs and `Bearer` on writes.

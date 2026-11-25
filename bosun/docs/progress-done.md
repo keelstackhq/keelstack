@@ -532,3 +532,8 @@ One line per landed task, oldest first. Agents never read this file; `docs/PROGR
 - 2026-11-23 · guard feedback G1-G3, G5, G6 · the Bash guard parses globs, braces, scripts and fetch chains; the bump-version repro passes · this PR
 - 2026-11-23 · BOOTSTRAP_EXCLUDED adds `scripts/release-pre.sh`; spec §8 · `core::risk::tests::bootstrap_excludes_the_release_pre_hook`
 - 2026-11-23 · port follow-ups: PR #4 review minors (settings lock, bosun_repo, .yaml workflows, base pins, replace objects, SessionStart bound, hex4, spec/site/decisions text) · this PR
+- 2026-11-24 · catch-up · mainfix #74 (signer-ci key test), CI signer on (checks mode, gate App ci-ok mirror, pinned ruleset), setup script 0.22.1, #68 and #70 review minors · PR #77
+- 2026-11-24 · fix crate packaging · keel-bosun package include + cargo package CI step, release 0.22.1 · PR #70
+- 2026-11-25 · flow v2 · D-028: `[review] verdicts_needed`/`block_on`, `[main_health] block`, `bosun followups add|list` (spec §19), ci_input_changed and ci_verdict 3000-file fixes, this repo's `.bosun/bosun.toml` on one verdict, blockers only, main warns · PR claude/flow-v2
+- 2026-11-24 · owner delegation · `[approvals] owner_delegation = "all"` (D-027), on in keelstack · PR #71
+- 2026-11-25 · release painless · bosun/docs/releasing.md points at the lockstep flow (root docs/releasing.md) · this PR

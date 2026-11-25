@@ -4,6 +4,8 @@ Newest first. The version in `Cargo.toml` is the last release; "Unreleased" ship
 
 ## Unreleased
 
+## 0.23.0 — 2026-11-25
+
 ## 0.22.1 — 2026-11-24
 
 - Lockstep release with keel-bosun's packaging fix (#70); no hoard changes.
