@@ -1316,17 +1316,30 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy
     // A decoy link (no open task the author leased) leaves no author to exclude: nothing counts.
     let inputs = autonomous_inputs(gh, pull, &app.ctx.repo.to_string())?;
     let models = review_models(gh, &pull.base_sha)?;
+    let flow = crate::cli::risk_check::flow_at(gh, &pull.base_sha)?;
     let clean = inputs.map_or(vec![], |(comments, mut excluded)| {
         excluded.push(app.ctx.session.clone());
         // The CI signer's own session is no reviewer's: the session that asked is excluded too.
         excluded.extend(requester.map(String::from));
         if quorum {
-            quorum_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+            quorum_clean(
+                &comments,
+                &pull.head_sha,
+                &excluded,
+                models.as_deref(),
+                flow,
+            )
         } else {
-            autonomous_clean(&comments, &pull.head_sha, &excluded, models.as_deref())
+            autonomous_clean(
+                &comments,
+                &pull.head_sha,
+                &excluded,
+                models.as_deref(),
+                flow,
+            )
         }
     });
-    let min = if quorum { risk::QUORUM_VERDICTS } else { 1 };
+    let min = if quorum { flow.verdicts_needed } else { 1 };
     if clean.len() < min {
         let rule = if quorum {
             "quorum (D-022)"
@@ -1339,7 +1352,14 @@ fn autonomous_ok(app: &App, pull: &Pull, requester: Option<&str>, policy: Policy
                 clean.len(),
                 pull.head_sha
             ),
-            "get independent clean verdicts (approve, confidence >= min, no major finding) with `bosun verdict comment --from -` in reviewer sessions (without CI add `--sign-key <reviewer.pem>`), then sign again",
+            format!(
+                "get independent clean verdicts (approve, confidence >= min, no {} finding) with `bosun verdict comment --from -` in reviewer sessions (without CI add `--sign-key <reviewer.pem>`), then sign again",
+                if flow.block_on_blocker {
+                    "blocker"
+                } else {
+                    "major"
+                }
+            ),
         ));
     }
     Ok(())

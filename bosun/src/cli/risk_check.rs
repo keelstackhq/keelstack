@@ -24,10 +24,10 @@ use crate::core::lease::leases_of;
 use crate::core::meta::{closing_issues_in, linked_issues_in, task_pr_lead};
 use crate::core::records::Record;
 use crate::core::risk::{
-    self, Approval, ChangedFile, FileView, OWNER_TEAM_FIX, OwnerView, Rules, VERDICTS_NEEDED,
-    added_lines, apply_floor, capability_labels, clean_verdicts, comment_approves, evaluate,
-    lease_sessions, new_dependencies, parse_owners_in, plain, replace_note, requirement, risk_note,
-    two_verdicts, unseen_diff,
+    self, Approval, ChangedFile, FileView, OWNER_TEAM_FIX, OwnerView, Rules, added_lines,
+    apply_floor, capability_labels, clean_verdicts_in, comment_approves, evaluate, lease_sessions,
+    new_dependencies, parse_owners_in, plain, replace_note, requirement, risk_note, two_verdicts,
+    unseen_diff,
 };
 use crate::core::touch::{Changed, outside, plan_tick_file};
 use crate::core::verdict::{Verdict, bot_verdict_json, comment_json, effective};
@@ -814,6 +814,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     let unlinked =
         linked.is_empty() && matches!(requirement, Approval::TwoVerdicts | Approval::Delegate);
     let models = review_models(gh, base)?;
+    let flow = flow_at(gh, base)?;
     let need = Need {
         repo: &ctx.repo,
         pr: n,
@@ -826,6 +827,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         unlinked,
         autonomous: auto.as_ref(),
         quorum,
+        flow,
         models: models.as_deref(),
         signer_on: signer_on(gh, base)?,
         plain_ok,
@@ -850,7 +852,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
                 let f = approval_on(gh, &need, h).ok()?;
                 // Any key (owner role included) is a signature: it needs the recount.
                 let by_signature = need.quorum && matches!(f.kind, Some(Approver::Key { .. }));
-                let recounted = found.autonomous_verdicts.len() >= risk::QUORUM_VERDICTS;
+                let recounted = found.autonomous_verdicts.len() >= flow.verdicts_needed;
                 (!by_signature || recounted).then_some(f)
             };
             carry_approval_in(gh, &pull, &branch, (&owners, Some(&view)), &approve)
@@ -875,7 +877,7 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             _ => {}
         }
     }
-    let by_verdicts = verdicts.len() >= VERDICTS_NEEDED;
+    let by_verdicts = verdicts.len() >= flow.verdicts_needed;
     let passed = passed_on_head || carried_from.is_some();
 
     let ids: Vec<&str> = matches.iter().map(|m| m.rule.as_str()).collect();
@@ -886,8 +888,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         (_, false) => "normal risk".to_string(),
         (Some(who), _) => format!("high risk ({}), approved by {who}{from}", ids.join(", ")),
         (None, _) if by_verdicts => format!(
-            "high risk ({}), approved by two verdicts: {}",
+            "high risk ({}), approved by {}: {}",
             ids.join(", "),
+            flow.verdicts_text(),
             verdicts.join(", ")
         ),
         (None, _) if halt_note.is_some() => format!(
@@ -896,8 +899,9 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             ids.join(", ")
         ),
         (None, _) if autonomous && quorum => format!(
-            "high risk, quorum (D-022): {} clean verdicts and orchestrator signature needed: {}",
-            risk::QUORUM_VERDICTS,
+            "high risk, quorum (D-022): {} clean verdict{} and orchestrator signature needed: {}",
+            flow.verdicts_needed,
+            plural(flow.verdicts_needed),
             ids.join(", ")
         ),
         (None, _) if autonomous => format!(
@@ -918,8 +922,10 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
             ids.join(", ")
         ),
         (None, _) if requirement == Approval::TwoVerdicts => format!(
-            "high risk, two verdicts needed ({}/{VERDICTS_NEEDED}): {}",
+            "high risk, {} needed ({}/{}): {}",
+            flow.verdicts_text(),
             verdicts.len(),
+            flow.verdicts_needed,
             ids.join(", ")
         ),
         (None, _) => format!("high risk, owner approval needed: {}", ids.join(", ")),
@@ -1032,10 +1038,17 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
     };
     let fix = if autonomous && quorum {
         format!(
-            "get {} independent clean verdicts (approve, confidence >= {}, no major finding) on head {head} from {} different reviewer sessions (`bosun verdict comment --from -`; neither the author nor the signer), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap` (or `--via-signer`); or an owner approval: {owner_fix}",
-            risk::QUORUM_VERDICTS,
+            "get {} independent clean verdict{} (approve, confidence >= {}, no {} finding) on head {head} from {} different reviewer session{} (`bosun verdict comment --from -`; neither the author nor the signer), then the orchestrator signs `bosun approve {n}@{head} --sign-key <pem> --bootstrap` (or `--via-signer`); or an owner approval: {owner_fix}",
+            flow.verdicts_needed,
+            plural(flow.verdicts_needed),
             risk::VERDICT_MIN_CONFIDENCE,
-            risk::QUORUM_VERDICTS
+            if flow.block_on_blocker {
+                "blocker"
+            } else {
+                "major"
+            },
+            flow.verdicts_needed,
+            plural(flow.verdicts_needed),
         )
     } else if autonomous {
         format!(
@@ -1053,7 +1066,18 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         )
     } else if requirement == Approval::TwoVerdicts {
         format!(
-            "get a second review verdict from a different session (approve, confidence >= {}) on head {head}, or an owner approval: {owner_fix}",
+            "get {} review verdict{} from {} (approve, confidence >= {}) on head {head}, or an owner approval: {owner_fix}",
+            if flow.verdicts_needed == 1 {
+                "a"
+            } else {
+                "a second"
+            },
+            "",
+            if flow.verdicts_needed == 1 {
+                "a reviewer session"
+            } else {
+                "a different session"
+            },
             risk::VERDICT_MIN_CONFIDENCE
         )
     } else {
@@ -1268,6 +1292,8 @@ struct Need<'a> {
     autonomous: Option<&'a (Vec<Comment>, Vec<String>)>,
     /// Quorum policy (D-022): the signature also needs [`risk::QUORUM_VERDICTS`] counting verdicts.
     quorum: bool,
+    /// `[review]` at base (D-028): verdicts needed and what blocks a verdict.
+    flow: risk::Flow,
     /// `[approvals] review_models` at base: when set, only verdicts by these models count.
     models: Option<&'a [String]>,
     /// `[approvals] signer` at base: a signer key's signature counts only while it is true.
@@ -1314,11 +1340,13 @@ pub(crate) struct Found {
     delegate_verdicts: Vec<String>,
     delegate_blocked: Option<String>,
     autonomous_verdicts: Vec<String>,
+    /// `[review] verdicts_needed` at base (D-028) when this was counted.
+    needed: usize,
 }
 
 impl Found {
     pub(crate) fn passed(&self) -> bool {
-        self.approved_by.is_some() || self.verdicts.len() >= VERDICTS_NEEDED
+        self.approved_by.is_some() || self.verdicts.len() >= self.needed.max(1)
     }
 
     /// The sessions whose verdicts count in this approval; `None` when an owner approved.
@@ -1335,17 +1363,20 @@ impl Found {
 /// The approval of a high-risk PR on `sha`: an owner, two verdicts, or a delegate.
 fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     let Need { repo, pr, view, .. } = *need;
-    let mut found = Found::default();
+    let mut found = Found {
+        needed: need.flow.verdicts_needed,
+        ..Found::default()
+    };
     let mut bootstrap = need.bootstrap;
     let mut signed_ok = need.signed_ok;
     if let Some((comments, excluded)) = need.autonomous {
         found.autonomous_verdicts = if need.quorum {
-            quorum_clean(comments, sha, excluded, need.models)
+            quorum_clean(comments, sha, excluded, need.models, need.flow)
         } else {
-            autonomous_clean(comments, sha, excluded, need.models)
+            autonomous_clean(comments, sha, excluded, need.models, need.flow)
         };
         let min = if need.quorum {
-            risk::QUORUM_VERDICTS
+            need.flow.verdicts_needed
         } else {
             1
         };
@@ -1355,7 +1386,7 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
     }
     // D-022: under quorum an owner-role key signature (v1, v2) counts only together with the
     // quorum of clean verdicts, never alone (also when no autonomous verdict can count at all).
-    if need.quorum && found.autonomous_verdicts.len() < risk::QUORUM_VERDICTS {
+    if need.quorum && found.autonomous_verdicts.len() < need.flow.verdicts_needed {
         signed_ok = false;
     }
     // Under the autonomous policy only its own form counts, else only the bootstrap form.
@@ -1393,11 +1424,12 @@ fn approval_on(gh: &dyn Github, need: &Need, sha: &str) -> Result<Found> {
         // The quorum-adjusted `signed_ok`: under quorum a delegate key also needs the quorum.
         if found.delegate_blocked.is_none() && signed_ok {
             let (comments, excluded) = verdict_inputs(gh, pr, need.linked)?;
-            found.delegate_verdicts = clean_verdicts(
+            found.delegate_verdicts = clean_verdicts_in(
                 comments.iter().map(|c| (c.user.as_str(), c.body.as_str())),
                 sha,
                 &excluded,
                 need.models,
+                need.flow,
             );
             if !found.delegate_verdicts.is_empty() && !owners_withdrawn(gh, pr, sha, view)? {
                 let v1 = |f: Form| f == Form::V1;
@@ -1983,13 +2015,15 @@ pub(crate) fn autonomous_clean(
     head: &str,
     excluded: &[String],
     models: Option<&[String]>,
+    flow: risk::Flow,
 ) -> Vec<String> {
     let c = comments.iter();
-    risk::autonomous_verdicts(
+    risk::autonomous_verdicts_in(
         c.map(|c| (c.user.as_str(), c.body.as_str(), c.unedited())),
         head,
         excluded,
         models,
+        flow,
     )
 }
 
@@ -1999,13 +2033,15 @@ pub(crate) fn quorum_clean(
     head: &str,
     excluded: &[String],
     models: Option<&[String]>,
+    flow: risk::Flow,
 ) -> Vec<String> {
     let c = comments.iter();
-    risk::quorum_verdicts(
+    risk::quorum_verdicts_in(
         c.map(|c| (c.user.as_str(), c.body.as_str(), c.unedited())),
         head,
         excluded,
         models,
+        flow,
     )
 }
 
@@ -2115,6 +2151,21 @@ pub(crate) fn oneoff_allow(gh: &dyn Github, base: &str) -> Result<Vec<crate::cor
         .iter()
         .filter_map(|g| crate::core::glob::Glob::parse(g).ok())
         .collect())
+}
+
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+/// The review flow (`[review] verdicts_needed`, `block_on`, D-028) on `base`. No config, or one
+/// that does not parse, gives the strict default: two verdicts, a major blocks.
+pub(crate) fn flow_at(gh: &dyn Github, base: &str) -> Result<risk::Flow> {
+    Ok(match gh.file_at(CONFIG_FILE, base)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)
+            .map(|c| risk::Flow::from_review(&c.review))
+            .unwrap_or_default(),
+        None => risk::Flow::default(),
+    })
 }
 
 /// `[approvals] review_models` on `base` (D-017 and the verdict classes): `None` when unset. A

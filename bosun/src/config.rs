@@ -52,6 +52,9 @@ pub struct Config {
     /// `intake`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub folders: Vec<FolderConfig>,
+    /// `[main_health]` (D-028): whether a red main blocks. Release ordering as for `intake`.
+    #[serde(skip_serializing_if = "MainHealth::is_default")]
+    pub main_health: MainHealth,
 }
 
 /// One `[[folders]]` table.
@@ -177,6 +180,7 @@ impl Default for Config {
             routines: Routines::default(),
             ci: Ci::default(),
             folders: Vec::new(),
+            main_health: MainHealth::default(),
         }
     }
 }
@@ -214,6 +218,59 @@ pub struct Review {
     pub max_tokens: u32,
     /// `review-ci` refuses a diff with more patch bytes than this; it never truncates.
     pub max_diff_bytes: u64,
+    /// Counting verdicts of different sessions a two-verdicts or quorum approval needs (D-028
+    /// flow v2: 1 is enough). Default 2. Read from the PR's base.
+    #[serde(skip_serializing_if = "is_default_verdicts_needed")]
+    pub verdicts_needed: u32,
+    /// Which findings stop a clean verdict (D-028): `major` (default) or `blocker`. Read from the
+    /// PR's base.
+    #[serde(skip_serializing_if = "BlockOn::is_default")]
+    pub block_on: BlockOn,
+}
+
+fn is_default_verdicts_needed(n: &u32) -> bool {
+    *n == DEFAULT_VERDICTS_NEEDED
+}
+
+/// `[review] verdicts_needed` when unset: two verdicts (D-022).
+pub const DEFAULT_VERDICTS_NEEDED: u32 = 2;
+
+/// `[review] block_on`: the lowest finding severity that keeps a verdict from counting as clean.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BlockOn {
+    /// A major or blocker finding blocks (today).
+    #[default]
+    Major,
+    /// Only a blocker blocks; major, minor and nit findings are follow-ups (D-028).
+    Blocker,
+}
+
+impl BlockOn {
+    fn is_default(&self) -> bool {
+        *self == BlockOn::Major
+    }
+}
+
+/// `[main_health] block`: whether a red default branch stops work (D-028: warn only).
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct MainHealth {
+    /// True (default): a red main blocks `main-open`, approvals, spawns and leases. False: it only
+    /// warns.
+    pub block: bool,
+}
+
+impl Default for MainHealth {
+    fn default() -> Self {
+        MainHealth { block: true }
+    }
+}
+
+impl MainHealth {
+    fn is_default(&self) -> bool {
+        *self == MainHealth::default()
+    }
 }
 
 impl Default for Review {
@@ -223,6 +280,8 @@ impl Default for Review {
             model: "claude-opus-5-5".into(),
             max_tokens: 8192,
             max_diff_bytes: 200_000,
+            verdicts_needed: DEFAULT_VERDICTS_NEEDED,
+            block_on: BlockOn::default(),
         }
     }
 }
@@ -596,6 +655,12 @@ impl Config {
                     format!("edit {file}: set review.{key} to a positive number, or remove it"),
                 ));
             }
+        }
+        if c.review.verdicts_needed == 0 {
+            return Err(BosunError::error(
+                format!("{file}: review.verdicts_needed must be at least 1"),
+                format!("edit {file}: set review.verdicts_needed to 1 or more, or remove it"),
+            ));
         }
         let bots = c.approvals.verdict_bots.iter().flatten();
         if let Some(b) = bots

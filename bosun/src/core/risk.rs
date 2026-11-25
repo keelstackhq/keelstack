@@ -1294,6 +1294,55 @@ pub const TRUST_ROOT: [&str; 57] = [
 /// [`VERDICT_MIN_CONFIDENCE`] (0.9), stricter than D-022's 0.85; it stays 0.9.
 pub const QUORUM_VERDICTS: usize = 2;
 
+/// The review flow of a repo (D-028), read from `[review]` at the PR's base: how many counting
+/// verdicts approve, and which findings keep a verdict from counting as clean. The default is the
+/// strict flow every repo had before (two verdicts, a major blocks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flow {
+    /// Counting verdicts from different sessions an approval needs (at least 1).
+    pub verdicts_needed: usize,
+    /// True when only a blocker keeps a verdict from counting (`block_on = "blocker"`).
+    pub block_on_blocker: bool,
+}
+
+impl Default for Flow {
+    fn default() -> Self {
+        Flow {
+            verdicts_needed: QUORUM_VERDICTS,
+            block_on_blocker: false,
+        }
+    }
+}
+
+impl Flow {
+    /// The flow a parsed `[review]` table asks for.
+    pub fn from_review(r: &crate::config::Review) -> Flow {
+        Flow {
+            verdicts_needed: (r.verdicts_needed as usize).max(1),
+            block_on_blocker: r.block_on == crate::config::BlockOn::Blocker,
+        }
+    }
+
+    /// Whether a record with `major` major findings is clean enough to count.
+    fn clean(&self, major: Option<u32>) -> bool {
+        self.block_on_blocker || major == Some(0)
+    }
+
+    /// The number as words for status texts: "one verdict", "two verdicts".
+    pub fn verdicts_text(&self) -> String {
+        let n = match self.verdicts_needed {
+            1 => "one".to_string(),
+            2 => "two".to_string(),
+            3 => "three".to_string(),
+            n => n.to_string(),
+        };
+        format!(
+            "{n} verdict{}",
+            if self.verdicts_needed == 1 { "" } else { "s" }
+        )
+    }
+}
+
 /// The pin file whose change [`pin_change_trust_root`] judges.
 pub const PIN_FILE: &str = ".bosun/version";
 
@@ -1439,6 +1488,17 @@ pub fn autonomous_verdicts<'a>(
     excluded: &[String],
     models: Option<&[String]>,
 ) -> Vec<String> {
+    autonomous_verdicts_in(comments, head, excluded, models, Flow::default())
+}
+
+/// [`autonomous_verdicts`] under a repo's [`Flow`].
+pub fn autonomous_verdicts_in<'a>(
+    comments: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+    flow: Flow,
+) -> Vec<String> {
     let all: Vec<_> = comments.into_iter().collect();
     // Any verdict on the head that would not count blocks, edited too (an edit can only make it
     // count less): a rejection, majors, a low or missing confidence. Only all-clean passes.
@@ -1446,14 +1506,14 @@ pub fn autonomous_verdicts<'a>(
         (a.eq_ignore_ascii_case(VERDICT_AUTHOR) || a.eq_ignore_ascii_case(UNVERIFIED_AUTHOR))
             && matches!(apply_record(b), Some(Record::Verdict { head_sha, approved, confidence, major, .. })
                 if head_sha == head
-                    && !(approved && major == Some(0)
+                    && !(approved && flow.clean(major)
                         && confidence.is_some_and(|c| c >= VERDICT_MIN_CONFIDENCE)))
     });
     if refused {
         return Vec::new();
     }
     let kept = (all.into_iter()).filter_map(|(a, b, unedited)| unedited.then_some((a, b)));
-    clean_verdicts(kept, head, excluded, models)
+    clean_verdicts_in(kept, head, excluded, models, flow)
 }
 
 /// The changed paths among `(path, previous path)` pairs that are CI workflow files
@@ -1623,7 +1683,19 @@ pub fn clean_verdicts<'a>(
     excluded: &[String],
     models: Option<&[String]>,
 ) -> Vec<String> {
-    verdict_sessions(comments, head, excluded, models, |major| major == Some(0))
+    clean_verdicts_in(comments, head, excluded, models, Flow::default())
+}
+
+/// [`clean_verdicts`] under a repo's [`Flow`]: with `block_on = "blocker"` a record counts
+/// whatever its major count (an approving record has no blocker).
+pub fn clean_verdicts_in<'a>(
+    comments: impl IntoIterator<Item = (&'a str, &'a str)>,
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+    flow: Flow,
+) -> Vec<String> {
+    verdict_sessions(comments, head, excluded, models, |major| flow.clean(major))
 }
 
 fn verdict_sessions<'a>(
@@ -1706,8 +1778,20 @@ pub fn quorum_verdicts<'a>(
     excluded: &[String],
     models: Option<&[String]>,
 ) -> Vec<String> {
+    quorum_verdicts_in(comments, head, excluded, models, Flow::default())
+}
+
+/// [`quorum_verdicts`] under a repo's [`Flow`]. Sessions are still deduped by root and carrier;
+/// the requester's and signer's own sessions are in `excluded`.
+pub fn quorum_verdicts_in<'a>(
+    comments: impl IntoIterator<Item = (&'a str, &'a str, bool)>,
+    head: &str,
+    excluded: &[String],
+    models: Option<&[String]>,
+    flow: Flow,
+) -> Vec<String> {
     let all: Vec<_> = comments.into_iter().collect();
-    let counted = autonomous_verdicts(all.iter().copied(), head, excluded, models);
+    let counted = autonomous_verdicts_in(all.iter().copied(), head, excluded, models, flow);
     // The carrier of each session's newest unedited record on `head` (the one that counted).
     let mut carrier: std::collections::BTreeMap<String, String> = Default::default();
     for (author, body, unedited) in &all {

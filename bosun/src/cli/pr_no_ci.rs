@@ -62,7 +62,8 @@ pub fn clean_by_other(app: &App, pull: &Pull) -> Result<Vec<String>> {
     excluded.push(app.ctx.session.clone());
     let models = review_models(gh, &pull.base_sha)?;
     let head = &pull.head_sha;
-    let found = autonomous_clean(&comments, head, &excluded, models.as_deref());
+    let flow = crate::cli::risk_check::flow_at(gh, &pull.base_sha)?;
+    let found = autonomous_clean(&comments, head, &excluded, models.as_deref(), flow);
     if provider_default(gh)? != CiProvider::None {
         return Ok(found);
     }
