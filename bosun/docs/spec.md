@@ -36,3 +36,4 @@ task that changes a section lists that file in its `touch`. `§N` in the text me
 - [16. Owner teams](spec/16-owner-teams.md)
 - [17. Clean template updates (proposed, not built)](spec/17-template-updates.md)
 - [18. Modes](spec/18-modes.md) (setup per mode and environment, migration: [quickstart](quickstart.md))
+- [19. Follow-ups](spec/19-followups.md)

@@ -18,10 +18,6 @@ profile = "ts-pnpm"
 path = "site"
 profile = "ts-pnpm"
 
-[review]
-# "subagent" (mode a) until M8 adds the CI review (mode b).
-mode = "subagent"
-
 [approvals]
 # Bootstrap mode (D-012, spec §8): until this day (UTC, inclusive). Under the autonomous policy
 # (D-017) a bootstrap-form signature no longer counts; the key stays for a move back to a tighter policy.
@@ -46,6 +42,20 @@ owner_delegation = "all"
 # head (never the requester's or the signer's own), not halted. Needs `[checks] mode = "checks"`.
 # Remove it to turn the signer off (every signer signature then stops counting).
 signer = true
+
+[review]
+# "subagent" (mode a) until M8 adds the CI review (mode b).
+mode = "subagent"
+# D-028 (flow v2, owner decision 2026-11-25): one clean independent verdict on the exact head is
+# enough, and only a blocker finding blocks; the rest goes to the rolling `bosun:followups` issue
+# (`bosun followups add`). Remove both keys for D-022's two verdicts and blocking majors.
+verdicts_needed = 1
+block_on = "blocker"
+
+[main_health]
+# D-028: a red main warns (main-open passes with a warning, work goes on); fix it with a
+# mainfix PR first. `block = true` (the default) gives back the old pause.
+block = false
 
 [cloud]
 # The shared cloud environment "keelstack" (spec §5.2): a relayed root starts there.

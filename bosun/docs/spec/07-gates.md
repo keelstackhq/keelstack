@@ -262,3 +262,5 @@ deny): "PR #N's verdict is for <old7>, not <new7>: it carries over only a clean 
 GitHub or config error (a stderr warning) adds nothing; the lookups wait at most 5 s. A
 repeat-lock warning and this one are joined; any deny wins.
 `ready`: no change.
+
+`review-verdict` (D-028): `[review] block_on` does not change the single verdict's own status (only a blocker, a request for changes or an escalation blocks it, as before); it changes which records count as clean for approval (section 8, "Review flow"). The `main-open` status text is `main is red (#N) (warning): ...` and passes when `[main_health] block = false` (section 9).

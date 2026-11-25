@@ -27,7 +27,7 @@ task back to ready.
 hides the older failed run.
 
 `bosun spawn` checks, in this order:
-1. Main is not red, and process is not red (a mainfix or process-fix epic is exempt from process-red).
+1. Main is not red, and process is not red (a mainfix or process-fix epic is exempt from process-red). With `[main_health] block = false` (D-028) a red main is no refusal here, in `claim`, `wave plan|tick` or `heal` (section 9); process-red still is.
 2. The daily budget is below 80 %.
 3. The depth of the new session is at most max_depth.
 4. The live sessions (all origins) are fewer than max_live_sessions.
