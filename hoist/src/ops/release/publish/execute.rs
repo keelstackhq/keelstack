@@ -45,15 +45,18 @@ pub(super) fn dry_run(
         let mut platform_pending = false;
         for step in job.steps() {
             if let Some(dep) = waits_on(job, step, &pending_pkgs) {
-                items.push(item(
-                    job,
-                    step,
-                    Action::Pending,
-                    format!("waits for {dep}, which is not on its registry yet"),
-                ));
+                let why = format!("waits for {dep}, which is not on its registry yet");
+                // Held in turn: whatever depends on this package waits too.
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
+                items.push(item(job, step, Action::Pending, why));
                 continue;
             }
             if waits_for_platforms(job, step, platform_pending) {
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
                 items.push(item(
                     job,
                     step,
@@ -121,15 +124,18 @@ pub(super) fn execute(
                 continue;
             }
             if let Some(dep) = waits_on(job, step, &pending_pkgs) {
-                items.push(item(
-                    job,
-                    step,
-                    Action::Pending,
-                    format!("waits for {dep}, which is not on its registry yet"),
-                ));
+                let why = format!("waits for {dep}, which is not on its registry yet");
+                // Held in turn: whatever depends on this package waits too.
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
+                items.push(item(job, step, Action::Pending, why));
                 continue;
             }
             if waits_for_platforms(job, step, platform_pending) {
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
                 items.push(item(
                     job,
                     step,

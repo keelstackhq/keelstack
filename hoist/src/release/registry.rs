@@ -56,7 +56,13 @@ pub fn latest_version(http: &Http, p: &Package) -> Result<Fetch<Option<String>>,
                     .as_str()
                     .or_else(|| v["crate"]["max_version"].as_str()),
             };
-            Fetch::Got(Some(found.unwrap_or_default().to_string()))
+            match found.filter(|f| !f.is_empty()) {
+                Some(f) => Fetch::Got(Some(f.to_string())),
+                None => Fetch::Unknown(
+                    "the registry answered without a newest version (no dist-tag `latest`)"
+                        .to_string(),
+                ),
+            }
         }
         Ok(Fetched::NotFound) => Fetch::Got(None),
         Ok(Fetched::Forbidden(why)) => Fetch::Unknown(format!("registry refused the read: {why}")),

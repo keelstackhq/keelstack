@@ -688,3 +688,52 @@ fn a_failed_write_after_the_policy_step_stops_and_the_tag_items_stay_pending() {
         "{w:?}"
     );
 }
+
+/// `[github] tags_key_environment`: the key's secret lives in that environment, not in the
+/// release one (the job that tags holds no registry credentials).
+#[test]
+fn tags_key_environment_moves_the_secret_out_of_the_release_environment() {
+    let (_sk, key) = keypair();
+    let api = Routes::fresh(&key)
+        .set(
+            "GET /repos/acme/x/environments/release-tags/secrets",
+            200,
+            SECRET_NONE,
+        )
+        .set(
+            "GET /repos/acme/x/environments/release-tags/secrets/public-key",
+            200,
+            &key,
+        )
+        .set(
+            "PUT /repos/acme/x/environments/release-tags/secrets/RELEASE_TAG_KEY",
+            201,
+            "{}",
+        )
+        .start();
+    let dir = repo(
+        "[github]\ntags_bypass = \"deploy_key\"\ntags_key_environment = \"release-tags\"\n\n[github.tag_ruleset]\npatterns = [\"v*\"]\n",
+    );
+    let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
+    let k = item(&plan, "tag_deploy_key", "hoist: release tags");
+    assert!(
+        k["reason"]
+            .as_str()
+            .unwrap()
+            .contains("environment `release-tags`"),
+        "{k}"
+    );
+    assert!(
+        api.requests()
+            .iter()
+            .any(|r| r.path == "/repos/acme/x/environments/release-tags/secrets"),
+        "{:?}",
+        api.requests()
+    );
+    assert!(
+        !api.requests()
+            .iter()
+            .any(|r| r.path == "/repos/acme/x/environments/release/secrets"),
+        "the release environment's secrets are not read"
+    );
+}

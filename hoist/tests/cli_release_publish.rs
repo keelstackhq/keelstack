@@ -2063,3 +2063,249 @@ fn only_dry_run_is_get_only_and_ignores_tags() {
     assert_eq!(item(&v, "npm", "@acme/lib@1.0.0")["action"], "ok");
     assert_eq!(item(&v, "crates", "tool@0.3.0")["action"], "ok");
 }
+
+#[test]
+fn only_registry_5xx_exits_1_and_publishes_nothing() {
+    let env = setup();
+    cargo_stub(&env, "");
+    let api = api_done(
+        &env.head,
+        &[
+            (TOOL_V, 503, r#"{"message":"down"}"#, &[]),
+            (TOOL_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = only_run(&env, &api, &[]);
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(1), "{v:#}\n{}", stderr(&output));
+    let crates = item(&v, "crates", "tool@0.3.0");
+    assert!(
+        crates["reason"].as_str().unwrap().starts_with("failed:"),
+        "{crates:#}"
+    );
+    assert!(!api.requests().iter().any(|r| r.path == "/oidc"));
+    assert!(tool_log(&env, "cargo").is_empty());
+    assert!(
+        tool_log(&env, "npm")
+            .iter()
+            .all(|l| !l.starts_with("publish"))
+    );
+}
+
+/// Three crates `ca` (never published) <- `cb` <- `cc`: the two dependents hold, transitively,
+/// although their own packages exist; nothing publishes half way.
+fn chain_env() -> Env {
+    let env = setup();
+    let d = env.repo.path();
+    for (n, dep) in [("a", None), ("b", Some("a")), ("c", Some("b"))] {
+        let deps = dep.map_or(String::new(), |x| {
+            format!("\n[dependencies]\nc{x} = {{ path = \"../{x}\", version = \"0.1.0\" }}\n")
+        });
+        write(
+            d,
+            &format!("crates/{n}/Cargo.toml"),
+            format!("[package]\nname = \"c{n}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n{deps}")
+                .as_bytes(),
+        );
+    }
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: chain"]);
+    env
+}
+
+const CHAIN_ROUTES: [RouteSpec<'static>; 6] = [
+    ("GET /api/v1/crates/ca/0.1.0", 404, "", &[]),
+    ("GET /api/v1/crates/ca", 404, "", &[]),
+    ("GET /api/v1/crates/cb/0.1.0", 404, "", &[]),
+    ("GET /api/v1/crates/cb", 200, "{}", &[]),
+    ("GET /api/v1/crates/cc/0.1.0", 404, "", &[]),
+    ("GET /api/v1/crates/cc", 200, "{}", &[]),
+];
+
+#[test]
+fn only_holds_the_transitive_dependents_of_a_new_crate() {
+    let env = chain_env();
+    cargo_stub(&env, "");
+    let api = api_done(&env.head, &CHAIN_ROUTES);
+    let output = only_run(&env, &api, &[]);
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(2), "{v:#}\n{}", stderr(&output));
+    assert_eq!(item(&v, "crates", "ca@0.1.0")["action"], "pending");
+    let b = item(&v, "crates", "cb@0.1.0");
+    assert_eq!(b["action"], "pending", "{b:#}");
+    assert!(
+        b["reason"].as_str().unwrap().contains("waits for ca"),
+        "{b:#}"
+    );
+    let c = item(&v, "crates", "cc@0.1.0");
+    assert_eq!(c["action"], "pending", "{c:#}");
+    assert!(
+        c["reason"].as_str().unwrap().contains("waits for cb"),
+        "{c:#}"
+    );
+    assert!(
+        tool_log(&env, "cargo").is_empty(),
+        "{:?}",
+        tool_log(&env, "cargo")
+    );
+    assert!(!api.requests().iter().any(|r| r.path == "/oidc"));
+}
+
+#[test]
+fn only_dry_run_holds_the_transitive_dependents_too() {
+    let env = chain_env();
+    let mut routes = CHAIN_ROUTES.to_vec();
+    routes.extend_from_slice(&ON_REGISTRIES);
+    let api = FakeApi::start(&routes);
+    let output = publish(&env, &api)
+        .args(["--dry-run", "--only", "crates"])
+        .output()
+        .unwrap();
+    let v = json(&output);
+    assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
+    assert!(
+        item(&v, "crates", "cc@0.1.0")["reason"]
+            .as_str()
+            .unwrap()
+            .contains("waits for cb"),
+        "{v:#}"
+    );
+}
+
+fn staged_pair(optional_version: &str) -> tempfile::TempDir {
+    let staged = tempfile::tempdir().unwrap();
+    write(
+        staged.path(),
+        "plat/package.json",
+        br#"{"name":"@acme/staged-linux","version":"1.0.0"}"#,
+    );
+    write(
+        staged.path(),
+        "main/package.json",
+        format!(
+            r#"{{"name":"@acme/staged","version":"1.0.0","optionalDependencies":{{"@acme/staged-linux":"{optional_version}"}}}}"#
+        )
+        .as_bytes(),
+    );
+    staged
+}
+
+#[test]
+fn only_npm_dir_publishes_the_launcher_last_whatever_the_flag_order() {
+    let env = setup();
+    let order = env.tools.path().join("npm.order");
+    stub(
+        env.tools.path(),
+        "npm",
+        &format!(
+            "if [ \"$1\" = --version ]; then echo 12.2.0; elif [ \"$1\" = publish ]; then basename \"$(pwd)\" >> '{}'; fi",
+            order.display()
+        ),
+    );
+    let staged = staged_pair("1.0.0");
+    let api = api_done(
+        &env.head,
+        &[
+            ("GET /@acme%2Fstaged-linux/1.0.0", 404, "", &[]),
+            ("GET /@acme%2Fstaged-linux/1.0.0", 200, "{}", &[]),
+            ("GET /@acme%2Fstaged-linux", 200, "{}", &[]),
+            ("GET /@acme%2Fstaged/1.0.0", 404, "", &[]),
+            ("GET /@acme%2Fstaged/1.0.0", 200, "{}", &[]),
+            ("GET /@acme%2Fstaged", 200, "{}", &[]),
+        ],
+    );
+    let (main, plat) = (staged.path().join("main"), staged.path().join("plat"));
+    // The launcher first on the command line.
+    let output = only_run(
+        &env,
+        &api,
+        &[
+            "--npm-dir",
+            main.to_str().unwrap(),
+            "--npm-dir",
+            plat.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let got = std::fs::read_to_string(&order).unwrap();
+    let published: Vec<&str> = got
+        .lines()
+        .filter(|l| *l == "plat" || *l == "main")
+        .collect();
+    assert_eq!(published, ["plat", "main"], "{got}");
+}
+
+#[test]
+fn only_npm_dir_with_a_mismatching_optional_dependency_version_exits_3() {
+    let env = setup();
+    let staged = staged_pair("0.9.0");
+    let api = FakeApi::start(&[]);
+    let (main, plat) = (staged.path().join("main"), staged.path().join("plat"));
+    let o = only_run(
+        &env,
+        &api,
+        &[
+            "--npm-dir",
+            plat.to_str().unwrap(),
+            "--npm-dir",
+            main.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    assert!(
+        stderr(&o).contains("requires @acme/staged-linux@0.9.0"),
+        "{}",
+        stderr(&o)
+    );
+}
+
+#[test]
+fn npm_tag_and_provenance_need_only() {
+    let env = setup();
+    let api = FakeApi::start(&[]);
+    for flag in [["--npm-tag", "x"], ["--provenance", ""]] {
+        let mut c = in_actions(&env, &api);
+        c.arg(flag[0]);
+        if !flag[1].is_empty() {
+            c.arg(flag[1]);
+        }
+        let o = c.output().unwrap();
+        assert_eq!(o.status.code(), Some(3), "{}", stderr(&o));
+    }
+}
+
+#[test]
+fn only_provenance_restores_package_json_after_publishing() {
+    let env = setup();
+    let pj = env.repo.path().join("packages/lib/package.json");
+    let before = std::fs::read(&pj).unwrap();
+    // The stub `npm pkg set` really edits the file, as npm does.
+    stub(
+        env.tools.path(),
+        "npm",
+        &format!(
+            "if [ \"$1\" = --version ]; then echo 12.2.0; elif [ \"$1\" = pkg ]; then echo '{{\"changed\":true}}' > '{}'; fi",
+            pj.display()
+        ),
+    );
+    let api = api_done(
+        &env.head,
+        &[
+            (LIB_V, 404, "", &[]),
+            (LIB_V, 200, "{}", &[]),
+            (LIB_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = only_run(&env, &api, &["--provenance"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert!(
+        tool_log(&env, "npm")
+            .iter()
+            .any(|l| l.starts_with("pkg set"))
+    );
+    assert_eq!(
+        std::fs::read(&pj).unwrap(),
+        before,
+        "package.json was left rewritten"
+    );
+}

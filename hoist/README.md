@@ -6,7 +6,7 @@ static Rust binary. Part of the keelstackhq family (hull, splice, hoard, hoist, 
 
 Status: M3 (releasing) done. `apply`, `secrets set|rotate`, `release prepare` and `release
 publish` write (after a preflight); every other command, including `import`, `release plan` and
-`release publish --dry-run`, only sends GET requests.
+`release publish --dry-run`, `release publish --only ... --dry-run` and `release check`, only sends GET requests.
 Design: `docs/superpowers/specs/2026-10-16-hoist-design.md`.
 
 ## Install
@@ -46,6 +46,8 @@ hoist changeset status [--since REV]  # PR check: each changed package has a cha
 hoist release plan            # next versions from .changeset/ (if config.json) or conventional commits, read-only (exit 0)
 hoist release prepare         # open/update the release PR on branch hoist/release, or close it
 hoist release publish [--assets DIR] [--dry-run]  # tags, GitHub Releases, npm, crates.io, deploys (CI only)
+hoist release publish --only crates,npm [--npm-dir D] [--npm-tag T] [--provenance]  # registries only, no tags (CI; idempotent, exit 2: a package is not on its registry yet)
+hoist release check           # read-only: per package, published?, newest vs workspace, trusted publisher (unknown)
 hoist release bootstrap [--dry-run] [--yes]  # first publish + trusted publishers, locally with your logins
 ```
 

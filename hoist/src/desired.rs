@@ -71,7 +71,7 @@ pub struct DesiredTagRuleset {
     pub source: String,
     /// `[github] tags_bypass`.
     pub bypass: crate::config::TagsBypass,
-    /// The environment the release-tags deploy key's secret goes to (`[release] environment`).
+    /// The environment the release-tags deploy key's secret goes to (`[github] tags_key_environment`, else `[release] environment`).
     pub key_env: String,
 }
 
@@ -698,7 +698,11 @@ pub fn build_desired(dir: &Path) -> Result<Desired, HoistError> {
             patterns: t.patterns.clone(),
             source: "hoist.toml:github.tag_ruleset".to_string(),
             bypass: root.github.tags_bypass,
-            key_env: root.release.environment.clone(),
+            key_env: root
+                .github
+                .tags_key_environment
+                .clone()
+                .unwrap_or_else(|| root.release.environment.clone()),
         }),
         actions_permissions: pick(
             &raw,

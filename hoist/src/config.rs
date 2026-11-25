@@ -181,6 +181,10 @@ pub struct GithubCfg {
     pub tag_ruleset: Option<TagRulesetCfg>,
     /// Who bypasses the `hoist: tags` ruleset: `actions` (default) or `deploy_key`.
     pub tags_bypass: TagsBypass,
+    /// With `deploy_key`: the environment that holds `RELEASE_TAG_KEY`. Unset: the release
+    /// environment (`[release] environment`). A separate one keeps the tag key out of the job
+    /// that publishes to registries.
+    pub tags_key_environment: Option<String>,
     /// Opt-in: the repository admin role may merge a PR past the default-branch ruleset.
     pub admin_bypass: bool,
 }
@@ -215,6 +219,7 @@ impl Default for GithubCfg {
             apps: Vec::new(),
             tag_ruleset: None,
             tags_bypass: TagsBypass::Actions,
+            tags_key_environment: None,
             admin_bypass: false,
         }
     }

@@ -364,9 +364,8 @@ enum Assets<'a> {
 }
 
 /// A package built from a pre-staged npm directory (`--npm-dir`): name and version from its
-/// package.json; its `optionalDependencies` that are earlier staged packages are its `deps`, so
-/// a launcher waits for a platform package that is not on npm yet.
-fn staged_package(dir: &Path, staged: &[Package]) -> Result<Package, HoistError> {
+/// package.json, and its `optionalDependencies` (name, version) for [`staged_packages`].
+fn staged_package(dir: &Path) -> Result<(Package, Vec<(String, String)>), HoistError> {
     let dir = &std::fs::canonicalize(dir)
         .map_err(|e| HoistError::Usage(format!("--npm-dir: cannot read {}: {e}", dir.display())))?;
     let file = dir.join("package.json");
@@ -384,18 +383,16 @@ fn staged_package(dir: &Path, staged: &[Package]) -> Result<Package, HoistError>
             .ok_or_else(|| HoistError::Usage(format!("--npm-dir: {} has no `{k}`", file.display())))
     };
     let (name, version) = (field("name")?, field("version")?);
-    let mut deps: Vec<String> = v
+    let optional: Vec<(String, String)> = v
         .get("optionalDependencies")
         .and_then(|o| o.as_object())
         .map(|o| {
-            o.keys()
-                .filter(|k| staged.iter().any(|p| &p.name == *k))
-                .cloned()
+            o.iter()
+                .map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_string()))
                 .collect()
         })
         .unwrap_or_default();
-    deps.sort();
-    Ok(Package {
+    let pkg = Package {
         name,
         kind: PkgKind::Npm,
         dir: dir.to_path_buf(),
@@ -403,14 +400,59 @@ fn staged_package(dir: &Path, staged: &[Package]) -> Result<Package, HoistError>
             value: version,
             source: file.display().to_string(),
         },
-        deps,
+        deps: Vec::new(),
         edges: Vec::new(),
         publish: crate::config::PublishCfg {
             npm: Some(crate::config::NpmPublish::default()),
             ..Default::default()
         },
         launcher: None,
-    })
+    };
+    Ok((pkg, optional))
+}
+
+/// The `--npm-dir` packages in publish order, whatever order the flags came in: a package's
+/// `optionalDependencies` that are other staged packages are its `deps` (a launcher waits for
+/// a platform package that is not on npm yet) and are published before it. A staged
+/// dependency pinned to another version than the one staged is a usage error.
+fn staged_packages(dirs: &[PathBuf], base: &Path) -> Result<Vec<Package>, HoistError> {
+    let mut all = Vec::new();
+    for d in dirs {
+        all.push(staged_package(&base.join(d))?);
+    }
+    let versions: Vec<(String, String)> = all
+        .iter()
+        .map(|(p, _)| (p.name.clone(), p.version.value.clone()))
+        .collect();
+    for (p, optional) in &mut all {
+        for (name, want) in optional.iter() {
+            let Some((_, have)) = versions.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            if want != have {
+                return Err(HoistError::Usage(format!(
+                    "--npm-dir: {} requires {name}@{want} but the staged {name} is {have}",
+                    p.name
+                )));
+            }
+            p.deps.push(name.clone());
+        }
+        p.deps.sort();
+    }
+    let mut left: Vec<Package> = all.into_iter().map(|(p, _)| p).collect();
+    let mut out: Vec<Package> = Vec::new();
+    while !left.is_empty() {
+        let at = left
+            .iter()
+            .position(|p| p.deps.iter().all(|d| out.iter().any(|o| &o.name == d)))
+            .ok_or_else(|| {
+                HoistError::Usage(
+                    "--npm-dir: the staged packages depend on each other in a cycle".to_string(),
+                )
+            })?;
+        out.push(left.remove(at));
+    }
+    Ok(out)
 }
 
 /// Tag and release every package whose manifest version is not yet released; with `--only`,
@@ -425,6 +467,13 @@ pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<R
     if !opts.npm_dirs.is_empty() && !only.is_some_and(|o| o.npm) {
         return Err(HoistError::Usage(
             "--npm-dir needs `--only npm`".to_string(),
+        ));
+    }
+    if only.is_none() && (opts.npm_tag.is_some() || opts.provenance) {
+        return Err(HoistError::Usage(
+            "--npm-tag and --provenance apply to registry publishing: add `--only npm` (or \
+             `--only crates,npm`)"
+                .to_string(),
         ));
     }
     if !dry_run_only {
@@ -473,11 +522,7 @@ pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<R
         (None, true, _) => Assets::Unbuilt,
         (a, _, _) => Assets::Dir(a),
     };
-    let mut staged: Vec<Package> = Vec::new();
-    for d in opts.npm_dirs {
-        let p = staged_package(&dir.join(d), &staged)?;
-        staged.push(p);
-    }
+    let staged = staged_packages(opts.npm_dirs, dir)?;
     let mut jobs = Vec::new();
     for (pkg, tag) in todo {
         let (files, unbuilt) = match (assets, only) {

@@ -104,3 +104,37 @@ fn behind_is_update_and_missing_is_pending() {
             .contains("hoist release bootstrap")
     );
 }
+
+#[test]
+fn an_unreadable_registry_is_unknown_and_reads_send_no_authorization() {
+    let (o, api, v) = run(&[
+        ("GET /@acme%2Flib", 503, r#"{"message":"down"}"#, &[]),
+        ("GET /@acme%2Flib/1.0.0", 503, r#"{"message":"down"}"#, &[]),
+        // npm answered without a `latest` dist-tag: unknown, never an empty version.
+        ("GET /api/v1/crates/tool", 200, r#"{"crate":{}}"#, &[]),
+        ("GET /api/v1/crates/tool/0.3.0", 200, "{}", &[]),
+    ]);
+    assert_eq!(o.status.code(), Some(0), "{v:#}");
+    assert_eq!(item(&v, "registry", "@acme/lib@1.0.0")["action"], "unknown");
+    assert_eq!(item(&v, "registry", "tool@0.3.0")["action"], "unknown");
+    assert!(
+        !v["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "trusted_publisher"),
+        "no trust item for a package that could not be read"
+    );
+    let reqs = api.requests();
+    assert!(!reqs.is_empty());
+    for r in reqs
+        .iter()
+        .filter(|r| r.path.starts_with("/@") || r.path.contains("/crates/"))
+    {
+        assert!(
+            r.auth.as_deref().is_none_or(|a| a.trim().is_empty()),
+            "registry read with credentials: {:?}",
+            r.auth
+        );
+    }
+}

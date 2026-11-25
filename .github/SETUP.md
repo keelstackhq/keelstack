@@ -64,9 +64,10 @@ Computer steps first, then phone steps. Typical first run:
     `hoist: release tags`. No workflow token can create, move or delete a `v*` tag, whatever its
     `contents:` scope, and neither can a push-triggered workflow on an unmerged branch. `hoist
     apply` creates the key pair, adds the public key as deploy key `hoist: release tags` (write
-    access), seals the private key as secret `RELEASE_TAG_KEY` into environment `release` and
-    makes that deploy key the only bypass actor; no step for the owner. release.yml's `release`
-    and `major` jobs (environment `release`, main only) load `RELEASE_TAG_KEY` (ed25519, OpenSSH
+    access), seals the private key as secret `RELEASE_TAG_KEY` into environment `release-tags` (hoist.toml
+    `tags_key_environment`; not `release`, which runs the registry job) and makes that deploy key
+    the only bypass actor; no step for the owner. release.yml's job `release` (environment
+    `release-tags`, main only, no reviewers; it runs no dependency code) loads `RELEASE_TAG_KEY` (ed25519, OpenSSH
     format, no passphrase) into ssh-agent (never on disk), pin github.com's ed25519 host key
     (`StrictHostKeyChecking=yes`) and push `refs/tags/vX.Y.Z` and `+refs/tags/v0` over SSH; they
     fail closed when the secret is missing. GitHub's DeployKey bypass actor takes no id, so it
@@ -78,8 +79,9 @@ Computer steps first, then phone steps. Typical first run:
     disable the tags ruleset (its only bypass actor is the deploy key), or to use the deploy key. The repository stays public (npm provenance). `hoist apply` updates of
     `hoist: tags` keep owner-added includes and rules (hoist reads, merges, writes);
   - environments `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default branch only,
-    no reviewers (D-022); environment `release`: default branch only and the owner as required
-    reviewer (`[release] reviewers` in hoist.toml, D-028);
+    no reviewers (D-022), and so does `release-tags` (the tag deploy key's environment);
+    environment `release`: default branch only and the owner as required reviewer (`[release]
+    reviewers` in hoist.toml, D-028);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
   - Cloudflare Pages project `keelstack-landing` (`site/hoist.toml`; deploy-site.yml builds and
     deploys `site/apps/site/dist`), a minted deploy token sealed with the
@@ -97,11 +99,15 @@ Computer steps first, then phone steps. Typical first run:
   - reads only: app installation, environment secrets and variables (present or not), crates.io and
     npm packages (first publish needed or not).
 - Release: no publish secrets (crates.io and npm use trusted publishing, OIDC); the one
-  release secret is `RELEASE_TAG_KEY`, created and sealed by `hoist apply` (above). Environment `release`
+  release secret is `RELEASE_TAG_KEY`, created and sealed into `release-tags` by `hoist apply`
+  (above). Environment `release`
   waits for the owner's tap (D-028): a version-bump merge or a dispatch of release.yml (or
   cargo-deny-npm.yml, an npm publish of the cargo-deny packages) publishes nothing before it;
   the environment's default-branch-only rule keeps both on main. How to release:
-  `docs/releasing.md`. One tap per release: only job `release` of release.yml is in the environment. Retired with the old
+  `docs/releasing.md`. One tap per release: only job `publish` of release.yml is in `release`; after the merge of
+  the PR that introduced `release-tags`, the owner runs `hoist apply --area github` once (creates
+  the environment, re-seals the key there, sets the reviewer); delete the old secret
+  `RELEASE_TAG_KEY` of environment `release` afterwards. Retired with the old
   repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build

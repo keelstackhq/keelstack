@@ -288,14 +288,40 @@ for j in release; do
   grep -qF 'RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}' <<<"$jt" || bad "release.yml $j: no RELEASE_TAG_KEY env"
   stop="$(awk '/^      - name: Stop the ssh-agent$/ { s = 1; next } s && /^      - / { exit } s' <<<"$jt")"
   grep -qx '        if: always()' <<<"$stop" || bad "release.yml $j: no always() step stops the ssh-agent"
-  grep -qx '    environment: release' <<<"$jt" || bad "release.yml $j: not in environment release"
 done
-# The key is loaded twice in the one release job (tag, then the major tag), stopped after each.
+# The key is loaded twice in job release (tag, then the major tag), stopped after each, and both
+# loads are the same script.
 [ "$(grep -c '^      - name: Load the tag deploy key$' "$rel")" = 2 ] || bad "release.yml: the deploy key is not loaded exactly twice"
 [ "$(grep -c '^      - name: Stop the ssh-agent$' "$rel")" = 2 ] || bad "release.yml: the ssh-agent is not stopped twice"
-# One tap: exactly one job is in the environment, and only it may request an OIDC token.
-[ "$(grep -c '^    environment:' "$rel")" = 1 ] || bad "release.yml: more than one job uses an environment (one tap per release)"
+key_bodies="$(awk '/^      - name: Load the tag deploy key$/ { n++; on = 1; next } on && /^      - / { on = 0 } on && $0 !~ /^        if: / { print n ": " $0 }' "$rel")"
+[ "$(grep '^1: ' <<<"$key_bodies" | sed 's/^1: //')" = "$(grep '^2: ' <<<"$key_bodies" | sed 's/^2: //')" ] ||
+  bad "release.yml: the two key-loading steps differ"
+# Privilege split: the registries run in `publish` (environment release, the owner's one tap,
+# id-token, no write permission, no deploy key); the tag key sits in `release` (environment
+# release-tags, contents: write, no id-token, no registry step).
+pj="$(job_text "$rel" publish)"
+rj="$(job_text "$rel" release)"
+grep -qx '    environment: release' <<<"$pj" || bad "release.yml publish: not in environment release"
+grep -qx '    environment: release-tags' <<<"$rj" || bad "release.yml release: not in environment release-tags"
+grep -qx '      id-token: write' <<<"$pj" || bad "release.yml publish: no id-token: write"
+! grep -q 'id-token' <<<"$rj" || bad "release.yml release: holds id-token"
+grep -qx '      contents: read' <<<"$pj" || bad "release.yml publish: contents is not read"
+! grep -qE 'contents: write|RELEASE_TAG_KEY|ssh-agent' <<<"$pj" || bad "release.yml publish: holds a write permission or the tag key"
+! grep -qE 'hoist .*release publish|cargo |npm (publish|install)|rust-toolchain' <<<"$(grep -vE '^[[:space:]]*#' <<<"$rj")" || bad "release.yml release: runs registry or dependency code next to the tag key"
+[ "$(grep -c '^    environment:' "$rel")" = 2 ] || bad "release.yml: not exactly two jobs use an environment"
 [ "$(grep -c '^      id-token: write' "$rel")" = 1 ] || bad "release.yml: id-token: write is not on exactly one job"
+# Every toolchain step of publish runs on re-runs too (no `released` condition on them).
+for tool in 'actions/setup-node' 'npm install -g npm@' 'dtolnay/rust-toolchain'; do
+  blk="$(grep -B1 -A3 -F "$tool" <<<"$pj" || true)"
+  [ -n "$blk" ] || { bad "release.yml publish: no $tool step"; continue; }
+  ! grep -q "released" <<<"$blk" || bad "release.yml publish: $tool is skipped on a re-run"
+done
+# The re-run (already released) path: the assets come from the release, checked against SHA256SUMS.
+grep -qF "if: needs.plan.outputs.released == 'true'" <<<"$pj" || bad "release.yml publish: no re-run path"
+grep -qF 'sha256sum -c --ignore-missing SHA256SUMS' <<<"$pj" || bad "release.yml publish: the re-run assets are not checked against SHA256SUMS"
+grep -qF 'hoist_sha_x86_64_unknown_linux_musl' <<<"$pj" || bad "release.yml publish: hoist is not checked against the build job's digest"
+# Job release still runs on a re-run (to move the major tag): its release steps are gated.
+grep -qF "needs.publish.result == 'success'" <<<"$rj" || bad "release.yml release: does not wait for publish"
 n="$(grep -vE '^[[:space:]]*#' "$rel" | grep -cE 'git/refs|extraheader' || true)"
 [ "$n" = 0 ] || bad "release.yml: a tag is still written through the API or an HTTPS token"
 [ "$fail" = 1 ] || ok "release.yml: tag deploy key fails closed, host key pinned, agent stopped"
@@ -305,21 +331,20 @@ n="$(grep -vE '^[[:space:]]*#' "$rel" | grep -cE 'git/refs|extraheader' || true)
 # package not on its registry yet pending, a registry error failing) lives in hoist and is tested
 # there (hoist/tests/cli_release_publish.rs, `only_*`); scripts/release-result.test.sh covers the
 # exit-code handling. Here: the jobs call hoist the way a consumer does, and major still waits.
-crates="$(step_run "$rel" release 'Publish the crates, dependencies first')"
+crates="$(step_run "$rel" publish 'Publish the crates, dependencies first')"
 [ -n "$crates" ] || bad "release.yml: crates publish step not found"
-grep -qF 'hoist -C publish release publish --only crates --json' <<<"$crates" || bad "crates: does not run hoist release publish --only crates"
-grep -qF 'bash publish/scripts/release-result.sh result-crates.json "$code" crates' <<<"$crates" || bad "crates: the exit code is not handled by release-result.sh"
-npm_step="$(step_run "$rel" release 'Publish to npm (trusted publishing, provenance), platform packages before their launcher')"
+grep -qF 'hoist release publish --only crates --json' <<<"$crates" || bad "crates: does not run hoist release publish --only crates"
+grep -qF 'bash scripts/release-result.sh result-crates.json "$code" crates' <<<"$crates" || bad "crates: the exit code is not handled by release-result.sh"
+npm_step="$(step_run "$rel" publish 'Publish to npm (trusted publishing, provenance), platform packages before their launcher')"
 [ -n "$npm_step" ] || bad "release.yml: npm publish step not found"
-for want in 'hoist "${args[@]}"' '--only npm' '--provenance' '--npm-tag "$dist_tag"' '--assets "$RUNNER_TEMP/assets"' 'bash publish/scripts/release-result.sh result-npm.json "$code" npm'; do
+for want in 'hoist "${args[@]}"' '--only npm' '--provenance' '--npm-tag "$DIST_TAG"' '--assets assets' 'bash scripts/release-result.sh result-npm.json "$code" npm'; do
   grep -qF -- "$want" <<<"$npm_step" || bad "npm: publish step lacks $want"
 done
-t="$(job_text "$rel" release)"
-grep -qF 'sha256sum -c --ignore-missing SHA256SUMS' <<<"$t" || bad "release.yml: hoist is not checked against SHA256SUMS"
+t="$(job_text "$rel" publish)"
 code_t="$(grep -vE '^[[:space:]]*#' <<<"$t" || true)"
 ! grep -qE 'cargo publish|npm publish|trusted_publishing' <<<"$code_t" || bad "release.yml: publishes by hand instead of through hoist"
 # The major tag moves only when neither registry step skipped a package.
-grep -qF "steps.crates.outputs.skipped == '' && steps.npm.outputs.skipped == ''" <<<"$t" ||
+grep -qF "needs.publish.outputs.crates_skipped == '' && needs.publish.outputs.npm_skipped == ''" <<<"$rj" ||
   bad "release.yml: moves the major tag while a crate or package is skipped"
 grep -qE '^  (crates|npm|major):' "$rel" && bad "release.yml: separate crates, npm or major job (each would need its own tap)"
 [ "$fail" = 1 ] || ok "release.yml: crates and npm run hoist release publish --only, major waits for skipped packages"

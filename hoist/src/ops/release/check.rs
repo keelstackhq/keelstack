@@ -40,7 +40,7 @@ fn trust_where(p: &Package) -> String {
     match p.kind {
         PkgKind::Npm => format!("unreadable without a login: `npm trust list {}`", p.name),
         PkgKind::Crate => format!(
-            "crates.io has no API for it: https://crates.io/crates/{}/settings",
+            "crates.io has no API for it: https://crates.io/crates/{}/settings/new-trusted-publisher",
             p.name
         ),
     }

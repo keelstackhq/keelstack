@@ -378,10 +378,15 @@ fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
             continue;
         }
         assert!(
-            ["release"].contains(&id.as_str()),
+            ["publish", "release"].contains(&id.as_str()),
             "job `{id}` grants {grants:?}"
         );
-        assert_eq!(environment_of(body).as_deref(), Some("release"), "{id}");
+        let want = if id == "publish" {
+            "release"
+        } else {
+            "release-tags"
+        };
+        assert_eq!(environment_of(body).as_deref(), Some(want), "{id}");
         assert!(
             body.contains(
                 "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"

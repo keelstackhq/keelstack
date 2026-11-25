@@ -54,7 +54,7 @@ Run the fast checks (fmt, clippy, test) before every commit. Release: lockstep, 
   Logs go to stderr.
 - **Actions** are `create`, `update`, `ok`, `drift`, `pending`, `unknown`.
 - **Reads stay GET-only:** `explain`, `plan`, `check`, `auth check`, `import`, `release plan`,
-  `release publish --dry-run`, `release bootstrap --dry-run`, `org plan` and `org check` send only GET requests (tests
+  `release publish --dry-run` (also with `--only`), `release check`, `release bootstrap --dry-run`, `org plan` and `org check` send only GET requests (tests
   assert it); only `apply`, `org apply`, `init` (one repo file, never commits), the `secrets` commands, `changeset add` and `changeset init` (local `.changeset/` files only, never commit), `release prepare`, `release publish` and
   `release bootstrap` write.
 - **Never leak secrets:** token values never reach stdout, stderr, JSON or logs. Tokens come

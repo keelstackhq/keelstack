@@ -212,21 +212,37 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
         _ => None,
     };
     let flags = &c.flags;
+    // Provenance names the repository the workflow runs in; package.json must say the same.
+    // The file is put back after the publish, so the checkout is left as it was.
+    let manifest = pkg_dir.join("package.json");
+    let original = if flags.provenance {
+        std::fs::read(&manifest).ok()
+    } else {
+        None
+    };
+    let restore = |original: &Option<Vec<u8>>| {
+        if let Some(bytes) = original {
+            let _ = std::fs::write(&manifest, bytes);
+        }
+    };
     if flags.provenance {
-        // Provenance names the repository the workflow runs in; package.json must say the same.
         let url = format!(
             "repository.url=git+https://github.com/{}.git",
             flags.repository
         );
-        tool(
+        let mut set = tool(
             Tool::Npm,
             &pkg_dir,
             &["pkg", "set", "repository.type=git", &url],
             &[],
-        )?;
-        if !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
+        );
+        if set.is_ok() && !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
             let d = format!("repository.directory={}", pkg.dir.to_string_lossy());
-            tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[])?;
+            set = tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[]);
+        }
+        if let Err(e) = set {
+            restore(&original);
+            return Err(e);
         }
     }
     let mut args = vec!["publish", "--access", access(pkg)];
@@ -237,6 +253,7 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
         args.extend(["--tag", t]);
     }
     let published = tool(Tool::Npm, &pkg_dir, &args, &[]);
+    restore(&original);
     // The binary leaves the checkout again, whether npm succeeded or not.
     let removed = copied.map_or(Ok(()), CopiedBin::remove);
     published?;

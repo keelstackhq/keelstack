@@ -39,7 +39,20 @@ if [ "${RELEASE_PR_NO_BRANCH:-}" != 1 ]; then
   if git rev-parse --verify --quiet "refs/heads/$branch" >/dev/null; then
     die "branch $branch already exists"
   fi
+  orig=$(git rev-parse --abbrev-ref HEAD)
   git checkout -q -b "$branch"
+  # The tree was clean, so a failure before the commit is undone completely: back on the
+  # original branch, the half-made release branch gone.
+  committed=0
+  cleanup() {
+    [ "$committed" = 1 ] && return 0
+    echo "release-pr: failed; going back to $orig and removing $branch" >&2
+    git reset -q --hard
+    git clean -fdq
+    git checkout -q "$orig"
+    git branch -q -D "$branch"
+  }
+  trap cleanup EXIT
 fi
 
 # Fold fragments of every folder that has them (only bosun does today).
@@ -58,6 +71,7 @@ bash scripts/bump-version.sh "$ver"
 git add -A
 git commit -q -m "chore: release $ver" \
   -m "Lockstep version bump to $ver (D-023). Merging this PR starts release.yml."
+committed=1
 echo
 echo "release $ver committed on $(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))."
 echo "Open the PR (the version-bump merge starts the release; the owner taps the release environment):"

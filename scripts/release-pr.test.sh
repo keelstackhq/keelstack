@@ -35,6 +35,15 @@ echo dirty >>README.md
 if bash scripts/release-pr.sh "$new" >/dev/null 2>&1; then fail "dirty tree accepted"; else ok "dirty tree refused"; fi
 git checkout -q -- README.md
 
+# A failure after the branch was made leaves nothing behind.
+echo "not a fragment" >"bosun/changelog.d/bad name.md"
+git add -A; git commit -q -m "bad fragment"
+if bash scripts/release-pr.sh "$new" >/dev/null 2>&1; then fail "bad fragment accepted"; else ok "a failing run is refused"; fi
+[ "$(git rev-parse --abbrev-ref HEAD)" = main ] && ok "back on main after a failure" || fail "left on $(git rev-parse --abbrev-ref HEAD)"
+[ -z "$(git branch --list "release/v$new")" ] && ok "no half-made release branch" || fail "release branch left behind"
+[ -z "$(git status --porcelain)" ] && ok "tree clean after the failure" || fail "dirty after failure: $(git status --porcelain)"
+git rm -q "bosun/changelog.d/bad name.md"; git commit -q -m "drop bad fragment"
+
 if bash scripts/release-pr.sh "$new" >"$tmp/out" 2>"$tmp/err"; then ok "release-pr runs"; else fail "release-pr failed: $(cat "$tmp/err")"; fi
 [ "$(git rev-parse --abbrev-ref HEAD)" = "release/v$new" ] && ok "on branch release/v$new" || fail "branch is $(git rev-parse --abbrev-ref HEAD)"
 [ "$(git log -1 --format=%s)" = "chore: release $new" ] && ok "one commit" || fail "commit: $(git log -1 --format=%s)"

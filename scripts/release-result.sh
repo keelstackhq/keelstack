@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Turns the result of `hoist release publish --only <registry> --json` into the job outcome of
-# release.yml's crates and npm jobs.
+# release.yml's job `publish` (steps `crates` and `npm`).
 #
 #   bash scripts/release-result.sh <result.json> <hoist exit code> <crates|npm>
 #
 # Exit 0 (everything published or already there): `skipped=` (empty) goes to $GITHUB_OUTPUT.
 # Exit 2 (a package is not on its registry yet, `hoist release bootstrap` is the owner's step):
-#   `skipped=<names>` goes to $GITHUB_OUTPUT, a notice names them and the job succeeds; job
-#   `major` waits until a re-run publishes them.
+#   `skipped=<names>` goes to $GITHUB_OUTPUT, a notice names them and the step succeeds; the
+#   major tag (job `release`) waits until a re-run publishes them.
 # Any other code is a failure: the job fails with that code.
 set -euo pipefail
 
