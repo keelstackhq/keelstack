@@ -214,10 +214,13 @@ pub fn main_red(gh: &dyn Github) -> Result<Option<u64>> {
 /// so claims, waves, spawns, answers and heal go on and only warn through `bosun status`.
 pub fn main_red_blocking(app: &App) -> Result<Option<u64>> {
     // Read from the default branch like main-open, so a working tree edit cannot lift the pause.
+    let Some(red) = main_red(app.gh.as_ref())? else {
+        return Ok(None);
+    };
     if crate::gates::main_open::main_warns(app.gh.as_ref())? {
         return Ok(None);
     }
-    main_red(app.gh.as_ref())
+    Ok(Some(red))
 }
 
 /// Move an issue to `to`: refuse a transition the state machine forbids (exit 3), remove the

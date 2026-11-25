@@ -109,8 +109,49 @@ fn steers_ci(lower: &str) -> Steer {
     if always { Steer::Always } else { Steer::No }
 }
 
-/// Whether the changed lines of `patch` touch what `kind` steers. Cargo: `autotests`,
-/// `autobins`, `[[test]]`, `test =`, `harness`, `build =`, `[profile`. pyproject: `[tool.pytest`.
+/// Cargo keys that switch a target's tests, doctests, benches or build script on or off.
+const CARGO_STEER_KEYS: [&str; 10] = [
+    "test",
+    "doctest",
+    "bench",
+    "build",
+    "harness",
+    "autotests",
+    "autobins",
+    "autobenches",
+    "autoexamples",
+    "required-features",
+];
+
+/// The key of a TOML `key = value` line, spaces and quotes stripped (`"test"=false` -> `test`).
+fn cargo_key(text: &str) -> Option<&str> {
+    let (k, _) = text.split_once('=')?;
+    let k = k.trim().trim_matches(|c| c == '"' || c == '\'');
+    (!k.is_empty() && !k.contains(char::is_whitespace)).then_some(k)
+}
+
+/// Whether a package.json string value is a dependency version or spec, not a command.
+fn looks_like_version(v: &str) -> bool {
+    v.is_empty()
+        || v.starts_with(|c: char| c.is_ascii_digit() || "^~<>=*".contains(c))
+        || [
+            "workspace:",
+            "catalog:",
+            "npm:",
+            "file:",
+            "link:",
+            "portal:",
+            "git",
+            "http",
+            "github:",
+        ]
+        .iter()
+        .any(|p| v.starts_with(p))
+        || v == "latest"
+}
+
+/// Whether the changed lines of `patch` touch what `kind` steers. Cargo: `[[test]]`, `[profile`
+/// and any [`CARGO_STEER_KEYS`] key (spaces and quotes ignored). pyproject: `[tool.pytest`.
 /// package.json: a line inside the `"scripts"` block, or a `"key": "value with spaces"` line
 /// (a script-looking entry whose block opener the patch does not show). A key changed under a
 /// section whose header is outside the hunk is not seen (residual, spec 08).
@@ -127,21 +168,44 @@ fn manifest_steered(kind: Manifest, patch: &str) -> bool {
         match kind {
             Manifest::Cargo => {
                 if (changed || line.starts_with("@@"))
-                    && ["autotests", "autobins", "[[test]]", "harness", "[profile"]
+                    && ["[[test]]", "[profile", "[lints", "[workspace.lints"]
                         .iter()
                         .any(|k| text.contains(k))
-                    || changed && (text.starts_with("test =") || text.starts_with("build ="))
+                    || changed && cargo_key(text).is_some_and(|k| CARGO_STEER_KEYS.contains(&k))
                 {
                     return true;
                 }
             }
             Manifest::Pyproject => {
-                if (changed || line.starts_with("@@")) && text.contains("[tool.pytest") {
+                if (changed || line.starts_with("@@"))
+                    && [
+                        "[tool.pytest",
+                        "[tool.coverage",
+                        "[tool.ruff",
+                        "[tool.mypy",
+                        "[tool.tox",
+                    ]
+                    .iter()
+                    .any(|k| text.contains(k))
+                {
                     return true;
                 }
             }
             Manifest::Package => {
-                if text.contains("\"scripts\"") && text.contains('{') {
+                if [
+                    "\"scripts\"",
+                    "\"jest\"",
+                    "\"eslintConfig\"",
+                    "\"prettier\"",
+                    "\"ava\"",
+                    "\"mocha\"",
+                    "\"c8\"",
+                    "\"nyc\"",
+                ]
+                .iter()
+                .any(|k| text.contains(k))
+                    && text.contains('{')
+                {
                     if changed {
                         return true;
                     }
@@ -152,10 +216,14 @@ fn manifest_steered(kind: Manifest, patch: &str) -> bool {
                     if in_scripts {
                         return true;
                     }
-                    // `"name": "tsc --noEmit"`: a value with a space is a command, not a version.
+                    // `"test": "vitest"` with the block opener outside the hunk: any string value
+                    // that does not look like a dependency version counts (fail closed).
                     if let Some((k, v)) = text.split_once("\":") {
-                        let v = v.trim().trim_end_matches(',').trim_matches('"');
-                        if k.starts_with('"') && v.contains(' ') && !v.starts_with('{') {
+                        let v = v.trim().trim_end_matches(',');
+                        if k.starts_with('"')
+                            && v.starts_with('"')
+                            && !looks_like_version(v.trim_matches('"'))
+                        {
                             return true;
                         }
                     }
@@ -282,7 +350,7 @@ pub fn ci_verdict(gh: &dyn Github, n: u64, head: &str) -> crate::github::Result<
     if files.len() >= PULL_FILES_CAP || (files.len() as u64) < reported {
         return Err(refuse(
             format!(
-                "PR #{n} lists {} files, GitHub's cap for the files API ({PULL_FILES_CAP}): a changed CI input could be hidden, so its ci-ok cannot be trusted for the CI signer",
+                "PR #{n}: the files API lists {} of {reported} changed files (its cap is {PULL_FILES_CAP}): a changed CI input could be hidden, so its ci-ok cannot be trusted for the CI signer",
                 files.len()
             ),
             "split the PR below 3000 files, or approve it with the orchestrator-held key (`bosun approve <pr>@<head> --sign-key <pem> --bootstrap`) or ask the owner",
@@ -567,6 +635,11 @@ mod tests {
             "test = false",
             "build = \"build.rs\"",
             "[profile.test]",
+            "test=false",
+            "\"test\" = false",
+            "doctest = false",
+            "build=\"x.rs\"",
+            "bench = false",
         ] {
             assert!(hit("Cargo.toml", Some(&cargo(l))), "{l}");
         }
@@ -591,9 +664,28 @@ mod tests {
         let add = "@@ -5,3 +5,4 @@\n+  \"scripts\": {\n+    \"ci\": \"echo ok\"\n+  },";
         assert!(hit("package.json", Some(add)));
         // The opener is outside the hunk: a command-looking value still counts.
+        let jest = "@@ -5,3 +5,3 @@\n   \"jest\": {\n-    \"testMatch\": [\"**/*.test.ts\"],\n+    \"testMatch\": [],\n   }";
+        assert!(hit("package.json", Some(jest)));
+        assert!(hit(
+            "Cargo.toml",
+            Some("@@ -1 +1,2 @@\n+[workspace.lints.clippy]\n+all = \"allow\"")
+        ));
+        assert!(hit(
+            "pyproject.toml",
+            Some("@@ -1 +1 @@\n+[tool.coverage.run]")
+        ));
         let inner =
             "@@ -9,2 +9,2 @@\n-    \"lint\": \"oxlint .\",\n+    \"lint\": \"true && echo\",";
         assert!(hit("package.json", Some(inner)));
+        // No space in the value, opener outside the hunk: still a command.
+        let plain = "@@ -9,2 +9,2 @@\n-    \"test\": \"vitest\",\n+    \"test\": \"true\",";
+        assert!(hit("package.json", Some(plain)));
+        let gone = "@@ -9,2 +9,1 @@\n-    \"test\": \"jest\",";
+        assert!(hit("package.json", Some(gone)));
+        let range = "@@ -9,2 +9,2 @@\n-    \"a\": \"^1\",\n+    \"a\": \"^1 || ^2\",";
+        assert!(!hit("package.json", Some(range)));
+        let ws = "@@ -9,2 +9,2 @@\n-    \"a\": \"workspace:*\",\n+    \"a\": \"catalog:\",";
+        assert!(!hit("package.json", Some(ws)));
     }
 
     /// Parity with the real ci.yml: every `uses: ./` line is found, so a new local action counts
