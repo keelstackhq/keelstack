@@ -427,7 +427,8 @@ impl Http {
     /// All pages of a list endpoint as one JSON array. GitHub follows `Link: rel="next"`;
     /// `array_key` names the array inside an object body (else the body is the array).
     /// Cloudflare concatenates `result` across `result_info.page/total_pages`; a list without
-    /// `total_pages` is read page by page until a 404, an empty, short or repeated page.
+    /// `total_pages` is read page by page until a 404, an empty page, a page shorter than
+    /// `result_info.per_page` (or than the page before) or a repeated page.
     pub fn get_all(&self, path: &str, array_key: Option<&str>) -> Result<Fetched, HttpError> {
         match self.service {
             Service::Cloudflare => self.get_all_cloudflare(path),
@@ -504,11 +505,15 @@ impl Http {
             // No `total_pages` (no `result_info`, or one without it): the page count is unknown,
             // so read on until a 404, an empty page, a page shorter than the last one (the last
             // page), or a page equal to the last one (an endpoint that ignores `page`).
+            let per_page = info.and_then(|i| i.get("per_page")).and_then(Value::as_u64);
             let Some(total) = total else {
                 if more.is_empty() || last.as_ref() == Some(&more) {
                     break;
                 }
-                let short = last.as_ref().is_some_and(|l| more.len() < l.len());
+                // A page shorter than the page size the server reports, or than the page before
+                // it, is the last one: no further request guesses at an end.
+                let short = last.as_ref().is_some_and(|l| more.len() < l.len())
+                    || per_page.is_some_and(|n| (more.len() as u64) < n);
                 items.extend(more.iter().cloned());
                 if short {
                     break;
