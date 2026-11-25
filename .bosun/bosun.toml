@@ -36,7 +36,7 @@ policy = "quorum"
 # the owner.
 owner_delegation = "all"
 # The CI signer (spec §8, keyless fast lane): `bosun approve <pr>@<head> --via-signer` asks
-# signer.yml to sign the quorum form with the enrolled `signer-ci` key (.bosun/approvers.toml,
+# signer.yml to sign the quorum form with the enrolled `signer-ci-2026-11` key (.bosun/approvers.toml,
 # role signer, secret BOSUN_SIGNER_KEY of environment bosun-signer). Same floor as the
 # orchestrator key: green gate-App ci-ok, `[review] verdicts_needed` clean verdicts from different
 # sessions on the exact head (never the requester's or the signer's own), not halted. Needs `[checks] mode = "checks"`.

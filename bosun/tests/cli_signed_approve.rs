@@ -333,7 +333,7 @@ fn this_repos_approvers_file_parses_with_32_byte_keys() {
         [
             ("orchestrator-2026-10", Role::Owner),
             ("delegate-2026-10", Role::Delegate),
-            ("signer-ci", Role::Signer)
+            ("signer-ci-2026-11", Role::Signer)
         ]
     );
     for k in &keys {

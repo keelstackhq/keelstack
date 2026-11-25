@@ -18,6 +18,6 @@ ed25519 = "eY7+H4GGfi5VIijIl1b4D18VIW94AYnBgdoaf4KYEhc="
 role = "delegate"
 
 [[key]]
-id = "signer-ci"
-ed25519 = "E6R4HrBsIBPLLwQlVk8IiRHIvfm3CA3dFb14W2BF5rY="
+id = "signer-ci-2026-11"
+ed25519 = "ngHqTQSlVWqlrrjpMo8ywQLtZ+mGBPGo/u77s+zK/QY="
 role = "signer"
