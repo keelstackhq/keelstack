@@ -25,6 +25,28 @@ pub struct Verdict {
     pub description: String,
 }
 
+/// [`judge`] where `warn` (`[main_health] block = false`, D-028) turns a refusal into a pass that
+/// says main is red (warning).
+pub fn judge_warn(main_red: Option<u64>, mainfix: bool, warn: bool) -> Verdict {
+    warned(judge(main_red, mainfix), main_red, warn)
+}
+
+/// A failing `v` that only warns: it passes and its description says so.
+fn warned(v: Verdict, main_red: Option<u64>, warn: bool) -> Verdict {
+    match (v.pass, warn, main_red) {
+        (false, true, Some(n)) => Verdict {
+            pass: true,
+            description: format!(
+                "main is red (#{n}) (warning): work goes on, fix it with a mainfix PR"
+            )
+            .chars()
+            .take(140)
+            .collect(),
+        },
+        _ => v,
+    }
+}
+
 /// Pass when main is open, or when the PR is a mainfix.
 pub fn judge(main_red: Option<u64>, mainfix: bool) -> Verdict {
     let (pass, description) = match (main_red, mainfix) {
@@ -46,6 +68,8 @@ pub struct MainState {
     pub red: Option<u64>,
     pub folders: Vec<Folder>,
     pub red_folders: BTreeSet<String>,
+    /// `[main_health] block = false` on the default branch (D-028): a red main only warns.
+    pub warn: bool,
 }
 
 impl MainState {
@@ -69,6 +93,17 @@ pub fn base_folders(gh: &dyn Github) -> Result<Vec<Folder>> {
     })
 }
 
+/// `[main_health] block = false` in `.bosun/bosun.toml` on the default branch (D-028). A missing
+/// or unparsable file blocks, as before.
+pub fn main_warns(gh: &dyn Github) -> Result<bool> {
+    Ok(match gh.file_at(CONFIG_FILE, &default_ref(gh)?)? {
+        Some(t) => Config::parse(&t, CONFIG_FILE)
+            .map(|c| !c.main_health.block)
+            .unwrap_or(false),
+        None => false,
+    })
+}
+
 /// Read main's state: the main-red issue and, only while main is red in a monorepo, the
 /// `ci-<folder>` check runs of the default branch head (newest per name; GitHub Actions only).
 pub fn main_state(gh: &dyn Github) -> Result<MainState> {
@@ -80,9 +115,13 @@ pub fn main_state_with(gh: &dyn Github, red: Option<u64>) -> Result<MainState> {
     if red.is_none() {
         return Ok(MainState::whole(None));
     }
+    let warn = main_warns(gh)?;
     let folders = base_folders(gh)?;
     if folders.is_empty() {
-        return Ok(MainState::whole(red));
+        return Ok(MainState {
+            warn,
+            ..MainState::whole(red)
+        });
     }
     let runs = gh.check_runs(&default_branch(gh)?)?;
     let red_folders = folders::red_folders(&folders, |name| {
@@ -102,6 +141,7 @@ pub fn main_state_with(gh: &dyn Github, red: Option<u64>) -> Result<MainState> {
         red,
         folders,
         red_folders,
+        warn,
     })
 }
 
@@ -134,6 +174,10 @@ fn blocked_touched(gh: &dyn Github, pull: &Pull, main: &MainState) -> Result<Opt
 
 /// [`judge`] in a monorepo: `hit` is the blocked folders the PR touches (`None`: one repo).
 pub fn judge_scoped(main: &MainState, mainfix: bool, hit: Option<&[String]>) -> Verdict {
+    warned(judge_blocking(main, mainfix, hit), main.red, main.warn)
+}
+
+fn judge_blocking(main: &MainState, mainfix: bool, hit: Option<&[String]>) -> Verdict {
     let (Some(n), Some(hit)) = (main.red, hit) else {
         return judge(main.red, mainfix);
     };
@@ -278,7 +322,25 @@ mod tests {
             red: Some(7),
             folders: vec![f("bosun", &[]), f("splice", &["bosun"]), f("hoist", &[])],
             red_folders: red.iter().map(|s| s.to_string()).collect(),
+            warn: false,
         }
+    }
+
+    #[test]
+    fn warn_turns_a_refusal_into_a_pass_that_says_so() {
+        let v = judge_warn(Some(7), false, true);
+        assert!(
+            v.pass && v.description.contains("main is red (#7) (warning)"),
+            "{v:?}"
+        );
+        assert!(!judge_warn(Some(7), false, false).pass);
+        assert_eq!(judge_warn(None, false, true), judge(None, false));
+        let m = MainState {
+            warn: true,
+            ..mono(&["bosun"])
+        };
+        let v = judge_scoped(&m, false, Some(&["bosun".into()]));
+        assert!(v.pass && v.description.contains("(warning)"), "{v:?}");
     }
 
     #[test]

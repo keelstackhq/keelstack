@@ -432,3 +432,48 @@ fn records_are_queried_by_the_compared_name() {
         "{urls:?}"
     );
 }
+
+#[test]
+fn a_short_page_without_total_pages_ends_the_list_with_no_further_request() {
+    // `per_page` 25 and one record: the list is complete, nothing guesses at a page 2.
+    let p1 = r#"{"success":true,"result":[{"id":"r0","type":"A","name":"www.example.dev","content":"1.1.1.1","proxied":false}],"result_info":{"page":1,"per_page":25}}"#;
+    let api = start(&[
+        zone_route(),
+        (
+            "GET /zones/z1/dns_records?name=www.example.dev&page=1",
+            200,
+            p1,
+        ),
+    ]);
+    let d = dir(&toml(&[("A", "www.example.dev", "1.1.1.1", false)]));
+    let r = run(&["check"], &d, &env(&api), 0);
+    assert_eq!(
+        records(&r, "A www.example.dev 1.1.1.1")[0]["action"],
+        "ok",
+        "{r:#}"
+    );
+    let reads = (api.requests().iter())
+        .filter(|q| q.path == "/zones/z1/dns_records")
+        .count();
+    assert_eq!(reads, 1, "a short page is the last page");
+}
+
+#[test]
+fn exactly_identical_declared_records_make_one_item() {
+    let api = api(LIVE_A);
+    let d = dir(&toml(&[
+        ("A", "www.example.dev", "1.1.1.1", false),
+        ("A", "www.example.dev", "1.1.1.1", false),
+        ("A", "www.example.dev", "1.1.1.1", false),
+    ]));
+    let r = run(&["check"], &d, &env(&api), 0);
+    let items = records(&r, "A www.example.dev 1.1.1.1");
+    assert_eq!(items.len(), 1, "{r:#}");
+    assert_eq!(items[0]["action"], "ok");
+    // Not a create either, when the record is missing live.
+    let empty = self::api("[]");
+    let r = run(&["plan"], &d, &env(&empty), 0);
+    let items = records(&r, "A www.example.dev 1.1.1.1");
+    assert_eq!(items.len(), 1, "{r:#}");
+    assert_eq!(items[0]["action"], "create");
+}

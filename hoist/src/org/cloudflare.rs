@@ -494,9 +494,13 @@ pub(crate) fn read(
             })
             .collect();
         let plans = match_records(&z.records, &by_name);
+        let mut reported: std::collections::HashSet<String> = std::collections::HashSet::new();
         for (i, r) in z.records.iter().enumerate() {
             let key = record_key(r);
             let twin = matches!(plans[i], Match::Twin);
+            if !twin {
+                reported.insert(key.clone());
+            }
             let unreadable =
                 id.is_none() || matches!(lives.get(&name_key(&r.name)), Some(Fetch::Unknown(_)));
             if twin && unreadable {
@@ -519,6 +523,11 @@ pub(crate) fn read(
                 continue;
             }
             let m = &plans[i];
+            // A twin spelled exactly like an earlier record has the same key: one item, not two.
+            // A twin spelled differently (another case) keeps its own `ok` item.
+            if twin && !reported.insert(key.clone()) {
+                continue;
+            }
             let (action, reason, op) = match m {
                 Match::Twin => (
                     Action::Ok,

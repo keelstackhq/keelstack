@@ -16,6 +16,7 @@ pub mod ci_log;
 pub mod claim;
 pub mod digest;
 pub mod doctor;
+pub mod followups;
 pub mod handoff;
 pub mod handoff_pr;
 pub mod heal;
@@ -194,6 +195,9 @@ pub enum Command {
     /// Lesson commands.
     #[command(subcommand)]
     Lesson(LessonCmd),
+    /// Non-blocking review findings in one rolling issue (D-028).
+    #[command(subcommand)]
+    Followups(FollowupsCmd),
     /// Claude Code hook entry points.
     #[command(subcommand)]
     Hook(HookCmd),
@@ -347,6 +351,8 @@ impl Command {
             Command::Ask(_) => "ask",
             Command::Hold(_) => "hold",
             Command::Answer(_) => "answer",
+            Command::Followups(FollowupsCmd::Add(_)) => "followups add",
+            Command::Followups(FollowupsCmd::List) => "followups list",
             Command::Lesson(LessonCmd::Add(_)) => "lesson add",
             Command::Lesson(LessonCmd::Hit(_)) => "lesson hit",
             Command::Lesson(LessonCmd::Capture(_)) => "lesson capture",
@@ -869,6 +875,24 @@ pub struct AnswerArgs {
     #[arg(long, value_name = "PEM", conflicts_with = "slack_user")]
     pub sign_key: Option<PathBuf>,
     /// The answer text: `-` for stdin, or a file.
+    #[arg(long, default_value = "-")]
+    pub from: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FollowupsCmd {
+    /// Append a verdict's non-blocking findings as unchecked items to the rolling
+    /// `bosun:followups` issue (opened when none is).
+    Add(FollowupsAddArgs),
+    /// The open items of the rolling issue.
+    List,
+}
+
+#[derive(Debug, Args)]
+pub struct FollowupsAddArgs {
+    /// The PR the verdict reviewed (the verdict's `pr` must match).
+    pub pr: u64,
+    /// The verdict JSON: `-` for stdin, or a file.
     #[arg(long, default_value = "-")]
     pub from: String,
 }

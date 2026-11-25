@@ -62,9 +62,16 @@ fn tty_settings() -> Option<String> {
         .ok()
         .filter(|o| o.status.success())?;
     let saved = String::from_utf8(out.stdout).ok()?.trim().to_string();
-    // `stty -g` prints one word of hex fields and colons; anything else is not passed back.
-    (!saved.is_empty() && saved.chars().all(|c| c.is_ascii_alphanumeric() || c == ':'))
-        .then_some(saved)
+    valid_tty_settings(&saved).then_some(saved)
+}
+
+/// `stty -g` prints one word: hex fields and colons (Linux), or `name=value` fields such as
+/// `gfmt1:cflag=4b00:iflag=2b02` (macOS). Anything else is not passed back to `stty`.
+fn valid_tty_settings(saved: &str) -> bool {
+    !saved.is_empty()
+        && saved
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == ':' || c == '=')
 }
 
 /// Restore the settings `tty_settings` saved on /dev/tty (echo back on).
@@ -244,6 +251,17 @@ mod tests {
         assert_eq!(tool_timeout_secs(Some("45")), 45);
         for bad in ["", "0", "-3", "soon"] {
             assert_eq!(tool_timeout_secs(Some(bad)), 600, "{bad}");
+        }
+    }
+
+    #[test]
+    fn stty_g_output_of_linux_and_macos_is_accepted() {
+        assert!(valid_tty_settings("4500:5:bf:8a3b:3:1c:7f:15:4:0:1:0"));
+        assert!(valid_tty_settings(
+            "gfmt1:cflag=4b00:iflag=6b02:lflag=200005cb:oflag=3:discard=f:eof=4:eol=ff"
+        ));
+        for bad in ["", "a b", "a;b", "$(x)", "a\nb", "-a", "a=b c"] {
+            assert!(!valid_tty_settings(bad), "{bad:?}");
         }
     }
 

@@ -6,8 +6,8 @@ use serde_json::{Value, json};
 
 use super::ClaimArgs;
 use crate::app::{
-    App, active_issues, active_issues_blocking, kill_switch, limits_from_default, main_red,
-    renew_lease, set_state, settle_race, task_meta, trusted_notes,
+    App, active_issues, active_issues_blocking, kill_switch, limits_from_default, renew_lease,
+    set_state, settle_race, task_meta, trusted_notes,
 };
 use crate::cli::lesson;
 use crate::cli::status::process_red;
@@ -40,7 +40,7 @@ pub fn run(dir: Option<&Path>, args: &ClaimArgs) -> CmdResult {
     let meta = task_meta(&issue);
     let mainfix = meta.as_ref().is_some_and(|m| m.kind == "mainfix")
         || issue.labels.iter().any(|l| l == "bosun:kind/mainfix");
-    if let Some(red) = main_red(gh)?
+    if let Some(red) = crate::app::main_red_blocking(&app)?
         && !mainfix
     {
         return Err(BosunError::halted(

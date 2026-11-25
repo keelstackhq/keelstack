@@ -401,9 +401,10 @@ pub(crate) fn carry_approval_in(
         });
         if !anywhere && standing(&comments, &reviews, owners, &path, (&h, approval)) {
             let counted = found.counted().unwrap_or_default().to_vec();
+            let flow = crate::cli::risk_check::flow_at(gh, &pull.base_sha).unwrap_or_default();
             let who = found
                 .approved_by
-                .unwrap_or_else(|| format!("two verdicts: {}", counted.join(", ")));
+                .unwrap_or_else(|| format!("{}: {}", flow.verdicts_text(), counted.join(", ")));
             return Some((h, who, counted));
         }
     }
