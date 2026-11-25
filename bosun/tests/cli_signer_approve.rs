@@ -673,9 +673,9 @@ fn the_signer_refuses_what_risk_check_calls_a_weakening() {
     let weak = format!("{t}#[test]\n#[ignore]\nfn b() {{ assert!(y); }}\n");
     let fake = pr(&k, "signer", "autonomous", "octocat");
     ci_ok(&fake);
-    fake.pull_file(1, "tests/a.rs", "modified", 3, 0, Some(PLAIN));
-    fake.content("tests/a.rs", BASE, t);
-    fake.content("tests/a.rs", HEAD, &weak);
+    fake.pull_file(1, "src/a.rs", "modified", 3, 0, Some(PLAIN));
+    fake.content("src/a.rs", BASE, t);
+    fake.content("src/a.rs", HEAD, &weak);
     let before = fake.comments_of(1).len();
     let (code, v) = sign(&fake, &k, &AS_SIGNER);
     assert_eq!(code, 1, "{v}");
@@ -687,9 +687,9 @@ fn the_signer_refuses_what_risk_check_calls_a_weakening() {
     // The same file without the weakening signs.
     let fake = pr(&k, "signer", "autonomous", "octocat");
     ci_ok(&fake);
-    fake.pull_file(1, "tests/a.rs", "modified", 3, 0, Some(PLAIN));
-    fake.content("tests/a.rs", BASE, t);
-    fake.content("tests/a.rs", HEAD, t);
+    fake.pull_file(1, "src/a.rs", "modified", 3, 0, Some(PLAIN));
+    fake.content("src/a.rs", BASE, t);
+    fake.content("src/a.rs", HEAD, t);
     assert_eq!(sign(&fake, &k, &AS_SIGNER).0, 0);
     // A `weaken` capability label is the owner's too.
     let fake = pr(&k, "signer", "autonomous", "octocat");
