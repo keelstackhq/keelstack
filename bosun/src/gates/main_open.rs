@@ -322,7 +322,25 @@ mod tests {
             red: Some(7),
             folders: vec![f("bosun", &[]), f("splice", &["bosun"]), f("hoist", &[])],
             red_folders: red.iter().map(|s| s.to_string()).collect(),
+            warn: false,
         }
+    }
+
+    #[test]
+    fn warn_turns_a_refusal_into_a_pass_that_says_so() {
+        let v = judge_warn(Some(7), false, true);
+        assert!(
+            v.pass && v.description.contains("main is red (#7) (warning)"),
+            "{v:?}"
+        );
+        assert!(!judge_warn(Some(7), false, false).pass);
+        assert_eq!(judge_warn(None, false, true), judge(None, false));
+        let m = MainState {
+            warn: true,
+            ..mono(&["bosun"])
+        };
+        let v = judge_scoped(&m, false, Some(&["bosun".into()]));
+        assert!(v.pass && v.description.contains("(warning)"), "{v:?}");
     }
 
     #[test]

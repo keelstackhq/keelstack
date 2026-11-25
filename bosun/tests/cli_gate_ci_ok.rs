@@ -271,3 +271,22 @@ fn a_pr_that_changes_what_ci_yml_runs_from_the_checkout_gets_no_mirror() {
     fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
     assert_eq!(mirror(&fake, "checks", true).0, 1);
 }
+
+#[test]
+fn a_pr_listing_3000_files_gets_no_mirror_because_the_list_may_be_cut() {
+    // GitHub's files API stops at 3000: a full list may hide a CI input, fail closed.
+    for (count, want) in [(2999, 0), (3000, 1)] {
+        let fake = pr();
+        for i in 0..count {
+            fake.pull_file(1, &format!("docs/page{i}.md"), "added", 1, 0, None);
+        }
+        fake.workflow_file_run(HEAD, CI, "pull_request", "completed", Some("success"));
+        let (code, v) = mirror(&fake, "checks", true);
+        assert_eq!(code, want, "{count} files: {v}");
+        if want == 1 {
+            let msg = v["error"]["message"].as_str().unwrap();
+            assert!(msg.contains("3000"), "{msg}");
+            assert!(ci_ok_runs(&fake).is_empty());
+        }
+    }
+}

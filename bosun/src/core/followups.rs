@@ -127,7 +127,12 @@ mod tests {
 
     #[test]
     fn the_blocking_level_follows_block_on() {
-        let x = v(vec![f("blocker", "a"), f("major", "b"), f("minor", "c"), f("nit", "d")]);
+        let x = v(vec![
+            f("blocker", "a"),
+            f("major", "b"),
+            f("minor", "c"),
+            f("nit", "d"),
+        ]);
         let sev = |b| {
             non_blocking(&x, b)
                 .iter()
@@ -141,7 +146,10 @@ mod tests {
     #[test]
     fn items_are_one_line_and_cannot_carry_a_marker() {
         let t = item_text(5, &f("minor", "line one\nline <!-- bosun:x --> two"));
-        assert!(!t.contains('\n') && !t.contains("<!--") && !t.contains("-->"), "{t}");
+        assert!(
+            !t.contains('\n') && !t.contains("<!--") && !t.contains("-->"),
+            "{t}"
+        );
         assert!(t.starts_with("#5 a.rs:3 [minor] line one line"), "{t}");
         assert_eq!(item_pr(&t), Some(5));
     }
@@ -159,7 +167,10 @@ mod tests {
         .into();
         let (out, fresh) = append(body, &texts);
         assert_eq!(fresh, ["#6 b.rs:1 [nit] new"]);
-        assert_eq!(open_items(&out), ["#5 a.rs:3 [nit] open", "#6 b.rs:1 [nit] new"]);
+        assert_eq!(
+            open_items(&out),
+            ["#5 a.rs:3 [nit] open", "#6 b.rs:1 [nit] new"]
+        );
         assert_eq!(append(&out, &texts).1.len(), 0);
     }
 }

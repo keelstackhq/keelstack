@@ -27,7 +27,13 @@ fn add(fake: &FakeGithub, pr: u64, text: &str) -> (i32, Value) {
         fake,
         "session_a",
         NOW,
-        &["followups", "add", &pr.to_string(), "--from", p.to_str().unwrap()],
+        &[
+            "followups",
+            "add",
+            &pr.to_string(),
+            "--from",
+            p.to_str().unwrap(),
+        ],
     )
 }
 
@@ -61,10 +67,7 @@ fn creates_the_rolling_issue_and_adds_minor_and_nit_by_default() {
         .iter()
         .map(|i| i["text"].as_str().unwrap())
         .collect();
-    assert_eq!(
-        texts,
-        ["#5 c.rs:3 [minor] small", "#5 d.rs:4 [nit] tiny"]
-    );
+    assert_eq!(texts, ["#5 c.rs:3 [minor] small", "#5 d.rs:4 [nit] tiny"]);
     assert_eq!(l["data"]["items"][0]["pr"], 5);
 }
 
@@ -127,5 +130,10 @@ fn finding_text_cannot_inject_a_marker_or_a_second_item() {
     assert_eq!(code, 0, "{v}");
     let (_, l) = run(&fake, "session_a", NOW, &["followups", "list"]);
     assert_eq!(l["data"]["open"], 1, "{l}");
-    assert!(!l["data"]["items"][0]["text"].as_str().unwrap().contains("<!--"));
+    assert!(
+        !l["data"]["items"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("<!--")
+    );
 }

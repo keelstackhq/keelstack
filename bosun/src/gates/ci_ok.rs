@@ -25,6 +25,9 @@ pub const CI_JOB: &str = "ci-ok";
 /// The one workflow whose `ci-ok` job is mirrored.
 pub const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 
+/// GitHub's pulls/files API lists at most this many files; a list this long may be cut.
+const PULL_FILES_CAP: usize = 3000;
+
 /// The local actions ci.yml runs from the checkout (`uses: ./<dir>`), from its text.
 pub fn local_actions(ci_yml: &str) -> Vec<String> {
     let mut out: Vec<String> = ci_yml
@@ -45,6 +48,26 @@ pub fn local_actions(ci_yml: &str) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Paths ci.yml's tasks read from the checkout besides workflows and scripts (lowercased): a
+/// `package.json` (its `scripts` are what `pnpm run ci` runs), the task and workspace config of
+/// pnpm and Turborepo, `.npmrc`, a Cargo `build.rs` (it runs at build time) and test files (the PR
+/// could weaken the tests its own CI runs): a `tests`, `test` or `__tests__` directory at any
+/// depth, `*.test.*`, `*.spec.*`, `*_test.<ext>` and `test_*.py`.
+fn steers_ci(lower: &str) -> bool {
+    let (dirs, name) = lower.rsplit_once('/').map_or(("", lower), |(d, n)| (d, n));
+    let stem = name.split('.').next().unwrap_or(name);
+    matches!(
+        name,
+        "package.json" | "turbo.json" | "pnpm-workspace.yaml" | ".npmrc" | "build.rs"
+    ) || dirs
+        .split('/')
+        .any(|seg| matches!(seg, "tests" | "test" | "__tests__"))
+        || name.contains(".test.")
+        || name.contains(".spec.")
+        || (stem.ends_with("_test") && name.contains('.'))
+        || (name.starts_with("test_") && name.ends_with(".py"))
 }
 
 /// The first changed path (or the path it was renamed from) that steers what the PR's own ci.yml
@@ -81,6 +104,7 @@ pub fn ci_input_changed<'a>(
             // ci.yml runs folder scripts too (`node scripts/affected-combos.mjs` in hull,
             // `bash scripts/check-index.sh` in decisions): `scripts/` at any depth.
             || lower.split('/').rev().skip(1).any(|seg| seg == "scripts")
+            || steers_ci(&lower)
             || r_ci(p)
     };
     files
@@ -142,6 +166,16 @@ pub fn ci_verdict(gh: &dyn Github, n: u64, head: &str) -> crate::github::Result<
     };
     let local = local_actions(&ci_yml);
     let files = gh.pull_files(n)?;
+    // GitHub's files API lists at most 3000 files: a full list may hide a changed CI input.
+    if files.len() >= PULL_FILES_CAP {
+        return Err(refuse(
+            format!(
+                "PR #{n} lists {} files, GitHub's cap for the files API ({PULL_FILES_CAP}): a changed CI input could be hidden, so its ci-ok cannot be trusted for the CI signer",
+                files.len()
+            ),
+            "split the PR below 3000 files, or approve it with the orchestrator-held key (`bosun approve <pr>@<head> --sign-key <pem> --bootstrap`) or ask the owner",
+        ));
+    }
     let changed = (files.iter()).map(|f| (f.filename.as_str(), f.previous_filename.as_deref()));
     if let Some(p) = ci_input_changed(changed, &local) {
         return Err(refuse(
@@ -338,6 +372,44 @@ mod tests {
         }
         assert!(hit("bosun/src/a.rs", None).is_none());
         assert!(hit("docs/scripts.md", None).is_none());
+    }
+
+    #[test]
+    fn ci_inputs_cover_package_scripts_task_config_build_scripts_and_tests() {
+        let hit = |p: &str| ci_input_changed([(p, None)], &[]);
+        for p in [
+            "package.json",
+            "hull/package.json",
+            "apps/web/package.json",
+            "turbo.json",
+            "hull/turbo.json",
+            "pnpm-workspace.yaml",
+            "site/pnpm-workspace.yaml",
+            ".npmrc",
+            "site/.npmrc",
+            "build.rs",
+            "bosun/build.rs",
+            "bosun/tests/cli_a.rs",
+            "tests/common/mod.rs",
+            "hull/tests/render.test.mjs",
+            "npm/keel/test/launcher.test.js",
+            "web/src/__tests__/a.ts",
+            "web/src/a.spec.ts",
+            "web/src/a.test.tsx",
+            "crates/x/src/a_test.go",
+        ] {
+            assert!(hit(p).is_some(), "{p}");
+        }
+        assert!(ci_input_changed([("src/a.rs", Some("tests/old.rs"))], &[]).is_some());
+        for p in [
+            "bosun/src/a.rs",
+            "docs/testing.md",
+            "src/contest.rs",
+            "src/latest/a.rs",
+            "web/src/package.jsonc.md",
+        ] {
+            assert!(hit(p).is_none(), "{p}");
+        }
     }
 
     /// Parity with the real ci.yml: every `uses: ./` line is found, so a new local action counts

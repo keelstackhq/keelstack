@@ -60,7 +60,10 @@ fn add(dir: Option<&Path>, a: &FollowupsAddArgs) -> CmdResult {
     if verdict.pr != a.pr {
         return Err(BosunError::usage(
             format!("the verdict is for PR #{}, not #{}", verdict.pr, a.pr),
-            format!("pass the verdict of PR #{} or name PR #{}", a.pr, verdict.pr),
+            format!(
+                "pass the verdict of PR #{} or name PR #{}",
+                a.pr, verdict.pr
+            ),
         ));
     }
     let app = App::load(dir)?;
@@ -125,7 +128,9 @@ fn list(dir: Option<&Path>) -> CmdResult {
     let app = App::load(dir)?;
     let gh = app.gh.as_ref();
     let Some(issue) = rolling(gh)? else {
-        return Ok(Outcome::data(json!({"issue": null, "open": 0, "ticked": 0, "items": []})));
+        return Ok(Outcome::data(
+            json!({"issue": null, "open": 0, "ticked": 0, "items": []}),
+        ));
     };
     let body = issue.body_text();
     let items: Vec<_> = open_items(body)
