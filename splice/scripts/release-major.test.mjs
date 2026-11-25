@@ -190,6 +190,8 @@ test("release.yml moves the major tag only after the release, crates.io and npm"
   );
   assert.match(major, /github\.event_name == 'workflow_dispatch' && needs\.plan\.outputs\.release == 'true'/);
   assert.match(major, /\n    environment: release-tags\n/);
+  // Only contents: write (tag, draft publish), never an OIDC token next to the deploy key.
+  assert.match(major, /\n    permissions:\n      contents: write\n    outputs:/);
   assert.match(major, /TAG: \$\{\{ needs\.plan\.outputs\.tag \}\}/);
   assert.doesNotMatch(major, /github\.ref_name|github\.event\.|inputs\./);
   assert.match(major, /RELEASE_TAG_KEY: \$\{\{ secrets\.RELEASE_TAG_KEY \}\}/);
