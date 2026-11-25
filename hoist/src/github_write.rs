@@ -22,9 +22,14 @@ pub fn execute_github(
     d: &Desired,
     change: &Change,
 ) -> Result<Option<HumanStep>, HoistError> {
-    if let Change::TagDeployKey { env } = change {
+    if let Change::TagDeployKey {
+        env,
+        replace,
+        old_env,
+    } = change
+    {
         let repo = format!("/repos/{}/{}", seg(&d.repo.owner), seg(&d.repo.name));
-        return write_tag_key(http, d, &repo, env);
+        return write_tag_key(http, d, &repo, env, replace, old_env.as_deref());
     }
     execute_github_plain(http, d, change).map(|()| None)
 }
@@ -501,14 +506,17 @@ fn write_tag_key(
     d: &Desired,
     repo: &str,
     env: &str,
+    replace: &[u64],
+    old_env: Option<&str>,
 ) -> Result<Option<HumanStep>, HoistError> {
     let probe = format!("{repo}/environments/{}/secrets/public-key", seg(env));
     match http.get_json(&probe)? {
         Fetched::Ok(_) => {}
         Fetched::NotFound => {
             return Err(HoistError::Usage(format!(
-                "environment `{env}` has no Actions public key (404): create the environment \
-                 (`[release] environment`) and run `hoist apply` again; no deploy key was added"
+                "environment `{env}` has no Actions public key (404): create it (declare it \
+                 under `[github.environments]`, or it is `[release] environment`) and run \
+                 `hoist apply` again; no deploy key was added"
             )));
         }
         Fetched::Forbidden(hint) => {
@@ -545,6 +553,39 @@ fn write_tag_key(
     );
     drop(key);
     let Err(err) = sealed else {
+        // A re-key: only now that the new key and its secret are in place does the old one go:
+        // first a leftover secret of another environment (a 404 is fine), then the old key(s).
+        // Any other failure stops with an error that names what is left behind.
+        if let Some(old_env) = old_env.filter(|o| *o != env && !replace.is_empty()) {
+            let path = format!(
+                "{repo}/environments/{}/secrets/{TAG_KEY_SECRET}",
+                seg(old_env)
+            );
+            match http.send_json(Method::Delete, &path, None) {
+                Ok(_) | Err(HttpError::Rejected { status: 404, .. }) => {}
+                Err(e) => {
+                    return Err(HoistError::Network(format!(
+                        "the new tag key is in place, but deleting the old secret \
+                         {TAG_KEY_SECRET} of environment `{old_env}` failed: {e}; delete it and \
+                         the old deploy key(s) {} by hand (Settings)",
+                        ids(replace, id)
+                    )));
+                }
+            }
+        }
+        for old in replace.iter().filter(|o| Some(**o) != id) {
+            let path = format!("{repo}/keys/{}", seg(&old.to_string()));
+            match http.send_json(Method::Delete, &path, None) {
+                Ok(_) | Err(HttpError::Rejected { status: 404, .. }) => {}
+                Err(e) => {
+                    return Err(HoistError::Network(format!(
+                        "the new tag key is in place, but deleting the old deploy key {old} \
+                         failed: {e}; delete it by hand (Settings, Deploy keys): while it \
+                         stays, two keys are titled `{TAG_KEY_TITLE}`"
+                    )));
+                }
+            }
+        }
         return Ok(None);
     };
     // A key whose private half is lost is useless (and drift): take it back.
@@ -726,4 +767,14 @@ fn merged_ruleset_body(
         "rules": rules,
         "bypass_actors": actors
     })
+}
+
+/// The ids of the old keys (not the new one) as text.
+fn ids(replace: &[u64], new: Option<u64>) -> String {
+    replace
+        .iter()
+        .filter(|o| Some(**o) != new)
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

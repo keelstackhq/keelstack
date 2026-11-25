@@ -33,12 +33,14 @@ pub(super) fn require_actions() -> Result<(), HoistError> {
 }
 
 /// The other preflight conditions (Global Constraints): on the default branch, at
-/// `GITHUB_SHA`, in the release environment. Sends no request.
+/// `GITHUB_SHA` (unless `check_sha` is false, for `--only`), in the release environment.
+/// Sends no request.
 pub(super) fn preflight(
     dir: &Path,
     default: &str,
     model: &ReleaseModel,
     head: &str,
+    check_sha: bool,
 ) -> Result<(), HoistError> {
     let want = format!("refs/heads/{default}");
     let got = env("GITHUB_REF").unwrap_or_default();
@@ -49,6 +51,7 @@ pub(super) fn preflight(
         )));
     }
     match env("GITHUB_SHA") {
+        _ if !check_sha => {}
         Some(sha) if sha == head => {}
         sha => {
             return Err(refuse(format!(

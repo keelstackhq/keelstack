@@ -11,14 +11,17 @@ import { fakeGh, gitEnv, job, releaseYml, runStep, stepScript } from "./release-
 
 const yml = releaseYml();
 const release = job(yml, "release");
+const draft = job(yml, "draft");
 const TAG_STEP = stepScript(release, "Release commit, tag and GitHub release");
-const NOTES_STEP = stepScript(release, "SHA256SUMS and release notes");
+// The draft release (and its notes) are made by job `draft`; `release` only tags and publishes it.
+const NOTES_STEP = stepScript(draft, "SHA256SUMS and release notes");
+const DRAFT_STEP = stepScript(draft, "The draft release (created, or an earlier run's reused)");
 
 /**
  * A bare origin with main at the merge commit SHA, and a clone at SHA with the rebuilt hoard
  * action (as job `release` has it after its checks), the release assets and the notes.
  */
-function sandbox({ version = "0.22.0", previous = "", gh = {} } = {}) {
+function sandbox({ version = "0.22.0", previous = "", gh } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "release-tag-"));
   const env = gitEnv(dir);
   const g = (cwd, ...args) => execFileSync("git", args, { cwd, env, encoding: "utf8" }).trim();
@@ -43,8 +46,9 @@ function sandbox({ version = "0.22.0", previous = "", gh = {} } = {}) {
   mkdirSync(join(work, "release"));
   writeFileSync(join(work, "release/splice-x86_64-unknown-linux-musl.tar.gz"), "asset\n");
   writeFileSync(join(work, "notes.md"), "notes\n");
-  const fake = fakeGh(gh);
   const tag = `v${version}`;
+  // By default job `draft` has made the draft release the tag step publishes.
+  const fake = fakeGh(gh ?? { releases: [{ id: 1, tag, draft: true }], next: 2 });
   const run = () =>
     runStep(TAG_STEP, {
       cwd: work,
@@ -76,26 +80,112 @@ test("an untagged version is tagged and released", () => {
   assert.equal(s.g(s.origin, "rev-parse", "refs/heads/main"), s.sha, "main is never pushed");
   assert.match(s.g(s.origin, "show", `${commit}:hoard/action/dist/index.js`), /^new$/);
   assert.match(r.output, new RegExp(`^commit=${commit}$`, "m"));
-  const [create] = creates(s.fake.calls());
-  assert.ok(create, "gh release create was not called");
-  assert.deepEqual(create.slice(2, 8), [s.tag, "--draft", "--target", s.sha, "--title", s.tag]);
-  assert.ok(create.includes("--generate-notes"));
-  // The draft is published once the tag is pushed.
+  // This job never creates a release: it publishes job `draft`'s, once the tag is pushed.
+  assert.deepEqual(creates(s.fake.calls()), []);
   assert.deepEqual(
-    s.fake.state().releases.map((x) => [x.tag, x.draft]),
-    [[s.tag, false]],
+    s.fake.state().releases.map((x) => [x.id, x.tag, x.draft]),
+    [[1, s.tag, false]],
   );
 });
 
-test("the notes start at the previous release only when there is one", () => {
-  const withPrev = sandbox({ previous: "v0.21.5" });
-  assert.equal(withPrev.run().status, 0);
+const EXPECTED = [
+  ...["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin"].flatMap((t) =>
+    ["bosun", "hoist", "berth", "keel"].map((n) => `${n}-${t}`).concat([`splice-${t}.tar.gz`, `hoard-${t}.tar.gz`]),
+  ),
+  ...["bosun", "hoist", "berth", "keel"].map((n) => `${n}-x86_64-pc-windows-msvc.exe`),
+  "splice-x86_64-pc-windows-msvc.zip",
+  "hoard-x86_64-pc-windows-msvc.tar.gz",
+  "action-bundle.tar.gz",
+  "SHA256SUMS",
+];
+
+/** Job `draft`'s release step in a directory holding the release assets, the notes and the list. */
+function draftRun(gh, previous, { built = true, curl = "404" } = {}) {
+  const dir = mkdtempSync(join(tmpdir(), "draft-step-"));
+  mkdirSync(join(dir, "release"));
+  writeFileSync(join(dir, "release/splice-x86_64-unknown-linux-musl.tar.gz"), "asset\n");
+  writeFileSync(join(dir, "notes.md"), "notes\n");
+  writeFileSync(join(dir, "expected-all.txt"), [...EXPECTED].sort().join("\n") + "\n");
+  const fake = fakeGh(gh);
+  const r = runStep(DRAFT_STEP, {
+    cwd: dir,
+    env: {
+      ...fake.env,
+      VERSION: "0.22.0",
+      TAG: "v0.22.0",
+      SHA: "abc",
+      PREVIOUS: previous,
+      GH_TOKEN: "x",
+      GH_REPO: "o/r",
+      BUILD_OK: String(built),
+      FAKE_CURL_CODE: curl,
+    },
+  });
+  return { r, fake };
+}
+const draftOf = (extra = {}) => ({ releases: [{ id: 3, tag: "v0.22.0", draft: true, assets: EXPECTED, ...extra }], next: 4 });
+
+test("the draft is created with the notes from the previous release only when there is one", () => {
+  const withPrev = draftRun({}, "v0.21.5");
+  assert.equal(withPrev.r.status, 0, withPrev.r.stderr);
   const [a] = creates(withPrev.fake.calls());
+  assert.deepEqual(a.slice(2, 8), ["v0.22.0", "--draft", "--target", "abc", "--title", "v0.22.0"]);
+  assert.ok(a.includes("--generate-notes"));
   assert.equal(a[a.indexOf("--notes-start-tag") + 1], "v0.21.5");
-  const first = sandbox();
-  assert.equal(first.run().status, 0);
+  const first = draftRun({}, "");
+  assert.equal(first.r.status, 0, first.r.stderr);
   const [b] = creates(first.fake.calls());
   assert.ok(!b.includes("--notes-start-tag"), "the first release: GitHub's default notes");
+});
+
+test("a complete draft of this workflow is reused as it is, even when this run built nothing", () => {
+  for (const built of [true, false]) {
+    const again = draftRun(draftOf(), "", { built });
+    assert.equal(again.r.status, 0, again.r.stderr + again.r.stdout);
+    assert.deepEqual(creates(again.fake.calls()), [], "this run's build output is not used");
+    assert.deepEqual(again.fake.state().releases.map((x) => [x.id, x.draft]), [[3, true]]);
+  }
+});
+
+test("a draft for another commit or by another author is not trusted", () => {
+  const other = draftRun(draftOf({ target: "def" }), "");
+  assert.equal(other.r.status, 1);
+  assert.match(other.r.stdout, /not this workflow's \(its target is def, not abc\).*gh release delete v0\.22\.0/);
+  const alien = draftRun(draftOf({ author: "mallory" }), "");
+  assert.equal(alien.r.status, 1);
+  assert.match(alien.r.stdout, /created by mallory, not github-actions\[bot\]/);
+  for (const x of [other, alien]) {
+    assert.deepEqual(creates(x.fake.calls()), []);
+    assert.ok(!x.fake.calls().some((c) => c.includes("DELETE")), "never deleted automatically");
+  }
+});
+
+test("an incomplete draft is remade only when no registry has the version", () => {
+  const partial = draftOf({ assets: EXPECTED.slice(0, 5) });
+  const remade = draftRun(partial, "", { curl: "404" });
+  assert.equal(remade.r.status, 0, remade.r.stderr + remade.r.stdout);
+  assert.ok(remade.fake.calls().some((c) => c.includes("DELETE") && c.includes("repos/o/r/releases/3")));
+  assert.equal(creates(remade.fake.calls()).length, 1);
+  const published = draftRun(partial, "", { curl: "200" });
+  assert.equal(published.r.status, 1);
+  assert.match(published.r.stdout, /already on a registry.*do not delete/);
+  assert.ok(!published.fake.calls().some((c) => c.includes("DELETE")));
+  const unreadable = draftRun(partial, "", { curl: "503" });
+  assert.equal(unreadable.r.status, 1);
+  assert.match(unreadable.r.stdout, /cannot tell whether 0\.22\.0 is on a registry/);
+  const nobuild = draftRun(partial, "", { built: false });
+  assert.equal(nobuild.r.status, 1);
+  assert.match(nobuild.r.stdout, /built nothing to remake it/);
+});
+
+test("without a draft and without a build nothing is created; a published release without its tag stops", () => {
+  const none = draftRun({}, "", { built: false });
+  assert.equal(none.r.status, 1);
+  assert.match(none.r.stdout, /no draft of v0\.22\.0 to reuse/);
+  assert.deepEqual(creates(none.fake.calls()), []);
+  const published = draftRun({ releases: [{ id: 3, tag: "v0.22.0", draft: false }], next: 4 }, "");
+  assert.equal(published.r.status, 1);
+  assert.match(published.r.stdout, /is published but its tag is missing/);
 });
 
 test("a tag on another commit releases nothing", () => {
@@ -124,7 +214,7 @@ test("a re-run after a finished release does nothing", () => {
   assert.equal(again.status, 0, again.stderr + again.stdout);
   assert.match(again.stdout, /is released already: nothing to do/);
   assert.match(again.output, new RegExp(`^commit=${commit}$`, "m"));
-  assert.equal(creates(s.fake.calls()).length, 1, "no second release");
+  assert.equal(creates(s.fake.calls()).length, 0, "no release is ever created here");
 });
 
 test("a tag without a release, or a release without its tag, stops for a person", () => {
@@ -146,15 +236,24 @@ test("a tag without a release, or a release without its tag, stops for a person"
   assert.throws(() => t.g(t.origin, "rev-parse", "--verify", "-q", `refs/tags/${t.tag}`));
 });
 
-test("a draft left without a tag by an earlier run is replaced", () => {
+test("the draft of an earlier run is tagged and published, never replaced", () => {
   const s = sandbox({ gh: { releases: [{ id: 3, tag: "v0.22.0", draft: true }], next: 4 } });
   const r = s.run();
   assert.equal(r.status, 0, r.stderr + r.stdout);
-  assert.ok(s.fake.calls().some((c) => c.includes("DELETE") && c.includes("repos/o/r/releases/3")));
+  assert.ok(!s.fake.calls().some((c) => c.includes("DELETE")), "nothing is deleted");
+  assert.deepEqual(creates(s.fake.calls()), []);
   assert.deepEqual(
     s.fake.state().releases.map((x) => [x.id, x.draft]),
-    [[4, false]],
+    [[3, false]],
   );
+});
+
+test("without a draft nothing is tagged", () => {
+  const s = sandbox({ gh: {} });
+  const r = s.run();
+  assert.equal(r.status, 1);
+  assert.match(r.stdout, /the draft release of v0\.22\.0 is missing/);
+  assert.throws(() => s.g(s.origin, "rev-parse", "--verify", "-q", `refs/tags/${s.tag}`));
 });
 
 test("other tags do not count, also not as prefixes", () => {
@@ -178,6 +277,9 @@ test("the notes start at the previous vX.Y.Z release, never at v<major>", () => 
   const previous = (tag) => {
     mkdirSync(join(dir, "release"), { recursive: true });
     writeFileSync(join(dir, "release/a.tar.gz"), "a\n");
+    mkdirSync(join(dir, "release-bundle/dist"), { recursive: true });
+    writeFileSync(join(dir, "release-bundle/dist/index.js"), "x\n");
+    writeFileSync(join(dir, "release-bundle/checksums.generated.ts"), "x\n");
     const r = runStep(NOTES_STEP, { cwd: dir, env: { ...env, VERSION: tag.slice(1), TAG: tag } });
     assert.equal(r.status, 0, r.stderr);
     return r.output.match(/^PREVIOUS=(.*)$/m)[1];
@@ -190,10 +292,12 @@ test("the notes start at the previous vX.Y.Z release, never at v<major>", () => 
 });
 
 test("release.yml tags only on the dispatched run on main, behind the release environment", () => {
-  assert.match(release, /needs: \[plan, build, action\]/);
+  assert.match(release, /needs: \[plan, draft, publish\]/);
   assert.match(release, /github\.event_name == 'workflow_dispatch' && needs\.plan\.outputs\.release == 'true'/);
+  assert.match(release, /needs\.publish\.result == 'success'/);
   assert.match(release, /needs\.plan\.outputs\.released != 'true'/);
-  assert.match(release, /\n    environment: release\n/);
+  // The tag key's own environment, not the owner's `release` (where dependency code publishes).
+  assert.match(release, /\n    environment: release-tags\n/);
   assert.match(release, /\n    permissions:\n      contents: write\n    outputs:/);
   // The tag comes from the plan (Cargo.toml's version), never from the event.
   assert.match(release, /TAG: \$\{\{ needs\.plan\.outputs\.tag \}\}/);
@@ -209,11 +313,13 @@ test("release.yml tags only on the dispatched run on main, behind the release en
     "the tag is pushed before the release is published",
   );
   assert.match(release, /RELEASE_TAG_KEY: \$\{\{ secrets\.RELEASE_TAG_KEY \}\}/);
-  assert.match(TAG_STEP, /--notes-start-tag "\$PREVIOUS"/);
+  assert.match(DRAFT_STEP, /--notes-start-tag "\$PREVIOUS"/);
+  // No dependency code next to the key: no toolchains, no installs, no hoist publish.
+  assert.doesNotMatch(release, /cargo |npm (ci|install|publish)|pnpm|rust-toolchain|hoist release publish/);
 });
 
 test("release.yml builds the commit of the run and never cancels a release", () => {
-  for (const name of ["release", "build", "action"]) {
+  for (const name of ["release", "draft", "build", "action"]) {
     assert.match(job(yml, name), /ref: \$\{\{ needs\.plan\.outputs\.sha \}\}/, name);
   }
   assert.doesNotMatch(yml, /cancel-in-progress: true/);

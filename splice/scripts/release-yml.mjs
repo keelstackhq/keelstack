@@ -59,8 +59,16 @@ const path = a.slice(1).find((x) => x.startsWith("repos/")).replace(/^repos\/[^/
 if (s.fail && path.startsWith(s.fail)) fail("HTTP 500: " + path);
 let m;
 if (method === "GET" && path.startsWith("releases?")) {
+  const long = a.join(" ").includes("target_commitish");
   for (const r of s.releases)
-    if (r.tag === process.env.TAG) console.log(r.id + " " + (r.draft ? "draft" : "published"));
+    if (r.tag === process.env.TAG) {
+      const base = r.id + " " + (r.draft ? "draft" : "published");
+      console.log(long ? base + " " + (r.target ?? process.env.SHA) + " " + (r.author ?? "github-actions[bot]") : base);
+    }
+} else if ((m = path.match(/^releases\/(\d+)\/assets/))) {
+  const r = s.releases.find((x) => x.id === Number(m[1]));
+  if (!r) fail("HTTP 404");
+  for (const n of r.assets ?? []) console.log(n);
 } else if ((m = path.match(/^releases\/(\d+)$/))) {
   const r = s.releases.find((x) => x.id === Number(m[1]));
   if (!r) fail("HTTP 404");
@@ -77,6 +85,9 @@ export function fakeGh(state = {}) {
   execFileSync("mkdir", ["-p", bin]);
   writeFileSync(join(bin, "gh"), FAKE_GH);
   chmodSync(join(bin, "gh"), 0o755);
+  // `curl` answers the registry probes with FAKE_CURL_CODE (default 404: not published).
+  writeFileSync(join(bin, "curl"), '#!/bin/sh\nprintf %s "${FAKE_CURL_CODE:-404}"\n');
+  chmodSync(join(bin, "curl"), 0o755);
   const stateFile = join(dir, "state.json");
   const logFile = join(dir, "log");
   writeFileSync(stateFile, JSON.stringify({ releases: [], next: 1, ...state }));

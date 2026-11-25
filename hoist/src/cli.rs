@@ -296,7 +296,25 @@ pub enum ReleaseCommand {
         /// Show what would be done; GET requests only, no preflight
         #[arg(long)]
         dry_run: bool,
+        /// Registry-only mode: publish just these registries (`crates`, `npm`) for every
+        /// package at its manifest version; no tag, GitHub Release or deploy. Idempotent: a
+        /// version already on the registry is skipped, a package not on it yet is `pending`
+        #[arg(long, value_delimiter = ',', value_name = "crates,npm")]
+        only: Vec<String>,
+        /// With `--only npm`: a pre-staged npm package directory published after the model's
+        /// packages (repeatable; platform packages first, launcher last)
+        #[arg(long, value_name = "DIR", requires = "only")]
+        npm_dir: Vec<PathBuf>,
+        /// npm dist-tag for the published versions (default: npm's `latest`)
+        #[arg(long, value_name = "TAG")]
+        npm_tag: Option<String>,
+        /// Publish to npm with provenance: rewrites `repository` in each package.json to this
+        /// GitHub repository first (public repositories only)
+        #[arg(long)]
+        provenance: bool,
     },
+    /// Read-only: per package, is it on its registry, at which version, trusted publisher
+    Check,
     /// First publish and trusted publishers of missing packages, locally with your own logins
     Bootstrap {
         /// Show what would be done; GET requests and read-only tool commands only
@@ -385,6 +403,9 @@ impl Command {
             Command::Release {
                 command: ReleaseCommand::Publish { .. },
             } => "release publish",
+            Command::Release {
+                command: ReleaseCommand::Check,
+            } => "release check",
             Command::Release {
                 command: ReleaseCommand::Bootstrap { .. },
             } => "release bootstrap",

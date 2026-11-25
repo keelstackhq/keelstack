@@ -114,6 +114,8 @@ jobs:
         run: bash .github/scripts/gate-workflows.test.sh
       - name: version-bump script test
         run: bash scripts/bump-version.test.sh
+      - name: release scripts test (release-pr.sh, release-result.sh)
+        run: bash scripts/release-pr.test.sh && bash scripts/release-result.test.sh
       - if: needs.detect.outputs.rust == 'true'
         uses: taiki-e/install-action@4a76afe23f9e08d2d9550fb56e556444e8611d21 # v2.90.4
         with:

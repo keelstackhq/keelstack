@@ -14,6 +14,57 @@ fn add_step(steps: &mut Vec<HumanStep>, step: HumanStep) {
     }
 }
 
+/// The first of `job`'s workspace dependencies that is still waiting to be published for the
+/// first time (a registry step cannot succeed before it).
+fn waits_on<'a>(job: &Job, step: Step, pending: &'a [String]) -> Option<&'a String> {
+    if !matches!(step, Step::Npm | Step::Crates) {
+        return None;
+    }
+    pending.iter().find(|n| job.pkg.deps.contains(n))
+}
+
+/// What a launcher job waits for: nothing, its crate (held; a hold, not a failure), or a failed
+/// read of crates.io (a failure: never a guess).
+enum CrateWait {
+    No,
+    Held(String),
+    Failed(String),
+}
+
+/// An npm launcher (and its platform packages) install the crate's binary: while a crate that
+/// publishes to crates.io is held in this run (`pending`), or, with `--only npm` alone, is not on
+/// crates.io at this version, they wait. A full run and a crate that ships binaries only never
+/// read crates.io for this.
+fn waits_for_crate(c: &Clients, job: &Job, pending: &[String]) -> CrateWait {
+    let Some(l) = job.pkg.launcher.as_ref() else {
+        return CrateWait::No;
+    };
+    let (name, v) = (&l.crate_name, &job.pkg.version.value);
+    if pending.contains(name) {
+        return CrateWait::Held(format!(
+            "waits for crate {name}, which is not on crates.io yet"
+        ));
+    }
+    if !job.crate_published || !job.only.is_some_and(|o| o.npm && !o.crates) {
+        return CrateWait::No;
+    }
+    let path = format!(
+        "/api/v1/crates/{}/{}",
+        crate::http::seg(name),
+        crate::http::seg(v)
+    );
+    match c.crates.get_json(&path) {
+        Ok(crate::http::Fetched::Ok(_)) => CrateWait::No,
+        Ok(crate::http::Fetched::NotFound) => CrateWait::Held(format!(
+            "waits for crate {name} {v}, which is not on crates.io yet"
+        )),
+        Ok(crate::http::Fetched::Forbidden(why)) => {
+            CrateWait::Failed(format!("cannot read crate {name} {v} on crates.io: {why}"))
+        }
+        Err(e) => CrateWait::Failed(format!("cannot read crate {name} {v} on crates.io: {e}")),
+    }
+}
+
 const PLATFORMS_PENDING: &str = "platform packages not published yet";
 
 /// R27: a launcher's own npm step waits while any of its platform packages is pending (npm
@@ -31,10 +82,38 @@ pub(super) fn dry_run(
 ) -> Result<Report, HoistError> {
     let mut items = Vec::new();
     let mut humans = Vec::new();
+    let mut pending_pkgs: Vec<String> = Vec::new();
     for job in jobs {
         let mut platform_pending = false;
+        let crate_wait = waits_for_crate(c, job, &pending_pkgs);
         for step in job.steps() {
+            match &crate_wait {
+                CrateWait::Held(why) if !step.github() => {
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
+                    items.push(item(job, step, Action::Pending, why.clone()));
+                    continue;
+                }
+                CrateWait::Failed(why) if !step.github() => {
+                    items.push(item(job, step, Action::Unknown, why.clone()));
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(dep) = waits_on(job, step, &pending_pkgs) {
+                let why = format!("waits for {dep}, which is not on its registry yet");
+                // Held in turn: whatever depends on this package waits too.
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
+                items.push(item(job, step, Action::Pending, why));
+                continue;
+            }
             if waits_for_platforms(job, step, platform_pending) {
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
                 items.push(item(
                     job,
                     step,
@@ -52,6 +131,9 @@ pub(super) fn dry_run(
                 }
                 if matches!(step, Step::Platform(_)) && action == Action::Pending {
                     platform_pending = true;
+                }
+                if action == Action::Pending && !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
                 }
                 (action, why)
             };
@@ -90,14 +172,47 @@ pub(super) fn execute(
     let mut humans = Vec::new();
     let mut done = Vec::new(); // (item index, job, step) to verify
     let mut failed = false;
+    let mut pending_pkgs: Vec<String> = Vec::new();
     for job in jobs {
         let mut platform_pending = false;
+        let crate_wait = if failed {
+            CrateWait::No
+        } else {
+            waits_for_crate(c, job, &pending_pkgs)
+        };
         for step in job.steps() {
             if failed {
                 items.push(item(job, step, Action::Update, "not attempted".to_string()));
                 continue;
             }
+            match &crate_wait {
+                CrateWait::Held(why) if !step.github() => {
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
+                    items.push(item(job, step, Action::Pending, why.clone()));
+                    continue;
+                }
+                CrateWait::Failed(why) if !step.github() => {
+                    failed = true;
+                    items.push(item(job, step, Action::Update, format!("failed: {why}")));
+                    continue;
+                }
+                _ => {}
+            }
+            if let Some(dep) = waits_on(job, step, &pending_pkgs) {
+                let why = format!("waits for {dep}, which is not on its registry yet");
+                // Held in turn: whatever depends on this package waits too.
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
+                items.push(item(job, step, Action::Pending, why));
+                continue;
+            }
             if waits_for_platforms(job, step, platform_pending) {
+                if !pending_pkgs.contains(&job.pkg.name) {
+                    pending_pkgs.push(job.pkg.name.clone());
+                }
                 items.push(item(
                     job,
                     step,
@@ -114,6 +229,9 @@ pub(super) fn execute(
                 }
                 Ok(Outcome::Pending(why, human)) => {
                     platform_pending |= matches!(step, Step::Platform(_));
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
                     add_step(&mut humans, human);
                     items.push(item(job, step, Action::Pending, why));
                 }
@@ -140,7 +258,10 @@ pub(super) fn execute(
         all_ok &= v.ok;
         items[index].verify = Some(v);
     }
-    let code = match (all_ok, humans.is_empty()) {
+    // A held package (waiting on a dependency that is not published yet) is pending even when
+    // the held one's own first-publish step is not among the human steps (npm only, crate held).
+    let held = items.iter().any(|i| i.action == Action::Pending);
+    let code = match (all_ok, humans.is_empty() && !held) {
         (false, _) => 1,
         (true, false) => 2,
         (true, true) => 0,

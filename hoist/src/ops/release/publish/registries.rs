@@ -211,15 +211,56 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
         Step::Platform(i) => Some(copy_bin(job, i, &pkg_dir)?),
         _ => None,
     };
-    let published = tool(
-        Tool::Npm,
-        &pkg_dir,
-        &["publish", "--access", access(pkg)],
-        &[],
-    );
-    // The binary leaves the checkout again, whether npm succeeded or not.
+    let flags = &c.flags;
+    // Provenance names the repository the workflow runs in; package.json must say the same.
+    // The file is put back after the publish, and the copied binary removed, whether npm
+    // succeeded or not, so the checkout is left as it was (a failed restore is an error).
+    let manifest = pkg_dir.join("package.json");
+    let original = if flags.provenance {
+        std::fs::read(&manifest).ok()
+    } else {
+        None
+    };
+    let published: Result<String, HoistError> = (|| {
+        if flags.provenance {
+            let url = format!(
+                "repository.url=git+https://github.com/{}.git",
+                flags.repository
+            );
+            tool(
+                Tool::Npm,
+                &pkg_dir,
+                &["pkg", "set", "repository.type=git", &url],
+                &[],
+            )?;
+            if !pkg.dir.is_absolute() && !pkg.dir.as_os_str().is_empty() {
+                let d = format!("repository.directory={}", pkg.dir.to_string_lossy());
+                tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[])?;
+            }
+        }
+        // No lifecycle scripts: what is published was built and tested by CI (job `build`), and a
+        // dependency's install script must not run with the id-token in reach.
+        let mut args = vec!["publish", "--access", access(pkg), "--ignore-scripts"];
+        if flags.provenance {
+            args.push("--provenance");
+        }
+        if let Some(t) = &flags.tag {
+            args.extend(["--tag", t]);
+        }
+        tool(Tool::Npm, &pkg_dir, &args, &[])
+    })();
+    let restored = match &original {
+        Some(bytes) => std::fs::write(&manifest, bytes).map_err(|e| {
+            HoistError::Io(format!(
+                "could not restore {}: {e}; restore it with git",
+                manifest.display()
+            ))
+        }),
+        None => Ok(()),
+    };
     let removed = copied.map_or(Ok(()), CopiedBin::remove);
     published?;
+    restored?;
     removed?;
     let note = match drop_next_tag(&pkg_dir, pkg) {
         Ok(true) => "; removed the `next` dist-tag".to_string(),
@@ -284,7 +325,9 @@ fn crates(
     let published = run_redacted(
         Tool::Cargo,
         dir,
-        &["publish", "-p", &pkg.name, "--locked"],
+        // --no-verify: CI built and tested this commit; verifying would compile it again here,
+        // running build scripts and proc-macros next to the publish token.
+        &["publish", "-p", &pkg.name, "--locked", "--no-verify"],
         &[("CARGO_REGISTRY_TOKEN", &token)],
     );
     drop(token);

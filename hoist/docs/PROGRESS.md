@@ -44,3 +44,4 @@ Human-only items, with the exact action:
   key (secret `HOIST_RELEASE_APP_KEY`); without them `release prepare` opens the PR
   with `GITHUB_TOKEN` (no checks), prints a warning and the workflow stays green (CLI exit 2).
 - `hoist org` on the real org: run `hoist org check` (owner credentials), deploy the Search Console bridge Worker (`examples/search-console-bridge/README.md`, service-account key as Worker secret, one bearer token as `HOIST_SEARCH_CONSOLE_TOKEN`), and verify the crates.io trusted publisher read with an API token on a canary crate (whether `CARGO_REGISTRY_TOKEN` is accepted without a browser session is unverified, spec §16.6).
+- 2026-11-25 · release painless · hoist: `release publish --only`, `release check`, bootstrap checklist (spec §9.3.1, §9.6.1); `release` environment gets the owner as required reviewer in hoist.toml (D-028); root release.yml calls hoist; scripts/release-pr.sh; docs/releasing.md · this PR

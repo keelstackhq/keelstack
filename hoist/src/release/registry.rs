@@ -44,3 +44,28 @@ pub fn package_exists(http: &Http, p: &Package) -> Result<Fetch<bool>, HoistErro
 pub fn version_exists(http: &Http, p: &Package, v: &str) -> Result<Fetch<bool>, HoistError> {
     exists(http, &path(p, Some(v)))
 }
+
+/// The newest stable version on the registry: npm `dist-tags.latest`, crates.io
+/// `crate.max_stable_version` (else `max_version`). `Got(None)`: the package is absent.
+pub fn latest_version(http: &Http, p: &Package) -> Result<Fetch<Option<String>>, HoistError> {
+    Ok(match http.get_json(&path(p, None)) {
+        Ok(Fetched::Ok(v)) => {
+            let found = match p.kind {
+                PkgKind::Npm => v["dist-tags"]["latest"].as_str(),
+                PkgKind::Crate => v["crate"]["max_stable_version"]
+                    .as_str()
+                    .or_else(|| v["crate"]["max_version"].as_str()),
+            };
+            match found.filter(|f| !f.is_empty()) {
+                Some(f) => Fetch::Got(Some(f.to_string())),
+                None => Fetch::Unknown(
+                    "the registry answered without a newest version (no dist-tag `latest`)"
+                        .to_string(),
+                ),
+            }
+        }
+        Ok(Fetched::NotFound) => Fetch::Got(None),
+        Ok(Fetched::Forbidden(why)) => Fetch::Unknown(format!("registry refused the read: {why}")),
+        Err(err) => Fetch::Unknown(err.to_string()),
+    })
+}

@@ -263,7 +263,7 @@ mod tests {
         let all = include_str!("../../../.github/workflows/release.yml").to_owned()
             + include_str!("../../../.github/workflows/review.yml")
             + include_str!("../../../.github/workflows/main-open.yml");
-        let want = ["release", "review", "bosun-app"].map(|n| Ok(n.to_string()));
+        let want = ["release", "release-tags", "review", "bosun-app"].map(|n| Ok(n.to_string()));
         assert_eq!(workflow_environments(&all), want);
     }
 }

@@ -278,7 +278,7 @@ fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
         plan.contains("if [ \"$REF\" != refs/heads/main ]; then"),
         "{plan}"
     );
-    for name in ["build", "release", "crates", "npm", "major"] {
+    for name in ["build", "draft", "publish", "release"] {
         let j = job(&text, name);
         assert!(
             j.contains(
@@ -287,12 +287,15 @@ fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
             "{name} must require the plan:\n{j}"
         );
     }
-    for name in ["release", "crates", "npm", "major"] {
-        assert!(
-            job(&text, name).contains("    environment: release\n"),
-            "{name} publishes from environment release"
-        );
-    }
+    // The registries run in the owner's environment, the tag key in its own.
+    assert!(
+        job(&text, "publish").contains("    environment: release\n"),
+        "publish runs from environment release"
+    );
+    assert!(
+        job(&text, "release").contains("    environment: release-tags\n"),
+        "release holds the tag key in environment release-tags"
+    );
     let code: String = text
         .lines()
         .filter(|l| !l.trim_start().starts_with('#'))
@@ -314,7 +317,7 @@ fn release_workflow_is_gated_so_a_merge_publishes_nothing() {
     }
     // A job-level GH_TOKEN reaches every step of the job.
     for name in [
-        "plan", "dispatch", "build", "action", "release", "crates", "npm", "major",
+        "plan", "dispatch", "build", "action", "draft", "publish", "release",
     ] {
         let j = job(&text, name);
         let head = &j[..j.find("\n    steps:\n").unwrap_or(j.len())];

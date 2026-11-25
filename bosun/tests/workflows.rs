@@ -377,11 +377,49 @@ fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
             assert!(environment_of(body).is_none(), "{body}");
             continue;
         }
+        if id == "draft" {
+            // The draft release: contents: write, no environment, no dependency code.
+            assert_eq!(grants, ["contents:write"], "{id}");
+            assert!(environment_of(body).is_none(), "{body}");
+            assert!(
+                body.contains(
+                    "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"
+                ),
+                "{id} must run on the dispatched run only: {body}"
+            );
+            continue;
+        }
         assert!(
-            ["release", "crates", "npm", "major"].contains(&id.as_str()),
+            ["publish", "release"].contains(&id.as_str()),
             "job `{id}` grants {grants:?}"
         );
-        assert_eq!(environment_of(body).as_deref(), Some("release"), "{id}");
+        if id == "release" {
+            // The tag job holds the deploy key and runs no dependency code: no toolchain or
+            // package manager anywhere in it.
+            let code: String = body
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for banned in [
+                "cargo ",
+                "npm ",
+                "pnpm",
+                "rust-toolchain",
+                "hoist release publish",
+            ] {
+                assert!(
+                    !code.contains(banned),
+                    "job release runs `{banned}` next to the tag key"
+                );
+            }
+        }
+        let want = if id == "publish" {
+            "release"
+        } else {
+            "release-tags"
+        };
+        assert_eq!(environment_of(body).as_deref(), Some(want), "{id}");
         assert!(
             body.contains(
                 "github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'"

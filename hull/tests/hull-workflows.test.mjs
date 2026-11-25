@@ -150,7 +150,7 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   // bosun's ci-minutes gate wants cancelling concurrency; its documented allow comment keeps a
   // release from ever being cancelled mid-publish.
   assert.match(text, /^# ci-minutes: allow concurrency \S/m);
-  const { plan, release } = wf.jobs;
+  const { plan, draft, publish, release } = wf.jobs;
   // The repo guard names this repository, never an old per-tool one.
   assert.match(plan.if, /^github\.repository == 'keelstackhq\/keelstack' &&/);
   assert.doesNotMatch(text, /github\.repository == 'keelstackhq\/(?!keelstack')/);
@@ -159,22 +159,48 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   const writers = Object.entries(wf.jobs).filter(([, j]) => j.permissions?.contents === "write");
   assert.deepEqual(
     writers.map(([k]) => k),
-    ["release"],
+    ["draft", "release"],
   );
-  // major moves v<major> with the release environment's deploy key: its token needs nothing.
-  assert.deepEqual(wf.jobs.major.permissions, {});
+  // The draft job has no environment and runs no dependency code; the one tap is on `publish`
+  // (environment release, contents: read + id-token: write, trusted publishing, no tag key);
+  // the tag key lives in release-tags, read only by `release`, which writes the tag.
+  assert.equal(draft.environment, undefined);
+  assert.equal(publish.environment, "release");
+  assert.deepEqual(publish.permissions, { contents: "read", "id-token": "write" });
+  assert.equal(release.environment, "release-tags");
+  assert.deepEqual(release.permissions, { contents: "write" });
+  // Exactly two environments: the owner's tap and the tag key's.
+  const envs = new Set(
+    Object.values(wf.jobs)
+      .map((j) => j.environment)
+      .filter(Boolean),
+  );
+  assert.deepEqual([...envs].sort(), ["release", "release-tags"]);
+  const idToken = Object.entries(wf.jobs).filter(([, j]) => j.permissions?.["id-token"]);
+  assert.deepEqual(
+    idToken.map(([k]) => k),
+    ["publish"],
+  );
   for (const [name, job] of Object.entries(wf.jobs)) {
     if (job.environment === undefined) continue;
-    assert.equal(job.environment, "release", name);
     assert.match(job.if, /github\.event_name == 'workflow_dispatch'/, name);
   }
-  for (const name of ["release", "crates", "npm", "major"])
-    assert.equal(wf.jobs[name].environment, "release", name);
-  assert.ok(release.needs.includes("plan"));
+  assert.ok(
+    wf.jobs.major === undefined && wf.jobs.crates === undefined && wf.jobs.npm === undefined,
+  );
+  assert.ok(publish.needs.includes("draft"));
+  assert.ok(release.needs.includes("publish") && release.needs.includes("draft"));
   assert.match(release.if, /needs\.plan\.outputs\.release == 'true'/);
-  const run = release.steps.map((s) => s.run ?? "").join("\n");
-  assert.match(run, /--notes-start-tag/);
-  // The tag goes over SSH with the release environment's deploy key, not the job token.
+  const runOf = (job) => job.steps.map((s) => s.run ?? "").join("\n");
+  // The draft carries the release notes; the tag job pushes the tag and publishes the draft.
+  assert.match(runOf(draft), /--notes-start-tag/);
+  assert.doesNotMatch(runOf(release), /gh release create/);
+  assert.doesNotMatch(
+    runOf(release),
+    /cargo publish|cargo build|pnpm install|npm install|npm publish/,
+  );
+  // The tag goes over SSH with the release-tags deploy key, not the job token.
+  const run = runOf(release);
   assert.match(run, /remote="git@github\.com:\$GH_REPO\.git"/);
   assert.match(run, /git push "\$remote" "refs\/tags\/\$TAG"/);
   const co = release.steps.find((s) => s.uses?.startsWith("actions/checkout@"));

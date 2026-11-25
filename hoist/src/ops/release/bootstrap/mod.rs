@@ -261,7 +261,10 @@ pub(crate) fn plan_steps(facts: &[Facts], t: &Trust, tty: bool) -> Plan {
                 t.workflow_for(&p.name),
                 t.env
             ),
-            format!("https://crates.io/crates/{}/settings", p.name),
+            format!(
+                "https://crates.io/crates/{}/settings/new-trusted-publisher",
+                p.name
+            ),
         ));
     }
     publish.extend(trust);
@@ -345,7 +348,7 @@ fn refuse_in_actions() -> Result<(), HoistError> {
 
 /// Every package that publishes to a registry: a launcher's platform packages, then the
 /// launcher (the publish order), then the next package.
-fn registry_packages(r: &DesiredRelease) -> Vec<&Package> {
+pub(crate) fn registry_packages(r: &DesiredRelease) -> Vec<&Package> {
     r.packages
         .iter()
         .flat_map(|p| {
@@ -359,7 +362,7 @@ fn registry_packages(r: &DesiredRelease) -> Vec<&Package> {
 
 /// Every package bootstrap looks at, with whether it is a `[registry.*]` one: the model's
 /// registry packages, then the `[registry.*]` entries (a name the model has wins).
-fn all_packages(r: &DesiredRelease) -> Vec<(&Package, bool)> {
+pub(crate) fn all_packages(r: &DesiredRelease) -> Vec<(&Package, bool)> {
     let model = registry_packages(r);
     let extra: Vec<&Package> = r
         .registry
@@ -682,7 +685,8 @@ fn hint(items: &[Item], tags: &[String], t: &Trust) -> String {
     });
     let mut text = if ready {
         format!(
-            "next: re-run the failed \"release publish\" job at {}, or run the release workflow\n",
+            "next: publish the release again with `gh workflow run {}` (a workflow with inputs takes `-f sha=<commit> -f version=<X.Y.Z>`), or re-run the failed \"release publish\" job at {}\n",
+            t.workflow,
             tags.join(", ")
         )
     } else {
@@ -907,7 +911,7 @@ mod tests {
         assert_eq!(ids, ["crates-trust:tool"]);
         assert_eq!(
             plan.human_steps[0].url,
-            "https://crates.io/crates/tool/settings"
+            "https://crates.io/crates/tool/settings/new-trusted-publisher"
         );
         let b: Vec<&Item> = plan.items.iter().filter(|i| i.key == "b").collect();
         assert_eq!(b.len(), 2);
@@ -1042,7 +1046,7 @@ mod tests {
         ];
         assert_eq!(
             hint(&items, &tags, &trust()),
-            "next: re-run the failed \"release publish\" job at v0.1.0, or run the release workflow\n"
+            "next: publish the release again with `gh workflow run release.yml` (a workflow with inputs takes `-f sha=<commit> -f version=<X.Y.Z>`), or re-run the failed \"release publish\" job at v0.1.0\n"
         );
         let finish = "next: finish the steps above, then run bootstrap again\n";
         // R7: an npm trust item still pending (no terminal) or not done blocks the re-run.

@@ -36,7 +36,8 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
 
 - One version for every tool: `[workspace.package] version` in the root `Cargo.toml`, mirrored
   by every npm launcher and platform package. Change it only with
-  `bash scripts/bump-version.sh X.Y.Z` (also updates `Cargo.lock`), in a version-bump PR.
+  `bash scripts/release-pr.sh X.Y.Z` (folds fragments, runs `scripts/bump-version.sh`, updates
+  `Cargo.lock`, commits on `release/vX.Y.Z`), then a version-bump PR. How to release: `docs/releasing.md`.
 - One tag `vX.Y.Z` and one GitHub release with every binary, created by the release workflow
   only. Agents never create tags or releases, never push tags, never publish by hand (D-006).
 

@@ -89,6 +89,9 @@ hoist changeset status [--since REV]   each package changed since merge-base(REV
 hoist release plan    [--json]         next versions and changelogs, no writes
 hoist release prepare                  open/update the release PR (CI, push to main)
 hoist release publish [--assets DIR] [--dry-run]  tag, release, publish (CI, release PR merged)
+hoist release publish --only crates,npm [--npm-dir DIR]... [--npm-tag T] [--provenance]
+                                                    registry-only publish of every package (§9.3.1)
+hoist release check                                 read-only: per package published?, newest vs workspace, trust (§9.6.1)
 hoist release bootstrap [--dry-run] [--yes]       first publish + trusted publishers (local, once; §9.6)
 hoist export --tofu <dir>              M4
 ```
@@ -204,6 +207,7 @@ secret_scope = "repo"             # repo | environment: where hoist keeps its se
 # apps = ["my-app"]               # GitHub Apps that must be installed on the repo (§6)
 # admin_bypass = false            # opt-in: the admin role may merge a PR past `hoist: default branch` (§6)
 # tags_bypass = "actions"         # actions | deploy_key: who bypasses `hoist: tags` (§6); other values exit 3
+# tags_key_environment = "release" # deploy_key: environment holding RELEASE_TAG_KEY (default: [release] environment); must be declared under [github.environments] (else exit 3)
 
 [github.tag_ruleset]              # optional: the `hoist: tags` ruleset (§6)
 # patterns = ["v*"]               # tag name patterns (required, non-empty)
@@ -296,7 +300,7 @@ A fixed set of typed resources. Each has a natural key, a read, a diff, a write 
 | github | repo settings | owner/repo | PATCH repo | settings read back |
 | github | branch ruleset | name `hoist: default branch` | create/update ruleset (only this one: other rulesets, such as `hoist: secrets repo`, are never touched): target `~DEFAULT_BRANCH`, enforcement `active`, rules `deletion`, `non_fast_forward`, `required_status_checks` (and `merge_queue` when on; `merge_queue = false` writes no queue rule, and a live queue rule is then `update`), `bypass_actors` = `[]`, or with `[github] admin_bypass = true` `[{actor_id: 5, actor_type: "RepositoryRole", bypass_mode: "pull_request"}]` (the repository admin role may merge a PR past the rules, e.g. a mainfix while `main-open` fails; it never pushes directly). An update is a read-merge-write like the tag ruleset's: `apply` `GET`s the ruleset by id and `PUT`s it with the live rules (with their parameters), conditions (includes, excludes) and bypass actors kept; hoist's parts change: enforcement `active`, target `branch`, `~DEFAULT_BRANCH` added to the includes when missing, `deletion` and `non_fast_forward` added when missing, the required checks set (a live strict policy and each kept check's pinned source stay), the merge queue rule added with hoist's settings or removed as wanted (a live one keeps its settings), and the admin role added when `admin_bypass` wants it (never under `--adopt`). hoist never removes a bypass actor; a ruleset gone (404) is created, an unreadable one (403) is a usage error and nothing is written | required check is a job name in a workflow on the default branch |
 | github | tag ruleset | name `hoist: tags` (`[github.tag_ruleset]`, §5) | create (`POST .../rulesets`) or update (`PUT .../rulesets/<id>`) a ruleset with target `tag`, enforcement `active`, `conditions.ref_name.include` = `refs/tags/<pattern>` per pattern, rules `creation`, `update`, `deletion` and `bypass_actors` = `[{actor_id: 15368, actor_type: "Integration", bypass_mode: "always"}]` (the GitHub Actions app, github-actions[bot]), or with `tags_bypass = "deploy_key"` `[{actor_id: null, actor_type: "DeployKey", bypass_mode: "always"}]` (GitHub's `DeployKey` actor takes no id and stands for every write deploy key of the repo; OpenAPI `repository-ruleset-bypass-actor`: "If `actor_type` is `DeployKey`, this should be null"). In `deploy_key` mode the Actions app is hoist's own earlier actor (told apart by `actor_type` `Integration` and `actor_id` 15368): a live one is `update` ("the GitHub Actions app is still listed") and the merge drops it; every other actor is the owner's and stays. In `actions` mode an app listed twice is `update` and the merge writes it once; read from the rulesets list hoist already reads (details by id, GET-only). hoist models only these parts: enforcement not `active`, a target other than `tag`, a wanted tag include missing, any exclude (it can unprotect a release tag), a missing `creation`/`update`/`deletion` rule, or the Actions app missing or not `always` are `update`. Owner-added includes, rules and bypass actors are no drift: the `ok` reason lists them ("owner-added, kept: tags …; rules …; bypass actors …", and "only by github-actions and the bypass actors the owner added" when there are extra actors). An update is a read-merge-write: `apply` `GET`s the ruleset by id, then `PUT`s it with the live includes, rules (with their parameters) and bypass actors kept, the missing wanted ones appended, the Actions app's mode set to `always`, `exclude` emptied and enforcement `active`; a ruleset gone (404) is created with `POST`; an unreadable one (403) is a usage error and nothing is written. Under `--adopt` an update that would clear live excludes is `drift` ("…; not written: an update would drop excludes `<x>` (--adopt never loosens)"). GitHub Free's 403 is `pending` with the human step `plan-limit:rulesets` like the default-branch ruleset (§6); no `[github.tag_ruleset]`: not managed; other rulesets are never touched | read back |
-| github | tag deploy key | title `hoist: release tags` (only `tags_bypass = "deploy_key"`) | `apply` reads the `[release] environment`'s secrets public key (a 404 or 403 is a usage error, nothing written), makes an ed25519 keypair in memory (ring; OpenSSH public line `ssh-ed25519 <base64>`, unencrypted `openssh-key-v1` private key, never printed, logged or written to disk), `POST /repos/{o}/{r}/keys` `{title: "hoist: release tags", key, read_only: false}`, then seals the private key into the environment secret `RELEASE_TAG_KEY` (written before the tag ruleset); a failed seal `DELETE`s the key just added (id from the POST answer). A rejected write names GitHub's `message` plus each `errors[]` entry (resource, field, code, message; never the request body). A 422 whose message names a deploy key ("Deploy keys are disabled for this repository", an organization policy) is no failure: the human step `deploy-keys-policy` (`allow deploy keys for <o>/<r> (organization settings), then re-run keel up`, url `https://github.com/organizations/<o>/settings`) leaves the key and the `hoist: tags` ruleset write skipped and both items `pending` (exit 2), the other writes still apply; any other 422 stops the run (exit 1). Read GET-only: `GET /repos/{o}/{r}/keys` and `GET .../environments/<env>/secrets` (404: no environment, no secret). Key and secret both present: `ok` (no rotation); neither: `create`; only one of them, a read-only key or two keys of that title: `drift` naming the fix (delete the key and the secret, run `hoist apply` again), never a guess. Another write deploy key can bypass the tags too: `drift` naming it ("delete them or make them read-only"). A workflow's `secrets.RELEASE_TAG_KEY` is this item, not a user secret | key and secret listed |
+| github | tag deploy key | title `hoist: release tags` (only `tags_bypass = "deploy_key"`) | `apply` reads the key environment's (`tags_key_environment`, else `[release] environment`) secrets public key (a 404 or 403 is a usage error, nothing written), makes an ed25519 keypair in memory (ring; OpenSSH public line `ssh-ed25519 <base64>`, unencrypted `openssh-key-v1` private key, never printed, logged or written to disk), `POST /repos/{o}/{r}/keys` `{title: "hoist: release tags", key, read_only: false}`, then seals the private key into the environment secret `RELEASE_TAG_KEY` (written before the tag ruleset); a failed seal `DELETE`s the key just added (id from the POST answer). A rejected write names GitHub's `message` plus each `errors[]` entry (resource, field, code, message; never the request body). A 422 whose message names a deploy key ("Deploy keys are disabled for this repository", an organization policy) is no failure: the human step `deploy-keys-policy` (`allow deploy keys for <o>/<r> (organization settings), then re-run keel up`, url `https://github.com/organizations/<o>/settings`) leaves the key and the `hoist: tags` ruleset write skipped and both items `pending` (exit 2), the other writes still apply; any other 422 stops the run (exit 1). Read GET-only: `GET /repos/{o}/{r}/keys` and `GET .../environments/<env>/secrets` (404: no environment, no secret). Key and secret both present: `ok` (no rotation); neither: `create`; the key without its secret in the key environment (a lost secret, or `tags_key_environment` moved): `update`, a re-key: a new key is added and sealed into the key environment, then the old key and a leftover `RELEASE_TAG_KEY` of the `[release] environment` are deleted; only the secret, a read-only key or two keys of that title: `drift` naming the fix (delete the key and the secret, run `hoist apply` again), never a guess. Another write deploy key can bypass the tags too: `drift` naming it ("delete them or make them read-only"). A workflow's `secrets.RELEASE_TAG_KEY` is this item, not a user secret | key and secret listed |
 | github | Actions permissions | repo | PUT default workflow permissions | read back |
 | github | environment | name | create the environment with its deployment branch policies (default: the default branch; `[github.environments.<name>] branches`, §5; `[]` = none). An existing one is read GET-only: the list entry's `deployment_branch_policy` (absent: not judged; `null`: any branch; `protected_branches`; `custom_branch_policies`: then `GET .../environments/<name>/deployment-branch-policies`, unreadable: `unknown`). A wanted branch the environment lacks is `update` (reason names the missing and the extra live policies); `apply` POSTs the missing policies only when custom policies are already on (no PUT: reviewers stay), else, for an existing environment, first `GET`s it and PUTs it (`deployment_branch_policy` custom or `null`) with its `wait_timer`, `prevent_self_review` and `reviewers` carried back (a PUT resets what it omits; the release environment's resolved reviewers win; an unreadable existing environment is a usage error, nothing written), then POSTs; extra policies are never deleted. `[github.environments.<name>] tags = ["v*"]` (also for the `release` environment, so a tag-triggered publish job may use it) adds one policy `{"name": pattern, "type": "tag"}` per pattern (`custom_branch_policies` true, even with `branches = []`); the read side keeps each live policy's `type` (absent: branch), so a branch policy never satisfies a wanted tag and the reason says "tag `<p>`" for a missing one. The `release` environment is read for its policies only when it has `tags`: an existing one that lacks a wanted tag is `update` in the `release` area ("present, but tag `<p>` cannot deploy; would add the tag deployment policy"; `drift` under `managed = "external"`; any branch may deploy: no gap; unreadable: `unknown`); `apply` POSTs only the missing tag policies when custom policies are on (no PUT: its reviewers stay), else (protected branches, or a reviewer change too) PUTs it as above, then POSTs | read back |
 | github | secret | name | PUT sealed secret (presence only) | listed with recent `updated_at` |
@@ -1036,6 +1040,37 @@ steps are `ok` (version there), `pending` (no package yet, with the human step),
 `unknown` (registry unreadable), deploys `create`; it always exits 0 (R17) apart from exit 3
 errors.
 
+#### 9.3.1 Registry-only mode (`--only`)
+
+`hoist release publish --only crates,npm` (either one, or both) is the publish a workflow that
+tags and releases by other means calls (keelstack's `release.yml`: job `draft` makes the draft release and its checked assets once, job `publish` (environment `release`, the owner's one tap, `contents: read` + `id-token: write`) runs it as its crates and npm steps from the draft's assets, job `release` (environment `release-tags`, the tag key) tags and publishes the draft; a
+consumer repo whose tag step is its own). It skips the tag, GitHub Release and deploy steps and
+does not use local tags to decide what is pending: every package of the release model is looked
+at, each at its manifest version, so a re-run of the same version is a no-op (`ok`, "already on
+<registry>"). Items are keyed `<name>@<version>`. Rules:
+
+- Order: the model's order (dependencies first); a launcher's platform packages (binaries copied
+  from `--assets`, as in §9.3) before the launcher. `--dry-run` needs no `--assets`.
+- A package that is not on its registry yet is `pending` with the `first-publish:<name>` human
+  step (exit 2), as in §9.3; every package that depends on it (a crate on a crate, a launcher on
+  its platform packages) is `pending` too, "waits for <dep>", so nothing is published half way.
+  Everything else still publishes. Exit 2 therefore means "published all that could be; run
+  `hoist release bootstrap`, then re-run" (release.yml turns it into a `skipped` job output and
+  holds the major tag).
+- `--npm-dir DIR` (repeatable, needs `--only npm`) adds pre-staged npm packages after the
+  model's, in the given order (name and version from their `package.json`; its
+  `optionalDependencies` naming an earlier `--npm-dir` package make it wait for that one):
+  keelstack's splice packages, which a script stages from release assets.
+- `--provenance` first runs `npm pkg set repository.type=git repository.url=git+https://github.com/<o>/<r>.git`
+  (and `repository.directory=<dir>` for a package inside the repo) so the manifest names the
+  repository the workflow runs in, then `npm publish --provenance`; `--npm-tag T` adds `--tag T`
+  (a backport uses a `v<major>.<minor>-latest` tag so `latest` never moves back).
+- `cargo publish` runs with `--no-verify` and `npm publish` with `--ignore-scripts`: CI built and tested the commit, and no dependency script runs next to the credentials. An npm launcher (with its platform packages) also waits for its crate: held in this run, or, with `--only npm` alone and a crate that publishes to crates.io, absent from it (a read error is exit 1, never a hold).
+- `--npm-tag` and `--provenance` need `--only` (exit 3 otherwise). `npm pkg set` edits each package.json in place; it is restored after the publish, whether or not npm succeeded. `--npm-dir` order does not matter: a staged package's `optionalDependencies` on other staged packages are published first, and a pinned version that is not the staged one is exit 3.
+- Preflight (§9.4) is the same except that `HEAD` need not equal `GITHUB_SHA` (a registry-only run has no tag to create at a commit, so the check that ties the tag to the started commit has nothing to protect): the job checks out
+  the release tag, which is the release commit and not the commit the workflow started on. No
+  full-history requirement (nothing reads tags).
+
 ### 9.4 Safety
 
 Publishing runs only from the default branch in the `release` environment. Before anything else
@@ -1099,7 +1134,9 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
    on a TTY it runs `npm trust github <pkg> --file <workflow> --repo <o>/<r> --env <env>
    --allow-publish` with inherited stdio (npm prompts for the 2FA code); without a TTY it adds a
    human step with that exact command. For crates the crates.io trusted-publishing settings
-   link is a human step (no documented API, §13).
+   page `https://crates.io/crates/<name>/settings/new-trusted-publisher` is a human step (no
+   documented API, §13): bootstrap never adds it, the step text names the repository, workflow
+   file and environment to enter.
    Every npm trust item (registered now, `would register`, or the human step's `pending` reason)
    says `npm drops this trusted publisher unless a publish uses it by <now + 48 h, RFC 3339>:
    run <trigger>` (§13), where the trigger is `the <workflow> workflow` (for the release
@@ -1111,8 +1148,9 @@ maintainer's machine, with the maintainer's own logins, so `release publish` can
 5. **Report.** One item per package and step (`release/bootstrap_npm`, `release/bootstrap_crate`,
    `release/bootstrap_trust`), then a hint on stderr after the table (in `--json` it is not
    printed): when every package exists and every npm trusted publisher is registered (crate
-   trust, `unknown`, does not count) `next: re-run the failed "release publish" job at <tag>, or
-   run the release workflow`, because the CI publish needs the trusted publisher; otherwise
+   trust, `unknown`, does not count) `next: publish the release again with `gh workflow run
+   <workflow>` (a workflow with inputs takes `-f sha=<commit> -f version=<X.Y.Z>`), or re-run the
+   failed "release publish" job at <tag>`, because the CI publish needs the trusted publisher; otherwise
    `next: finish the steps above, then run bootstrap again`. A registration that `npm trust list`
    does not confirm afterwards is a failed write.
 
@@ -1121,6 +1159,18 @@ run (exit 1 with done / failed / not attempted); human steps alone exit 2; `--dr
 GETs and runs only read-only tool commands (`npm whoami`, `npm --version`, `npm trust list`,
 `git tag`, `cargo --version`). hoist never reads, stores or prints npm or crates.io
 credentials: `npm` and `cargo` use their own login state, and their output goes to stderr.
+
+### 9.6.1 Check (`hoist release check`)
+
+Read-only, GET requests only. For every registry package (the §9.6 set: model packages, launcher
+platform packages, `[registry.*]` entries) it reads the registry anonymously and reports
+`release/registry` `<name>@<version>`: `ok` when that version is on the registry ("on npm at X
+(newest Y)"), `update` when the package exists but not at the workspace version (the release
+workflow publishes it; exit 1), `pending` when the package is not on the registry at all (the
+`first-publish:<name>` human step, "run `hoist release bootstrap`"; exit 2), `unknown` when the
+registry cannot be read. Existing packages also get a `release/trusted_publisher` item,
+`unknown`: npm lists them only with a login (`npm trust list <pkg>`) and crates.io has no API
+(§13); `release bootstrap --dry-run` reads npm's with the maintainer's login.
 
 ### 9.7 Container images (a pattern, not a publish kind yet)
 

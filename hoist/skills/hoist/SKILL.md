@@ -23,8 +23,12 @@ makes GitHub and Cloudflare match. Always pass `--json` and parse stdout (one ob
 - Org (`org.toml`: GitHub org, Cloudflare zones, npm scope, crates owners, Search Console): `hoist org plan|check` (GET only; exit 2 lists human steps such as `npm trust github ...`, `cargo owner --add ...`), `hoist org apply --yes` writes only Cloudflare and Search Console (GitHub only in Actions with an app token). Missing registry/bridge tokens make items `unknown`, never exit 3 (except `apply`). Spec section 16.
 - Secrets: `hoist secrets set|rotate` (`set NAME --from-file key.pem` for multi-line values such as PEMs; the prompt reads one line and refuses a pasted PEM); shared secrets repos: `grant|revoke|sync`. `hoist secrets check`
   in a repo with no `access.toml` or `secrets.toml` exits 0 (one `secrets/config` item, `ok`).
-- Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only),
-  `bootstrap` (first publish, local, human).
+- Releases: `hoist release plan` (preview), `prepare` (release PR), `publish` (CI only; a workflow
+  that tags itself runs `publish --only crates,npm [--npm-dir D] [--provenance] [--npm-tag T]`:
+  idempotent, exit 2 = a package is not on its registry yet), `check` (read-only: per package
+  published?, newest vs workspace, trusted publisher `unknown`), `bootstrap` (first publish and
+  trusted publishers of new packages, local, human; ends with the exact `gh workflow run` to
+  publish the rest and, for crates, the crates.io `/settings/new-trusted-publisher` step).
 - Changesets (no HTTP): `hoist changeset init [--from-commits]` writes `.changeset/config.json` and
   `README.md`; `changeset add <pkg>:<major|minor|patch|none>... -m TEXT [--empty] [--id ID]` writes
   `.changeset/<id>.md`; `changeset status [--since REV]` exits 1 when a changed package has no

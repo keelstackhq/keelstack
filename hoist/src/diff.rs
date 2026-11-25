@@ -507,12 +507,16 @@ fn tag_deploy_key(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
                  and run `hoist apply` again"
             ),
         ),
+        // The key exists but its private half is not where the workflow reads it (a lost
+        // secret, or `tags_key_environment` moved): re-key. `apply` adds a new key, seals it
+        // into `{env}`, then deletes the old key (and the old secret of the release environment).
         ([_], false) => (
-            Action::Drift,
+            Action::Update,
             format!(
                 "deploy key `{TAG_KEY_TITLE}` exists but secret {TAG_KEY_SECRET} is missing in \
-                 environment `{env}`: its private key is gone; delete the deploy key \
-                 (Settings → Deploy keys) and run `hoist apply` again"
+                 environment `{env}`: would re-key (a new write deploy key, its private key \
+                 sealed into `{env}`, then the old key and a leftover secret of the release \
+                 environment deleted)"
             ),
         ),
         ([k], true) if k.read_only => (

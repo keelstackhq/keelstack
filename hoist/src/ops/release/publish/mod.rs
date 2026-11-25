@@ -14,7 +14,7 @@ use crate::release::launcher::verify_optional_deps;
 use crate::release::oidc::require_oidc_env;
 use crate::release::planner::order;
 use crate::release::tools::{Tool, run};
-use crate::release::{Package, ReleaseModel, exe_suffix, read_release_model};
+use crate::release::{Package, PkgKind, ReleaseModel, exe_suffix, read_release_model};
 use crate::repo::git::read_repo_local;
 use crate::repo::targets::{Target, join_rel, read_targets};
 use crate::report::{Action, HumanStep, Item, Report};
@@ -44,11 +44,79 @@ pub(super) struct Job<'a> {
     bins: Vec<PathBuf>,
     /// The package's `build` command already ran in this run (once per job).
     built: std::cell::Cell<bool>,
+    /// `--only`: registry-only mode (no tag, release or deploy; just the named registries).
+    only: Option<Only>,
+    /// A launcher job: its crate publishes to crates.io (`[publish] crates`).
+    crate_published: bool,
+}
+
+/// The registries `--only` selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct Only {
+    crates: bool,
+    npm: bool,
+}
+
+impl Only {
+    fn parse(list: &[String]) -> Result<Option<Only>, HoistError> {
+        if list.is_empty() {
+            return Ok(None);
+        }
+        let mut only = Only {
+            crates: false,
+            npm: false,
+        };
+        for w in list {
+            match w.as_str() {
+                "crates" => only.crates = true,
+                "npm" => only.npm = true,
+                other => {
+                    return Err(HoistError::Usage(format!(
+                        "--only `{other}`: use `crates`, `npm` or `crates,npm`"
+                    )));
+                }
+            }
+        }
+        Ok(Some(only))
+    }
+
+    fn keeps(self, step: Step) -> bool {
+        match step {
+            Step::Tag | Step::Release | Step::Deploy => false,
+            Step::Npm | Step::Platform(_) => self.npm,
+            Step::Crates => self.crates,
+        }
+    }
+}
+
+/// What `release publish` was asked for.
+pub struct PublishOpts<'a> {
+    pub assets: Option<&'a Path>,
+    pub dry_run: bool,
+    pub only: &'a [String],
+    pub npm_dirs: &'a [PathBuf],
+    pub npm_tag: Option<&'a str>,
+    pub provenance: bool,
+}
+
+/// How npm publishes: dist-tag, provenance (and the repository it names).
+pub(super) struct NpmFlags {
+    tag: Option<String>,
+    provenance: bool,
+    repository: String,
 }
 
 impl Job<'_> {
     /// The steps of this package, in order (spec §9.3).
     fn steps(&self) -> Vec<Step> {
+        let all = self.all_steps();
+        match self.only {
+            Some(o) => all.into_iter().filter(|s| o.keeps(*s)).collect(),
+            None => all,
+        }
+    }
+
+    fn all_steps(&self) -> Vec<Step> {
         if let Some(l) = &self.pkg.launcher {
             // Platform packages first, in target order, then the launcher.
             let mut steps: Vec<Step> = (0..l.platforms.len()).map(Step::Platform).collect();
@@ -114,6 +182,7 @@ pub(super) struct Clients {
     up: Http,
     npm: Http,
     crates: Http,
+    flags: NpmFlags,
 }
 
 fn git(dir: &Path, args: &[&str], verbose: bool) -> Result<String, HoistError> {
@@ -234,6 +303,8 @@ fn launcher_jobs<'a>(
             deploy: false,
             bins,
             built: std::cell::Cell::new(false),
+            only: None,
+            crate_published: krate.publish.crates.is_some(),
         });
     }
     Ok(jobs)
@@ -248,7 +319,7 @@ fn release_body(dir: &Path, p: &Package, tag: &str) -> String {
 
 pub(super) fn item(job: &Job, step: Step, action: Action, reason: String) -> Item {
     let mut it = item_of(job, step.kind(), action, reason);
-    if let Step::Platform(_) = step {
+    if job.only.is_some() || matches!(step, Step::Platform(_)) {
         let p = job.step_pkg(step);
         it.key = format!("{}@{}", p.name, p.version.value);
         it.source = p.version.source.clone();
@@ -295,13 +366,119 @@ enum Assets<'a> {
     Unbuilt,
 }
 
-/// Tag and release every package whose manifest version is not yet released.
-pub fn release_publish(
-    dir: &Path,
-    assets: Option<&Path>,
-    dry_run_only: bool,
-    verbose: bool,
-) -> Result<Report, HoistError> {
+/// A package built from a pre-staged npm directory (`--npm-dir`): name and version from its
+/// package.json, and its `optionalDependencies` (name, version) for [`staged_packages`].
+fn staged_package(dir: &Path) -> Result<(Package, Vec<(String, String)>), HoistError> {
+    let dir = &std::fs::canonicalize(dir)
+        .map_err(|e| HoistError::Usage(format!("--npm-dir: cannot read {}: {e}", dir.display())))?;
+    let file = dir.join("package.json");
+    let text = std::fs::read_to_string(&file).map_err(|e| {
+        HoistError::Usage(format!("--npm-dir: cannot read {}: {e}", file.display()))
+    })?;
+    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| {
+        HoistError::Usage(format!("--npm-dir: {} is not JSON: {e}", file.display()))
+    })?;
+    let field = |k: &str| {
+        v.get(k)
+            .and_then(|x| x.as_str())
+            .filter(|x| !x.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| HoistError::Usage(format!("--npm-dir: {} has no `{k}`", file.display())))
+    };
+    let (name, version) = (field("name")?, field("version")?);
+    let optional: Vec<(String, String)> = v
+        .get("optionalDependencies")
+        .and_then(|o| o.as_object())
+        .map(|o| {
+            o.iter()
+                .map(|(k, x)| (k.clone(), x.as_str().unwrap_or_default().to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let pkg = Package {
+        name,
+        kind: PkgKind::Npm,
+        dir: dir.to_path_buf(),
+        version: crate::repo::Sourced {
+            value: version,
+            source: file.display().to_string(),
+        },
+        deps: Vec::new(),
+        edges: Vec::new(),
+        publish: crate::config::PublishCfg {
+            npm: Some(crate::config::NpmPublish::default()),
+            ..Default::default()
+        },
+        launcher: None,
+    };
+    Ok((pkg, optional))
+}
+
+/// The `--npm-dir` packages in publish order, whatever order the flags came in: a package's
+/// `optionalDependencies` that are other staged packages are its `deps` (a launcher waits for
+/// a platform package that is not on npm yet) and are published before it. A staged
+/// dependency pinned to another version than the one staged is a usage error.
+fn staged_packages(dirs: &[PathBuf], base: &Path) -> Result<Vec<Package>, HoistError> {
+    let mut all = Vec::new();
+    for d in dirs {
+        all.push(staged_package(&base.join(d))?);
+    }
+    let versions: Vec<(String, String)> = all
+        .iter()
+        .map(|(p, _)| (p.name.clone(), p.version.value.clone()))
+        .collect();
+    for (p, optional) in &mut all {
+        for (name, want) in optional.iter() {
+            let Some((_, have)) = versions.iter().find(|(n, _)| n == name) else {
+                continue;
+            };
+            if want != have {
+                return Err(HoistError::Usage(format!(
+                    "--npm-dir: {} requires {name}@{want} but the staged {name} is {have}",
+                    p.name
+                )));
+            }
+            p.deps.push(name.clone());
+        }
+        p.deps.sort();
+    }
+    let mut left: Vec<Package> = all.into_iter().map(|(p, _)| p).collect();
+    let mut out: Vec<Package> = Vec::new();
+    while !left.is_empty() {
+        let at = left
+            .iter()
+            .position(|p| p.deps.iter().all(|d| out.iter().any(|o| &o.name == d)))
+            .ok_or_else(|| {
+                HoistError::Usage(
+                    "--npm-dir: the staged packages depend on each other in a cycle".to_string(),
+                )
+            })?;
+        out.push(left.remove(at));
+    }
+    Ok(out)
+}
+
+/// Tag and release every package whose manifest version is not yet released; with `--only`,
+/// publish every package to the named registries instead (idempotent, no tags).
+pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<Report, HoistError> {
+    let PublishOpts {
+        assets,
+        dry_run: dry_run_only,
+        ..
+    } = opts;
+    let only = Only::parse(opts.only)?;
+    if !opts.npm_dirs.is_empty() && !only.is_some_and(|o| o.npm) {
+        return Err(HoistError::Usage(
+            "--npm-dir needs `--only npm`".to_string(),
+        ));
+    }
+    if only.is_none() && (opts.npm_tag.is_some() || opts.provenance) {
+        return Err(HoistError::Usage(
+            "--npm-tag and --provenance apply to registry publishing: add `--only npm` (or \
+             `--only crates,npm`)"
+                .to_string(),
+        ));
+    }
     if !dry_run_only {
         require_actions()?;
     }
@@ -314,51 +491,91 @@ pub fn release_publish(
     let gh = Http::new(Service::Github, token.clone()).verbose(verbose);
     if !dry_run_only {
         let default = default_branch(&gh, &repo, local)?;
-        preflight(dir, &default, &model, &head)?;
+        // Registry-only runs (`--only`) need not be at GITHUB_SHA: the workflow may check out
+        // another commit than the one it started on (no tag is created at it).
+        preflight(dir, &default, &model, &head, only.is_none())?;
     }
-    require_full_history(dir)?;
-    let todo = pending(&model, &released_tags(dir, verbose)?);
-    if todo.is_empty() {
-        let it = Item {
-            area: "release".to_string(),
-            kind: "publish".to_string(),
-            key: "pending".to_string(),
-            action: Action::Ok,
-            reason: "every package version is already tagged".to_string(),
-            source: "default".to_string(),
-            verify: None,
-        };
-        return Ok(report(vec![it], vec![], 0));
-    }
-    let (targets, _, _) = read_targets(dir)?;
-    let assets = match (assets, dry_run_only) {
-        (None, true) => Assets::Unbuilt,
-        (a, _) => Assets::Dir(a),
+    let todo: Vec<(&Package, String)> = if only.is_some() {
+        order(&model)
+            .into_iter()
+            .filter(|p| p.launcher.is_none())
+            .map(|p| (p, model.tag_for(p, &p.version.value)))
+            .collect()
+    } else {
+        require_full_history(dir)?;
+        let todo = pending(&model, &released_tags(dir, verbose)?);
+        if todo.is_empty() {
+            let it = Item {
+                area: "release".to_string(),
+                kind: "publish".to_string(),
+                key: "pending".to_string(),
+                action: Action::Ok,
+                reason: "every package version is already tagged".to_string(),
+                source: "default".to_string(),
+                verify: None,
+            };
+            return Ok(report(vec![it], vec![], 0));
+        }
+        todo
     };
+    let (targets, _, _) = read_targets(dir)?;
+    // A registry-only run that skips npm needs no binaries; one that publishes npm needs them
+    // (`--assets`) unless it is a dry run.
+    let assets = match (assets, dry_run_only, only) {
+        (_, _, Some(o)) if !o.npm => Assets::Unbuilt,
+        (None, true, _) => Assets::Unbuilt,
+        (a, _, _) => Assets::Dir(a),
+    };
+    let staged = staged_packages(opts.npm_dirs, dir)?;
     let mut jobs = Vec::new();
     for (pkg, tag) in todo {
-        let (files, unbuilt) = match assets {
-            Assets::Unbuilt => (
+        let (files, unbuilt) = match (assets, only) {
+            (_, Some(_)) => (Vec::new(), 0),
+            (Assets::Unbuilt, None) => (
                 Vec::new(),
                 pkg.publish
                     .github_release
                     .as_ref()
                     .map_or(0, |g| g.targets.len()),
             ),
-            Assets::Dir(a) => (asset_files(pkg, a)?, 0),
+            (Assets::Dir(a), None) => (asset_files(pkg, a)?, 0),
         };
         jobs.push(Job {
             assets: local_assets(&files)?,
             unbuilt,
-            body: release_body(dir, pkg, &tag),
+            body: if only.is_some() {
+                String::new()
+            } else {
+                release_body(dir, pkg, &tag)
+            },
             deploy: deploys_on_release(dir, &targets, pkg),
             pkg,
             tag,
             bins: Vec::new(),
             built: std::cell::Cell::new(false),
+            only: None,
+            crate_published: false,
         });
         jobs.extend(launcher_jobs(dir, &model, pkg, assets)?);
     }
+    for pkg in &staged {
+        jobs.push(Job {
+            pkg,
+            tag: format!("{}@{}", pkg.name, pkg.version.value),
+            body: String::new(),
+            assets: Vec::new(),
+            unbuilt: 0,
+            deploy: false,
+            bins: Vec::new(),
+            built: std::cell::Cell::new(false),
+            only: None,
+            crate_published: false,
+        });
+    }
+    for j in &mut jobs {
+        j.only = only;
+    }
+    jobs.retain(|j| !j.steps().is_empty());
     if !dry_run_only && jobs.iter().any(Job::publishes) {
         require_oidc_env()?;
     }
@@ -368,6 +585,11 @@ pub fn release_publish(
         up: Http::new(Service::GithubUploads, token).verbose(verbose),
         npm: Http::new(Service::Npm, anonymous()).verbose(verbose),
         crates: Http::new(Service::Crates, anonymous()).verbose(verbose),
+        flags: NpmFlags {
+            tag: opts.npm_tag.map(str::to_string),
+            provenance: opts.provenance,
+            repository: repo.to_string(),
+        },
     };
     if dry_run_only {
         return dry_run(&c, &repo, &jobs, &head);
