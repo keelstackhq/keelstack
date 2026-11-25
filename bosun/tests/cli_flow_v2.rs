@@ -150,3 +150,26 @@ fn config_parses_the_review_flow_and_rejects_bad_values() {
     assert!(Config::parse("[main_health]\nblock = false\n", "f").is_ok());
     assert!(Config::parse("[main_health]\nwarn = false\n", "f").is_err());
 }
+
+#[test]
+fn a_loose_review_config_at_the_pr_head_is_ignored_when_the_base_is_strict() {
+    let (fake, k) = pr("verdicts_needed = 2");
+    // The PR's own head carries a loose config; only the base counts.
+    fake.content(
+        ".bosun/bosun.toml",
+        HEAD,
+        &config("verdicts_needed = 1\nblock_on = \"blocker\""),
+    );
+    let (code, v) = with(&fake, &k, &[("session_r", 0)]);
+    assert_eq!(code, 5, "{v}");
+    let d = description(&fake);
+    assert!(d.contains("2 clean verdicts"), "{d}");
+    // And a major still blocks although the head says only blockers do.
+    let (fake, k) = pr("verdicts_needed = 1");
+    fake.content(
+        ".bosun/bosun.toml",
+        HEAD,
+        &config("verdicts_needed = 1\nblock_on = \"blocker\""),
+    );
+    assert_eq!(with(&fake, &k, &[("session_r", 2)]).0, 5);
+}

@@ -189,8 +189,25 @@ fn interruptible_wait(forwarded: bool) -> bool {
 /// Whether the child stopped because of an interrupt: its signal was forwarded, or it died (the
 /// terminal's Ctrl-C reaches its process group too) between two 10 ms polls, before the loop saw
 /// the interrupt. Both get the short drain grace for trailing output instead of dropping it.
-fn stopped_by_interrupt(forwarded: bool, pending: Option<i32>) -> bool {
-    forwarded || pending.is_some()
+/// `signalled`: the child itself died of SIGINT or SIGTERM, which covers the window where its
+/// death is seen before keel's own handler has set the flag.
+fn stopped_by_interrupt(forwarded: bool, pending: Option<i32>, signalled: bool) -> bool {
+    forwarded || pending.is_some() || signalled
+}
+
+/// Whether the child ended on SIGINT or SIGTERM.
+#[cfg(unix)]
+fn died_of_interrupt(status: &std::io::Result<std::process::ExitStatus>) -> bool {
+    use std::os::unix::process::ExitStatusExt;
+    status.as_ref().is_ok_and(|st| {
+        st.signal() == Some(signal_hook::consts::SIGINT)
+            || st.signal() == Some(signal_hook::consts::SIGTERM)
+    })
+}
+
+#[cfg(not(unix))]
+fn died_of_interrupt(_: &std::io::Result<std::process::ExitStatus>) -> bool {
+    false
 }
 
 /// Wait for a pipe reader's EOF signal until `until`, in short slices, and stop at once when
@@ -336,7 +353,7 @@ impl Runner for SystemRunner {
         // pipes: after a kill 1 s, after a forwarded signal 2 s (keel must exit soon), after a
         // normal exit `PIPE_GRACE` (what the child wrote is already in the pipes). An interrupt
         // ends the wait at once.
-        let forwarded = stopped_by_interrupt(forwarded, interrupted());
+        let forwarded = stopped_by_interrupt(forwarded, interrupted(), died_of_interrupt(&status));
         let until = Instant::now() + pipe_grace(timed_out, forwarded);
         type Drain = (
             std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
@@ -534,10 +551,12 @@ mod tests {
     #[test]
     fn a_child_killed_between_two_polls_still_gets_the_interrupt_drain_grace() {
         // The interrupt is pending but the loop never forwarded it (the child was already gone).
-        assert!(stopped_by_interrupt(false, Some(2)));
-        assert!(stopped_by_interrupt(true, None));
-        assert!(!stopped_by_interrupt(false, None));
-        let forwarded = stopped_by_interrupt(false, Some(2));
+        assert!(stopped_by_interrupt(false, Some(2), false));
+        assert!(stopped_by_interrupt(true, None, false));
+        // The child died of the signal before keel's flag was set.
+        assert!(stopped_by_interrupt(false, None, true));
+        assert!(!stopped_by_interrupt(false, None, false));
+        let forwarded = stopped_by_interrupt(false, Some(2), false);
         assert_eq!(pipe_grace(false, forwarded), Duration::from_secs(2));
         assert!(
             !interruptible_wait(forwarded),

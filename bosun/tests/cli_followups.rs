@@ -137,3 +137,76 @@ fn finding_text_cannot_inject_a_marker_or_a_second_item() {
             .contains("<!--")
     );
 }
+
+#[test]
+fn ticked_items_are_dropped_and_open_ones_kept_on_the_next_add() {
+    let fake = setup();
+    fake.issue(
+        30,
+        "Follow-ups",
+        &["bosun:followups"],
+        "head\n\n- [x] #4 old.rs:1 [nit] done\n- [ ] #4 keep.rs:2 [nit] still open\n",
+    );
+    let (code, v) = add(&fake, 5, &verdict(5, MIXED));
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["issue"], 30);
+    let (_, l) = run(&fake, "session_a", NOW, &["followups", "list"]);
+    assert_eq!(l["data"]["open"], 3, "{l}");
+    assert_eq!(l["data"]["ticked"], 0, "{l}");
+    assert_eq!(
+        l["data"]["items"][0]["text"],
+        "#4 keep.rs:2 [nit] still open"
+    );
+}
+
+#[test]
+fn a_body_that_would_pass_the_cap_is_refused_and_nothing_is_written() {
+    let fake = setup();
+    let mut body = String::from("head\n\n");
+    let mut i = 0;
+    while body.len() < 59_950 {
+        body.push_str(&format!(
+            "- [ ] #4 f{i}.rs:1 [nit] filler item number {i}\n"
+        ));
+        i += 1;
+    }
+    fake.issue(30, "Follow-ups", &["bosun:followups"], &body);
+    let (code, v) = add(&fake, 5, &verdict(5, MIXED));
+    assert_eq!(code, 6, "{v}");
+    assert!(
+        v["error"]["fix"]
+            .as_str()
+            .unwrap()
+            .contains("followups list")
+    );
+    let (_, l) = run(&fake, "session_a", NOW, &["followups", "list"]);
+    assert_eq!(l["data"]["open"], i, "unchanged: {l}");
+}
+
+#[test]
+fn mentions_in_a_finding_do_not_notify() {
+    let fake = setup();
+    let (code, v) = add(
+        &fake,
+        5,
+        &verdict(5, &[("minor", "c.rs", 3, "ping @octocat")]),
+    );
+    assert_eq!(code, 0, "{v}");
+    let (_, l) = run(&fake, "session_a", NOW, &["followups", "list"]);
+    let t = l["data"]["items"][0]["text"].as_str().unwrap();
+    assert!(!t.contains("@o") && t.contains("@\u{200b}octocat"), "{t}");
+}
+
+#[test]
+fn two_rolling_issues_append_to_the_oldest_and_name_the_other() {
+    let fake = setup();
+    fake.issue(31, "Follow-ups b", &["bosun:followups"], "head\n");
+    fake.issue(30, "Follow-ups a", &["bosun:followups"], "head\n");
+    let (code, v) = add(&fake, 5, &verdict(5, MIXED));
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["data"]["issue"], 30);
+    assert_eq!(v["data"]["duplicates"], json!([31]));
+    let (_, l) = run(&fake, "session_a", NOW, &["followups", "list"]);
+    assert_eq!(l["data"]["issue"], 30);
+    assert_eq!(l["data"]["open"], 2);
+}

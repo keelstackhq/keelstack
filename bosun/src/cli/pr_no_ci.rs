@@ -95,6 +95,7 @@ pub fn clean_by_other(app: &App, pull: &Pull) -> Result<Vec<String>> {
         &excluded,
         models.as_deref(),
         chunks,
+        flow.block_on_blocker,
     ))
 }
 

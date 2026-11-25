@@ -1066,19 +1066,14 @@ fn judge(gh: &dyn Github, ctx: &Ctx, app: Option<&App>, w: &GateWriter, pull: Pu
         )
     } else if requirement == Approval::TwoVerdicts {
         format!(
-            "get {} review verdict{} from {} (approve, confidence >= {}) on head {head}, or an owner approval: {owner_fix}",
-            if flow.verdicts_needed == 1 {
-                "a"
-            } else {
-                "a second"
-            },
-            "",
+            "get {} clean review (approve, confidence >= {}) from {} on head {head}, or an owner approval: {owner_fix}",
+            flow.verdicts_text(),
+            risk::VERDICT_MIN_CONFIDENCE,
             if flow.verdicts_needed == 1 {
                 "a reviewer session"
             } else {
-                "a different session"
-            },
-            risk::VERDICT_MIN_CONFIDENCE
+                "different sessions"
+            }
         )
     } else {
         owner_fix

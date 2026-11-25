@@ -34,7 +34,7 @@ answer = {issue: int, comment_id?: int, state?: str, ask?: int, key_id?: str, mo
     not_moved?: str, truncated?: bool, chat?: str};
 lesson add = {id?: str, issue?: int, count?: int, global_count?: int, dup?: str, upstream?: bool};
 lesson hit = {id: str, hits: int, comment_id: int | null};
-followups add = {pr: int, issue: int | null, created: bool, added: int, skipped: int, items: [str]};
+followups add = {pr: int, issue: int | null, created: bool, duplicates?: [int], added: int, skipped: int, items: [str]};
 followups list = {issue: int | null, open: int, ticked: int, items: [{text: str, pr: int | null}]};
 lesson capture = {issue: int, kind: str, signature: str, created: bool, reopened: bool, hits: int};
 lesson triage = {issue: int, as: str, lesson?: str, process_red?: int, task?: int};

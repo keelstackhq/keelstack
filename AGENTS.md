@@ -43,7 +43,7 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
 ## Decisions that shape the work
 
 - D-022 as amended by D-028: the orchestrator signs (or the CI signer signs) and merges every PR
-  as soon as required checks are green and ONE clean independent verdict (>= 0.85, no blocker)
+  as soon as required checks are green and ONE clean independent verdict (>= 0.9, no blocker)
   is on the exact head. Only blockers (security, data loss, broken main, broken release) block;
   other findings go to the rolling `bosun:followups` issue (`bosun followups add`). A red main
   only warns. The owner approves what the signer refuses (.github/**, scripts, R-ci, secrets,

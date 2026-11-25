@@ -50,37 +50,140 @@ pub fn local_actions(ci_yml: &str) -> Vec<String> {
     out
 }
 
-/// Paths ci.yml's tasks read from the checkout besides workflows and scripts (lowercased): a
-/// `package.json` (its `scripts` are what `pnpm run ci` runs), the task and workspace config of
-/// pnpm and Turborepo, `.npmrc`, a Cargo `build.rs` (it runs at build time) and test files (the PR
-/// could weaken the tests its own CI runs): a `tests`, `test` or `__tests__` directory at any
-/// depth, `*.test.*`, `*.spec.*`, `*_test.<ext>` and `test_*.py`.
-fn steers_ci(lower: &str) -> bool {
+/// How a path steers ci.yml's tasks (lowercased name): always, only when its patch touches
+/// build or test-runner steering, or not at all.
+enum Steer {
+    Always,
+    Manifest(Manifest),
+    No,
+}
+
+/// A manifest whose changes steer CI only in some keys (see [`manifest_steered`]).
+#[derive(Clone, Copy)]
+enum Manifest {
+    Cargo,
+    Pyproject,
+    Package,
+}
+
+/// Test-runner and build config ci.yml's tasks read from the checkout besides workflows and
+/// scripts: the pnpm and Turborepo task and workspace config, `.npmrc`, `.pnpmfile.*`, a Cargo
+/// `build.rs`, tool configs (`*.config.{js,cjs,mjs,ts,mts,cts,json}`: vitest, vite, jest,
+/// playwright, cypress, eslint), nextest config, `conftest.py`, `pytest.ini`, `tox.ini`,
+/// `setup.cfg`, `tsconfig*.json`, `rust-toolchain(.toml)`, `deny.toml`, `.cargo/config(.toml)`,
+/// `Makefile` and `justfile`. `Cargo.toml`, `pyproject.toml` and `package.json` steer only
+/// through some keys, judged on the patch. Test files are not CI inputs: editing tests is
+/// normal and weakening them is test-integrity's job.
+fn steers_ci(lower: &str) -> Steer {
     let (dirs, name) = lower.rsplit_once('/').map_or(("", lower), |(d, n)| (d, n));
-    let stem = name.split('.').next().unwrap_or(name);
-    matches!(
+    let in_dir = |d: &str| dirs.split('/').any(|s| s == d);
+    match name {
+        "cargo.toml" => return Steer::Manifest(Manifest::Cargo),
+        "pyproject.toml" => return Steer::Manifest(Manifest::Pyproject),
+        "package.json" => return Steer::Manifest(Manifest::Package),
+        _ => {}
+    }
+    let always = matches!(
         name,
-        "package.json" | "turbo.json" | "pnpm-workspace.yaml" | ".npmrc" | "build.rs"
-    ) || dirs
-        .split('/')
-        .any(|seg| matches!(seg, "tests" | "test" | "__tests__"))
-        || name.contains(".test.")
-        || name.contains(".spec.")
-        || (stem.ends_with("_test") && name.contains('.'))
-        || (name.starts_with("test_") && name.ends_with(".py"))
+        "turbo.json"
+            | "pnpm-workspace.yaml"
+            | ".npmrc"
+            | "build.rs"
+            | "conftest.py"
+            | "pytest.ini"
+            | "setup.cfg"
+            | "tox.ini"
+            | "nextest.toml"
+            | "rust-toolchain"
+            | "rust-toolchain.toml"
+            | "deny.toml"
+            | "makefile"
+            | "justfile"
+    ) || name.starts_with(".pnpmfile.")
+        || (name.starts_with("tsconfig") && name.ends_with(".json"))
+        || [".js", ".cjs", ".mjs", ".ts", ".mts", ".cts", ".json"]
+            .iter()
+            .any(|e| name.strip_suffix(e).is_some_and(|n| n.ends_with(".config")))
+        || (matches!(name, "config.toml" | "config") && in_dir(".cargo"))
+        || (name == "nextest.toml" && in_dir(".config"));
+    if always { Steer::Always } else { Steer::No }
+}
+
+/// Whether the changed lines of `patch` touch what `kind` steers. Cargo: `autotests`,
+/// `autobins`, `[[test]]`, `test =`, `harness`, `build =`, `[profile`. pyproject: `[tool.pytest`.
+/// package.json: a line inside the `"scripts"` block, or a `"key": "value with spaces"` line
+/// (a script-looking entry whose block opener the patch does not show). A key changed under a
+/// section whose header is outside the hunk is not seen (residual, spec 08).
+fn manifest_steered(kind: Manifest, patch: &str) -> bool {
+    let mut in_scripts = false;
+    for line in patch.lines() {
+        if line.starts_with("@@") {
+            in_scripts = false;
+        }
+        let (changed, text) = match line.chars().next() {
+            Some('+') | Some('-') => (true, line[1..].trim()),
+            _ => (false, line.trim()),
+        };
+        match kind {
+            Manifest::Cargo => {
+                if (changed || line.starts_with("@@"))
+                    && ["autotests", "autobins", "[[test]]", "harness", "[profile"]
+                        .iter()
+                        .any(|k| text.contains(k))
+                    || changed && (text.starts_with("test =") || text.starts_with("build ="))
+                {
+                    return true;
+                }
+            }
+            Manifest::Pyproject => {
+                if (changed || line.starts_with("@@")) && text.contains("[tool.pytest") {
+                    return true;
+                }
+            }
+            Manifest::Package => {
+                if text.contains("\"scripts\"") && text.contains('{') {
+                    if changed {
+                        return true;
+                    }
+                    in_scripts = true;
+                } else if in_scripts && text.starts_with('}') {
+                    in_scripts = false;
+                } else if changed {
+                    if in_scripts {
+                        return true;
+                    }
+                    // `"name": "tsc --noEmit"`: a value with a space is a command, not a version.
+                    if let Some((k, v)) = text.split_once("\":") {
+                        let v = v.trim().trim_end_matches(',').trim_matches('"');
+                        if k.starts_with('"') && v.contains(' ') && !v.starts_with('{') {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    false
 }
 
 /// The first changed path (or the path it was renamed from) that steers what the PR's own ci.yml
-/// run does from the checkout: anything under `.github/` (workflows, `.github/scripts/**` such as
-/// the affected-folder detection, `.github/actions/**`), under a local action ci.yml uses
-/// (`local`, from [`local_actions`], e.g. `hoard/**`), anything under a `scripts/` directory at
-/// any depth (folder scripts ci.yml runs), or any path of the built-in R-ci rule
-/// (every `action.yml`, toolchain and tool configs, `deny.toml`,
-/// `Makefile`, ...; the built-in rule, never the repo's risk.toml, so a base config cannot narrow
-/// it). A `pull_request` run executes the PR's copies of these, so the PR could make its own
-/// `ci-ok` green: the mirror and the CI signer refuse it.
+/// run does from the checkout: anything under `.github/` (workflows, `.github/scripts/**`,
+/// `.github/actions/**`), under a local action ci.yml uses (`local`, from [`local_actions`]),
+/// anything under a `scripts/` directory at any depth, any path of the built-in R-ci rule, and
+/// the build and test-runner config of [`steers_ci`]. A manifest (`Cargo.toml`, `pyproject.toml`,
+/// `package.json`) counts when its patch touches steering keys; here, with no patch, it counts
+/// (fail closed). A `pull_request` run executes the PR's copies of these, so the PR could make
+/// its own `ci-ok` green: the mirror and the CI signer refuse it.
 pub fn ci_input_changed<'a>(
     files: impl IntoIterator<Item = (&'a str, Option<&'a str>)>,
+    local: &[String],
+) -> Option<String> {
+    ci_input_changed_patched(files.into_iter().map(|(p, prev)| (p, prev, None)), local)
+}
+
+/// [`ci_input_changed`] with each file's patch (`None`: absent, a manifest then counts).
+pub fn ci_input_changed_patched<'a>(
+    files: impl IntoIterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>,
     local: &[String],
 ) -> Option<String> {
     let rules = crate::core::risk::Rules::defaults();
@@ -94,7 +197,7 @@ pub fn ci_input_changed<'a>(
             .iter()
             .any(|m| m.rule == "R-ci")
     };
-    let hit = |p: &str| {
+    let hit = |p: &str, patch: Option<&str>| {
         let lower = p.trim_start_matches("./").to_ascii_lowercase();
         lower.starts_with(".github/")
             || local.iter().any(|d| {
@@ -104,14 +207,22 @@ pub fn ci_input_changed<'a>(
             // ci.yml runs folder scripts too (`node scripts/affected-combos.mjs` in hull,
             // `bash scripts/check-index.sh` in decisions): `scripts/` at any depth.
             || lower.split('/').rev().skip(1).any(|seg| seg == "scripts")
-            || steers_ci(&lower)
+            || match steers_ci(&lower) {
+                Steer::Always => true,
+                Steer::Manifest(k) => patch.is_none_or(|t| manifest_steered(k, t)),
+                Steer::No => false,
+            }
             || r_ci(p)
     };
-    files
-        .into_iter()
-        .flat_map(|(path, prev)| std::iter::once(path).chain(prev))
-        .find(|p| hit(p))
+    files.into_iter().find_map(|(path, prev, patch)| {
+        // A rename source has no patch of its own: a manifest there counts.
+        if hit(path, patch) {
+            Some(path)
+        } else {
+            prev.filter(|p| hit(p, None))
+        }
         .map(str::to_string)
+    })
 }
 
 /// The newest run of ci.yml on `sha` for PR `pr` into `base` (the highest id: ids only grow).
@@ -167,7 +278,8 @@ pub fn ci_verdict(gh: &dyn Github, n: u64, head: &str) -> crate::github::Result<
     let local = local_actions(&ci_yml);
     let files = gh.pull_files(n)?;
     // GitHub's files API lists at most 3000 files: a full list may hide a changed CI input.
-    if files.len() >= PULL_FILES_CAP {
+    let reported = gh.get_pull(n)?.map_or(0, |p| p.changed_files);
+    if files.len() >= PULL_FILES_CAP || (files.len() as u64) < reported {
         return Err(refuse(
             format!(
                 "PR #{n} lists {} files, GitHub's cap for the files API ({PULL_FILES_CAP}): a changed CI input could be hidden, so its ci-ok cannot be trusted for the CI signer",
@@ -176,8 +288,14 @@ pub fn ci_verdict(gh: &dyn Github, n: u64, head: &str) -> crate::github::Result<
             "split the PR below 3000 files, or approve it with the orchestrator-held key (`bosun approve <pr>@<head> --sign-key <pem> --bootstrap`) or ask the owner",
         ));
     }
-    let changed = (files.iter()).map(|f| (f.filename.as_str(), f.previous_filename.as_deref()));
-    if let Some(p) = ci_input_changed(changed, &local) {
+    let changed = (files.iter()).map(|f| {
+        (
+            f.filename.as_str(),
+            f.previous_filename.as_deref(),
+            f.patch.as_deref(),
+        )
+    });
+    if let Some(p) = ci_input_changed_patched(changed, &local) {
         return Err(refuse(
             format!(
                 "PR #{n} changes {p}, which its own {CI_WORKFLOW} run executes from the checkout (`.github/**`, local actions {local:?}, R-ci paths): its ci-ok cannot be trusted for the CI signer"
@@ -375,41 +493,107 @@ mod tests {
     }
 
     #[test]
-    fn ci_inputs_cover_package_scripts_task_config_build_scripts_and_tests() {
+    fn ci_inputs_are_build_and_test_runner_config_not_test_files() {
         let hit = |p: &str| ci_input_changed([(p, None)], &[]);
         for p in [
-            "package.json",
-            "hull/package.json",
-            "apps/web/package.json",
             "turbo.json",
             "hull/turbo.json",
             "pnpm-workspace.yaml",
-            "site/pnpm-workspace.yaml",
-            ".npmrc",
             "site/.npmrc",
-            "build.rs",
             "bosun/build.rs",
-            "bosun/tests/cli_a.rs",
-            "tests/common/mod.rs",
-            "hull/tests/render.test.mjs",
-            "npm/keel/test/launcher.test.js",
-            "web/src/__tests__/a.ts",
-            "web/src/a.spec.ts",
-            "web/src/a.test.tsx",
-            "crates/x/src/a_test.go",
+            ".pnpmfile.cjs",
+            "vitest.config.ts",
+            "web/vite.config.mjs",
+            "jest.config.json",
+            "playwright.config.ts",
+            "cypress.config.cts",
+            "conftest.py",
+            "pytest.ini",
+            "setup.cfg",
+            "tox.ini",
+            ".config/nextest.toml",
+            "nextest.toml",
+            "tsconfig.json",
+            "web/tsconfig.base.json",
+            ".cargo/config.toml",
+            "x/.cargo/config",
+            "rust-toolchain.toml",
+            "rust-toolchain",
+            "deny.toml",
+            "Makefile",
+            "justfile",
         ] {
             assert!(hit(p).is_some(), "{p}");
         }
-        assert!(ci_input_changed([("src/a.rs", Some("tests/old.rs"))], &[]).is_some());
         for p in [
             "bosun/src/a.rs",
+            "bosun/tests/cli_a.rs",
+            "tests/a.rs",
+            "tests/common/mod.rs",
+            "hull/tests/render.test.mjs",
+            "web/src/__tests__/a.ts",
+            "web/src/a.spec.ts",
+            "crates/x/src/a_test.go",
+            "tests/test_a.py",
+            "Cargo.lock",
+            "pnpm-lock.yaml",
             "docs/testing.md",
             "src/contest.rs",
-            "src/latest/a.rs",
             "web/src/package.jsonc.md",
+            "pyproject.tomlx",
         ] {
             assert!(hit(p).is_none(), "{p}");
         }
+        // A rename away from a config counts; from a test file does not.
+        assert!(ci_input_changed([("src/a.rs", Some("vitest.config.ts"))], &[]).is_some());
+        assert!(ci_input_changed([("src/a.rs", Some("tests/old.rs"))], &[]).is_none());
+    }
+
+    #[test]
+    fn manifests_count_only_when_their_patch_touches_build_or_test_steering() {
+        let hit = |p: &str, patch: Option<&str>| {
+            ci_input_changed_patched([(p, None, patch)], &[]).is_some()
+        };
+        // No patch (too large): fail closed.
+        for p in ["Cargo.toml", "x/pyproject.toml", "web/package.json"] {
+            assert!(hit(p, None), "{p}");
+        }
+        let cargo = |l: &str| format!("@@ -1,3 +1,3 @@\n [package]\n-{l}\n+{l}2");
+        for l in [
+            "autotests = false",
+            "autobins = false",
+            "[[test]]",
+            "harness = false",
+            "test = false",
+            "build = \"build.rs\"",
+            "[profile.test]",
+        ] {
+            assert!(hit("Cargo.toml", Some(&cargo(l))), "{l}");
+        }
+        for l in ["version = \"1.2.3\"", "serde = \"=1.0.1\"", "name = \"x\""] {
+            assert!(!hit("bosun/Cargo.toml", Some(&cargo(l))), "{l}");
+        }
+        assert!(hit(
+            "pyproject.toml",
+            Some("@@ -1 +1 @@\n+[tool.pytest.ini_options]")
+        ));
+        assert!(!hit(
+            "pyproject.toml",
+            Some("@@ -1 +1 @@\n-version = \"1\"\n+version = \"2\"")
+        ));
+        // package.json: dependency bumps no, scripts yes.
+        let dep = "@@ -5,3 +5,3 @@\n   \"dependencies\": {\n-    \"left-pad\": \"1.0.0\",\n+    \"left-pad\": \"1.0.1\",\n   }";
+        assert!(!hit("package.json", Some(dep)));
+        let bump = "@@ -2 +2 @@\n-  \"version\": \"1.0.0\",\n+  \"version\": \"1.0.1\",";
+        assert!(!hit("package.json", Some(bump)));
+        let scripts = "@@ -5,3 +5,3 @@\n   \"scripts\": {\n-    \"test\": \"vitest\",\n+    \"test\": \"true\",\n   }";
+        assert!(hit("package.json", Some(scripts)));
+        let add = "@@ -5,3 +5,4 @@\n+  \"scripts\": {\n+    \"ci\": \"echo ok\"\n+  },";
+        assert!(hit("package.json", Some(add)));
+        // The opener is outside the hunk: a command-looking value still counts.
+        let inner =
+            "@@ -9,2 +9,2 @@\n-    \"lint\": \"oxlint .\",\n+    \"lint\": \"true && echo\",";
+        assert!(hit("package.json", Some(inner)));
     }
 
     /// Parity with the real ci.yml: every `uses: ./` line is found, so a new local action counts

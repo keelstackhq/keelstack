@@ -1325,7 +1325,8 @@ impl Flow {
 
     /// Whether a record with `major` major findings is clean enough to count.
     fn clean(&self, major: Option<u32>) -> bool {
-        self.block_on_blocker || major == Some(0)
+        // A record without the count never counts, whatever `block_on` says.
+        major.is_some() && (self.block_on_blocker || major == Some(0))
     }
 
     /// The number as words for status texts: "one verdict", "two verdicts".
@@ -2509,6 +2510,18 @@ pub fn inverse_problems(merged: &[PatchFile], revert: &[PatchFile]) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_record_without_the_major_count_never_counts_even_under_block_on_blocker() {
+        let lax = Flow {
+            verdicts_needed: 1,
+            block_on_blocker: true,
+        };
+        assert!(!lax.clean(None));
+        assert!(lax.clean(Some(3)));
+        assert!(!Flow::default().clean(None));
+        assert!(!Flow::default().clean(Some(1)));
+    }
 
     #[test]
     fn bootstrap_excludes_every_approval_code_path_in_bosun_only() {

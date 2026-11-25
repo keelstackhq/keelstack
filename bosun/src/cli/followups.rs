@@ -11,7 +11,7 @@ use super::{FollowupsAddArgs, FollowupsCmd};
 use crate::app::{App, kill_switch};
 use crate::cli::risk_check::flow_at;
 use crate::core::followups::{
-    HEADER, LABEL, TITLE, append, existing, item_pr, item_text, non_blocking, open_items,
+    HEADER, LABEL, MAX_BODY, TITLE, append, existing, item_pr, item_text, non_blocking, open_items,
 };
 use crate::core::verdict::Verdict;
 use crate::github::{Github, Issue, IssuePatch, IssueState, PatchState};
@@ -42,11 +42,18 @@ fn read_input(from: &str) -> Result<String, BosunError> {
 
 /// The oldest open issue labelled `bosun:followups`.
 fn rolling(gh: &dyn Github) -> Result<Option<Issue>, BosunError> {
-    Ok(gh
+    Ok(rolling_all(gh)?.into_iter().next())
+}
+
+/// Every open `bosun:followups` issue, oldest first.
+fn rolling_all(gh: &dyn Github) -> Result<Vec<Issue>, BosunError> {
+    let mut all: Vec<Issue> = gh
         .list_issues(&[LABEL], IssueState::Open)?
         .into_iter()
         .filter(|i| !i.pull_request)
-        .min_by_key(|i| i.number))
+        .collect();
+    all.sort_by_key(|i| i.number);
+    Ok(all)
 }
 
 fn add(dir: Option<&Path>, a: &FollowupsAddArgs) -> CmdResult {
@@ -108,20 +115,76 @@ fn add(dir: Option<&Path>, a: &FollowupsAddArgs) -> CmdResult {
             }
         }
     };
-    let (body, fresh) = append(issue.body_text(), &texts);
-    if !fresh.is_empty() {
-        gh.update_issue(
-            issue.number,
-            IssuePatch {
-                body: Some(body),
-                ..IssuePatch::default()
-            },
-        )?;
-    }
+    let fresh = write_items(gh, &issue, &texts)?;
+    let duplicates: Vec<u64> = rolling_all(gh)?
+        .iter()
+        .map(|i| i.number)
+        .filter(|n| *n != issue.number)
+        .collect();
     Ok(Outcome::data(json!({
-        "pr": a.pr, "issue": issue.number, "created": created,
+        "pr": a.pr, "issue": issue.number, "created": created, "duplicates": duplicates,
         "added": fresh.len(), "skipped": texts.len() - fresh.len(), "items": fresh,
     })))
+}
+
+/// Read-modify-write the issue body: drop ticked items, append `texts`, refuse a body over
+/// [`MAX_BODY`], then read the issue back and, when a parallel add lost this write, redo it once
+/// from the fresh body. Returns the items that were new.
+fn write_items(
+    gh: &dyn Github,
+    first: &Issue,
+    texts: &[String],
+) -> Result<Vec<String>, BosunError> {
+    let number = first.number;
+    let mut fresh = Vec::new();
+    for attempt in 0..2 {
+        // Read right before the write, so a box a human ticked meanwhile is not overwritten.
+        let issue = gh.get_issue(number)?.ok_or_else(|| {
+            BosunError::error(
+                format!("follow-up issue #{number} disappeared"),
+                "run `bosun followups add` again",
+            )
+        })?;
+        let (body, new) = append(issue.body_text(), texts);
+        if new.is_empty() && attempt == 0 {
+            return Ok(new);
+        }
+        if body.chars().count() > MAX_BODY {
+            return Err(BosunError::limit(
+                format!(
+                    "follow-up issue #{number} would pass {MAX_BODY} characters: nothing was added"
+                ),
+                format!(
+                    "pick up and tick the open items of #{number} (`bosun followups list`), then run `bosun followups add` again"
+                ),
+            ));
+        }
+        if !new.is_empty() {
+            fresh = new;
+            gh.update_issue(
+                number,
+                IssuePatch {
+                    body: Some(body),
+                    ..IssuePatch::default()
+                },
+            )?;
+        }
+        // Another add may have read the old body at the same time: check that ours is in.
+        let back = gh.get_issue(number)?.ok_or_else(|| {
+            BosunError::error(
+                format!("follow-up issue #{number} disappeared"),
+                "run `bosun followups add` again",
+            )
+        })?;
+        let have = open_items(back.body_text());
+        if fresh.iter().all(|t| have.contains(&t.as_str())) {
+            return Ok(fresh);
+        }
+    }
+    Err(BosunError::conflict(
+        format!("follow-up issue #{number} changed during the write and the items may be missing"),
+        "run `bosun followups add` again with the same verdict (items already there are skipped)",
+    ))
 }
 
 fn list(dir: Option<&Path>) -> CmdResult {

@@ -213,7 +213,8 @@ pub fn main_red(gh: &dyn Github) -> Result<Option<u64>> {
 /// [`main_red`] where a red main stops work: `None` when `[main_health] block = false` (D-028),
 /// so claims, waves, spawns, answers and heal go on and only warn through `bosun status`.
 pub fn main_red_blocking(app: &App) -> Result<Option<u64>> {
-    if !app.ctx.config.main_health.block {
+    // Read from the default branch like main-open, so a working tree edit cannot lift the pause.
+    if crate::gates::main_open::main_warns(app.gh.as_ref())? {
         return Ok(None);
     }
     main_red(app.gh.as_ref())

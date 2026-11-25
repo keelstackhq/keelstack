@@ -4,9 +4,10 @@
 - Scope: all
 - Status: accepted
 - Supersedes: —
-- Amends: D-021 (one PR per requirement), D-022 and D-027 (two clean verdicts become one; only blockers block)
 
 ## Context
+
+This decision amends D-021 (one PR per requirement), D-022 and D-027 (two clean verdicts become one; only blockers block); it supersedes none.
 
 On 2026-11-25 the owner decided in chat: progress matters more than gates. The two-verdict quorum
 (D-022), blocking major findings, a red main that pauses all work, and many small PRs each
@@ -40,6 +41,7 @@ that guard security, data, main and releases stay; the rest must stop holding wo
 
 ## Consequences
 
+- The CI signer keeps covering normal PRs: only build and test-runner config (`*.config.*`, `.pnpmfile.*`, nextest, `tox.ini`, `tsconfig*.json`, toolchain, `.cargo/config`, `Makefile`, `build.rs`, and the steering keys of `Cargo.toml`, `pyproject.toml`, `package.json`) is a CI input that sends a PR to the orchestrator key or the owner. Test files are not: editing tests is normal and test-integrity guards weakening. Lockfiles are not either; R-deps judges dependencies.
 - D-022's "two approving verdicts (>= 0.85, no blocker/major) from two different reviewer
   sessions" and D-027's "two clean verdicts" become "one clean verdict, no blocker" in repos that
   set the keys; the rest of both decisions stands (trust root, floor, halt, secrets). No earlier
