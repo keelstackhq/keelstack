@@ -15,7 +15,7 @@
 #    git error (a missing object) fails the step. The plan checkout keeps no credentials.
 # 5. release.yml: the tag deploy key step fails closed without RELEASE_TAG_KEY, pins github.com's
 #    host key, and both tag jobs stop the agent in an always() step.
-# 6. release.yml crates and npm: both jobs run `hoist release publish --only <registry>` (a
+# 6. release.yml crates and npm steps: the release job runs `hoist release publish --only <registry>` (a
 #    package not published yet is skipped with a notice, see scripts/release-result.sh) and
 #    major waits for skipped packages.
 set -euo pipefail
@@ -267,7 +267,7 @@ plan_case missing-blob $'[workspace.package]\nversion = "0.21.5"\n' blob error
 [ "$fail" = 1 ] || ok "release plan: an absent version reads empty, a git failure fails"
 
 # --- 5. release.yml: the tag deploy key -------------------------------------------------------
-for j in release major; do
+for j in release; do
   key="$(step_run "$rel" "$j" 'Load the tag deploy key')"
   [ -n "$key" ] || { bad "release.yml $j: no 'Load the tag deploy key' step"; continue; }
   if out="$(RELEASE_TAG_KEY='' RUNNER_TEMP="$tmp" GITHUB_ENV="$tmp/env" bash -e -c "$key" 2>&1)"; then
@@ -290,8 +290,12 @@ for j in release major; do
   grep -qx '        if: always()' <<<"$stop" || bad "release.yml $j: no always() step stops the ssh-agent"
   grep -qx '    environment: release' <<<"$jt" || bad "release.yml $j: not in environment release"
 done
-[ "$(step_run "$rel" release 'Load the tag deploy key')" = "$(step_run "$rel" major 'Load the tag deploy key')" ] ||
-  bad "release.yml: the key steps of release and major differ"
+# The key is loaded twice in the one release job (tag, then the major tag), stopped after each.
+[ "$(grep -c '^      - name: Load the tag deploy key$' "$rel")" = 2 ] || bad "release.yml: the deploy key is not loaded exactly twice"
+[ "$(grep -c '^      - name: Stop the ssh-agent$' "$rel")" = 2 ] || bad "release.yml: the ssh-agent is not stopped twice"
+# One tap: exactly one job is in the environment, and only it may request an OIDC token.
+[ "$(grep -c '^    environment:' "$rel")" = 1 ] || bad "release.yml: more than one job uses an environment (one tap per release)"
+[ "$(grep -c '^      id-token: write' "$rel")" = 1 ] || bad "release.yml: id-token: write is not on exactly one job"
 n="$(grep -vE '^[[:space:]]*#' "$rel" | grep -cE 'git/refs|extraheader' || true)"
 [ "$n" = 0 ] || bad "release.yml: a tag is still written through the API or an HTTPS token"
 [ "$fail" = 1 ] || ok "release.yml: tag deploy key fails closed, host key pinned, agent stopped"
@@ -301,25 +305,23 @@ n="$(grep -vE '^[[:space:]]*#' "$rel" | grep -cE 'git/refs|extraheader' || true)
 # package not on its registry yet pending, a registry error failing) lives in hoist and is tested
 # there (hoist/tests/cli_release_publish.rs, `only_*`); scripts/release-result.test.sh covers the
 # exit-code handling. Here: the jobs call hoist the way a consumer does, and major still waits.
-crates="$(step_run "$rel" crates 'Publish the crates, dependencies first')"
-[ -n "$crates" ] || bad "release.yml crates: publish step not found"
-grep -qF 'hoist release publish --only crates --json' <<<"$crates" || bad "crates: does not run hoist release publish --only crates"
-grep -qF 'bash scripts/release-result.sh result.json "$code" crates' <<<"$crates" || bad "crates: the exit code is not handled by release-result.sh"
-npm_step="$(step_run "$rel" npm 'Publish (trusted publishing, provenance), platform packages before their launcher')"
-[ -n "$npm_step" ] || bad "release.yml npm: publish step not found"
-for want in 'hoist release publish "${args[@]}"' '--only npm' '--provenance' '--npm-tag "$dist_tag"' '--assets assets' 'bash scripts/release-result.sh result.json "$code" npm'; do
+crates="$(step_run "$rel" release 'Publish the crates, dependencies first')"
+[ -n "$crates" ] || bad "release.yml: crates publish step not found"
+grep -qF 'hoist -C publish release publish --only crates --json' <<<"$crates" || bad "crates: does not run hoist release publish --only crates"
+grep -qF 'bash publish/scripts/release-result.sh result-crates.json "$code" crates' <<<"$crates" || bad "crates: the exit code is not handled by release-result.sh"
+npm_step="$(step_run "$rel" release 'Publish to npm (trusted publishing, provenance), platform packages before their launcher')"
+[ -n "$npm_step" ] || bad "release.yml: npm publish step not found"
+for want in 'hoist "${args[@]}"' '--only npm' '--provenance' '--npm-tag "$dist_tag"' '--assets "$RUNNER_TEMP/assets"' 'bash publish/scripts/release-result.sh result-npm.json "$code" npm'; do
   grep -qF -- "$want" <<<"$npm_step" || bad "npm: publish step lacks $want"
 done
-for job in crates npm; do
-  t="$(job_text "$rel" "$job")"
-  grep -qF 'sha256sum -c --ignore-missing SHA256SUMS' <<<"$t" || bad "release.yml $job: hoist is not checked against SHA256SUMS"
-  grep -qF 'environment: release' <<<"$t" || bad "release.yml $job: not in the release environment"
-  grep -qF 'id-token: write' <<<"$t" || bad "release.yml $job: no id-token: write for trusted publishing"
-  ! grep -qE 'cargo publish|npm publish|trusted_publishing' <<<"$t" || bad "release.yml $job: publishes by hand instead of through hoist"
-done
-mj="$(job_text "$rel" major)"
-grep -qF "needs.crates.outputs.skipped == '' && needs.npm.outputs.skipped == ''" <<<"$mj" ||
-  bad "release.yml major: moves the tag while a crate or package is skipped"
+t="$(job_text "$rel" release)"
+grep -qF 'sha256sum -c --ignore-missing SHA256SUMS' <<<"$t" || bad "release.yml: hoist is not checked against SHA256SUMS"
+code_t="$(grep -vE '^[[:space:]]*#' <<<"$t" || true)"
+! grep -qE 'cargo publish|npm publish|trusted_publishing' <<<"$code_t" || bad "release.yml: publishes by hand instead of through hoist"
+# The major tag moves only when neither registry step skipped a package.
+grep -qF "steps.crates.outputs.skipped == '' && steps.npm.outputs.skipped == ''" <<<"$t" ||
+  bad "release.yml: moves the major tag while a crate or package is skipped"
+grep -qE '^  (crates|npm|major):' "$rel" && bad "release.yml: separate crates, npm or major job (each would need its own tap)"
 [ "$fail" = 1 ] || ok "release.yml: crates and npm run hoist release publish --only, major waits for skipped packages"
 
 # ci-repo packages every publishable crate (verify on) when Rust is affected.

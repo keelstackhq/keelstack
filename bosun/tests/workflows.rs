@@ -378,7 +378,7 @@ fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
             continue;
         }
         assert!(
-            ["release", "crates", "npm", "major"].contains(&id.as_str()),
+            ["release"].contains(&id.as_str()),
             "job `{id}` grants {grants:?}"
         );
         assert_eq!(environment_of(body).as_deref(), Some("release"), "{id}");

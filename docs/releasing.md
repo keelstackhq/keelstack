@@ -12,10 +12,11 @@ workflow (trusted publishing).
    pnpm lock pins, changelogs) and commits. It prints the `git push` and `gh pr create` lines.
 2. Open the PR, get it through CI and review, merge it. The merge changes the workspace version,
    which starts `release.yml` (`plan` reads the version, then dispatches the real run on `main`).
-3. Tap `release` in the run's "Review deployments" box (the owner, D-028). GitHub asks once per
-   stage: `release` (tag, GitHub release with every binary), `crates` and `npm` together, `major`.
-4. The run builds five targets, publishes the crates and every npm package, then moves the major
-   tag (`v0`). `hoist release check` lists, per package, whether it is on its registry at the
+3. Tap `release` once in the run's "Review deployments" box (the owner, D-028). Only one job,
+   `release`, uses the environment: after the tap it tags, publishes the GitHub release with
+   every binary, publishes the crates and npm packages (trusted publishing) and moves the major
+   tag, all as steps of that job. One release, one tap.
+4. The run builds five targets first (no tap needed), then the one approved job does the rest. `hoist release check` lists, per package, whether it is on its registry at the
    workspace version.
 5. Pin the new bosun in `.bosun/version` and the setup script when needed (`bosun/docs/releasing.md`).
 

@@ -1042,7 +1042,7 @@ errors.
 #### 9.3.1 Registry-only mode (`--only`)
 
 `hoist release publish --only crates,npm` (either one, or both) is the publish a workflow that
-tags and releases by other means calls (keelstack's `release.yml` jobs `crates` and `npm`; a
+tags and releases by other means calls (keelstack's `release.yml`, whose single `release` job, one environment tap, runs it as its crates and npm steps; a
 consumer repo whose tag step is its own). It skips the tag, GitHub Release and deploy steps and
 does not use local tags to decide what is pending: every package of the release model is looked
 at, each at its manifest version, so a re-run of the same version is a no-op (`ok`, "already on

@@ -28,8 +28,8 @@ name: release
 #   - environment `release`: deployment branches = default branch only, the owner as required
 #     reviewer (hoist.toml `[release] reviewers`, set by `hoist apply`).
 #   - secrets: RELEASE_TAG_KEY only, a secret of the environment `release` (written by hoist):
-#     the private half (ed25519, OpenSSH format) of a deploy key with write access. Jobs
-#     `release` and `major` load it into ssh-agent (never onto disk) and push the tags vX.Y.Z and
+#     the private half (ed25519, OpenSSH format) of a deploy key with write access. Job
+#     `release` (the only one in the environment: one tap) loads it into ssh-agent (never onto disk) and push the tags vX.Y.Z and
 #     v<major> with `git push git@github.com:<repo>.git` over SSH (github.com's host key pinned
 #     below). The GitHub API and the Actions token never create or move a tag. npm and crates.io
 #     use OIDC trusted publishing: every package on npm and every crate on crates.io needs a
@@ -77,10 +77,10 @@ concurrency:
   # of one commit waits for the first. Plan runs of different PRs never share a group (a pending
   # run would replace another one). The version is not known here (a manual run may leave the
   # input empty: plan reads it from Cargo.toml), so the jobs after plan that write a version's
-  # draft, tag, crates, npm packages or v<major> (release, crates, npm, major) each also hold a
+  # draft, tag, crates, npm packages and v<major> (all in job release) also hold a
   # job-level group release-<job>-<version>: two runs of one version (two commits, or a manual
   # run next to a dispatched one) never write the same draft or packages at once. One group per
-  # job, not one per version, so the jobs of one run never wait for each other.
+  # job, not one per version.
   group: ${{ github.event_name == 'workflow_dispatch' && format('release-{0}', inputs.sha || github.sha) || format('plan-{0}', github.run_id) }}
   cancel-in-progress: false
 
@@ -456,44 +456,53 @@ jobs:
     needs: [plan, build, action]
     if: >-
       !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
+      (needs.plan.outputs.released == 'true' ||
+      (needs.build.result == 'success' && needs.action.result == 'success'))
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     # One run at a time per version for this job (see the top-level concurrency).
     concurrency:
       group: release-release-${{ needs.plan.outputs.version }}
       cancel-in-progress: false
     environment: release
+    # The one job that holds id-token: write (trusted publishing) and the one tap.
     permissions:
       contents: write
+      id-token: write
     outputs:
       commit: ${{ steps.release.outputs.commit }}
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       TAG: ${{ needs.plan.outputs.tag }}
       SHA: ${{ needs.plan.outputs.sha }}
+      GH_REPO: ${{ github.repository }}
     steps:
       # No stored credentials, and no dependency code runs in this job: tags are pushed over SSH
       # with the deploy key (RELEASE_TAG_KEY), which only the push steps load into ssh-agent.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: needs.plan.outputs.released != 'true'
         with:
           ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: needs.plan.outputs.released != 'true'
         with:
           node-version: 24
           package-manager-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.released != 'true'
         with:
           pattern: release-*
           path: release
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.plan.outputs.released != 'true'
         with:
           name: action-bundle
           path: release-bundle
       - name: Check the assets and the action bundle
+        if: needs.plan.outputs.released != 'true'
         env:
           BUILD_OUTPUTS: ${{ toJSON(needs.build.outputs) }}
         run: |
@@ -528,6 +537,7 @@ jobs:
           rm -rf hoard/action/dist
           cp -r release-bundle/dist hoard/action/dist
       - name: SHA256SUMS and release notes
+        if: needs.plan.outputs.released != 'true'
         run: |
           set -euo pipefail
           # <hex>  <file>, one line per asset: what hoist's release action and the READMEs expect.
@@ -555,6 +565,7 @@ jobs:
       # The tag deploy key (the tags ruleset's only bypass actor) goes into ssh-agent for the
       # tag step only; the agent is stopped in an always() step. Same two steps as in `major`.
       - name: Load the tag deploy key
+        if: needs.plan.outputs.released != 'true'
         env:
           RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
         run: |
@@ -591,6 +602,7 @@ jobs:
             echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
           } >>"$GITHUB_ENV"
       - name: Release commit, tag and GitHub release
+        if: needs.plan.outputs.released != 'true'
         id: release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -681,6 +693,7 @@ jobs:
           echo "released $TAG at $commit"
           echo "commit=$commit" >>"$GITHUB_OUTPUT"
       - name: The release has every asset
+        if: needs.plan.outputs.released != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -696,141 +709,89 @@ jobs:
           if [ -n "${SSH_AGENT_PID:-}" ]; then ssh-agent -k >/dev/null || true; fi
           rm -f "$RUNNER_TEMP/release-ssh-agent.sock" "$RUNNER_TEMP/release-known_hosts"
 
-  # crates and npm run `hoist release publish --only <registry>`, the same command a consumer
-  # repo's release workflow runs, with the hoist binary this release just built (the release
-  # asset, checked against SHA256SUMS). hoist skips what is on the registry (a re-run is a
-  # no-op), publishes dependencies and platform packages first, and exits 2 for a package that
-  # is not on its registry yet: that package (and what needs it) is skipped with a notice, the
-  # job's `skipped` output holds the names and job major waits. `hoist release bootstrap`
-  # (local, owner) publishes it and registers the npm trusted publisher; the crates.io
-  # trusted publisher is added by hand (docs/releasing.md).
-  crates:
-    needs: [plan, release]
-    if: >-
-      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    outputs:
-      skipped: ${{ steps.publish.outputs.skipped }}
-    concurrency:
-      group: release-crates-${{ needs.plan.outputs.version }}
-      cancel-in-progress: false
-    environment: release
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      TAG: ${{ needs.plan.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # --- Registries: `hoist release publish --only <registry>`, the same command a consumer
+      # repo's release workflow runs, with the hoist binary this release just built (the release
+      # asset, checked against SHA256SUMS). hoist skips what is on the registry (a re-run is a
+      # no-op), publishes dependencies and platform packages first, and exits 2 for a package
+      # that is not on its registry yet: it (and what needs it) is skipped with a notice, the
+      # step's `skipped` output holds the names and the major tag is held. `hoist release
+      # bootstrap` (local, owner) publishes it and registers the npm trusted publisher; the
+      # crates.io trusted publisher is added by hand (docs/releasing.md). Same job, same
+      # environment: one tap approves the tag, the release, both registries and the major tag.
+      - name: Check out the release tag for publishing
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: refs/tags/${{ needs.plan.outputs.tag }}
+          path: publish
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           toolchain: "1.97"
-      - name: Install hoist from this release
-        run: |
-          set -euo pipefail
-          mkdir -p dl "$RUNNER_TEMP/bin"
-          gh release download "$TAG" --dir dl --pattern SHA256SUMS --pattern hoist-x86_64-unknown-linux-musl
-          (cd dl && sha256sum -c --ignore-missing SHA256SUMS)
-          install -m 755 dl/hoist-x86_64-unknown-linux-musl "$RUNNER_TEMP/bin/hoist"
-          echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
-      # No build cache in the jobs that hold an OIDC token. keel-splice has `publish = false` and
-      # keel-hoard `crates = false` (hoard/hoist.toml): hoist does not publish them.
-      - name: Publish the crates, dependencies first
-        id: publish
-        run: |
-          set +e
-          hoist release publish --only crates --json >result.json
-          code=$?
-          set -e
-          cat result.json
-          bash scripts/release-result.sh result.json "$code" crates
-  npm:
-    needs: [plan, release]
-    if: >-
-      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    outputs:
-      skipped: ${{ steps.publish.outputs.skipped }}
-    concurrency:
-      group: release-npm-${{ needs.plan.outputs.version }}
-      cancel-in-progress: false
-    environment: release
-    permissions:
-      contents: read
-      id-token: write
-    env:
-      VERSION: ${{ needs.plan.outputs.version }}
-      TAG: ${{ needs.plan.outputs.tag }}
-      GH_TOKEN: ${{ github.token }}
-      GITHUB_TOKEN: ${{ github.token }}
-      GH_REPO: ${{ github.repository }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # The checkout is only for the npm/ package directories and scripts/; no cargo runs here.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: refs/tags/${{ needs.plan.outputs.tag }}
-          persist-credentials: false
-      # npm >= 11.5.1 and Node >= 22.14.0 do the OIDC exchange for trusted publishing.
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "24"
-          package-manager-cache: false
+      # npm >= 11.5.1 does the OIDC exchange for trusted publishing.
       - run: npm install -g npm@12.2.0
       - name: Require a public repository (npm provenance)
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           private=$(gh api "repos/$GH_REPO" --jq .private)
           if [ "$private" = true ]; then
             echo "::error::npm provenance needs a public repository: make $GH_REPO public, then re-run"
             exit 1
           fi
-      # The binaries in the packages are the release's assets (checked against SHA256SUMS), so
-      # npm and the GitHub release carry the same bytes, also on a re-run.
-      - name: Download the release assets
+      # The binaries in the npm packages are the release's assets (checked against SHA256SUMS),
+      # so npm and the GitHub release carry the same bytes, also on a re-run.
+      - name: Install hoist and download the release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          mkdir assets "$RUNNER_TEMP/bin"
-          gh release download "$TAG" --dir assets --pattern SHA256SUMS \
+          mkdir -p "$RUNNER_TEMP/assets" "$RUNNER_TEMP/bin"
+          gh release download "$TAG" --dir "$RUNNER_TEMP/assets" --pattern SHA256SUMS \
             --pattern 'bosun-*' --pattern 'hoist-*' --pattern 'berth-*' --pattern 'keel-*' --pattern 'splice-*'
-          (cd assets && sha256sum -c --ignore-missing SHA256SUMS)
-          [ "$(find assets -mindepth 1 -maxdepth 1 | wc -l)" -eq 26 ] || { echo "::error::expected 25 assets and SHA256SUMS"; ls assets; exit 1; }
-          install -m 755 assets/hoist-x86_64-unknown-linux-musl "$RUNNER_TEMP/bin/hoist"
+          (cd "$RUNNER_TEMP/assets" && sha256sum -c --ignore-missing SHA256SUMS)
+          [ "$(find "$RUNNER_TEMP/assets" -mindepth 1 -maxdepth 1 | wc -l)" -eq 26 ] || { echo "::error::expected 25 assets and SHA256SUMS"; ls "$RUNNER_TEMP/assets"; exit 1; }
+          install -m 755 "$RUNNER_TEMP/assets/hoist-x86_64-unknown-linux-musl" "$RUNNER_TEMP/bin/hoist"
           echo "$RUNNER_TEMP/bin" >>"$GITHUB_PATH"
+      # keel-splice has `publish = false` and keel-hoard `crates = false` (hoard/hoist.toml):
+      # hoist does not publish them.
+      - name: Publish the crates, dependencies first
+        id: crates
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          hoist -C publish release publish --only crates --json >result-crates.json
+          code=$?
+          set -e
+          cat result-crates.json
+          bash publish/scripts/release-result.sh result-crates.json "$code" crates
       # bosun, hoist, berth and keel: hoist copies the binaries into their platform packages
       # (<tool>/npm/<tool>-<os>-<cpu>) from `--assets`. splice's platform packages are not in
       # the repo: its own script stages them and prints the directories, the launcher last.
       - name: Stage splice's packages
         run: |
           set -euo pipefail
-          platforms="x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc"
-          for tgt in $platforms; do
+          a="$RUNNER_TEMP/assets"
+          for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
             mkdir -p "art/$tgt"
             case "$tgt" in
-              *-windows-*) unzip -q "assets/splice-$tgt.zip" splice.exe -d "art/$tgt" ;;
-              *) tar -xzf "assets/splice-$tgt.tar.gz" -C "art/$tgt" splice ;;
+              *-windows-*) unzip -q "$a/splice-$tgt.zip" splice.exe -d "art/$tgt" ;;
+              *) tar -xzf "$a/splice-$tgt.tar.gz" -C "art/$tgt" splice ;;
             esac
           done
-          GITHUB_REPOSITORY="$GH_REPO" node splice/scripts/npm-stage.mjs --version "$VERSION" \
+          GITHUB_REPOSITORY="$GH_REPO" node publish/splice/scripts/npm-stage.mjs --version "$VERSION" \
             --artifacts "$PWD/art" --out "$RUNNER_TEMP/splice-npm" >splice-dirs.txt
           cat splice-dirs.txt
-      - name: Publish (trusted publishing, provenance), platform packages before their launcher
-        id: publish
+      - name: Publish to npm (trusted publishing, provenance), platform packages before their launcher
+        id: npm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # dist-tag `latest` only when this is the highest stable vX.Y.Z tag (the backport rule
-          # of job major); a backport gets `v<major>.<minor>-latest`, so `latest` never moves back.
+          # of the major tag step); a backport gets `v<major>.<minor>-latest`, so `latest` never
+          # moves back.
           newest=$(gh api "repos/$GH_REPO/git/matching-refs/tags/v" --paginate --jq '.[].ref' \
             | sed 's#^refs/tags/##' | { grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true; } | sort -V | tail -n1)
           if [ "$newest" = "$TAG" ]; then
@@ -839,41 +800,22 @@ jobs:
             dist_tag="v${VERSION%.*}-latest"
             echo "::notice::newest stable tag is ${newest:-none}, not $TAG: npm dist-tag $dist_tag, latest not moved"
           fi
-          args=(--only npm --assets assets --provenance --npm-tag "$dist_tag" --json)
+          args=(-C publish release publish --only npm --assets "$RUNNER_TEMP/assets" --provenance --npm-tag "$dist_tag" --json)
           while read -r d; do [ -z "$d" ] || args+=(--npm-dir "$d"); done <splice-dirs.txt
           set +e
-          hoist release publish "${args[@]}" >result.json
+          hoist "${args[@]}" >result-npm.json
           code=$?
           set -e
-          cat result.json
-          bash scripts/release-result.sh result.json "$code" npm
-
-  # The Action's major tag follows the newest stable release, and only moves once the release,
-  # crates.io and npm all have it (the splice Action installs `@keelstackhq/splice` at its
-  # pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's dist. A
-  # crate or package skipped as new (`hoist release bootstrap`) holds the tag until a re-run.
-  major:
-    needs: [plan, release, crates, npm]
-    if: >-
-      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      needs.crates.result == 'success' && needs.npm.result == 'success' &&
-      needs.crates.outputs.skipped == '' && needs.npm.outputs.skipped == '' &&
-      (needs.plan.outputs.released == 'true' || needs.release.result == 'success')
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    concurrency:
-      group: release-major-${{ needs.plan.outputs.version }}
-      cancel-in-progress: false
-    environment: release
-    # The deploy key moves the tag: the job's token needs no permission.
-    permissions: {}
-    env:
-      TAG: ${{ needs.plan.outputs.tag }}
-      VERSION: ${{ needs.plan.outputs.version }}
-      GH_REPO: ${{ github.repository }}
-    steps:
+          cat result-npm.json
+          bash publish/scripts/release-result.sh result-npm.json "$code" npm
+      # The Action's major tag follows the newest stable release, and only moves once the
+      # release, crates.io and npm all have it (the splice Action installs `@keelstackhq/splice`
+      # at its pinned version). `uses: keelstackhq/keelstack/hoard@v0` then runs this release's
+      # dist. A crate or package skipped as new (`hoist release bootstrap`) holds the tag until
+      # a re-run. The deploy key is loaded again; the first agent was stopped above.
       # Same two steps as in `release`: the deploy key in ssh-agent, stopped in an always() step.
       - name: Load the tag deploy key
+        if: steps.crates.outputs.skipped == '' && steps.npm.outputs.skipped == ''
         env:
           RELEASE_TAG_KEY: ${{ secrets.RELEASE_TAG_KEY }}
         run: |
@@ -910,6 +852,7 @@ jobs:
             echo "GIT_SSH_COMMAND=ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\"$kh\" -o GlobalKnownHostsFile=/dev/null -o HostKeyAlgorithms=ssh-ed25519"
           } >>"$GITHUB_ENV"
       - name: Move v<major> to the release commit
+        if: steps.crates.outputs.skipped == '' && steps.npm.outputs.skipped == ''
         run: |
           set -euo pipefail
           remote="git@github.com:$GH_REPO.git"

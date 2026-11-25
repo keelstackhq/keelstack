@@ -101,7 +101,7 @@ Computer steps first, then phone steps. Typical first run:
   waits for the owner's tap (D-028): a version-bump merge or a dispatch of release.yml (or
   cargo-deny-npm.yml, an npm publish of the cargo-deny packages) publishes nothing before it;
   the environment's default-branch-only rule keeps both on main. How to release:
-  `docs/releasing.md`. Retired with the old
+  `docs/releasing.md`. One tap per release: only job `release` of release.yml is in the environment. Retired with the old
   repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build
