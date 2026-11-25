@@ -51,7 +51,12 @@ git rm -q "bosun/changelog.d/bad name.md"; git commit -q -m "drop bad fragment"
 
 if bash scripts/release-pr.sh "$new" >"$tmp/out" 2>"$tmp/err"; then ok "release-pr runs"; else fail "release-pr failed: $(cat "$tmp/err")"; fi
 [ "$(git rev-parse --abbrev-ref HEAD)" = "release/v$new" ] && ok "on branch release/v$new" || fail "branch is $(git rev-parse --abbrev-ref HEAD)"
-[ "$(git log -1 --format=%s)" = "chore: release $new" ] && ok "one commit" || fail "commit: $(git log -1 --format=%s)"
+[ "$(git log -1 --format=%s)" = "chore: site follows $new" ] && ok "site commit on top" || fail "commit: $(git log -1 --format=%s)"
+[ "$(git log -2 --format=%s | tail -1)" = "chore: release $new" ] && ok "release commit below" || fail "second commit: $(git log -2 --format=%s | tail -1)"
+[ -f "site/apps/site/src/data/hull/assess/v$new.mjs.txt" ] && ok "assess v$new copied" || fail "no assess copy for v$new"
+cmp -s "site/apps/site/src/data/hull/assess/v$new.mjs.txt" hull/template/pieces/base/files/scripts/ready.mjs && ok "assess copy is hull's ready.mjs" || fail "assess copy differs"
+grep -q "\"/assess/v$new.mjs\"" site/apps/site/src/data/hull/adopt.json && ok "adopt.json serves v$new" || fail "adopt.json not at v$new"
+grep -q "\"v$new\"" site/agents/versions.json && ok "site/agents/versions.json at v$new" || fail "agents versions.json not at $new"
 [ -z "$(git status --porcelain)" ] && ok "tree clean after commit" || fail "dirty: $(git status --porcelain)"
 grep -q "^version = \"$new\"" Cargo.toml && ok "Cargo.toml bumped" || fail "Cargo.toml not bumped"
 grep -A1 '^name = "keel-hoist"' Cargo.lock | grep -q "\"$new\"" && ok "Cargo.lock bumped" || fail "Cargo.lock not bumped"

@@ -10,6 +10,11 @@
 #   3. runs scripts/bump-version.sh X.Y.Z (Cargo.toml, path deps, Cargo.lock, npm launchers and
 #      platform packages, pnpm lock specifiers, the splice Action default, every CHANGELOG),
 #   4. commits it as `chore: release X.Y.Z`,
+#   5. makes the landing site follow X.Y.Z (site/apps/site): installs site/ dependencies if
+#      missing, copies hull's ready.mjs as the hosted assess/vX.Y.Z (apps/site/scripts/adopt.mjs,
+#      pinned to the commit of step 4, which already holds hull/docs/adopt.md at X.Y.Z), and
+#      regenerates src/pages/docs, site/agents and adopt.json (gen-docs.ts); commits that as
+#      `chore: site follows X.Y.Z`,
 # then prints the command that opens the PR. It never pushes, tags or publishes: merging the PR
 # is what releases (.github/workflows/release.yml, docs/releasing.md).
 # RELEASE_PR_NO_BRANCH=1 stays on the current branch (tests).
@@ -72,6 +77,19 @@ bash scripts/bump-version.sh "$ver"
 git add -A
 git commit -q -m "chore: release $ver" \
   -m "Lockstep version bump to $ver (D-023). Merging this PR starts release.yml."
+
+# The site's pinned copies (ci-site checks them against this commit): adopt.mjs reads hull/ at HEAD,
+# so it runs after the bump commit; its output is a second commit.
+if [ ! -d site/node_modules ]; then
+  command -v pnpm >/dev/null || die "pnpm not found: install pnpm (see site/package.json packageManager), then rerun"
+  pnpm --dir site install --frozen-lockfile --prefer-offline >&2 ||
+    die "'pnpm --dir site install --frozen-lockfile' failed: fix it, then rerun"
+fi
+(cd site/apps/site && node scripts/adopt.mjs HEAD "v$ver") >&2 ||
+  die "site/apps/site/scripts/adopt.mjs failed: run 'pnpm --dir site install' and rerun"
+git add -A
+git commit -q -m "chore: site follows $ver" \
+  -m "Hosted assess v$ver, adopt.json and the regenerated docs pages (apps/site/scripts/adopt.mjs)."
 committed=1
 echo
 echo "release $ver committed on $(git rev-parse --abbrev-ref HEAD) ($(git rev-parse --short HEAD))."
