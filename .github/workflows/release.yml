@@ -476,10 +476,10 @@ jobs:
   # (job `publish`) and the tag (job `release`) get the same bytes, on a retry too.
   draft:
     needs: [plan, build, action]
+    # Runs even when the build or the action job failed: a retry reuses the earlier run's draft
+    # and needs no build output at all (the steps that use it say so).
     if: >-
-      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true' &&
-      (needs.plan.outputs.released == 'true' ||
-      (needs.build.result == 'success' && needs.action.result == 'success'))
+      !cancelled() && github.event_name == 'workflow_dispatch' && needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     concurrency:
@@ -496,29 +496,29 @@ jobs:
       GH_REPO: ${{ github.repository }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         with:
           ref: ${{ needs.plan.outputs.sha }}
           fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         with:
           node-version: 24
           package-manager-cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         with:
           pattern: release-*
           path: release
           merge-multiple: true
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         with:
           name: action-bundle
           path: release-bundle
       - name: Check the assets and the action bundle
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         env:
           BUILD_OUTPUTS: ${{ toJSON(needs.build.outputs) }}
         run: |
@@ -541,7 +541,7 @@ jobs:
               echo "::error::MANIFEST-$tgt.txt has sha256 $got, the build leg exported '${want:-nothing}'"
               exit 1
             fi
-            (cd release && sha256sum -c "MANIFEST-$tgt.txt")
+            (cd release && sha256sum -c --strict "MANIFEST-$tgt.txt")
           done
           mkdir manifests
           mv release/MANIFEST-*.txt manifests/
@@ -569,7 +569,7 @@ jobs:
           rm -rf hoard/action/dist
           cp -r release-bundle/dist hoard/action/dist
       - name: SHA256SUMS and release notes
-        if: needs.plan.outputs.released != 'true'
+        if: needs.plan.outputs.released != 'true' && needs.build.result == 'success' && needs.action.result == 'success'
         run: |
           set -euo pipefail
           # The hoard action bundle the release commit is made of travels with the draft, so a
@@ -597,23 +597,79 @@ jobs:
             | sort -V | awk -v t="$TAG" '$0 == t { print p; exit } { p = $0 }')
           echo "previous release: ${prev:-none}"
           echo "PREVIOUS=$prev" >>"$GITHUB_ENV"
+      - name: The expected assets
+        run: |
+          set -euo pipefail
+          # Every binary asset, the action bundle and SHA256SUMS: what a complete draft holds.
+          {
+            for tgt in x86_64-unknown-linux-musl aarch64-unknown-linux-musl x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+              ext=""; arch=tar.gz
+              case "$tgt" in *-windows-*) ext=.exe; arch=zip ;; esac
+              for t in bosun hoist berth keel; do echo "$t-$tgt$ext"; done
+              echo "splice-$tgt.$arch"
+              echo "hoard-$tgt.tar.gz"
+            done
+            echo action-bundle.tar.gz
+            echo SHA256SUMS
+          } | LC_ALL=C sort >expected-all.txt
       - name: The draft release (created, or an earlier run's reused)
         if: needs.plan.outputs.released != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          BUILD_OK: ${{ needs.build.result == 'success' && needs.action.result == 'success' }}
         run: |
           set -euo pipefail
-          # Drafts included (the tag endpoint does not list them): "<id> <draft|published>".
+          # The release of the tag, drafts included (the tag endpoint does not list them):
+          # "<id> <draft|published> <target> <author>".
           found=$(gh api "repos/$GH_REPO/releases?per_page=100" --paginate \
-            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(if .draft then \"draft\" else \"published\" end)\"" | head -n1)
-          state=${found#* }
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(if .draft then \"draft\" else \"published\" end) \(.target_commitish) \(.author.login)\"" | head -n1)
+          rid="" state="" target="" author=""
+          [ -z "$found" ] || read -r rid state target author <<<"$found"
           if [ "$state" = published ]; then
             echo "::error::release $TAG is published but its tag is missing; fix it by hand (the release is immutable)"
             exit 1
           fi
+          # Is $VERSION on a registry? Then anything published came from the draft: never delete it.
+          on_registry() {
+            local code
+            for url in "https://crates.io/api/v1/crates/keel-hoist/$VERSION" "https://registry.npmjs.org/@keelstackhq%2Fhoist/$VERSION"; do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -A keelstack-release "$url")
+              case "$code" in 200) return 0 ;; 404) ;; *) echo "::error::cannot tell whether $VERSION is on a registry ($url answered $code): not deleting anything"; exit 1 ;; esac
+            done
+            return 1
+          }
           if [ "$state" = draft ]; then
-            echo "::notice::a draft of $TAG exists (an earlier run's): it is reused as it is, this run's build output is not used"
-            exit 0
+            # A draft this workflow made for this commit: its target is SHA, its author the
+            # workflow's token. Anything else is not trusted, whatever assets it holds.
+            bad=""
+            [ "$target" = "$SHA" ] || bad="its target is $target, not $SHA"
+            [ "$author" = "github-actions[bot]" ] || bad="${bad:+$bad; }it was created by $author, not github-actions[bot]"
+            if [ -n "$bad" ]; then
+              echo "::error::the draft release of $TAG is not this workflow's ($bad): check that no registry has $VERSION from it, then delete it with: gh release delete $TAG --repo $GH_REPO"
+              exit 1
+            fi
+            gh api "repos/$GH_REPO/releases/$rid/assets" --paginate --jq '.[] | select(.state == "uploaded") | .name' | LC_ALL=C sort >draft-names.txt
+            if diff expected-all.txt draft-names.txt >/dev/null; then
+              echo "::notice::the draft of $TAG (an earlier run's) is complete and reused as it is; this run's build output is not used"
+              exit 0
+            fi
+            # Incomplete. Nothing can have been published from it if no registry has the version:
+            # then it is remade from this run's build; otherwise a person decides.
+            if on_registry; then
+              echo "::error::the draft of $TAG lacks assets, but $VERSION is already on a registry (published from it): do not delete it; add the missing assets by hand, or ask the owner"
+              diff expected-all.txt draft-names.txt || true
+              exit 1
+            fi
+            if [ "$BUILD_OK" != true ]; then
+              echo "::error::the draft of $TAG lacks assets and this run built nothing to remake it: run the workflow again"
+              exit 1
+            fi
+            echo "::notice::the draft of $TAG is incomplete and nothing is published from it: replacing it"
+            gh api -X DELETE "repos/$GH_REPO/releases/$rid"
+          fi
+          if [ "$BUILD_OK" != true ]; then
+            echo "::error::no draft of $TAG to reuse and the build or the action job did not succeed: fix it and run the workflow again"
+            exit 1
           fi
           start=()
           if [ -n "$PREVIOUS" ]; then start=(--notes-start-tag "$PREVIOUS"); fi
@@ -637,7 +693,7 @@ jobs:
               gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$id" >"draft-assets/$name"
             done
           # Every file is listed in SHA256SUMS and matches it, and SHA256SUMS lists no other.
-          (cd draft-assets && sha256sum -c SHA256SUMS)
+          (cd draft-assets && sha256sum -c --strict SHA256SUMS)
           [ "$(find draft-assets -type f | wc -l)" -eq "$(( $(wc -l <draft-assets/SHA256SUMS) + 1 ))" ] \
             || { echo "::error::the release has files SHA256SUMS does not list"; ls draft-assets; exit 1; }
           echo "sums_sha=$(sha256sum draft-assets/SHA256SUMS | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
@@ -723,8 +779,9 @@ jobs:
           SUMS_SHA: ${{ needs.draft.outputs.sums_sha }}
         run: |
           set -euo pipefail
-          [ -n "$SUMS_SHA" ] && echo "$SUMS_SHA  assets/SHA256SUMS" | sha256sum -c -
-          (cd assets && sha256sum -c SHA256SUMS)
+          [ -n "$SUMS_SHA" ] || { echo "::error::job draft exported no digest of SHA256SUMS"; exit 1; }
+          echo "$SUMS_SHA  assets/SHA256SUMS" | sha256sum -c --strict -
+          (cd assets && sha256sum -c --strict SHA256SUMS)
           [ "$(find assets -type f | wc -l)" -eq "$(( $(wc -l <assets/SHA256SUMS) + 1 ))" ] \
             || { echo "::error::assets has files SHA256SUMS does not list"; ls assets; exit 1; }
           [ "$(find assets -type f \( -name 'bosun-*' -o -name 'hoist-*' -o -name 'berth-*' -o -name 'keel-*' -o -name 'splice-*' \) | wc -l)" -eq 25 ] \
@@ -856,8 +913,9 @@ jobs:
           RELEASED: ${{ needs.plan.outputs.released }}
         run: |
           set -euo pipefail
-          [ -n "$SUMS_SHA" ] && echo "$SUMS_SHA  draft-assets/SHA256SUMS" | sha256sum -c -
-          (cd draft-assets && sha256sum -c SHA256SUMS)
+          [ -n "$SUMS_SHA" ] || { echo "::error::job draft exported no digest of SHA256SUMS"; exit 1; }
+          echo "$SUMS_SHA  draft-assets/SHA256SUMS" | sha256sum -c --strict -
+          (cd draft-assets && sha256sum -c --strict SHA256SUMS)
           [ "$(find draft-assets -type f | wc -l)" -eq "$(( $(wc -l <draft-assets/SHA256SUMS) + 1 ))" ] \
             || { echo "::error::draft-assets has files SHA256SUMS does not list"; exit 1; }
           { awk '{ print $2 }' draft-assets/SHA256SUMS; echo SHA256SUMS; } | LC_ALL=C sort >expected.txt

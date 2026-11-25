@@ -325,14 +325,23 @@ dj="$(job_text "$rel" draft)"
 grep -qx '      contents: write' <<<"$dj" || bad "release.yml draft: contents is not write"
 ! grep -qE 'id-token|RELEASE_TAG_KEY|ssh-agent|cargo |npm (publish|install|ci)|pnpm|rust-toolchain|hoist release' <<<"$(grep -vE '^[[:space:]]*#' <<<"$dj")" || bad "release.yml draft: runs dependency code or holds a publish credential"
 grep -qF 'manifest_sha_' <<<"$dj" || bad "release.yml draft: build legs' manifests are not checked"
-grep -qF 'sha256sum -c SHA256SUMS' <<<"$dj" || bad "release.yml draft: the draft's assets are not checked against SHA256SUMS"
+grep -qF 'sha256sum -c --strict SHA256SUMS' <<<"$dj" || bad "release.yml draft: the draft's assets are not checked against SHA256SUMS"
 grep -qF 'sums_sha' <<<"$dj" || bad "release.yml draft: exports no digest of SHA256SUMS"
+# Reusing an earlier run's draft checks who made it, for which commit, and that it is complete;
+# an incomplete one is only deleted while no registry has the version.
+dstep="$(step_run "$rel" draft "The draft release (created, or an earlier run's reused)")"
+for want in 'target_commitish' 'target" = "$SHA"' 'github-actions[bot]' 'diff expected-all.txt draft-names.txt' 'on_registry' 'gh release delete'; do
+  grep -qF -- "$want" <<<"$dstep" || bad "release.yml draft: the draft reuse does not check $want"
+done
+! grep -qE "build.result == 'success' &&" <<<"$(grep -A4 '^    if: >-' <<<"$dj" | head -5)" || bad "release.yml draft: a retry with a draft needs the build to succeed"
+! grep -qE '\[ -n "\$SUMS_SHA" \] &&' "$rel" || bad "release.yml: an empty SUMS_SHA would pass the check"
+! grep -E 'sha256sum -c' "$rel" | grep -vq -- '--strict' || bad "release.yml: a sha256sum -c without --strict"
 for j in publish release; do
   t="$(job_text "$rel" "$j")"
   grep -qF 'name: draft-assets' <<<"$t" || bad "release.yml $j: does not use the draft's assets"
   ! grep -qE 'pattern: release-\*|name: action-bundle' <<<"$t" || bad "release.yml $j: uses this run's build artifacts"
   ! grep -qF -- '--ignore-missing' <<<"$t" || bad "release.yml $j: SHA256SUMS is checked with --ignore-missing"
-  grep -qF 'sha256sum -c SHA256SUMS' <<<"$t" || bad "release.yml $j: files are not all checked against SHA256SUMS"
+  grep -qF 'sha256sum -c --strict SHA256SUMS' <<<"$t" || bad "release.yml $j: files are not all checked against SHA256SUMS"
   grep -qF 'needs.draft.outputs.sums_sha' <<<"$t" || bad "release.yml $j: SHA256SUMS is not tied to the draft job's digest"
 done
 grep -qF 'needs: [plan, draft]' <<<"$pj" || bad "release.yml publish: does not need draft"

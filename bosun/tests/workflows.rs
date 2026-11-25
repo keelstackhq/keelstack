@@ -393,6 +393,27 @@ fn release_runs_only_on_main_merges_and_never_puts_event_data_in_a_script() {
             ["publish", "release"].contains(&id.as_str()),
             "job `{id}` grants {grants:?}"
         );
+        if id == "release" {
+            // The tag job holds the deploy key and runs no dependency code: no toolchain or
+            // package manager anywhere in it.
+            let code: String = body
+                .lines()
+                .filter(|l| !l.trim_start().starts_with('#'))
+                .collect::<Vec<_>>()
+                .join("\n");
+            for banned in [
+                "cargo ",
+                "npm ",
+                "pnpm",
+                "rust-toolchain",
+                "hoist release publish",
+            ] {
+                assert!(
+                    !code.contains(banned),
+                    "job release runs `{banned}` next to the tag key"
+                );
+            }
+        }
         let want = if id == "publish" {
             "release"
         } else {

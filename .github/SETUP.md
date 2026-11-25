@@ -106,10 +106,11 @@ Computer steps first, then phone steps. Typical first run:
   waits for the owner's tap (D-028): a version-bump merge or a dispatch of release.yml (or
   cargo-deny-npm.yml, an npm publish of the cargo-deny packages) publishes nothing before it;
   the environment's default-branch-only rule keeps both on main. How to release:
-  `docs/releasing.md`. One tap per release: only job `publish` of release.yml is in `release`; after the merge of
-  the PR that introduced `release-tags`, the owner runs `hoist apply --area github` once (creates
-  the environment, re-seals the key there, sets the reviewer); delete the old secret
-  `RELEASE_TAG_KEY` of environment `release` afterwards. Retired with the old
+  `docs/releasing.md`. One tap per release: only job `publish` of release.yml is in `release`. Before merging the
+  next version-bump PR, the owner runs `hoist apply --area github` once on main (creates
+  `release-tags`, re-keys the tag deploy key there and deletes the old key and the old secret of
+  `release` itself, sets the reviewer); a version bump merged earlier would publish untapped and
+  fail at the tag. Retired with the old
   repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build

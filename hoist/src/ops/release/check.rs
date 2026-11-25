@@ -93,16 +93,34 @@ pub fn release_check(dir: &Path, verbose: bool) -> Result<Report, HoistError> {
                 humans.push(first_publish_step(&p.name, p.kind));
                 continue;
             }
-            (Fetch::Got(Some(latest)), Fetch::Got(true)) => items.push(item(
-                "registry",
-                p,
-                Action::Ok,
-                if want.is_empty() {
-                    format!("on {reg} (newest {latest}); published by its own workflow")
+            (Fetch::Got(Some(latest)), Fetch::Got(true)) => {
+                // The workspace version is there, but the registry may be ahead of it.
+                let ahead = matches!(
+                    (Version::parse(&latest), Version::parse(want)),
+                    (Ok(l), Ok(w)) if l > w
+                );
+                if ahead {
+                    items.push(item(
+                        "registry",
+                        p,
+                        Action::Drift,
+                        format!(
+                            "{reg} has {latest}, newer than the workspace's {want}: the workspace version is behind the registry"
+                        ),
+                    ));
                 } else {
-                    format!("on {reg} at {want} (newest {latest})")
-                },
-            )),
+                    items.push(item(
+                        "registry",
+                        p,
+                        Action::Ok,
+                        if want.is_empty() {
+                            format!("on {reg} (newest {latest}); published by its own workflow")
+                        } else {
+                            format!("on {reg} at {want} (newest {latest})")
+                        },
+                    ));
+                }
+            }
             (Fetch::Got(Some(latest)), Fetch::Got(false)) => {
                 // The registry ahead of the workspace is no pending release: say so.
                 let ahead = matches!(

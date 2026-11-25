@@ -214,3 +214,33 @@ fn a_registry_entry_has_no_version_and_only_its_presence_counts() {
         "{i}"
     );
 }
+
+#[test]
+fn a_registry_ahead_of_the_workspace_is_drift_even_when_the_workspace_version_is_published() {
+    let (o, _api, v) = run(&[
+        (
+            "GET /@acme%2Flib",
+            200,
+            r#"{"dist-tags":{"latest":"2.0.0"}}"#,
+            &[],
+        ),
+        ("GET /@acme%2Flib/1.0.0", 200, "{}", &[]),
+        (
+            "GET /api/v1/crates/tool",
+            200,
+            r#"{"crate":{"max_stable_version":"0.3.0"}}"#,
+            &[],
+        ),
+        ("GET /api/v1/crates/tool/0.3.0", 200, "{}", &[]),
+    ]);
+    assert_eq!(o.status.code(), Some(1), "{v:#}");
+    let i = item(&v, "registry", "@acme/lib@1.0.0");
+    assert_eq!(i["action"], "drift", "{i}");
+    assert!(
+        i["reason"]
+            .as_str()
+            .unwrap()
+            .contains("newer than the workspace"),
+        "{i}"
+    );
+}

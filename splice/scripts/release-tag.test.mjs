@@ -88,19 +88,42 @@ test("an untagged version is tagged and released", () => {
   );
 });
 
-/** Job `draft`'s release step in a directory holding the release assets and the notes. */
-function draftRun(gh, previous) {
+const EXPECTED = [
+  ...["x86_64-unknown-linux-musl", "aarch64-unknown-linux-musl", "x86_64-apple-darwin", "aarch64-apple-darwin"].flatMap((t) =>
+    ["bosun", "hoist", "berth", "keel"].map((n) => `${n}-${t}`).concat([`splice-${t}.tar.gz`, `hoard-${t}.tar.gz`]),
+  ),
+  ...["bosun", "hoist", "berth", "keel"].map((n) => `${n}-x86_64-pc-windows-msvc.exe`),
+  "splice-x86_64-pc-windows-msvc.zip",
+  "hoard-x86_64-pc-windows-msvc.tar.gz",
+  "action-bundle.tar.gz",
+  "SHA256SUMS",
+];
+
+/** Job `draft`'s release step in a directory holding the release assets, the notes and the list. */
+function draftRun(gh, previous, { built = true, curl = "404" } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "draft-step-"));
   mkdirSync(join(dir, "release"));
   writeFileSync(join(dir, "release/splice-x86_64-unknown-linux-musl.tar.gz"), "asset\n");
   writeFileSync(join(dir, "notes.md"), "notes\n");
+  writeFileSync(join(dir, "expected-all.txt"), [...EXPECTED].sort().join("\n") + "\n");
   const fake = fakeGh(gh);
   const r = runStep(DRAFT_STEP, {
     cwd: dir,
-    env: { ...fake.env, VERSION: "0.22.0", TAG: "v0.22.0", SHA: "abc", PREVIOUS: previous, GH_TOKEN: "x", GH_REPO: "o/r" },
+    env: {
+      ...fake.env,
+      VERSION: "0.22.0",
+      TAG: "v0.22.0",
+      SHA: "abc",
+      PREVIOUS: previous,
+      GH_TOKEN: "x",
+      GH_REPO: "o/r",
+      BUILD_OK: String(built),
+      FAKE_CURL_CODE: curl,
+    },
   });
   return { r, fake };
 }
+const draftOf = (extra = {}) => ({ releases: [{ id: 3, tag: "v0.22.0", draft: true, assets: EXPECTED, ...extra }], next: 4 });
 
 test("the draft is created with the notes from the previous release only when there is one", () => {
   const withPrev = draftRun({}, "v0.21.5");
@@ -115,11 +138,51 @@ test("the draft is created with the notes from the previous release only when th
   assert.ok(!b.includes("--notes-start-tag"), "the first release: GitHub's default notes");
 });
 
-test("an existing draft is reused as it is, a published release without its tag stops", () => {
-  const again = draftRun({ releases: [{ id: 3, tag: "v0.22.0", draft: true }], next: 4 }, "");
-  assert.equal(again.r.status, 0, again.r.stderr);
-  assert.deepEqual(creates(again.fake.calls()), [], "this run's build output is not used");
-  assert.deepEqual(again.fake.state().releases.map((x) => [x.id, x.draft]), [[3, true]]);
+test("a complete draft of this workflow is reused as it is, even when this run built nothing", () => {
+  for (const built of [true, false]) {
+    const again = draftRun(draftOf(), "", { built });
+    assert.equal(again.r.status, 0, again.r.stderr + again.r.stdout);
+    assert.deepEqual(creates(again.fake.calls()), [], "this run's build output is not used");
+    assert.deepEqual(again.fake.state().releases.map((x) => [x.id, x.draft]), [[3, true]]);
+  }
+});
+
+test("a draft for another commit or by another author is not trusted", () => {
+  const other = draftRun(draftOf({ target: "def" }), "");
+  assert.equal(other.r.status, 1);
+  assert.match(other.r.stdout, /not this workflow's \(its target is def, not abc\).*gh release delete v0\.22\.0/);
+  const alien = draftRun(draftOf({ author: "mallory" }), "");
+  assert.equal(alien.r.status, 1);
+  assert.match(alien.r.stdout, /created by mallory, not github-actions\[bot\]/);
+  for (const x of [other, alien]) {
+    assert.deepEqual(creates(x.fake.calls()), []);
+    assert.ok(!x.fake.calls().some((c) => c.includes("DELETE")), "never deleted automatically");
+  }
+});
+
+test("an incomplete draft is remade only when no registry has the version", () => {
+  const partial = draftOf({ assets: EXPECTED.slice(0, 5) });
+  const remade = draftRun(partial, "", { curl: "404" });
+  assert.equal(remade.r.status, 0, remade.r.stderr + remade.r.stdout);
+  assert.ok(remade.fake.calls().some((c) => c.includes("DELETE") && c.includes("repos/o/r/releases/3")));
+  assert.equal(creates(remade.fake.calls()).length, 1);
+  const published = draftRun(partial, "", { curl: "200" });
+  assert.equal(published.r.status, 1);
+  assert.match(published.r.stdout, /already on a registry.*do not delete/);
+  assert.ok(!published.fake.calls().some((c) => c.includes("DELETE")));
+  const unreadable = draftRun(partial, "", { curl: "503" });
+  assert.equal(unreadable.r.status, 1);
+  assert.match(unreadable.r.stdout, /cannot tell whether 0\.22\.0 is on a registry/);
+  const nobuild = draftRun(partial, "", { built: false });
+  assert.equal(nobuild.r.status, 1);
+  assert.match(nobuild.r.stdout, /built nothing to remake it/);
+});
+
+test("without a draft and without a build nothing is created; a published release without its tag stops", () => {
+  const none = draftRun({}, "", { built: false });
+  assert.equal(none.r.status, 1);
+  assert.match(none.r.stdout, /no draft of v0\.22\.0 to reuse/);
+  assert.deepEqual(creates(none.fake.calls()), []);
   const published = draftRun({ releases: [{ id: 3, tag: "v0.22.0", draft: false }], next: 4 }, "");
   assert.equal(published.r.status, 1);
   assert.match(published.r.stdout, /is published but its tag is missing/);

@@ -2,10 +2,12 @@
 
 ## One-time after the PR that added `release-tags`
 
-The owner runs `hoist apply --area github` once on main: it creates environment `release-tags`,
-seals the tag deploy key there (replacing the one in `release`), and sets the required reviewer
-on `release`. Then delete the secret `RELEASE_TAG_KEY` of environment `release` (Settings,
-Environments). Until then the tag job fails closed (no key in its environment).
+Before merging the next version-bump PR, the owner runs `hoist apply --area github` once on main.
+It creates environment `release-tags`, re-keys the tag deploy key into it (a new key; the old key
+and the old `RELEASE_TAG_KEY` secret of `release` are deleted by apply itself), and sets the
+required reviewer on `release`. If a version-bump PR merges first, `publish` runs in an
+environment without its reviewer (untapped) and the tag job fails closed (no key in its
+environment).
 
 ## How to release keelstack
 

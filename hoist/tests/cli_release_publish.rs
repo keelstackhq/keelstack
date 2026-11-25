@@ -975,7 +975,10 @@ fn npm_publish_runs_in_package_dir() {
     assert_eq!(output.status.code(), Some(0), "{v:#}\n{}", stderr(&output));
     let log = tool_log(&env, "npm");
     assert!(has_line(&log, "--version env:"), "{log:?}");
-    assert!(has_line(&log, "publish --access public env:"), "{log:?}");
+    assert!(
+        has_line(&log, "publish --access public --ignore-scripts env:"),
+        "{log:?}"
+    );
     assert!(
         !log.iter().any(|l| l.contains("CARGO_REGISTRY_TOKEN")),
         "{log:?}"
@@ -1072,7 +1075,7 @@ fn crates_exchange_publish_and_revoke() {
     let log = tool_log(&env, "cargo");
     assert_eq!(log.len(), 1, "{log:?}");
     assert!(
-        log[0].starts_with("publish -p tool --locked env:"),
+        log[0].starts_with("publish -p tool --locked --no-verify env:"),
         "{log:?}"
     );
     assert!(log[0].contains("CARGO_REGISTRY_TOKEN"), "{log:?}");
@@ -1199,7 +1202,7 @@ fn rerun_after_partial_failure_publishes_only_missing() {
     );
     assert!(has_line(
         &tool_log(&env, "cargo"),
-        "publish -p tool --locked"
+        "publish -p tool --locked --no-verify"
     ));
     for (kind, key) in [
         ("tag", "@acme/lib@1.0.0"),
@@ -1243,7 +1246,7 @@ fn never_published_package_is_pending_and_others_continue() {
     assert!(!has_line(&tool_log(&env, "npm"), "publish"));
     assert!(has_line(
         &tool_log(&env, "cargo"),
-        "publish -p tool --locked"
+        "publish -p tool --locked --no-verify"
     ));
     assert_eq!(item(&v, "crates", "tool@0.3.0")["action"], "ok");
 }
@@ -1939,7 +1942,7 @@ fn only_publishes_registries_without_tags_or_github_writes() {
     assert!(
         has_line(
             &log,
-            "publish --access public --provenance --tag v1-latest env:"
+            "publish --access public --ignore-scripts --provenance --tag v1-latest env:"
         ),
         "{log:?}"
     );

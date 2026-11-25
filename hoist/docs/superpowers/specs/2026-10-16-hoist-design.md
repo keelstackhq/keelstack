@@ -1043,7 +1043,7 @@ errors.
 #### 9.3.1 Registry-only mode (`--only`)
 
 `hoist release publish --only crates,npm` (either one, or both) is the publish a workflow that
-tags and releases by other means calls (keelstack's `release.yml`, whose single `release` job, one environment tap, runs it as its crates and npm steps; a
+tags and releases by other means calls (keelstack's `release.yml`: job `draft` makes the draft release and its checked assets once, job `publish` (environment `release`, the owner's one tap, `contents: read` + `id-token: write`) runs it as its crates and npm steps from the draft's assets, job `release` (environment `release-tags`, the tag key) tags and publishes the draft; a
 consumer repo whose tag step is its own). It skips the tag, GitHub Release and deploy steps and
 does not use local tags to decide what is pending: every package of the release model is looked
 at, each at its manifest version, so a re-run of the same version is a no-op (`ok`, "already on
@@ -1065,6 +1065,7 @@ at, each at its manifest version, so a re-run of the same version is a no-op (`o
   (and `repository.directory=<dir>` for a package inside the repo) so the manifest names the
   repository the workflow runs in, then `npm publish --provenance`; `--npm-tag T` adds `--tag T`
   (a backport uses a `v<major>.<minor>-latest` tag so `latest` never moves back).
+- `cargo publish` runs with `--no-verify` and `npm publish` with `--ignore-scripts`: CI built and tested the commit, and no dependency script runs next to the credentials. An npm launcher (with its platform packages) also waits for its crate: held in this run, or, with `--only npm` alone and a crate that publishes to crates.io, absent from it (a read error is exit 1, never a hold).
 - `--npm-tag` and `--provenance` need `--only` (exit 3 otherwise). `npm pkg set` edits each package.json in place; it is restored after the publish, whether or not npm succeeded. `--npm-dir` order does not matter: a staged package's `optionalDependencies` on other staged packages are published first, and a pinned version that is not the staged one is exit 3.
 - Preflight (§9.4) is the same except that `HEAD` need not equal `GITHUB_SHA` (a registry-only run has no tag to create at a commit, so the check that ties the tag to the started commit has nothing to protect): the job checks out
   the release tag, which is the release commit and not the commit the workflow started on. No

@@ -968,9 +968,21 @@ fn launcher_dry_run_names_the_build_on_the_first_real_publish() {
     assert_eq!(builds, ["@acme/tool-darwin-arm64@0.3.0"], "{v:#}");
 }
 
+/// The fixture's crate also publishes to crates.io (`crates = {}`), committed.
+fn crate_on_crates_io(p: &Pub) {
+    let d = p.repo.path();
+    let file = d.join("crates/tool/hoist.toml");
+    let mut text = std::fs::read_to_string(&file).unwrap();
+    text.push_str("crates = {}\n");
+    std::fs::write(&file, text).unwrap();
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: crates"]);
+}
+
 #[test]
 fn only_npm_holds_a_launcher_whose_crate_is_not_on_crates_io() {
     let p = pub_setup();
+    crate_on_crates_io(&p);
     let api = api(&p.head, &[(TOOL_V, 404, "", &[])]);
     let output = publish_cmd(&p, &api)
         .args(["--only", "npm"])
@@ -994,4 +1006,82 @@ fn only_npm_holds_a_launcher_whose_crate_is_not_on_crates_io() {
         );
     }
     assert!(published_dirs(&p).is_empty());
+}
+
+#[test]
+fn only_npm_with_an_unreadable_crates_io_fails_instead_of_holding() {
+    for status in [403, 503] {
+        let p = pub_setup();
+        crate_on_crates_io(&p);
+        let api = api(&p.head, &[(TOOL_V, status, r#"{"message":"no"}"#, &[])]);
+        let output = publish_cmd(&p, &api)
+            .args(["--only", "npm"])
+            .output()
+            .unwrap();
+        let v = json(&output);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{status}: {v:#}\n{}",
+            stderr(&output)
+        );
+        let it = item(&v, "npm", "@acme/tool-linux-x64@0.3.0");
+        assert!(
+            it["reason"]
+                .as_str()
+                .unwrap()
+                .contains("cannot read crate tool"),
+            "{it:#}"
+        );
+        assert!(published_dirs(&p).is_empty());
+    }
+}
+
+#[test]
+fn a_crate_that_ships_binaries_only_never_makes_the_launcher_read_crates_io() {
+    // The crate ships binaries only (`crates = false`): crates.io says 404 and nobody asks.
+    let p = pub_setup();
+    let d = p.repo.path();
+    let file = d.join("crates/tool/hoist.toml");
+    let text = std::fs::read_to_string(&file).unwrap() + "crates = false\n";
+    std::fs::write(&file, text).unwrap();
+    git(d, &["add", "-A"]);
+    git(d, &["commit", "-q", "-m", "chore: no crates"]);
+    let api = api(
+        &p.head,
+        &[
+            (TOOL_V, 404, "", &[]),
+            (LINUX_V, 404, "", &[]),
+            (LINUX_V, 200, "{}", &[]),
+            (LINUX_PKG, 200, "{}", &[]),
+            (DARWIN_V, 404, "", &[]),
+            (DARWIN_V, 200, "{}", &[]),
+            (DARWIN_PKG, 200, "{}", &[]),
+            (LAUNCHER_V, 404, "", &[]),
+            (LAUNCHER_V, 200, "{}", &[]),
+            (LAUNCHER_PKG, 200, "{}", &[]),
+        ],
+    );
+    let output = publish_cmd(&p, &api)
+        .args(["--only", "npm"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}\n{}",
+        stderr(&output),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        !api.requests()
+            .iter()
+            .any(|r| r.path.starts_with("/api/v1/crates/tool")),
+        "{:?}",
+        api.requests()
+    );
+    assert_eq!(published_dirs(&p).len(), 3);
+    // A full dry run does not read crates.io for it either.
+    let dry = publish_cmd(&p, &api).arg("--dry-run").output().unwrap();
+    assert_eq!(dry.status.code(), Some(0), "{}", stderr(&dry));
 }

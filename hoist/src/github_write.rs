@@ -553,24 +553,38 @@ fn write_tag_key(
     );
     drop(key);
     let Err(err) = sealed else {
-        // A re-key: the old key(s) go only now that the new one and its secret exist.
-        for old in replace.iter().filter(|o| Some(**o) != id) {
-            http.send_json(
-                Method::Delete,
-                &format!("{repo}/keys/{}", seg(&old.to_string())),
-                None,
-            )?;
-        }
-        // The secret a move to another environment leaves behind (404: none, fine).
+        // A re-key: only now that the new key and its secret are in place does the old one go:
+        // first a leftover secret of another environment (a 404 is fine), then the old key(s).
+        // Any other failure stops with an error that names what is left behind.
         if let Some(old_env) = old_env.filter(|o| *o != env && !replace.is_empty()) {
-            let _ = http.send_json(
-                Method::Delete,
-                &format!(
-                    "{repo}/environments/{}/secrets/{TAG_KEY_SECRET}",
-                    seg(old_env)
-                ),
-                None,
+            let path = format!(
+                "{repo}/environments/{}/secrets/{TAG_KEY_SECRET}",
+                seg(old_env)
             );
+            match http.send_json(Method::Delete, &path, None) {
+                Ok(_) | Err(HttpError::Rejected { status: 404, .. }) => {}
+                Err(e) => {
+                    return Err(HoistError::Network(format!(
+                        "the new tag key is in place, but deleting the old secret \
+                         {TAG_KEY_SECRET} of environment `{old_env}` failed: {e}; delete it and \
+                         the old deploy key(s) {} by hand (Settings)",
+                        ids(replace, id)
+                    )));
+                }
+            }
+        }
+        for old in replace.iter().filter(|o| Some(**o) != id) {
+            let path = format!("{repo}/keys/{}", seg(&old.to_string()));
+            match http.send_json(Method::Delete, &path, None) {
+                Ok(_) | Err(HttpError::Rejected { status: 404, .. }) => {}
+                Err(e) => {
+                    return Err(HoistError::Network(format!(
+                        "the new tag key is in place, but deleting the old deploy key {old} \
+                         failed: {e}; delete it by hand (Settings, Deploy keys): while it \
+                         stays, two keys are titled `{TAG_KEY_TITLE}`"
+                    )));
+                }
+            }
         }
         return Ok(None);
     };
@@ -753,4 +767,14 @@ fn merged_ruleset_body(
         "rules": rules,
         "bypass_actors": actors
     })
+}
+
+/// The ids of the old keys (not the new one) as text.
+fn ids(replace: &[u64], new: Option<u64>) -> String {
+    replace
+        .iter()
+        .filter(|o| Some(**o) != new)
+        .map(u64::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }

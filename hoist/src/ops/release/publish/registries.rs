@@ -238,7 +238,9 @@ fn npm(c: &Clients, dir: &Path, job: &Job, step: Step) -> Result<Outcome, HoistE
                 tool(Tool::Npm, &pkg_dir, &["pkg", "set", &d], &[])?;
             }
         }
-        let mut args = vec!["publish", "--access", access(pkg)];
+        // No lifecycle scripts: what is published was built and tested by CI (job `build`), and a
+        // dependency's install script must not run with the id-token in reach.
+        let mut args = vec!["publish", "--access", access(pkg), "--ignore-scripts"];
         if flags.provenance {
             args.push("--provenance");
         }
@@ -323,7 +325,9 @@ fn crates(
     let published = run_redacted(
         Tool::Cargo,
         dir,
-        &["publish", "-p", &pkg.name, "--locked"],
+        // --no-verify: CI built and tested this commit; verifying would compile it again here,
+        // running build scripts and proc-macros next to the publish token.
+        &["publish", "-p", &pkg.name, "--locked", "--no-verify"],
         &[("CARGO_REGISTRY_TOKEN", &token)],
     );
     drop(token);

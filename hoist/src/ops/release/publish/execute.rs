@@ -23,19 +23,30 @@ fn waits_on<'a>(job: &Job, step: Step, pending: &'a [String]) -> Option<&'a Stri
     pending.iter().find(|n| job.pkg.deps.contains(n))
 }
 
-/// An npm launcher (and its platform packages) install the crate's binary: while the crate is
-/// not on crates.io at this version they wait, whether the crate is held in this run (`pending`)
-/// or this run publishes npm only (`--only npm`) and crates.io has no such version.
-fn waits_for_crate(c: &Clients, job: &Job, pending: &[String]) -> Option<String> {
-    let l = job.pkg.launcher.as_ref()?;
+/// What a launcher job waits for: nothing, its crate (held; a hold, not a failure), or a failed
+/// read of crates.io (a failure: never a guess).
+enum CrateWait {
+    No,
+    Held(String),
+    Failed(String),
+}
+
+/// An npm launcher (and its platform packages) install the crate's binary: while a crate that
+/// publishes to crates.io is held in this run (`pending`), or, with `--only npm` alone, is not on
+/// crates.io at this version, they wait. A full run and a crate that ships binaries only never
+/// read crates.io for this.
+fn waits_for_crate(c: &Clients, job: &Job, pending: &[String]) -> CrateWait {
+    let Some(l) = job.pkg.launcher.as_ref() else {
+        return CrateWait::No;
+    };
     let (name, v) = (&l.crate_name, &job.pkg.version.value);
     if pending.contains(name) {
-        return Some(format!(
+        return CrateWait::Held(format!(
             "waits for crate {name}, which is not on crates.io yet"
         ));
     }
-    if job.only.is_some_and(|o| o.crates) {
-        return None;
+    if !job.crate_published || !job.only.is_some_and(|o| o.npm && !o.crates) {
+        return CrateWait::No;
     }
     let path = format!(
         "/api/v1/crates/{}/{}",
@@ -43,14 +54,14 @@ fn waits_for_crate(c: &Clients, job: &Job, pending: &[String]) -> Option<String>
         crate::http::seg(v)
     );
     match c.crates.get_json(&path) {
-        Ok(crate::http::Fetched::Ok(_)) => None,
-        Ok(crate::http::Fetched::NotFound) => Some(format!(
+        Ok(crate::http::Fetched::Ok(_)) => CrateWait::No,
+        Ok(crate::http::Fetched::NotFound) => CrateWait::Held(format!(
             "waits for crate {name} {v}, which is not on crates.io yet"
         )),
         Ok(crate::http::Fetched::Forbidden(why)) => {
-            Some(format!("cannot read crate {name} {v} on crates.io: {why}"))
+            CrateWait::Failed(format!("cannot read crate {name} {v} on crates.io: {why}"))
         }
-        Err(e) => Some(format!("cannot read crate {name} {v} on crates.io: {e}")),
+        Err(e) => CrateWait::Failed(format!("cannot read crate {name} {v} on crates.io: {e}")),
     }
 }
 
@@ -76,12 +87,19 @@ pub(super) fn dry_run(
         let mut platform_pending = false;
         let crate_wait = waits_for_crate(c, job, &pending_pkgs);
         for step in job.steps() {
-            if let Some(why) = crate_wait.as_ref().filter(|_| !step.github()) {
-                if !pending_pkgs.contains(&job.pkg.name) {
-                    pending_pkgs.push(job.pkg.name.clone());
+            match &crate_wait {
+                CrateWait::Held(why) if !step.github() => {
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
+                    items.push(item(job, step, Action::Pending, why.clone()));
+                    continue;
                 }
-                items.push(item(job, step, Action::Pending, why.clone()));
-                continue;
+                CrateWait::Failed(why) if !step.github() => {
+                    items.push(item(job, step, Action::Unknown, why.clone()));
+                    continue;
+                }
+                _ => {}
             }
             if let Some(dep) = waits_on(job, step, &pending_pkgs) {
                 let why = format!("waits for {dep}, which is not on its registry yet");
@@ -158,7 +176,7 @@ pub(super) fn execute(
     for job in jobs {
         let mut platform_pending = false;
         let crate_wait = if failed {
-            None
+            CrateWait::No
         } else {
             waits_for_crate(c, job, &pending_pkgs)
         };
@@ -167,12 +185,20 @@ pub(super) fn execute(
                 items.push(item(job, step, Action::Update, "not attempted".to_string()));
                 continue;
             }
-            if let Some(why) = crate_wait.as_ref().filter(|_| !step.github()) {
-                if !pending_pkgs.contains(&job.pkg.name) {
-                    pending_pkgs.push(job.pkg.name.clone());
+            match &crate_wait {
+                CrateWait::Held(why) if !step.github() => {
+                    if !pending_pkgs.contains(&job.pkg.name) {
+                        pending_pkgs.push(job.pkg.name.clone());
+                    }
+                    items.push(item(job, step, Action::Pending, why.clone()));
+                    continue;
                 }
-                items.push(item(job, step, Action::Pending, why.clone()));
-                continue;
+                CrateWait::Failed(why) if !step.github() => {
+                    failed = true;
+                    items.push(item(job, step, Action::Update, format!("failed: {why}")));
+                    continue;
+                }
+                _ => {}
             }
             if let Some(dep) = waits_on(job, step, &pending_pkgs) {
                 let why = format!("waits for {dep}, which is not on its registry yet");

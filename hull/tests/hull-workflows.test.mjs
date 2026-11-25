@@ -169,6 +169,13 @@ test("root release.yml plans on merged PRs to main and releases behind the relea
   assert.deepEqual(publish.permissions, { contents: "read", "id-token": "write" });
   assert.equal(release.environment, "release-tags");
   assert.deepEqual(release.permissions, { contents: "write" });
+  // Exactly two environments: the owner's tap and the tag key's.
+  const envs = new Set(
+    Object.values(wf.jobs)
+      .map((j) => j.environment)
+      .filter(Boolean),
+  );
+  assert.deepEqual([...envs].sort(), ["release", "release-tags"]);
   const idToken = Object.entries(wf.jobs).filter(([, j]) => j.permissions?.["id-token"]);
   assert.deepEqual(
     idToken.map(([k]) => k),

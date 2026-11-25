@@ -46,6 +46,8 @@ pub(super) struct Job<'a> {
     built: std::cell::Cell<bool>,
     /// `--only`: registry-only mode (no tag, release or deploy; just the named registries).
     only: Option<Only>,
+    /// A launcher job: its crate publishes to crates.io (`[publish] crates`).
+    crate_published: bool,
 }
 
 /// The registries `--only` selects.
@@ -302,6 +304,7 @@ fn launcher_jobs<'a>(
             bins,
             built: std::cell::Cell::new(false),
             only: None,
+            crate_published: krate.publish.crates.is_some(),
         });
     }
     Ok(jobs)
@@ -551,6 +554,7 @@ pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<R
             bins: Vec::new(),
             built: std::cell::Cell::new(false),
             only: None,
+            crate_published: false,
         });
         jobs.extend(launcher_jobs(dir, &model, pkg, assets)?);
     }
@@ -565,6 +569,7 @@ pub fn release_publish(dir: &Path, opts: PublishOpts, verbose: bool) -> Result<R
             bins: Vec::new(),
             built: std::cell::Cell::new(false),
             only: None,
+            crate_published: false,
         });
     }
     for j in &mut jobs {

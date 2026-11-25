@@ -698,9 +698,19 @@ fn a_key_whose_secret_is_in_another_environment_is_re_keyed_by_apply() {
             200,
             r#"{"total_count":2,"environments":[{"name":"release"},{"name":"release-tags"}]}"#,
         )
+        // Reads in order: plan, apply's own, and apply's read-back (the new key, its secret).
         .set(KEYS, 200, &format!("[{old}]"))
+        .then(KEYS, 200, &format!("[{old}]"))
+        .then(KEYS, 200, &format!("[{OURS}]"))
+        .set(
+            "GET /repos/acme/x/rulesets/12",
+            200,
+            &tags(DEPLOY_KEY_ACTOR),
+        )
         .set(ENV_SECRETS, 200, SECRET_THERE)
         .set(&format!("GET {tags_env}/secrets"), 200, SECRET_NONE)
+        .then(&format!("GET {tags_env}/secrets"), 200, SECRET_NONE)
+        .then(&format!("GET {tags_env}/secrets"), 200, SECRET_THERE)
         .set(&format!("GET {tags_env}/secrets/public-key"), 200, &key)
         .set(
             &format!("PUT {tags_env}/secrets/RELEASE_TAG_KEY"),
@@ -721,7 +731,9 @@ fn a_key_whose_secret_is_in_another_environment_is_re_keyed_by_apply() {
     let k = item(&plan, "tag_deploy_key", "hoist: release tags");
     assert_eq!(k["action"], "update", "{k}");
     assert!(k["reason"].as_str().unwrap().contains("re-key"), "{k}");
-    run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 0);
+    let k = item(&out.report, "tag_deploy_key", "hoist: release tags");
+    assert_eq!(k["action"], "ok", "read back after the re-key: {k}");
     let w = writes(&api);
     let pos = |s: &str| {
         w.iter()
@@ -729,12 +741,64 @@ fn a_key_whose_secret_is_in_another_environment_is_re_keyed_by_apply() {
             .unwrap_or_else(|| panic!("{s}: {w:?}"))
     };
     let put = pos(&format!("PUT {tags_env}/secrets/RELEASE_TAG_KEY"));
+    let old_secret = pos("DELETE /repos/acme/x/environments/release/secrets/RELEASE_TAG_KEY");
+    let old_key = pos("DELETE /repos/acme/x/keys/55");
     assert!(pos(POST_KEY) < put, "{w:?}");
     assert!(
-        put < pos("DELETE /repos/acme/x/keys/55"),
-        "the old key goes last: {w:?}"
+        put < old_secret,
+        "the new secret is in before the old one goes: {w:?}"
     );
-    pos("DELETE /repos/acme/x/environments/release/secrets/RELEASE_TAG_KEY");
+    assert!(old_secret < old_key, "the old key goes last: {w:?}");
+}
+
+/// A lost secret in the same environment: re-key there, and no secret of another environment is
+/// deleted.
+#[test]
+fn a_lost_secret_is_re_keyed_in_place_without_deleting_a_secret() {
+    let (_sk, key) = keypair();
+    let old = OURS.replace("\"id\":77", "\"id\":55");
+    let api = Routes::fresh(&key)
+        .set(KEYS, 200, &format!("[{old}]"))
+        .set(
+            "GET /repos/acme/x/rulesets/12",
+            200,
+            &tags(DEPLOY_KEY_ACTOR),
+        )
+        .set("DELETE /repos/acme/x/keys/55", 204, "")
+        .start();
+    let dir = repo(TOML);
+    let plan = run(&api, dir.path(), &["plan", "--area", "github"], 0).report;
+    assert_eq!(
+        item(&plan, "tag_deploy_key", "hoist: release tags")["action"],
+        "update"
+    );
+    run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let w = writes(&api);
+    assert!(w.contains(&PUT_SECRET.to_string()), "{w:?}");
+    assert!(
+        w.contains(&"DELETE /repos/acme/x/keys/55".to_string()),
+        "{w:?}"
+    );
+    assert!(
+        !w.iter()
+            .any(|x| x.starts_with("DELETE") && x.contains("/secrets/")),
+        "{w:?}"
+    );
+}
+
+/// A failed deletion of the old key is an error that names it.
+#[test]
+fn a_failed_old_key_delete_names_the_stale_key() {
+    let (_sk, key) = keypair();
+    let old = OURS.replace("\"id\":77", "\"id\":55");
+    let api = Routes::fresh(&key)
+        .set(KEYS, 200, &format!("[{old}]"))
+        .set("DELETE /repos/acme/x/keys/55", 500, r#"{"message":"boom"}"#)
+        .start();
+    let dir = repo(TOML);
+    let out = run(&api, dir.path(), &["apply", "--yes", "--area", "github"], 1);
+    let text = format!("{}{}", out.stdout, out.stderr);
+    assert!(text.contains("old deploy key 55"), "{text}");
 }
 
 #[test]
