@@ -307,6 +307,7 @@ pub fn comment_clean<'a>(
     excluded: &[String],
     models: Option<&[String]>,
     chunks: usize,
+    only_blockers: bool,
 ) -> Vec<String> {
     let mut newest: Vec<(String, String, bool)> = Vec::new();
     let mut blocked = false;
@@ -322,7 +323,8 @@ pub fn comment_clean<'a>(
         let clean = effective(&v).approve
             && !v.escalate_risk
             && (chunks <= 1 || (1..=chunks as u32).all(listed))
-            && v.count("major") == 0
+            && v.count("blocker") == 0
+            && (only_blockers || v.count("major") == 0)
             && v.confidence >= VERDICT_MIN_CONFIDENCE;
         blocked |= !clean;
         let model_ok =
@@ -388,6 +390,33 @@ pub fn bot_verdict_json(body: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn clean_of(findings: &str, verdict: &str, only_blockers: bool) -> Vec<String> {
+        let json = format!(
+            r#"{{"pr":1,"head_sha":"h","verdict":"{verdict}","confidence":0.95,"findings":[{findings}]}}"#
+        );
+        let body = format!("x\n<!-- bosun:reviewer s1 -->\n{COMMENT_MARKER}\n```json\n{json}\n```");
+        comment_clean(
+            [(body.as_str(), true, "k1")],
+            1,
+            "h",
+            &[],
+            None,
+            0,
+            only_blockers,
+        )
+    }
+
+    #[test]
+    fn no_ci_clean_honours_block_on() {
+        let major = r#"{"severity":"major","file":"a","claim":"c","evidence":"e"}"#;
+        let blocker = r#"{"severity":"blocker","file":"a","claim":"c","evidence":"e"}"#;
+        assert!(clean_of(major, "approve", false).is_empty());
+        assert_eq!(clean_of(major, "approve", true).len(), 1);
+        // A blocker, or a rejection, blocks whatever block_on says.
+        assert!(clean_of(blocker, "approve", true).is_empty());
+        assert!(clean_of("", "request-changes", true).is_empty());
+    }
 
     fn v(verdict: &str, conf: f64, sev: &[&str]) -> Verdict {
         Verdict {

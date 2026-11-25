@@ -43,10 +43,15 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
 
 ## Decisions that shape the work
 
-- D-022: the orchestrator signs and merges every PR after green required checks and two approving
-  verdicts (>= 0.85, no blocker/major) from two different reviewer sessions on the exact head.
-  Owner only: the trust root (`.bosun/approvers.toml`, bosun `[approvals]`). A version-bump merge
-  releases after the owner's tap on the `release` environment (D-028). Child sessions never merge, tag, release or force-push.
+- D-022 as amended by D-028: the orchestrator signs (or the CI signer signs) and merges every PR
+  as soon as required checks are green and ONE clean independent verdict (>= 0.9, no blocker)
+  is on the exact head. Only blockers (security, data loss, broken main, broken release) block;
+  other findings go to the rolling `bosun:followups` issue (`bosun followups add`). A red main
+  only warns. The owner approves what the signer refuses (.github/**, scripts, R-ci, secrets,
+  environments), batched, and taps `release` once per release. Children never merge, tag,
+  release or force-push.
+- D-028: one requirement, one issue, one branch, one big PR; in-session implementer subagents by
+  default; child sessions only for separate requirements, checked every 20-30 min.
 - D-023: one monorepo, one version, one release; D-003 ended (one contract file); old repos are
   archived, their `gh:keelstackhq/<tool>` sources still render. New sources:
   `gh:keelstackhq/keelstack//hull/template`, `gh:keelstackhq/keelstack//decisions/channel`

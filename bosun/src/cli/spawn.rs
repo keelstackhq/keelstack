@@ -8,8 +8,8 @@ use serde_json::{Value, json};
 
 use super::{IntakeArgs, SpawnArgs, intake};
 use crate::app::{
-    App, default_branch, end_lease, kill_switch, limits_from_default, main_red, set_state,
-    settle_race, task_meta, trusted_notes,
+    App, default_branch, end_lease, kill_switch, limits_from_default, set_state, settle_race,
+    task_meta, trusted_notes,
 };
 use crate::cli::plan::epic_item;
 use crate::cli::risk_check::owner_slack_ids;
@@ -98,7 +98,7 @@ fn gather(
         None => Vec::new(),
     };
     let input = SpawnInput {
-        main_red: main_red(app.gh.as_ref())?.is_some(),
+        main_red: crate::app::main_red_blocking(app)?.is_some(),
         process_red: process_red(app.gh.as_ref())?.is_some(),
         process_fix: !restricted
             && (meta.as_ref().is_some_and(|m| m.kind == "process-fix")

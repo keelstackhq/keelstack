@@ -152,6 +152,28 @@ const KNOWN: &[(&str, &[&str])] = &[
             "folders",
         ],
     ),
+    // `[main_health]` (D-028) and `[review] verdicts_needed` / `block_on` are read from the
+    // release after 0.22.x (the first that ships flow v2).
+    (
+        "0.23.0",
+        &[
+            "project",
+            "stack",
+            "review",
+            "slack",
+            "cloud",
+            "prices",
+            "approvals",
+            "intake",
+            "trailers",
+            "checks",
+            "session",
+            "mode",
+            "ci",
+            "folders",
+            "main_health",
+        ],
+    ),
 ];
 
 /// The `.bosun/limits.toml` keys (`table.key`) each pinned release accepts.
@@ -525,6 +547,14 @@ fn a_workflow_that_runs_a_release_is_caught() {
 }
 
 #[test]
+fn main_health_is_known_from_0_23_0() {
+    // D-028: the monorepo's root config sets `[main_health]`; 0.22.x pins refuse it.
+    let has = |v: &str| known_for(KNOWN, v).is_some_and(|k| k.contains(&"main_health"));
+    assert!(!has("0.22.1"));
+    assert!(has("0.23.0"));
+}
+
+#[test]
 fn folders_is_known_from_0_22_0() {
     // The monorepo's root config needs it: a 0.21.0 pin (the release that is out) is refused.
     let has = |v: &str| known_for(KNOWN, v).is_some_and(|k| k.contains(&"folders"));
@@ -636,7 +666,8 @@ fn policy_known_follows_the_release_table() {
 #[test]
 fn an_unlisted_release_falls_back_to_the_newest_older_entry() {
     // Key sets only grow, so the newest older release is a safe subset: no hand-added entry.
-    assert_eq!(known_for(KNOWN, "0.99.0"), known_for(KNOWN, "0.22.0"));
+    assert_eq!(known_for(KNOWN, "0.99.0"), known_for(KNOWN, "0.23.0"));
+    assert_eq!(known_for(KNOWN, "0.22.1"), known_for(KNOWN, "0.22.0"));
     assert_eq!(known_for(KNOWN, "0.21.0"), known_for(KNOWN, "0.14.0"));
     assert_eq!(known_for(KNOWN, "0.20.0"), known_for(KNOWN, "0.14.0"));
     assert_eq!(known_for(KNOWN, "0.12.0"), known_for(KNOWN, "0.10.0"));

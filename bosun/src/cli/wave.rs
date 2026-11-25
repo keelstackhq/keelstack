@@ -12,7 +12,7 @@ use super::prereqs_gate::{blockers, open_items, plan_ids};
 use super::{EpicArg, WaveCmd};
 use crate::app::{
     App, active_issues, active_issues_blocking, default_branch, kill_switch, limits_from_default,
-    main_red, task_meta, trusted_notes,
+    task_meta, trusted_notes,
 };
 use crate::cli::status::process_red;
 use crate::config::{CONFIG_FILE, Config};
@@ -159,7 +159,7 @@ fn plan_on(app: &App, epic: u64) -> CmdResult {
         ));
     };
     let fixing = |kind: &str| epic_issue.labels.iter().any(|l| l == kind);
-    if let Some(red) = main_red(gh)?
+    if let Some(red) = crate::app::main_red_blocking(app)?
         && !fixing("bosun:kind/mainfix")
     {
         return Err(BosunError::halted(

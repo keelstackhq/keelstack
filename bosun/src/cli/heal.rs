@@ -27,7 +27,7 @@ use crate::core::meta::closing_issues;
 use crate::core::metrics::{CiRun, ci_head};
 use crate::core::mode::{Brake, HealMain, HealPr, brake};
 use crate::core::records::{Note, Record, parse_record, spend_total_today};
-use crate::core::risk::{clean_verdicts, revert_targets};
+use crate::core::risk::{clean_verdicts_in, revert_targets};
 use crate::core::signature::signature;
 use crate::core::spawn::{SpawnInput, check};
 use crate::core::state::{State, state_of, transition_allowed};
@@ -219,7 +219,8 @@ impl Run<'_> {
         excluded.push(a.trim().into());
         let models = review_models(gh, &pull.base_sha)?;
         let by = comments.iter().map(|c| (c.user.as_str(), c.body.as_str()));
-        if clean_verdicts(by, &pull.head_sha, &excluded, models.as_deref()).is_empty() {
+        let flow = crate::cli::risk_check::flow_at(gh, &pull.base_sha)?;
+        if clean_verdicts_in(by, &pull.head_sha, &excluded, models.as_deref(), flow).is_empty() {
             return skip(format!("no clean independent verdict on the head of #{m}"));
         }
         // D-019: with no CI nothing gates an auto-merge; the orchestrator merges the revert.
@@ -357,7 +358,7 @@ impl Run<'_> {
             .filter(|m| m.parent.as_deref() == Some(me))
             .count() as u32;
         let input = SpawnInput {
-            main_red: main_red(gh)?.is_some(),
+            main_red: crate::app::main_red_blocking(app)?.is_some(),
             process_red: process_red(gh)?.is_some(),
             mainfix: false,
             process_fix: false,

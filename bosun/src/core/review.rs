@@ -32,10 +32,12 @@ pub fn chunks(files: &[(String, usize)], max_bytes: usize) -> Vec<Vec<String>> {
     out
 }
 
-/// Whether a verdict has a blocker or major finding (severity compared case-insensitively).
-fn is_serious(v: &Verdict) -> bool {
+/// Whether a verdict has a blocker or, unless only blockers block (`[review] block_on =
+/// "blocker"`, D-028), a major finding (severity compared case-insensitively).
+fn is_serious(v: &Verdict, only_blockers: bool) -> bool {
     v.findings.iter().any(|f| {
-        f.severity.eq_ignore_ascii_case("blocker") || f.severity.eq_ignore_ascii_case("major")
+        f.severity.eq_ignore_ascii_case("blocker")
+            || (!only_blockers && f.severity.eq_ignore_ascii_case("major"))
     })
 }
 
@@ -50,6 +52,18 @@ pub fn merge_chunk_verdicts(
     head_sha: &str,
     total: u32,
     results: &[(u32, Result<Verdict, String>)],
+) -> Verdict {
+    merge_chunk_verdicts_in(pr, head_sha, total, results, false)
+}
+
+/// [`merge_chunk_verdicts`] where, with `only_blockers`, a major finding alone does not turn the
+/// merge into a request for changes (`[review] block_on = "blocker"`).
+pub fn merge_chunk_verdicts_in(
+    pr: u64,
+    head_sha: &str,
+    total: u32,
+    results: &[(u32, Result<Verdict, String>)],
+    only_blockers: bool,
 ) -> Verdict {
     let mut merged = Verdict {
         pr,
@@ -68,7 +82,7 @@ pub fn merge_chunk_verdicts(
         let worse = |a: &Result<Verdict, String>, b: &Result<Verdict, String>| {
             let rank = |r: &Result<Verdict, String>| match r {
                 Ok(v) if v.pr == pr && v.head_sha == head_sha => {
-                    let bad = v.verdict != "approve" || is_serious(v);
+                    let bad = v.verdict != "approve" || is_serious(v, only_blockers);
                     // A NaN confidence is the worst: it ranks below every number.
                     let c = if v.confidence.is_nan() {
                         f64::NEG_INFINITY
@@ -90,7 +104,7 @@ pub fn merge_chunk_verdicts(
         match pick {
             Some(Ok(v)) if v.pr == pr && v.head_sha == head_sha => {
                 merged.chunks_reviewed.push(k);
-                if v.verdict != "approve" || is_serious(v) {
+                if v.verdict != "approve" || is_serious(v, only_blockers) {
                     merged.verdict = "request-changes".into();
                 }
                 // A NaN confidence is no confidence (f64::min would skip it).
@@ -176,6 +190,24 @@ mod tests {
             escalate_risk: false,
             chunks_reviewed: vec![],
         }
+    }
+
+    #[test]
+    fn only_blockers_block_a_merge_when_block_on_is_blocker() {
+        let r = [(1, Ok(ver("approve", 0.95, &["major", "minor"])))];
+        assert_eq!(
+            merge_chunk_verdicts(1, "h", 1, &r).verdict,
+            "request-changes"
+        );
+        assert_eq!(
+            merge_chunk_verdicts_in(1, "h", 1, &r, true).verdict,
+            "approve"
+        );
+        let b = [(1, Ok(ver("approve", 0.95, &["blocker"])))];
+        assert_eq!(
+            merge_chunk_verdicts_in(1, "h", 1, &b, true).verdict,
+            "request-changes"
+        );
     }
 
     #[test]

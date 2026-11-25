@@ -15,7 +15,7 @@ use crate::config::ReviewMode;
 use crate::core::agreement::approved;
 use crate::core::budget::{Level, level};
 use crate::core::records::{Record, spend_total_today};
-use crate::core::review::merge_chunk_verdicts;
+use crate::core::review::merge_chunk_verdicts_in;
 use crate::core::risk::{FileView, unseen_diff};
 use crate::core::verdict::{Finding, Verdict, valid_model};
 use crate::github::Github;
@@ -243,7 +243,13 @@ pub fn run(dir: Option<&Path>, args: &ReviewCiArgs) -> CmdResult {
         v.chunks_reviewed = (1..=chunk_count).collect();
         v
     } else {
-        merge_chunk_verdicts(n, &head_sha, chunk_count, &results)
+        merge_chunk_verdicts_in(
+            n,
+            &head_sha,
+            chunk_count,
+            &results,
+            cfg.block_on == crate::config::BlockOn::Blocker,
+        )
     };
     let reviewed = verdict.chunks_reviewed.len();
     if dry {

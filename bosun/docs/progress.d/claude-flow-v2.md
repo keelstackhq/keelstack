@@ -1,0 +1,1 @@
+- 2026-11-25 · flow v2 · D-028: `[review] verdicts_needed`/`block_on`, `[main_health] block`, `bosun followups add|list` (spec §19), ci_input_changed and ci_verdict 3000-file fixes, this repo's `.bosun/bosun.toml` on one verdict, blockers only, main warns · PR claude/flow-v2

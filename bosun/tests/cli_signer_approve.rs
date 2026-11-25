@@ -779,3 +779,35 @@ fn doctor_checks_the_signer_environment_is_limited_to_the_default_branch() {
         "{signer}"
     );
 }
+
+#[test]
+fn with_one_verdict_needed_the_requesters_and_signers_own_sessions_still_do_not_count() {
+    let k = key();
+    let one = format!(
+        "{}\n[review]\nverdicts_needed = 1\nblock_on = \"blocker\"\n",
+        config("autonomous", true, true)
+    );
+    // The requester's verdict, then the signer's own session (BOSUN_SESSION signer-ci-1).
+    for session in ["session_q", "signer-ci-1"] {
+        let fake = pr_v(&k, "signer", "autonomous", "octocat", Some((session, 0)));
+        fake.content(".bosun/bosun.toml", BASE, &one);
+        fake.content(".bosun/bosun.toml", MAIN, &one);
+        ci_ok(&fake);
+        let before = fake.comments_of(1).len();
+        let (code, v) = sign(&fake, &k, &AS_SIGNER);
+        assert_eq!(code, 1, "{session}: {v}");
+        assert_eq!(fake.comments_of(1).len(), before, "nothing signed");
+    }
+    // A different reviewer's verdict signs, even with a major finding (block_on blocker).
+    let fake = pr_v(
+        &k,
+        "signer",
+        "autonomous",
+        "octocat",
+        Some(("session_r", 2)),
+    );
+    fake.content(".bosun/bosun.toml", BASE, &one);
+    fake.content(".bosun/bosun.toml", MAIN, &one);
+    ci_ok(&fake);
+    assert_eq!(sign(&fake, &k, &AS_SIGNER).0, 0);
+}

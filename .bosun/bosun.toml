@@ -18,34 +18,44 @@ profile = "ts-pnpm"
 path = "site"
 profile = "ts-pnpm"
 
-[review]
-# "subagent" (mode a) until M8 adds the CI review (mode b).
-mode = "subagent"
-
 [approvals]
 # Bootstrap mode (D-012, spec §8): until this day (UTC, inclusive). Under the autonomous policy
 # (D-017) a bootstrap-form signature no longer counts; the key stays for a move back to a tighter policy.
 bootstrap_until = "2026-11-30"
 # D-022 (owner answer Q3, 2026-11-21, recorded in docs/plans/port-open-prs.md
-# section 3 "Owner answers"): the orchestrator's signature plus two clean
-# verdicts from different reviewer sessions approve every PR except the trust root. The trust-root
+# section 3 "Owner answers"): the orchestrator's signature plus `[review] verdicts_needed`
+# (below, D-028) clean verdicts from different reviewer sessions approve every PR except the trust root. The trust-root
 # path list is compiled into bosun (bosun/src/core/risk.rs `TRUST_ROOT`, and `QUORUM_CODE_FILES` of
 # bosun/src/core/approve.rs under each code root, here `bosun/`; spec §8) and read with this file from the PR's base. This file is
 # trust root as a whole: every edit of it needs the owner.
 policy = "quorum"
 # D-027 (owner decision 2026-11-24, in chat: "full approval from my side"): owner delegation.
 # The quorum signature (an enrolled key's, or the CI signer's) also approves the trust root and
-# R-weaken, still only with green required checks and two clean verdicts from different reviewer
-# sessions on the exact head. Read from the PR's base; remove it to give the trust root back to
+# R-weaken, still only with green required checks and `[review] verdicts_needed` clean verdicts from
+# different reviewer sessions on the exact head. Read from the PR's base; remove it to give the trust root back to
 # the owner.
 owner_delegation = "all"
 # The CI signer (spec §8, keyless fast lane): `bosun approve <pr>@<head> --via-signer` asks
 # signer.yml to sign the quorum form with the enrolled `signer-ci` key (.bosun/approvers.toml,
 # role signer, secret BOSUN_SIGNER_KEY of environment bosun-signer). Same floor as the
-# orchestrator key: green gate-App ci-ok, two clean verdicts from different sessions on the exact
-# head (never the requester's or the signer's own), not halted. Needs `[checks] mode = "checks"`.
+# orchestrator key: green gate-App ci-ok, `[review] verdicts_needed` clean verdicts from different
+# sessions on the exact head (never the requester's or the signer's own), not halted. Needs `[checks] mode = "checks"`.
 # Remove it to turn the signer off (every signer signature then stops counting).
 signer = true
+
+[review]
+# "subagent" (mode a) until M8 adds the CI review (mode b).
+mode = "subagent"
+# D-028 (flow v2, owner decision 2026-11-25): one clean independent verdict on the exact head is
+# enough, and only a blocker finding blocks; the rest goes to the rolling `bosun:followups` issue
+# (`bosun followups add`). Remove both keys for D-022's two verdicts and blocking majors.
+verdicts_needed = 1
+block_on = "blocker"
+
+[main_health]
+# D-028: a red main warns (main-open passes with a warning, work goes on); fix it with a
+# mainfix PR first. `block = true` (the default) gives back the old pause.
+block = false
 
 [cloud]
 # The shared cloud environment "keelstack" (spec §5.2): a relayed root starts there.
