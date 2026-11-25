@@ -36,7 +36,8 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
 
 - One version for every tool: `[workspace.package] version` in the root `Cargo.toml`, mirrored
   by every npm launcher and platform package. Change it only with
-  `bash scripts/bump-version.sh X.Y.Z` (also updates `Cargo.lock`), in a version-bump PR.
+  `bash scripts/release-pr.sh X.Y.Z` (folds fragments, runs `scripts/bump-version.sh`, updates
+  `Cargo.lock`, commits on `release/vX.Y.Z`), then a version-bump PR. How to release: `docs/releasing.md`.
 - One tag `vX.Y.Z` and one GitHub release with every binary, created by the release workflow
   only. Agents never create tags or releases, never push tags, never publish by hand (D-006).
 
@@ -45,7 +46,7 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
 - D-022: the orchestrator signs and merges every PR after green required checks and two approving
   verdicts (>= 0.85, no blocker/major) from two different reviewer sessions on the exact head.
   Owner only: the trust root (`.bosun/approvers.toml`, bosun `[approvals]`). A version-bump merge
-  releases with no tap. Child sessions never merge, tag, release or force-push.
+  releases after the owner's tap on the `release` environment (D-028). Child sessions never merge, tag, release or force-push.
 - D-023: one monorepo, one version, one release; D-003 ended (one contract file); old repos are
   archived, their `gh:keelstackhq/<tool>` sources still render. New sources:
   `gh:keelstackhq/keelstack//hull/template`, `gh:keelstackhq/keelstack//decisions/channel`
