@@ -77,8 +77,9 @@ Computer steps first, then phone steps. Typical first run:
     reported as drift, never removed. Deleting a wrong tag needs an admin to first edit or
     disable the tags ruleset (its only bypass actor is the deploy key), or to use the deploy key. The repository stays public (npm provenance). `hoist apply` updates of
     `hoist: tags` keep owner-added includes and rules (hoist reads, merges, writes);
-  - environments `release`, `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default
-    branch only, no reviewers (D-022);
+  - environments `bosun-app`, `bosun-signer`, `review`, `hoard-r2`, `site`: default branch only,
+    no reviewers (D-022); environment `release`: default branch only and the owner as required
+    reviewer (`[release] reviewers` in hoist.toml, D-028);
   - repository settings (auto-merge, delete branch on merge) and Actions permissions (read);
   - Cloudflare Pages project `keelstack-landing` (`site/hoist.toml`; deploy-site.yml builds and
     deploys `site/apps/site/dist`), a minted deploy token sealed with the
@@ -97,9 +98,10 @@ Computer steps first, then phone steps. Typical first run:
     npm packages (first publish needed or not).
 - Release: no publish secrets (crates.io and npm use trusted publishing, OIDC); the one
   release secret is `RELEASE_TAG_KEY`, created and sealed by `hoist apply` (above). Environment `release`
-  has no required reviewer (D-022), so anyone with write access can dispatch release.yml or
-  cargo-deny-npm.yml (an npm publish of the cargo-deny packages) from main; the environment's
-  default-branch-only rule keeps both on main. Retired with the old
+  waits for the owner's tap (D-028): a version-bump merge or a dispatch of release.yml (or
+  cargo-deny-npm.yml, an npm publish of the cargo-deny packages) publishes nothing before it;
+  the environment's default-branch-only rule keeps both on main. How to release:
+  `docs/releasing.md`. Retired with the old
   repos: `BOSUN_RELEASE`, `BERTH_RELEASE`, `HOIST_RELEASE_TOKEN`, the `release-pr` environment.
 
 ## Main does not build
