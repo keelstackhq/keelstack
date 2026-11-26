@@ -165,6 +165,6 @@ test("doc Action pins of the monorepo path (keelstackhq/keelstack/splice/action)
   );
   assert.throws(
     () => checkVersion({ tag: null, cargoToml: cargo("0.5.0"), docs: { "a.md": mono(A, "0.4.0"), "b.md": pin(B, "0.4.0") } }),
-    /different|pin/,
+    /different Action releases/,
   );
 });

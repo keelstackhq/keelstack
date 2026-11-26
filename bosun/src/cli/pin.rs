@@ -409,7 +409,9 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
         })
         .collect();
     let body = format!(
-        "Tool pins moved by `bosun pin --latest` (tarballs checked against npm dist.integrity):\n{}\n\nGated R-gov: needs owner approval.{}",
+        "Tool pins moved by `bosun pin {}` (tarballs checked against npm dist.integrity):\n{}\n\nGated R-gov: needs owner approval.{}",
+        a.to.as_deref()
+            .map_or_else(|| "--latest".to_string(), |v| format!("--to {v}")),
         moves.join("\n"),
         if ci_findings.is_empty() {
             String::new()

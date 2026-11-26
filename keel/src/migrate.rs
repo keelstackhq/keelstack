@@ -334,7 +334,7 @@ impl Mig<'_> {
         ]);
         o.stdout
             .split('\0')
-            .filter(|p| !p.is_empty() && !p.starts_with(".keel"))
+            .filter(|p| !p.is_empty() && *p != ".keel/" && !p.starts_with(".keel/"))
             .map(String::from)
             .collect()
     }

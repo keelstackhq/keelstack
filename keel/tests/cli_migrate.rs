@@ -968,3 +968,34 @@ fn an_ignored_directory_and_file_survive_a_plain_rollback() {
     intact(&env);
     assert!(!env.repo.join("AGENTS.md").exists());
 }
+
+/// A user file whose name merely starts with `.keel` (`.keel.env`) is protected like any other.
+#[test]
+fn a_dot_keel_prefixed_ignored_file_is_protected_too() {
+    let env = Env::new(&ALL);
+    write(&env.repo, ".gitignore", ".keel.env\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "gitignore"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    write(&env.repo, ".keel.env", "S2\n");
+    let (code, v) = run_rewriting(&env, "ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".keel.env")).unwrap(),
+        "S2\n"
+    );
+    assert!(
+        git(
+            &env.repo,
+            &["log", "--all", "--format=%H", "--", ".keel.env"]
+        )
+        .trim()
+        .is_empty()
+    );
+    let (code, v) = run_rewriting(&env, "checkfail", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".keel.env")).unwrap(),
+        "S2\n"
+    );
+}
