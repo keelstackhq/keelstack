@@ -18,10 +18,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: keelstackhq/keelstack/splice/action@5553c1a9da6e4b5e666207d0c884d91739b169c0 # v0.23.0
+      - uses: keelstackhq/keelstack/splice/action@d9ff733da856b8913e6b92c79feca45f7709505b # v0.24.0
         with:
           scope: all
           # Pinned: this job can write. Move it with the setup script's SPLICE_VERSION.
-          version: 0.23.0
+          version: 0.24.0
           # GITHUB_TOKEN works, but its PRs do not trigger CI.
           token: ${{ secrets.SPLICE_BOT_TOKEN || github.token }}
