@@ -834,5 +834,5 @@ fn a_leftover_branch_whose_pr_is_merged_is_replaced_and_any_other_gets_exact_adv
     std::fs::write(env.log.join("pr_merged"), "").unwrap();
     let (code, v) = env.run("ok", &["--to", "0.23.0"]);
     assert_ne!(code, 3, "{v}");
-    assert_eq!(v["status"] == "failed", false, "{v}");
+    assert_ne!(v["status"], "failed", "{v}");
 }
