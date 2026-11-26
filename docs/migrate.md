@@ -11,7 +11,7 @@ It skips every piece the repo does not use and does, in order, one commit each, 
 
 1. **tools**: installs splice, bosun and hoist at the target version (checksum verified, never an unverified tarball).
 2. **splice**: `splice update --channel decisions` alone (`chore: sync org decisions`), then `splice update --all` (hull template, rigging and every other channel).
-3. **bosun-pin**: `bosun pin --to <target>` (exactly that published release; `.bosun/version` and the cloud setup script `docs/setup-script.sh`); with the bosun channel `splice update` already did it.
+3. **bosun-pin**: `bosun pin --to <target>` (exactly that published release; `.bosun/version` and the cloud setup script `docs/setup-script.sh`). Skipped (not an error) when the repo has no `.bosun/`, has the bosun channel (`splice update` already moved it), or has no `docs/setup-script.sh`.
 4. **hoist**: `hoist init` refreshes an unedited `release.yml`.
 5. **setup-snippet**: compares the cloud-environment bootstrap of the old and the new bosun.
 6. **verify** (read-only): `splice check`, `bosun doctor`, `hoist check`.
@@ -40,10 +40,14 @@ approvals and merges follow the org's rules, keel does neither.
 
 ## Safety
 
-- A dirty tree is refused (exit 3): git is the undo button.
-- Any failed step before the PR rolls back to the untouched starting branch and deletes the migration branch; the JSON
+- Exit 3 means keel changed nothing and tells you the fix: not a git checkout; `-C` is not the repo root (the check and the rollback cover the whole repo); HEAD detached or no commit; a dirty tree, tracked or untracked (checked with `--untracked-files=all` over the whole repo, whatever `status.showUntrackedFiles` says: git is the undo button, `git stash -u`); the branch `keel/migrate-vX.Y.Z` already exists and is neither merged, a squash merge of the same tree, nor the branch of a merged PR (`git switch` it to resume, or `git branch -D` it); `gh` missing or logged out with `--pr`; no splice, bosun or hoist piece found.
+- A branch left by an earlier migration is replaced silently when it is merged into HEAD, has the same tree as HEAD (a squash merge), or its PR is merged on GitHub.
+- Any failed step before the PR rolls back to the untouched starting branch and deletes the migration branch. The rollback never runs `git clean`: it deletes only the untracked files that appeared during the run (none existed before, the preflight proved it), and resets only keel's own branch; the JSON
   `recovery` says exactly what was undone and what to run next. A repo that is already current changes nothing and exits 0.
 - `--dry-run` installs nothing, writes nothing, creates no branch and pushes nothing.
+- `--pr` opens the PR against the repo's default branch (`--base`); a checked-out branch that is merely ahead of origin, with nothing to migrate, gets no PR and exit 0.
+- A tool that is not at the target is installed with keel's embedded sha512 when keel has them for that version. Otherwise keel takes the integrity from `npm view`, which is the registry vouching for itself: it catches a corrupted download, not a compromised registry. Prefer a keel release whose embedded pins cover the target.
+- `--mode`: if `bosun migrate --to MODE --dry-run` fails, the migration stays and the checklist says to run it by hand.
 - keel never merges, tags, releases, publishes or force-pushes.
 
 More: `keel/README.md`, spec section 11 (`keel/docs/superpowers/specs/2026-11-20-keel-design.md`).

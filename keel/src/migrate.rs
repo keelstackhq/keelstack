@@ -237,6 +237,8 @@ struct Mig<'a> {
     raw: Vec<HumanStep>,
     branch: String,
     orig: String,
+    /// HEAD when this run started.
+    start: String,
     /// Commits keel made in this run.
     commits: u32,
     snippet: Snippet,
@@ -338,7 +340,7 @@ impl Mig<'_> {
         {
             return Ok(p);
         }
-        npm::registry_pin(self.r, tool, &self.target)
+        npm::registry_pin(self.r, &self.dir, tool, &self.target)
     }
 
     fn splice_update(&self, extra: &[&str]) -> Result<String, String> {
@@ -746,7 +748,21 @@ impl Mig<'_> {
         let c = self.tool("bosun", &["--json", "migrate", "--to", &mode, "--dry-run"]);
         let o = self.r.run(&c);
         if o.code != 0 {
-            return Err(failure(&c, &o));
+            // The migration itself is done and verified: a mode that cannot be planned here is a
+            // warning with the command to run by hand, never a rollback.
+            self.human(
+                "bosun-mode",
+                format!(
+                    "After this PR merges, move bosun to mode {mode} by hand (planning it here failed: {})",
+                    failure(&c, &o)
+                ),
+                "",
+                &format!("bosun migrate --to {mode}"),
+            );
+            return Ok((
+                MAction::Pending,
+                format!("could not plan bosun migrate --to {mode}; left to a human"),
+            ));
         }
         self.human(
             "bosun-mode",
@@ -762,13 +778,20 @@ impl Mig<'_> {
         ))
     }
 
-    /// Commits ahead of the default branch (the migration already exists from an earlier run).
+    /// Commits that belong to a migration: on a branch keel made this run, those since the start
+    /// commit; when resuming on the migration branch itself, those the default branch lacks. Other
+    /// commits of the checked-out branch (a feature branch ahead of origin) never count.
     fn ahead(&self) -> u32 {
-        let base = ["origin/HEAD", "origin/main", "origin/master"]
-            .iter()
-            .find(|b| self.git(&["rev-parse", "--verify", "--quiet", b]).code == 0);
-        let Some(base) = base else { return 0 };
-        let o = self.git(&["rev-list", "--count", &format!("{base}..HEAD")]);
+        let range = if self.orig == self.branch {
+            let base = ["origin/HEAD", "origin/main", "origin/master"]
+                .iter()
+                .find(|b| self.git(&["rev-parse", "--verify", "--quiet", b]).code == 0);
+            let Some(base) = base else { return 0 };
+            format!("{base}..HEAD")
+        } else {
+            format!("{}..HEAD", self.start)
+        };
+        let o = self.git(&["rev-list", "--count", &range]);
         o.stdout.trim().parse().unwrap_or(0)
     }
 
@@ -795,7 +818,9 @@ impl Mig<'_> {
         self.push()?;
         let title = format!("chore: migrate to keelstack v{}", self.target);
         let body = self.pr_body();
-        let c = gh::pr_create_cmd(&self.dir, &repo, &self.branch, &title, &body);
+        let base = gh::default_branch(self.r, &repo)?;
+        let mut c = gh::pr_create_cmd(&self.dir, &repo, &self.branch, &title, &body);
+        c.args.extend(["--base".to_string(), base]);
         let o = self.r.run(&c);
         if o.code != 0 {
             return Err(failure(&c, &o));
@@ -864,8 +889,26 @@ impl Mig<'_> {
         ok
     }
 
-    /// Undo this run: back to where it started, the branch deleted when keel made it.
+    /// Untracked files git reports (every one, whatever `status.showUntrackedFiles` says),
+    /// except keel's own `.keel/`.
+    fn untracked(&self) -> Vec<String> {
+        let o = self.git(&["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+        o.stdout
+            .split('\0')
+            .filter_map(|e| e.strip_prefix("?? "))
+            .filter(|p| !p.starts_with(".keel/"))
+            .map(String::from)
+            .collect()
+    }
+
+    /// Undo this run on keel's own branch: delete only the files this run created (the preflight
+    /// proved there were no untracked files before it, so every untracked file now is keel's;
+    /// never `git clean`, never an ignored file), reset to the start commit, and, when keel made
+    /// the branch, go back to the original branch and delete it.
     fn rollback(&self, start: &str, created: bool) -> Result<(), String> {
+        if !created && self.orig != self.branch {
+            return Err("refusing to reset a branch keel did not create".into());
+        }
         let must = |o: Out, what: &str| -> Result<(), String> {
             if o.code == 0 {
                 Ok(())
@@ -873,8 +916,13 @@ impl Mig<'_> {
                 Err(format!("{what} failed: {}", o.stderr.trim()))
             }
         };
+        for rel in self.untracked() {
+            let p = self.dir.join(&rel);
+            if p.is_file() || p.is_symlink() {
+                std::fs::remove_file(&p).map_err(|e| format!("cannot remove {rel}: {e}"))?;
+            }
+        }
         must(self.git(&["reset", "--hard", start]), "git reset")?;
-        must(self.git(&["clean", "-fd", "-e", ".keel"]), "git clean")?;
         if created {
             must(self.git(&["checkout", &self.orig]), "git checkout")?;
             must(self.git(&["branch", "-D", &self.branch]), "git branch -D")?;
@@ -944,6 +992,28 @@ fn keep_scratch_untracked(git: &dyn Fn(&[&str]) -> Out, dir: &Path) {
         .and_then(|()| std::fs::write(&path, next));
 }
 
+/// Is the local migration branch spent? Merged into HEAD, or the same tree as HEAD (a squash
+/// merge), or its PR is merged on GitHub (asked only when `gh` works).
+fn leftover(git: &dyn Fn(&[&str]) -> Out, r: &dyn Runner, dir: &Path, branch: &str) -> bool {
+    if git(&["merge-base", "--is-ancestor", branch, "HEAD"]).code == 0 {
+        return true;
+    }
+    let tree = |rev: &str| {
+        let o = git(&["rev-parse", &format!("{rev}^{{tree}}")]);
+        (o.code == 0).then(|| o.stdout.trim().to_string())
+    };
+    if tree(branch).is_some() && tree(branch) == tree("HEAD") {
+        return true;
+    }
+    let c = Cmd::new("gh", &["repo", "view", "--json", "nameWithOwner"]).dir(dir);
+    let o = r.run(&c);
+    let repo = json(&o)
+        .and_then(|v| v["nameWithOwner"].as_str().map(String::from))
+        .filter(|_| o.code == 0);
+    repo.and_then(|repo| gh::pr_view(r, dir, &repo, branch))
+        .is_some_and(|pr| pr.state == "MERGED")
+}
+
 /// An environment error (exit 3) whose message says how to fix it.
 fn env_err(msg: impl Into<String>, fix: impl Into<String>) -> KeelError {
     KeelError::Env(format!("{}; fix: {}", msg.into(), fix.into()))
@@ -974,6 +1044,23 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             "run keel migrate inside the repo's clone",
         ));
     }
+    let top = gitc(&["rev-parse", "--show-toplevel"])
+        .stdout
+        .trim()
+        .to_string();
+    let same = |a: &Path, b: &Path| match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    };
+    if !top.is_empty() && !same(dir, Path::new(&top)) {
+        return Err(env_err(
+            format!(
+                "{} is not the repo root ({top}); keel migrate checks and rolls back the whole repo",
+                dir.display()
+            ),
+            format!("run it from the repo root: keel -C {top} migrate"),
+        ));
+    }
     let orig = {
         let o = gitc(&["rev-parse", "--abbrev-ref", "HEAD"]);
         o.stdout.trim().to_string()
@@ -984,13 +1071,26 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             "git switch <branch> first",
         ));
     }
-    let mut st = vec!["status", "--porcelain"];
-    st.extend(NOT_KEEL);
-    if !args.dry_run && !gitc(&st).stdout.trim().is_empty() {
-        return Err(env_err(
-            "the working tree has changes; keel migrate refuses a dirty tree (git is the undo button)",
-            "commit or stash them, then rerun",
-        ));
+    if !args.dry_run {
+        let st = gitc(&[
+            "status",
+            "--porcelain=v1",
+            "--untracked-files=all",
+            "--ignore-submodules=none",
+        ]);
+        if st.code != 0 {
+            return Err(env_err("git status failed", st.stderr.trim().to_string()));
+        }
+        if st
+            .stdout
+            .lines()
+            .any(|l| !l.is_empty() && !l.starts_with("?? .keel/"))
+        {
+            return Err(env_err(
+                "the working tree has changes (tracked or untracked); keel migrate refuses a dirty tree (git is the undo button)",
+                "commit or stash them (`git stash -u`), then rerun",
+            ));
+        }
     }
     if args.pr && !args.dry_run {
         match gh::auth_ok(r) {
@@ -1023,6 +1123,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
         raw: Vec::new(),
         branch: branch.clone(),
         orig: orig.clone(),
+        start: start.clone(),
         commits: 0,
         snippet: Snippet {
             status: "not-checked",
@@ -1043,16 +1144,15 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
                 "--quiet",
                 &format!("refs/heads/{branch}"),
             ]);
-            let merged = exists.code == 0
-                && gitc(&["merge-base", "--is-ancestor", &branch, "HEAD"]).code == 0;
-            if merged {
-                // An earlier migration PR was merged: its branch is only a leftover.
+            if exists.code == 0 && leftover(&gitc, r, dir, &branch) {
+                // An earlier migration PR landed (fast-forward, squash or merged on GitHub):
+                // its branch is only a leftover.
                 let _ = gitc(&["branch", "-D", &branch]);
             } else if exists.code == 0 {
                 return Err(env_err(
-                    format!("branch {branch} already exists"),
+                    format!("branch {branch} already exists and is not merged into {orig}"),
                     format!(
-                        "`git switch {branch}` and rerun to resume it, or `git branch -D {branch}`"
+                        "`git switch {branch}` and rerun to resume it, or `git branch -D {branch}` to start over"
                     ),
                 ));
             }
@@ -1141,7 +1241,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             recovery = Some("nothing was written; fix the problem above and rerun".into());
         } else {
             let undo = format!(
-                "git reset --hard {start} && git clean -fd -e .keel{}",
+                "git reset --hard {start} (then delete the untracked files `git status` shows: keel created them){}",
                 if created {
                     format!(" && git checkout {orig} && git branch -D {branch}")
                 } else {
@@ -1316,7 +1416,7 @@ mod tests {
     #[test]
     fn registry_pin_reads_dist_integrity_of_both_packages() {
         let r = crate::exec::FakeRunner::new().on(&["npm", "view"], Out::ok("sha512-QUJD\n"));
-        let pin = npm::registry_pin(&r, "splice", "0.23.0").unwrap();
+        let pin = npm::registry_pin(&r, Path::new("."), "splice", "0.23.0").unwrap();
         let s = pin.sha512.unwrap();
         assert_eq!(s.launcher, "QUJD");
         assert_eq!(s.platform.values().next().unwrap(), "QUJD");
@@ -1324,6 +1424,6 @@ mod tests {
         assert!(calls[0].line().contains("@keelstackhq/splice@0.23.0"));
         assert!(calls[1].line().contains("@keelstackhq/splice-"));
         let none = crate::exec::FakeRunner::new().on(&["npm", "view"], Out::with(1, "", "E404"));
-        assert!(npm::registry_pin(&none, "splice", "9.9.9").is_err());
+        assert!(npm::registry_pin(&none, Path::new("."), "splice", "9.9.9").is_err());
     }
 }

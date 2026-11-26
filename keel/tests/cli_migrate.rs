@@ -49,14 +49,18 @@ case "$name $*" in
   "bosun --json doctor")
     [ "$KEEL_SCENARIO" = offline ] && { echo '{"ok":false,"exit_code":5,"data":{"offline":true}}'; exit 5; }
     env '{}';;
-  "bosun --json migrate --to"*) env '{"planned":[]}';;
+  "bosun --json migrate --to"*)
+    [ "$KEEL_SCENARIO" = modefail ] && { echo "bosun: boom" >&2; exit 3; }
+    env '{"planned":[]}';;
   "hoist --json init"*) echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "hoist --json check")
     [ "$KEEL_SCENARIO" = hoistdrift ] && { echo '{"ok":false,"exit_code":1,"items":[{"area":"github","kind":"environment","key":"release-tags","action":"create","reason":"missing"}],"human_steps":[]}'; exit 1; }
     echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "gh auth status"*) ;;
-  "gh repo view"*) echo '{"nameWithOwner":"owner/name"}';;
-  "gh pr view"*) [ -f "$KEEL_LOG/pr_open" ] && echo '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"OPEN","headRefOid":"abc","mergeCommit":null}' || exit 1;;
+  "gh repo view"*) echo '{"nameWithOwner":"owner/name","defaultBranchRef":{"name":"main"}}';;
+  "gh pr view"*)
+    [ -f "$KEEL_LOG/pr_merged" ] && { echo '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"MERGED","headRefOid":"abc","mergeCommit":{"oid":"c0"}}'; exit 0; }
+    [ -f "$KEEL_LOG/pr_open" ] && echo '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"OPEN","headRefOid":"abc","mergeCommit":null}' || exit 1;;
   "gh pr create"*) : > "$KEEL_LOG/pr_open"; echo "https://github.com/owner/name/pull/9";;
 esac
 exit 0
@@ -146,6 +150,10 @@ impl Env {
     }
 
     fn keel(&self, scenario: &str, args: &[&str]) -> Command {
+        self.keel_in(&self.repo, scenario, args)
+    }
+
+    fn keel_in(&self, dir: &Path, scenario: &str, args: &[&str]) -> Command {
         let integrity =
             base64::engine::general_purpose::STANDARD.encode(Sha512::digest(b"TARBALL"));
         let mut c = Command::cargo_bin("keel").unwrap();
@@ -163,7 +171,7 @@ impl Env {
             .env("KEEL_SCENARIO", scenario)
             .env("KEEL_INTEGRITY", integrity)
             .arg("-C")
-            .arg(&self.repo)
+            .arg(dir)
             .arg("--json")
             .arg("migrate")
             .args(args);
@@ -665,4 +673,166 @@ fn a_target_that_is_not_npm_latest_is_pinned_exactly() {
         "{calls:?}"
     );
     assert!(!calls.iter().any(|c| c.contains("--latest")));
+}
+
+#[test]
+fn untracked_files_are_found_even_when_git_is_told_to_hide_them() {
+    let env = Env::new(&ALL);
+    git(&env.repo, &["config", "status.showUntrackedFiles", "no"]);
+    write(&env.repo, "notes/todo.txt", "mine\n");
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("working tree has changes"),
+        "{v}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("notes/todo.txt")).unwrap(),
+        "mine\n"
+    );
+    assert_eq!(env.branch(), "main");
+}
+
+#[test]
+fn a_rollback_never_deletes_a_file_the_user_had_even_an_ignored_one() {
+    let env = Env::new(&ALL);
+    write(&env.repo, ".gitignore", "local.env\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "ignore"]);
+    write(&env.repo, "local.env", "SECRET=1\n");
+    write(&env.repo, "dir/ignored-too/local.env", "x\n");
+    let (code, v) = env.run("conflict", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("local.env")).unwrap(),
+        "SECRET=1\n"
+    );
+    // Only what keel's own failed step created is removed.
+    assert!(!env.repo.join("AGENTS.md").exists());
+    assert!(env.repo.join("dir/ignored-too/local.env").exists());
+    assert!(!env.calls().iter().any(|c| c.starts_with("git clean")));
+}
+
+#[test]
+fn a_subdirectory_checkout_is_refused_because_the_status_check_covers_the_whole_repo() {
+    let env = Env::new(&ALL);
+    write(&env.repo, "sub/hoist.toml", "[github]\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "sub"]);
+    write(&env.repo, "README.md", "edited at the root\n");
+    let sub = env.repo.join("sub");
+    let o = env
+        .keel_in(&sub, "ok", &["--to", "0.23.0"])
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(o.status.code(), Some(3), "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("repo root"),
+        "{v}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("README.md")).unwrap(),
+        "edited at the root\n"
+    );
+    assert_eq!(env.branch(), "main");
+}
+
+#[test]
+fn a_mode_that_cannot_be_planned_is_a_warning_not_a_rollback() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run("modefail", &["--to", "0.23.0", "--mode", "booster"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["changed"], true);
+    assert_eq!(action(&v, "mode"), "pending");
+    assert_eq!(env.branch(), "keel/migrate-v0.23.0");
+    let e = v["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "bosun-mode")
+        .unwrap();
+    assert_eq!(e["command"], "bosun migrate --to booster");
+    assert!(v["recovery"].is_null());
+}
+
+#[test]
+fn a_feature_branch_ahead_of_origin_with_nothing_to_migrate_opens_no_pr() {
+    let env = Env::new(&ALL);
+    let (code, _) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5);
+    git(&env.repo, &["checkout", "main"]);
+    git(&env.repo, &["merge", "--ff-only", "keel/migrate-v0.23.0"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    git(&env.repo, &["branch", "-D", "keel/migrate-v0.23.0"]);
+    git(&env.repo, &["checkout", "-b", "feature/x"]);
+    write(&env.repo, "feature.txt", "work\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "feature work, not pushed"]);
+    let before = env
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("gh pr create"))
+        .count();
+    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["changed"], false);
+    assert_eq!(action(&v, "pr"), "skipped");
+    assert_eq!(
+        env.calls()
+            .iter()
+            .filter(|c| c.starts_with("gh pr create"))
+            .count(),
+        before
+    );
+    assert_eq!(env.branch(), "feature/x");
+}
+
+#[test]
+fn a_squash_merged_migration_branch_is_replaced_cleanly() {
+    let env = Env::new(&ALL);
+    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5);
+    // The PR is squash-merged: main gets the same tree in one new commit; the branch is no ancestor.
+    git(&env.repo, &["checkout", "main"]);
+    git(&env.repo, &["merge", "--squash", "keel/migrate-v0.23.0"]);
+    git(&env.repo, &["commit", "-m", "squash of the migration"]);
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["changed"], false);
+    assert!(
+        git(&env.repo, &["branch", "--list", "keel/*"])
+            .trim()
+            .is_empty()
+    );
+    assert_eq!(env.branch(), "main");
+}
+
+#[test]
+fn a_leftover_branch_whose_pr_is_merged_is_replaced_and_any_other_gets_exact_advice() {
+    let env = Env::new(&ALL);
+    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5);
+    git(&env.repo, &["checkout", "main"]);
+    // main moved on in another way (rebase-merge with edits): trees differ, the branch is no ancestor.
+    write(&env.repo, "other.txt", "x\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "other"]);
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("git switch keel/migrate-v0.23.0") && msg.contains("git branch -D"),
+        "{msg}"
+    );
+    std::fs::write(env.log.join("pr_merged"), "").unwrap();
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_ne!(code, 3, "{v}");
+    assert_eq!(v["status"] == "failed", false, "{v}");
 }

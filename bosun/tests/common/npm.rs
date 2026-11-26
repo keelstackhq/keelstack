@@ -35,7 +35,7 @@ impl Registry {
     }
 
     /// As `start`, plus `older`: tool -> another published version (served by version only, never
-    /// as `latest`), and `deprecated`: versions npm marks deprecated (a yanked release).
+    /// as `latest`), and `deprecated`: versions (or `package@version`) npm marks deprecated (a yanked release).
     pub fn start_with(
         latest: &[(&str, &str)],
         older: &[(&str, &str)],
@@ -64,7 +64,8 @@ impl Registry {
                 };
                 let tarball = format!("{host}/@keelstackhq/{p}/-/{p}-{ver}.tgz");
                 let mut meta = json!({"version": ver, "dist": {"integrity": format!("sha512-{}", sha(&tar)), "tarball": tarball}});
-                if deprecated.contains(&ver) {
+                if deprecated.contains(&ver) || deprecated.contains(&format!("{p}@{ver}").as_str())
+                {
                     meta["deprecated"] = json!("yanked: broken release");
                 }
                 let served = if tamper == Some(p.as_str()) {

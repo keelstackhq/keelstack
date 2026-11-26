@@ -105,6 +105,37 @@ fn a_deprecated_release_is_refused() {
 }
 
 #[test]
+fn a_deprecated_platform_package_is_refused_too_and_a_missing_one_is_named() {
+    let d = repo();
+    let before = read(d.path(), "docs/setup-script.sh");
+    let reg = Registry::start_with(
+        &ALL,
+        &[("bosun", "0.9.1")],
+        &["bosun-linux-x64@0.9.1"],
+        None,
+        None,
+    );
+    let (code, v) = pin_to(d.path(), &reg, &["--to", "0.9.1", "--tool", "bosun"]);
+    assert_eq!(code, 1, "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("bosun-linux-x64") && msg.contains("deprecated"),
+        "{v}"
+    );
+    assert_eq!(read(d.path(), "docs/setup-script.sh"), before);
+    // The 404 fix names the package of the tool that is missing, not bosun's.
+    let (code, v) = pin_to(d.path(), &reg, &["--to", "0.4.7", "--tool", "hoist"]);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]["fix"]
+            .as_str()
+            .unwrap()
+            .contains("@keelstackhq/hoist versions"),
+        "{v}"
+    );
+}
+
+#[test]
 fn a_downgrade_with_to_is_still_a_conflict() {
     let d = repo();
     let reg = Registry::start_with(&ALL, &[("bosun", "0.8.0")], &[], None, None);

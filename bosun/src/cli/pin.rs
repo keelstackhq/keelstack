@@ -230,7 +230,7 @@ fn explicit(npm: &Npm, tool: &str, v: &str) -> Result<Meta, BosunError> {
         if e.message.contains("HTTP 404") {
             BosunError::error(
                 format!("@keelstackhq/{tool}@{v} is not published on npm"),
-                "pass a published release (`npm view @keelstackhq/bosun versions`), or wait for the release to publish",
+                format!("pass a published release (`npm view @keelstackhq/{tool} versions`), or wait for the release to publish"),
             )
         } else {
             e
@@ -304,7 +304,12 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
         let launcher = npm.verified(t, m)?;
         let arch = |suffix: &str| -> Result<String, BosunError> {
             let pkg = format!("{t}-linux-{suffix}");
-            let am = npm.meta(&pkg, &m.version)?;
+            // An exact `--to` also refuses a platform package that is missing or deprecated.
+            let am = if a.to.is_some() {
+                explicit(&npm, &pkg, &m.version)?
+            } else {
+                npm.meta(&pkg, &m.version)?
+            };
             if am.version != m.version {
                 return Err(BosunError::error(
                     format!(
