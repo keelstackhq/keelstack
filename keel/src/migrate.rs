@@ -418,8 +418,16 @@ impl Mig<'_> {
             return Ok((MAction::Skipped, "no docs/setup-script.sh to pin".into()));
         }
         if self.dry {
-            let c = self.tool("bosun", &["--json", "pin", "--latest", "--check"]);
+            let c = self.tool("bosun", &["--json", "pin", "--to", &self.target, "--check"]);
             let o = self.r.run(&c);
+            if o.code == 2 {
+                // An older bosun than the target has no `pin --to`; the real run installs the target first.
+                return Ok((
+                    MAction::WouldRun,
+                    "this bosun has no `pin --to`; the real run installs the target bosun first"
+                        .into(),
+                ));
+            }
             if o.code != 0 {
                 return Err(failure(&c, &o));
             }
@@ -432,7 +440,7 @@ impl Mig<'_> {
                 (MAction::WouldRun, behind)
             });
         }
-        let c = self.tool("bosun", &["--json", "pin", "--latest"]);
+        let c = self.tool("bosun", &["--json", "pin", "--to", &self.target]);
         let o = self.r.run(&c);
         if o.code != 0 {
             return Err(failure(&c, &o));
@@ -443,9 +451,8 @@ impl Mig<'_> {
             && have != self.target
         {
             return Err(format!(
-                "`bosun pin --latest` leaves .bosun/version at {have}, not the target {}: bosun pins only \
-                 move to npm latest, so pass `--to {have}` (or wait until {} is npm latest)",
-                self.target, self.target
+                ".bosun/version says {have} after `bosun pin --to {}`; the repo pins another release than the target: fix it by hand, then rerun",
+                self.target
             ));
         }
         if self.commit_all(&format!("chore: pin keelstack tools to {}", self.target))? {

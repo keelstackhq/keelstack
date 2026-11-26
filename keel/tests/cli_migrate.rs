@@ -37,10 +37,10 @@ case "$name $*" in
     [ "$KEEL_SCENARIO" = checkfail ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
     [ "$KEEL_SCENARIO" = dry ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
     echo '{"ok":true,"exit_code":0}';;
-  "bosun --json pin --latest --check")
+  "bosun --json pin --to "*" --check")
     env '{"behind":[{"tool":"bosun","from":"0.22.1","to":"0.23.0"}],"unchanged":[]}';;
-  "bosun --json pin --latest")
-    echo 0.23.0 > .bosun/version; echo "BOSUN_VERSION=0.23.0" > docs/setup-script.sh
+  "bosun --json pin --to "*)
+    echo "$4" > .bosun/version; echo "BOSUN_VERSION=$4" > docs/setup-script.sh
     env '{"changed":[{"tool":"bosun","from":"0.22.1","to":"0.23.0"}],"unchanged":[],"files":["docs/setup-script.sh",".bosun/version"]}';;
   "bosun --json setup-snippet")
     if [ "$KEEL_SNIPPET" = changes ] && [ "$(ver bosun)" = 0.23.0 ]; then
@@ -268,8 +268,8 @@ fn full_repo_moves_every_piece_on_one_branch_and_lists_what_a_human_must_do() {
         at("splice --json --yes update --channel decisions")
             < at("splice --json --yes update --all")
     );
-    assert!(at("splice --json --yes update --all") < at("bosun --json pin --latest"));
-    assert!(at("bosun --json pin --latest") < at("splice --json check"));
+    assert!(at("splice --json --yes update --all") < at("bosun --json pin --to 0.23.0"));
+    assert!(at("bosun --json pin --to 0.23.0") < at("splice --json check"));
     // One commit per step, decisions alone with the org's message.
     let log = git(&env.repo, &["log", "--format=%s", "main..HEAD"]);
     assert!(log.contains("chore: sync org decisions"), "{log}");
@@ -489,7 +489,7 @@ fn dry_run_writes_nothing_installs_nothing_and_reports_the_work() {
             "{banned}: {calls:?}"
         );
     }
-    assert!(calls.iter().all(|c| c != "bosun --json pin --latest"));
+    assert!(calls.iter().all(|c| c != "bosun --json pin --to 0.23.0"));
 }
 
 #[test]
@@ -642,4 +642,24 @@ fn text_output_has_steps_and_a_numbered_checklist() {
         out.contains("bosun-pin") && out.contains("checklist:\n  1. [computer]"),
         "{out}"
     );
+}
+
+#[test]
+fn a_target_that_is_not_npm_latest_is_pinned_exactly() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run("ok", &["--to", "0.22.9"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(action(&v, "bosun-pin"), "done", "{v}");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".bosun/version"))
+            .unwrap()
+            .trim(),
+        "0.22.9"
+    );
+    let calls = env.calls();
+    assert!(
+        calls.contains(&"bosun --json pin --to 0.22.9".to_string()),
+        "{calls:?}"
+    );
+    assert!(!calls.iter().any(|c| c.contains("--latest")));
 }

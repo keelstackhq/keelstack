@@ -325,7 +325,7 @@ keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--mode MODE
 - `--to X.Y.Z` (default: keel's own version; anything but three numbers is exit 2). The release is
   lockstep (D-023): every tool is installed at that version.
 - `--dry-run`: writes nothing, installs nothing, creates no branch, pushes nothing; reports `would-run` per step
-  (`splice --json check`, `bosun pin --latest --check`, `hoist init --dry-run`, read-only verification). Exit 1 when work remains
+  (`splice --json check`, `bosun pin --to X.Y.Z --check`, `hoist init --dry-run`, read-only verification). Exit 1 when work remains
   (status `planned`), as `keel plan`. A dirty tree is allowed.
 - `--pr`: push the branch (never forced) and open ONE PR with `gh pr create`; an open PR for the branch is reused. keel never merges.
 - `--mode MODE`: `bosun migrate --to MODE --dry-run` is run and the real move is listed in the checklist for after the merge
@@ -346,7 +346,7 @@ branch already merged into HEAD is deleted; any other existing one is exit 3 wit
 |----|------|
 | `tools` | for each tool in use, `<tool> --version` must equal the target, else install it: keel's embedded sha512 when it has them for exactly that version, else the `dist.integrity` the registry serves (`npm view`); `npm pack` both tarballs, compare, then `npm install -g --ignore-scripts` (an unpublished version fails here) |
 | `splice` | with a `decisions` channel: `splice update --channel decisions`, committed alone as `chore: sync org decisions` (the org rule); then `splice update --all` (template, every channel; exit 1 = conflicts, a failure with the manual command) |
-| `bosun-pin` | `bosun pin --latest` (verifies every tarball against npm; skipped with the bosun channel, which `splice update` already moved, or without `docs/setup-script.sh`); `.bosun/version` must end equal to the target, else failed with `pass --to <that version>` (bosun pins only move to npm latest) |
+| `bosun-pin` | `bosun pin --to X.Y.Z` (the exact target, any published release, not only npm latest; refuses an unpublished or deprecated one; verifies every tarball against npm; skipped with the bosun channel, which `splice update` already moved, or without `docs/setup-script.sh`); `.bosun/version` must end equal to the target, else failed. An old bosun without `pin --to` exits 2: in `--dry-run` that is `would-run` (the real run installs the target bosun first) |
 | `hoist` | only when `.github/workflows/release.yml` exists: `hoist init` (rewrites only an unedited hoist file; hoist's own `release-workflow*` human steps are dropped, others go to the checklist; exit 3, e.g. offline, is `skipped` plus a `hoist-init` checklist entry) |
 | `setup-snippet` | `bosun setup-snippet` `data.script` is compared with the one the previously installed bosun printed (kept in `.keel/migrate-snippet-before` across a failed run). Unchanged: nothing to do. Changed or unknown: `.keel/cloud-setup.sh` (same file as the `agent-env` step) and `.keel/cloud-setup.previous.sh` are written and a `setup-snippet` checklist entry names them; the JSON `setup_snippet` has `status`, `path`, `sha256` and a line-count `summary`. The snippet holds no secret |
 | `verify` | read-only: `splice check` must pass (else failed, rolled back); `bosun doctor` (exit 5 offline = skipped) and `hoist check` findings are remote state, so they become checklist entries (`bosun-doctor`, `hoist-apply` = `hoist apply --area github`, hoist's human steps) and never a rollback |

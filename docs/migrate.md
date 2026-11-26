@@ -11,7 +11,7 @@ It skips every piece the repo does not use and does, in order, one commit each, 
 
 1. **tools**: installs splice, bosun and hoist at the target version (checksum verified, never an unverified tarball).
 2. **splice**: `splice update --channel decisions` alone (`chore: sync org decisions`), then `splice update --all` (hull template, rigging and every other channel).
-3. **bosun-pin**: `bosun pin --latest` (`.bosun/version` and the cloud setup script `docs/setup-script.sh`); with the bosun channel `splice update` already did it.
+3. **bosun-pin**: `bosun pin --to <target>` (exactly that published release; `.bosun/version` and the cloud setup script `docs/setup-script.sh`); with the bosun channel `splice update` already did it.
 4. **hoist**: `hoist init` refreshes an unedited `release.yml`.
 5. **setup-snippet**: compares the cloud-environment bootstrap of the old and the new bosun.
 6. **verify** (read-only): `splice check`, `bosun doctor`, `hoist check`.
