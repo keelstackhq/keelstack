@@ -1,1 +1,0 @@
-- 2026-11-26 · keel migrate · docs point upgrades to `keel migrate --pr` · PR #86

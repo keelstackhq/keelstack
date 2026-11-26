@@ -537,3 +537,4 @@ One line per landed task, oldest first. Agents never read this file; `docs/PROGR
 - 2026-11-25 · flow v2 · D-028: `[review] verdicts_needed`/`block_on`, `[main_health] block`, `bosun followups add|list` (spec §19), ci_input_changed and ci_verdict 3000-file fixes, this repo's `.bosun/bosun.toml` on one verdict, blockers only, main warns · PR claude/flow-v2
 - 2026-11-24 · owner delegation · `[approvals] owner_delegation = "all"` (D-027), on in keelstack · PR #71
 - 2026-11-25 · release painless · bosun/docs/releasing.md points at the lockstep flow (root docs/releasing.md) · this PR
+- 2026-11-26 · keel migrate · docs point upgrades to `keel migrate --pr` · PR #86

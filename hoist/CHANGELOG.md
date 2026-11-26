@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.24.0 (2026-11-26)
+
 - `hoist org` gains `[fly]` (D-029, spec §16.7): Fly.io org, apps (create), primary region (checked), app secrets by name (never values) and certificates (create), through the Machines HTTP API with `FLY_API_TOKEN` (a proxy-injected dummy works; `HOIST_FLY_API` overrides the base). `--area fly`.
 - `hoist org apply` deploys the Search Console bridge Worker (`[search_console.worker]`, spec §16.8): uploads the embedded Worker through the Cloudflare API, enables workers.dev and sets `BRIDGE_TOKEN` and `SA_KEY` from `HOIST_BRIDGE_TOKEN`, `HOIST_BRIDGE_SA_KEY(_FILE)` or a hidden prompt. The Worker source moved to `src/org/bridge_worker.js`.
 - `examples/org.toml`: a ready-to-fill org file covering all six services.
