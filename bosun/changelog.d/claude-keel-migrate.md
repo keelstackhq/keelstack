@@ -1,0 +1,1 @@
+- `keel migrate` moves a repo to a keelstack release in one command; the adopt and migrate-booster guides point to it.

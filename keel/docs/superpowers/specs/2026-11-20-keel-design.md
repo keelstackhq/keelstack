@@ -311,3 +311,56 @@ is an apply flag (`--secrets-to fly:APP`); minting an r2 key without it exits 3.
 (check and apply exit 2) and `dns-cname:<host>`. Each item has `action` in
 create|update|ok|drift|pending|unknown; only "ok" is done (no per-item `ok`, no "noop"). Exit 2
 (check or apply) means `human_steps[]` are pending, never done; keel surfaces `human_steps[0]`.
+
+## 11. `keel migrate`
+
+One command moves an existing repo to a keelstack release, so nobody runs `splice update`, `bosun pin`,
+`hoist check` and the setup-snippet by hand and nobody adds the repo to an orchestrator session. Run it
+in the repo by a human or an agent: `npx @keelstackhq/keel migrate --pr`.
+
+```
+keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--mode MODE]
+```
+
+- `--to X.Y.Z` (default: keel's own version; anything but three numbers is exit 2). The release is
+  lockstep (D-023): every tool is installed at that version.
+- `--dry-run`: writes nothing, installs nothing, creates no branch, pushes nothing; reports `would-run` per step
+  (`splice --json check`, `bosun pin --latest --check`, `hoist init --dry-run`, read-only verification). Exit 1 when work remains
+  (status `planned`), as `keel plan`. A dirty tree is allowed.
+- `--pr`: push the branch (never forced) and open ONE PR with `gh pr create`; an open PR for the branch is reused. keel never merges.
+- `--mode MODE`: `bosun migrate --to MODE --dry-run` is run and the real move is listed in the checklist for after the merge
+  (it opens its own gated PR from the default branch, so it cannot share this one).
+- Exit codes: 0 done (or nothing to do) · 1 a step failed (rolled back) or, with `--dry-run`, work remains · 2 usage (bad `--to`) ·
+  3 environment (not a git checkout, dirty tree, detached HEAD, no pieces found, migration branch exists, `gh` missing with `--pr`) · 5 a human step is pending.
+
+**Detection** (on disk; absent pieces are `skipped`, never errors): splice = `.splice/lock.toml` or `.splice/channels/*.toml`;
+bosun = `.bosun/`; hoist = `hoist.toml`. None of them is exit 3 ("nothing to migrate").
+
+**Preflight.** Git work tree, a named branch, a clean tree (apart from `.keel/`; keel lists `.keel/` in `.git/info/exclude`), a commit, and
+`gh auth status` with `--pr`. Then branch `keel/migrate-vX.Y.Z` is created from the current branch (or resumed when you are on it; a leftover
+branch already merged into HEAD is deleted; any other existing one is exit 3 with the two ways out).
+
+**Steps, in order, one commit each.**
+
+| id | does |
+|----|------|
+| `tools` | for each tool in use, `<tool> --version` must equal the target, else install it: keel's embedded sha512 when it has them for exactly that version, else the `dist.integrity` the registry serves (`npm view`); `npm pack` both tarballs, compare, then `npm install -g --ignore-scripts` (an unpublished version fails here) |
+| `splice` | with a `decisions` channel: `splice update --channel decisions`, committed alone as `chore: sync org decisions` (the org rule); then `splice update --all` (template, every channel; exit 1 = conflicts, a failure with the manual command) |
+| `bosun-pin` | `bosun pin --latest` (verifies every tarball against npm; skipped with the bosun channel, which `splice update` already moved, or without `docs/setup-script.sh`); `.bosun/version` must end equal to the target, else failed with `pass --to <that version>` (bosun pins only move to npm latest) |
+| `hoist` | only when `.github/workflows/release.yml` exists: `hoist init` (rewrites only an unedited hoist file; hoist's own `release-workflow*` human steps are dropped, others go to the checklist; exit 3, e.g. offline, is `skipped` plus a `hoist-init` checklist entry) |
+| `setup-snippet` | `bosun setup-snippet` `data.script` is compared with the one the previously installed bosun printed (kept in `.keel/migrate-snippet-before` across a failed run). Unchanged: nothing to do. Changed or unknown: `.keel/cloud-setup.sh` (same file as the `agent-env` step) and `.keel/cloud-setup.previous.sh` are written and a `setup-snippet` checklist entry names them; the JSON `setup_snippet` has `status`, `path`, `sha256` and a line-count `summary`. The snippet holds no secret |
+| `verify` | read-only: `splice check` must pass (else failed, rolled back); `bosun doctor` (exit 5 offline = skipped) and `hoist check` findings are remote state, so they become checklist entries (`bosun-doctor`, `hoist-apply` = `hoist apply --area github`, hoist's human steps) and never a rollback |
+| `mode` | `--mode` only |
+| `pr` | `--pr` only, and only when the branch has commits the default branch lacks |
+
+**Idempotent.** A repo already at the target changes nothing: no branch is left, no commit, exit 0, `changed:false`. A repo whose migration commits exist from an
+earlier run (on the migration branch) re-runs the steps as no-ops and `--pr` opens the PR.
+
+**Failure.** A failed step before `pr` rolls back: `git reset --hard <start>`, `git clean -fd -e .keel`, back to the original branch, the migration branch deleted. The
+original branch is never touched. JSON: `status:"failed"`, the failed step, later steps `not-reached`, and `recovery` (what was undone and the next command; if the
+rollback itself fails, the exact git commands). Globally installed tools stay installed. A failure in `pr` keeps the commits.
+
+**Report.** `{version, ok, command:"migrate", status, exit_code, target, dry_run, from_branch, branch, pieces, steps[{id,action,detail}], changed, pr:{action,url}|null,
+setup_snippet, checklist[], human_step, recovery}`. Actions: `ok` `done` `would-run` `skipped` `pending` `failed` `not-reached`. The checklist is keel's (D-009: `computer` first,
+`phone` last): `approve-pr` (phone) with `--pr`, else `open-pr`; plus the entries above. Only a non-empty checklist makes exit 5.
+

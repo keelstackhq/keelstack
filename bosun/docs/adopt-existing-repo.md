@@ -160,6 +160,19 @@ Check the result with `bosun doctor` (add `--remote` to also run `hoist check`).
 step as ok, warn, skipped or missing. Without `GITHUB_TOKEN` it still runs the local checks and marks the GitHub ones skipped;
 `data.next_step` names the first missing step.
 
+### Upgrading later
+
+To move the repo to a newer keelstack release (tools, splice, the bosun pins and `docs/setup-script.sh`, hoist's release
+workflow, verification), run one command in the repo, as a human or an agent; no orchestrator session is needed:
+
+```bash
+npx @keelstackhq/keel migrate --pr        # --dry-run first to see the plan; --json for agents
+```
+
+It opens one PR and prints a checklist of what only a human can do (approve the PR; paste the new setup snippet into the
+cloud environment only if it changed). Details: [docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md).
+The by-hand route is [update.md](update.md) (`bosun pin --latest --pr`).
+
 ### Modes (optional, after setup)
 
 A freshly adopted repo is in `gatekeeper`: no `[mode]` table. To move on, run

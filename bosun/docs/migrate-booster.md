@@ -183,6 +183,12 @@ If `bosun mode` exits non-zero or `bosun doctor` shows a `missing` step: do its 
 
 #### Step 2. Pin the new release
 
+**Shortcut for moving to a new keelstack release (all tools, one PR):** run `npx @keelstackhq/keel migrate --pr` in the
+repo (see [docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md)). It installs the tools,
+runs `splice update` and `bosun pin --latest`, refreshes hoist's release workflow, checks `splice check`, `bosun doctor`
+and `hoist check`, opens ONE PR, and lists what only a human can do (including a changed cloud setup snippet). The mode
+move below stays a separate step: `keel migrate --mode MODE` only lists it. The by-hand steps that follow are what it runs.
+
 ```bash
 # Local only: give bosun your GitHub login from `gh auth token` (a cloud session needs none).
 bosun pin --latest --pr
