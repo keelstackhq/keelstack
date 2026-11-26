@@ -103,11 +103,17 @@ test("the templates' splice.yml runs the splice update bot on all sources", asyn
     assert.deepEqual(wf.permissions, { contents: "write", "pull-requests": "write" }, t);
     const steps = wf.jobs.update.steps;
     const checkout = steps[0];
-    const bot = steps.find((s) => String(s.uses).startsWith("keelstackhq/splice/action@"));
+    const bot = steps.find((s) =>
+      String(s.uses).startsWith("keelstackhq/keelstack/splice/action@"),
+    );
     assert.match(checkout.uses, /^actions\/checkout@/, t);
     assert.equal(checkout.with["persist-credentials"], false, t);
     // it receives a token with workflows: write, so it is pinned by commit SHA
-    assert.equal(bot.uses, "keelstackhq/splice/action@85c95b63f53836301f2405368767c6ae9138109f", t);
+    assert.equal(
+      bot.uses,
+      "keelstackhq/keelstack/splice/action@5553c1a9da6e4b5e666207d0c884d91739b169c0",
+      t,
+    );
     assert.equal(bot.with.scope, "all", t);
     assert.equal(
       bot.with.token,
