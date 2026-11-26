@@ -804,6 +804,7 @@ fn a_squash_merged_migration_branch_is_replaced_cleanly() {
     git(&env.repo, &["checkout", "main"]);
     git(&env.repo, &["merge", "--squash", "keel/migrate-v0.23.0"]);
     git(&env.repo, &["commit", "-m", "squash of the migration"]);
+    git(&env.repo, &["push", "origin", "main"]);
     let (code, v) = env.run("ok", &["--to", "0.23.0"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["changed"], false);
@@ -997,5 +998,80 @@ fn a_dot_keel_prefixed_ignored_file_is_protected_too() {
     assert_eq!(
         std::fs::read_to_string(env.repo.join(".keel.env")).unwrap(),
         "S2\n"
+    );
+}
+
+fn feature_branch(env: &Env) {
+    git(&env.repo, &["checkout", "-b", "feature/x"]);
+    write(&env.repo, "feature.txt", "unpushed work\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "feature work, not pushed"]);
+}
+
+#[test]
+fn the_migration_branch_starts_from_the_default_branch_not_from_unpushed_work() {
+    let env = Env::new(&ALL);
+    feature_branch(&env);
+    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["pr"]["action"], "opened");
+    assert_eq!(v["base"], "origin/main");
+    assert_eq!(v["excluded_commits"], 1);
+    let log = git(
+        &env.repo,
+        &["log", "--format=%s", "origin/main..keel/migrate-v0.23.0"],
+    );
+    assert!(!log.contains("feature work"), "{log}");
+    assert!(log.contains("chore: pin keelstack tools"), "{log}");
+    assert!(
+        !env.repo.join("feature.txt").exists(),
+        "the PR tree has no feature file"
+    );
+    // What the remote got has no feature commit either.
+    let remote = env.repo.parent().unwrap().join("remote.git");
+    let pushed = git(
+        &remote,
+        &["log", "--format=%s", "main..keel/migrate-v0.23.0"],
+    );
+    assert!(!pushed.contains("feature work"), "{pushed}");
+    assert!(git(&env.repo, &["log", "--format=%s", "feature/x"]).contains("feature work"));
+}
+
+#[test]
+fn a_rollback_returns_to_the_feature_branch_with_its_commit_intact() {
+    let env = Env::new(&ALL);
+    feature_branch(&env);
+    let head = env.head();
+    let (code, v) = env.run("checkfail", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(env.branch(), "feature/x");
+    assert_eq!(env.head(), head);
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("feature.txt")).unwrap(),
+        "unpushed work\n"
+    );
+    assert!(
+        git(&env.repo, &["branch", "--list", "keel/*"])
+            .trim()
+            .is_empty()
+    );
+    assert!(git(&env.repo, &["status", "--porcelain"]).trim().is_empty());
+}
+
+#[test]
+fn a_tracked_file_under_dot_keel_is_never_deleted_by_a_commit() {
+    let env = Env::new(&ALL);
+    write(&env.repo, ".keel/notes.md", "mine\n");
+    git(&env.repo, &["add", "-f", ".keel/notes.md"]);
+    git(&env.repo, &["commit", "-m", "track a note under .keel"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    assert!(git(&env.repo, &["ls-files", ".keel/notes.md"]).contains("notes.md"));
+    let diff = git(&env.repo, &["diff", "--name-status", "main..HEAD"]);
+    assert!(!diff.contains(".keel/notes.md"), "{diff}");
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".keel/notes.md")).unwrap(),
+        "mine\n"
     );
 }

@@ -209,8 +209,19 @@ fn inspect<'a>(
         let (from, to) = (sv(cur, "pinned")?, sv(&m.version, "latest")?);
         if to < from {
             return Err(BosunError::conflict(
-                format!("{t}: npm latest {} is older than the pin {cur}", m.version),
-                "pins only move up; check the npm dist-tag, or pin by hand",
+                if want.is_some() {
+                    format!(
+                        "{t}: the requested {} is older than the pin {cur}",
+                        m.version
+                    )
+                } else {
+                    format!("{t}: npm latest {} is older than the pin {cur}", m.version)
+                },
+                if want.is_some() {
+                    "pins only move up; pass a newer --to, or pin by hand"
+                } else {
+                    "pins only move up; check the npm dist-tag, or pin by hand"
+                },
             ));
         }
         if to == from {

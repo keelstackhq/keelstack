@@ -115,6 +115,10 @@ pub struct MigrateReport {
     pub from_branch: String,
     /// The migration branch the work is on now; None when nothing changed (or `--dry-run`).
     pub branch: Option<String>,
+    /// What the migration branch started from (`origin/<default>`), or None when it started from HEAD.
+    pub base: Option<String>,
+    /// Commits of the checked-out branch that are not on `base`: not part of the migration PR.
+    pub excluded_commits: u32,
     pub pieces: Pieces,
     pub steps: Vec<MStep>,
     pub changed: bool,
@@ -155,6 +159,19 @@ pub fn render_migrate_text(r: &MigrateReport) -> String {
     }
     if let Some(b) = &r.branch {
         out.push_str(&format!("\nbranch: {b} (from {})\n", r.from_branch));
+    }
+    if let Some(b) = &r.base {
+        out.push_str(&format!(
+            "base: {b}{}\n",
+            if r.excluded_commits > 0 {
+                format!(
+                    " ({} local commit(s) of {} are not part of this migration)",
+                    r.excluded_commits, r.from_branch
+                )
+            } else {
+                String::new()
+            }
+        ));
     }
     if let Some(p) = &r.pr {
         out.push_str(&format!("pr: {} ({})\n", p.url, p.action));
@@ -242,6 +259,8 @@ struct Mig<'a> {
     protected: Vec<String>,
     /// Commits keel made in this run.
     commits: u32,
+    base: Option<String>,
+    excluded: u32,
     snippet: Snippet,
     before: Option<String>,
     pr: Option<PrInfo>,
@@ -290,16 +309,9 @@ impl Mig<'_> {
                 bad.join(", ")
             ));
         }
-        // Belt and braces: `.keel/` is in .git/info/exclude, but never commit it.
-        let _ = self.git(&[
-            "rm",
-            "-r",
-            "--cached",
-            "-q",
-            "--ignore-unmatch",
-            "--",
-            ".keel",
-        ]);
+        // Belt and braces: `.keel/` is in .git/info/exclude, but never commit what keel put there.
+        // Unstage only (a file the repo already tracks there is left exactly as it was).
+        let _ = self.git(&["reset", "-q", "--", ".keel"]);
         let quiet = self.git(&["diff", "--cached", "--quiet"]);
         if quiet.code == 0 {
             return Ok(false);
@@ -898,6 +910,17 @@ impl Mig<'_> {
             "Moves this repo to keelstack v{} with `keel migrate`.\n\n## Steps\n",
             self.target
         );
+        if self.excluded > 0 {
+            b.insert_str(
+                0,
+                &format!(
+                    "Based on `{}`: the {} local commit(s) of `{}` that are not on it are not part of this PR.\n\n",
+                    self.base.as_deref().unwrap_or("HEAD"),
+                    self.excluded,
+                    self.orig
+                ),
+            );
+        }
         for s in &self.steps {
             b.push_str(&format!(
                 "- `{}` {}: {}\n",
@@ -1085,6 +1108,21 @@ fn leftover(
     ))
 }
 
+/// `origin/<default>` after a best-effort fetch of it: the branch `origin/HEAD` names, else
+/// `origin/main`, else `origin/master`. None when the repo has no such remote branch.
+fn default_remote_base(git: &dyn Fn(&[&str]) -> Out) -> Option<String> {
+    let head = git(&["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]);
+    let named = (head.code == 0).then(|| head.stdout.trim().to_string());
+    let base = named
+        .into_iter()
+        .chain(["origin/main".to_string(), "origin/master".to_string()])
+        .find(|b| git(&["rev-parse", "--verify", "--quiet", b]).code == 0)?;
+    if let Some(name) = base.strip_prefix("origin/") {
+        let _ = git(&["fetch", "origin", name]);
+    }
+    Some(base)
+}
+
 /// An environment error (exit 3) whose message says how to fix it.
 fn env_err(msg: impl Into<String>, fix: impl Into<String>) -> KeelError {
     KeelError::Env(format!("{}; fix: {}", msg.into(), fix.into()))
@@ -1101,7 +1139,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             fix: "keel migrate --to 0.23.0".into(),
         });
     }
-    let p = detect(dir);
+    let mut p = detect(dir);
     if !(p.splice || p.bosun || p.hoist) {
         return Err(env_err(
             "nothing to migrate: no .splice/, .bosun/ or hoist.toml here",
@@ -1177,7 +1215,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             Some(true) => {}
         }
     }
-    let start = gitc(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+    let mut start = gitc(&["rev-parse", "HEAD"]).stdout.trim().to_string();
     if start.is_empty() {
         return Err(env_err("the repo has no commit yet", "make a first commit"));
     }
@@ -1197,6 +1235,8 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
         start: start.clone(),
         protected: Vec::new(),
         commits: 0,
+        base: None,
+        excluded: 0,
         snippet: Snippet {
             status: "not-checked",
             path: None,
@@ -1209,6 +1249,8 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
 
     let mut created = false;
     if !m.dry {
+        // Before the branch switch: the ignore rules of the user's own HEAD decide what is protected.
+        m.protected = m.ignored_now();
         if orig != branch {
             let exists = gitc(&[
                 "rev-parse",
@@ -1238,7 +1280,13 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
                     ),
                 ));
             }
-            let o = gitc(&["checkout", "-b", &branch]);
+            // Start from the default branch's remote tip, never from the checked-out HEAD: its
+            // unpushed commits would ride into the PR. The tree is clean (preflight).
+            let base = default_remote_base(&gitc);
+            let o = match &base {
+                Some(b) => gitc(&["checkout", "-b", &branch, b, "--no-track"]),
+                None => gitc(&["checkout", "-b", &branch]),
+            };
             if o.code != 0 {
                 return Err(KeelError::Env(format!(
                     "cannot create {branch}: {}",
@@ -1246,9 +1294,18 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
                 )));
             }
             created = true;
+            if let Some(b) = base {
+                let n = gitc(&["rev-list", "--count", &format!("{b}..{orig}")]);
+                m.excluded = n.stdout.trim().parse().unwrap_or(0);
+                m.base = Some(b);
+                // The checkout moved the tree: what is rolled back to, and what is detected, is the base.
+                start = gitc(&["rev-parse", "HEAD"]).stdout.trim().to_string();
+                m.start = start.clone();
+                m.p = detect(dir);
+                p = m.p.clone();
+            }
         }
         keep_scratch_untracked(&gitc, dir);
-        m.protected = m.ignored_now();
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
         if p.bosun {
             m.before = std::fs::read_to_string(dir.join(SNIPPET_BEFORE))
@@ -1402,6 +1459,8 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
         dry_run: m.dry,
         from_branch: orig,
         branch: keep_branch.then_some(branch),
+        base: m.base.clone(),
+        excluded_commits: m.excluded,
         pieces: p,
         steps: m.steps,
         changed,

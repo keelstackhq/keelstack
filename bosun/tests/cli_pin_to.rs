@@ -174,6 +174,13 @@ fn a_downgrade_with_to_is_still_a_conflict() {
     let reg = Registry::start_with(&ALL, &[("bosun", "0.8.0")], &[], &[], None, None);
     let (code, v) = pin_to(d.path(), &reg, &["--to", "0.8.0", "--tool", "bosun"]);
     assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("the requested 0.8.0 is older than the pin 0.9.0"),
+        "{v}"
+    );
     assert_eq!(read(d.path(), ".bosun/version"), "0.9.0\n");
 }
 

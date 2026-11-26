@@ -46,6 +46,7 @@ approvals and merges follow the org's rules, keel does neither.
 - Any failed step before the PR rolls back to the untouched starting branch and deletes the migration branch. The rollback never runs `git clean`: it deletes only the untracked files that appeared during the run (none existed before, the preflight proved it), and resets only keel's own branch; the JSON
   `recovery` says exactly what was undone and what to run next. A repo that is already current changes nothing and exits 0.
 - `--dry-run` installs nothing, writes nothing, creates no branch and pushes nothing.
+- The migration branch starts from the remote default branch (`origin/<default>`, fetched), never from the checked-out HEAD, so unpushed local commits cannot ride into the PR; the JSON has `base` and `excluded_commits` (how many local commits were left out) and the PR body says so. On failure keel returns to your branch with its commits intact.
 - `--pr` opens the PR against the repo's default branch (`--base`); a checked-out branch that is merely ahead of origin, with nothing to migrate, gets no PR and exit 0.
 - A tool that is not at the target is installed with keel's embedded sha512 when keel has them for that version. Otherwise keel takes the integrity from `npm view`, which is the registry vouching for itself: it catches a corrupted download, not a compromised registry. Prefer a keel release whose embedded pins cover the target.
 - `--mode`: if `bosun migrate --to MODE --dry-run` fails, the migration stays and the checklist says to run it by hand.
