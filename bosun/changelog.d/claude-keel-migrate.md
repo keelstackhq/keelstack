@@ -1,1 +1,1 @@
-- `keel migrate` moves a repo to a keelstack release in one command; the adopt and migrate-booster guides point to it.
+- `bosun pin --to X.Y.Z` pins an exact published release (refuses unpublished or deprecated versions); `keel migrate` moves a repo to a release in one command.

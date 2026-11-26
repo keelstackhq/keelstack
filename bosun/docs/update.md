@@ -42,6 +42,8 @@ Then:
 2. Turn on auto-merge. GitHub merges when the checks are green. **Agents never merge.**
 3. Post a review verdict if your repo asks for one (`bosun review-pack`, `bosun verdict comment`).
 
+To pin an exact published release instead of the newest, use `bosun pin --to X.Y.Z` (same checks; an unpublished or deprecated version is refused).
+
 ## 3. Update the CLI on your machine
 
 After the PR merges:

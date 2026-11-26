@@ -25,6 +25,8 @@ struct Meta {
     version: String,
     integrity: String,
     tarball: String,
+    /// npm's `deprecated` message: a yanked release carries one.
+    deprecated: Option<String>,
 }
 
 struct Npm {
@@ -101,6 +103,7 @@ impl Npm {
                 version,
                 integrity,
                 tarball,
+                deprecated: s("/deprecated").filter(|d| !d.is_empty()),
             }),
             _ => Err(BosunError::error(
                 format!("npm {what}: no version, dist.integrity or dist.tarball"),
@@ -159,7 +162,12 @@ type Found<'a> = (
 );
 
 /// Read the pins of `root` and compare them with npm latest (nothing is written or downloaded).
-fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, BosunError> {
+fn inspect<'a>(
+    root: &Path,
+    only: &'a [String],
+    npm: &Npm,
+    want: Option<&str>,
+) -> Result<Found<'a>, BosunError> {
     if root.join(CHANNEL).exists() {
         return Err(BosunError::error(
             "the bosun channel owns the tool pins in this repo",
@@ -183,7 +191,10 @@ fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, 
                 format!("fix {SCRIPT} by hand"),
             )
         })?;
-        let m = npm.meta(t, "latest")?;
+        let m = match want {
+            None => npm.meta(t, "latest")?,
+            Some(v) => explicit(npm, t, v)?,
+        };
         if *t == "bosun" {
             bosun_latest = Some(m.version.clone());
         }
@@ -212,6 +223,37 @@ fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, 
     Ok((script, changed, unchanged, latest, bosun_latest))
 }
 
+/// Metadata of exactly `v`: a version npm does not have, or one marked deprecated (yanked), is
+/// refused with a fix, never pinned.
+fn explicit(npm: &Npm, tool: &str, v: &str) -> Result<Meta, BosunError> {
+    let m = npm.meta(tool, v).map_err(|e| {
+        if e.message.contains("HTTP 404") {
+            BosunError::error(
+                format!("@keelstackhq/{tool}@{v} is not published on npm"),
+                "pass a published release (`npm view @keelstackhq/bosun versions`), or wait for the release to publish",
+            )
+        } else {
+            e
+        }
+    })?;
+    if m.version != v {
+        return Err(BosunError::error(
+            format!(
+                "npm @keelstackhq/{tool}@{v}: answered version {}",
+                m.version
+            ),
+            "do not pin this release; tell the owner, then rerun later",
+        ));
+    }
+    if let Some(d) = &m.deprecated {
+        return Err(BosunError::error(
+            format!("@keelstackhq/{tool}@{v} is deprecated on npm ({d})"),
+            "pin a release that is not deprecated (`--to` another version, or --latest)",
+        ));
+    }
+    Ok(m)
+}
+
 pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
     let start = match dir {
         Some(d) => d.to_path_buf(),
@@ -220,7 +262,7 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
     let root: PathBuf =
         git_out(&start, &["rev-parse", "--show-toplevel"]).map_or(start, PathBuf::from);
     let npm = Npm::new(None);
-    let (script, changed, unchanged, latest, _) = inspect(&root, &a.tool, &npm)?;
+    let (script, changed, unchanged, latest, _) = inspect(&root, &a.tool, &npm, a.to.as_deref())?;
     if a.check {
         return Ok(Outcome::data(
             json!({"behind": changed, "unchanged": unchanged}),
@@ -499,7 +541,7 @@ pub fn update_check(dir: &Path) -> Check {
             Err(e) => return failed(&e),
         }
     } else {
-        match inspect(&root, &[], &npm) {
+        match inspect(&root, &[], &npm, None) {
             Ok((_, behind, _, _, latest)) => {
                 let moves = behind
                     .iter()

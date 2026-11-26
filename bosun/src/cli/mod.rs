@@ -1447,11 +1447,22 @@ pub struct SetupSnippetArgs {
     pub settings: Option<std::path::PathBuf>,
 }
 
+/// `X.Y.Z`: three numbers without leading zeros, the only versions pins hold.
+fn pin_version(v: &str) -> Result<String, String> {
+    match crate::core::pin::parse_semver(v) {
+        Some(_) if !v.contains(['+', '-']) => Ok(v.to_string()),
+        _ => Err(format!("{v:?} is not a release number X.Y.Z")),
+    }
+}
+
 #[derive(Debug, Args)]
 pub struct PinArgs {
-    /// Move the tool pins to the newest npm release (required; the only mode).
-    #[arg(long, required = true)]
+    /// Move the tool pins to the newest npm release (this or `--to` is required).
+    #[arg(long, required_unless_present = "to", conflicts_with = "to")]
     pub latest: bool,
+    /// Move the tool pins to this exact published release X.Y.Z (the same version for every tool).
+    #[arg(long, value_name = "X.Y.Z", value_parser = pin_version)]
+    pub to: Option<String>,
     /// Only this tool (repeatable); default: splice, hoist, berth and bosun.
     #[arg(long, value_name = "TOOL", value_parser = ["splice", "hoist", "berth", "bosun"])]
     pub tool: Vec<String>,

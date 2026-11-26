@@ -31,13 +31,30 @@ impl Registry {
     /// `latest`: tool -> version. `tamper`: serve other bytes than the integrity covers for this package.
     /// `foreign`: this package's tarball URL points at another host.
     pub fn start(latest: &[(&str, &str)], tamper: Option<&str>, foreign: Option<&str>) -> Registry {
+        Registry::start_with(latest, &[], &[], tamper, foreign)
+    }
+
+    /// As `start`, plus `older`: tool -> another published version (served by version only, never
+    /// as `latest`), and `deprecated`: versions npm marks deprecated (a yanked release).
+    pub fn start_with(
+        latest: &[(&str, &str)],
+        older: &[(&str, &str)],
+        deprecated: &[&str],
+        tamper: Option<&str>,
+        foreign: Option<&str>,
+    ) -> Registry {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let base = format!(
             "http://127.0.0.1:{}",
             server.server_addr().to_ip().unwrap().port()
         );
         let mut routes: HashMap<String, Vec<u8>> = HashMap::new();
-        for (tool, ver) in latest {
+        let all: Vec<(&str, &str, bool)> = latest
+            .iter()
+            .map(|(t, v)| (*t, *v, true))
+            .chain(older.iter().map(|(t, v)| (*t, *v, false)))
+            .collect();
+        for (tool, ver, is_latest) in all {
             for p in pkgs(tool) {
                 let tar = format!("{p}@{ver}").into_bytes();
                 let host = if foreign == Some(p.as_str()) {
@@ -46,16 +63,21 @@ impl Registry {
                     base.as_str()
                 };
                 let tarball = format!("{host}/@keelstackhq/{p}/-/{p}-{ver}.tgz");
-                let meta = json!({"version": ver, "dist": {"integrity": format!("sha512-{}", sha(&tar)), "tarball": tarball}});
+                let mut meta = json!({"version": ver, "dist": {"integrity": format!("sha512-{}", sha(&tar)), "tarball": tarball}});
+                if deprecated.contains(&ver) {
+                    meta["deprecated"] = json!("yanked: broken release");
+                }
                 let served = if tamper == Some(p.as_str()) {
                     b"other bytes".to_vec()
                 } else {
                     tar
                 };
-                routes.insert(
-                    format!("/@keelstackhq/{p}/latest"),
-                    meta.to_string().into_bytes(),
-                );
+                if is_latest {
+                    routes.insert(
+                        format!("/@keelstackhq/{p}/latest"),
+                        meta.to_string().into_bytes(),
+                    );
+                }
                 routes.insert(
                     format!("/@keelstackhq/{p}/{ver}"),
                     meta.to_string().into_bytes(),
