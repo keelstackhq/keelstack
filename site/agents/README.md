@@ -6,7 +6,7 @@ You are an AI agent in the TARGET repo (set up, adopt, upgrade, change mode), no
 
 ## Use
 
-Versions: hull v0.23.0, splice 0.23.0, bosun 0.23.0, hoist 0.23.0, hoard v0.23.0, berth 0.23.0. JSON: https://keelstack.dev/agents/versions.json. Every pin is keelstack v0.23.0, one version for every tool.
+Versions: hull v0.24.0, splice 0.24.0, bosun 0.24.0, hoist 0.24.0, hoard v0.24.0, berth 0.24.0. JSON: https://keelstack.dev/agents/versions.json. Every pin is keelstack v0.24.0, one version for every tool.
 
 bosun prints exactly one JSON object on stdout: `{version, command, ok, exit_code, data, error, next}`; `error` is `{kind, message, fix}`. Do what `error.fix` says; make the calls in `next`; never work around a refusal. Exit codes: 0 ok, 1 error, 2 usage, 3 conflict, 4 halted, 5 needs-human, 6 limit. On exit 5 stop and tell the owner.
 
@@ -41,7 +41,7 @@ The owner merges; agents never merge. Step 4 also sets branch protection and aut
 Install bosun first (every path assumes it):
 
 ```bash
-npm i -g @keelstackhq/bosun@0.23.0
+npm i -g @keelstackhq/bosun@0.24.0
 export GITHUB_TOKEN=$(gh auth token)   # in your shell, never in a file
 ```
 
@@ -50,7 +50,7 @@ Needs git, Node, `gh auth login`; pnpm unless C or B bosun alone. Use a clean br
 A. New repo. The owner's brief gives the name, `<owner>`, the pieces (`<id>:<name>`, e.g. `preact-app`) and the plan: after `splice new` write `plans/<name>.md` from it and `bosun plan check` it; `bosun init --plan` copies it. Rust: `//template-rust`, `--stack rust`, piece `rust-cli` (libraries need none); skip `pnpm install && pnpm run ci`; run its `.claude/skills/verify/SKILL.md` steps. For signed approvals pause before `bosun init` for step 2.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.23.0 new gh:keelstackhq/keelstack//hull/template my-repo --ref v0.23.0 --piece <id>:<name> ...
+pnpm dlx @keelstackhq/splice@0.24.0 new gh:keelstackhq/keelstack//hull/template my-repo --ref v0.24.0 --piece <id>:<name> ...
 cd my-repo && pnpm install && pnpm run ci
 git add -A && git commit -m "chore: render from hull"   # commit the render and its lockfile (`splice new --commit` skips the lockfile)
 gh repo create <owner>/my-repo --private --source . --push   # before bosun init; <owner> from the brief
@@ -61,7 +61,7 @@ bosun doctor
 Owner step 4, after the merge:
 
 ```bash
-npm install -g @keelstackhq/hoist@0.23.0
+npm install -g @keelstackhq/hoist@0.24.0
 hoist plan --area github          # what would change; writes nothing
 hoist apply --area github --yes   # write it, then verify like `hoist check`
 ```
@@ -69,17 +69,17 @@ hoist apply --area github --yes   # write it, then verify like `hoist check`
 B. Adopt, with hull. Take `<template>` and each `<id>:<name>` from the assess JSON (`next`, `pieces`). The owner confirms them and the change list.
 
 ```bash
-curl -fsSL https://keelstack.dev/assess/v0.23.0.mjs -o /tmp/assess.mjs
+curl -fsSL https://keelstack.dev/assess/v0.24.0.mjs -o /tmp/assess.mjs
 echo "ee7933f0c2afff2098c91a158d7ffddf6f2300d3a40e7df0391a59d11e8f7ec6  /tmp/assess.mjs" | sha256sum -c
 node /tmp/assess.mjs --assess --json
-pnpm dlx @keelstackhq/splice@0.23.0 adopt gh:keelstackhq/keelstack//hull/<template> --ref v0.23.0 --piece <id>:<name> ... --dry-run --json
+pnpm dlx @keelstackhq/splice@0.24.0 adopt gh:keelstackhq/keelstack//hull/<template> --ref v0.24.0 --piece <id>:<name> ... --dry-run --json
 ```
 
 Then run it for real and check. Never `--force` unless the owner names the files to replace. Their `ci.yml` is an owned clash (refused): the owner takes the template's or keeps theirs with its job renamed `ci-ok`; a kept owned workflow stays refused, so adopt later or channels only.
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.23.0 adopt gh:keelstackhq/keelstack//hull/<template> --ref v0.23.0 --piece <id>:<name> ...   # the dry-run command without --dry-run
-pnpm dlx @keelstackhq/splice@0.23.0 check --offline   # conflict markers fail it
+pnpm dlx @keelstackhq/splice@0.24.0 adopt gh:keelstackhq/keelstack//hull/<template> --ref v0.24.0 --piece <id>:<name> ...   # the dry-run command without --dry-run
+pnpm dlx @keelstackhq/splice@0.24.0 check --offline   # conflict markers fail it
 ```
 
 Open the PR; the owner merges. Then `bosun init --stack <stack> --plan plans/<name>.md --owner <login>` (`stack` from assess; plan as in A), then owner step 4 with `--adopt`:
@@ -92,7 +92,7 @@ hoist apply --area github --adopt --yes   # write it, then verify
 B. Adopt, channels only (no hull template). Bosun for rust or ts-pnpm: then `bosun init --stack <stack> --plan plans/<name>.md --owner <login>` (plan from the owner's brief):
 
 ```bash
-pnpm dlx @keelstackhq/splice@0.23.0 channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project
+pnpm dlx @keelstackhq/splice@0.24.0 channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece import-project
 ```
 
 B. Adopt, with bosun alone (other stacks, or no splice). Write `plans/<name>.md` from the owner's brief:
@@ -103,7 +103,7 @@ bosun adopt --owner <login>              # writes bosun's files; commits nothing
 bosun doctor                             # verify
 ```
 
-Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, run `npm i -g @keelstackhq/hoist@0.23.0`, then `hoist apply --area github --adopt --yes`.
+Bosun alone, step 4 instead, after the setup PR merges: create hoist.toml with `ci-ok`, `risk-check`, `review-verdict`, `main-open` in `[github] required_checks`, run `npm i -g @keelstackhq/hoist@0.24.0`, then `hoist apply --area github --adopt --yes`.
 
 C. Change mode. Needs bosun 0.15.0 or later in the repo. No `bosun init` or new plan: `--finish` amends open epics' plans (`--plan <file>` adds one). One rung per PR unless the owner says `--direct`; the owner approves the PR head.
 
@@ -125,8 +125,8 @@ bosun pin --latest --pr               # checks npm sha512, opens a draft PR; the
 npm i -g @keelstackhq/bosun@<new> && bosun --version
 # then hull, on its own branch:
 git switch <default-branch> && git pull && git switch -c chore/splice-update
-pnpm dlx @keelstackhq/splice@0.23.0 update --all
-pnpm dlx @keelstackhq/splice@0.23.0 check && pnpm install && pnpm run ci
+pnpm dlx @keelstackhq/splice@0.24.0 update --all
+pnpm dlx @keelstackhq/splice@0.24.0 check && pnpm install && pnpm run ci
 git add -A && git commit -m "chore: splice update to hull vX.Y.Z" && git push -u origin HEAD
 ```
 
@@ -145,7 +145,7 @@ A red `pnpm run ci` is yours to fix. `splice check` also exits 1 on an available
 ```bash
 pnpm run ci   # where the repo has it
 bosun doctor   # exit 5: owner steps pending
-pnpm dlx @keelstackhq/splice@0.23.0 check --offline   # needs .splice/lock.toml
+pnpm dlx @keelstackhq/splice@0.24.0 check --offline   # needs .splice/lock.toml
 hoist check --area github   # after owner step 4 (--adopt on an adopted repo)
 ```
 
@@ -163,4 +163,4 @@ bosun migrate --to <tighter-mode>                       # mode too loose: one PR
 
 - This file: https://keelstack.dev/agents.md
 - One scenario each: https://keelstack.dev/docs/start/a.md to f.md
-- hull adopt guide at the pinned hull release: https://github.com/keelstackhq/keelstack/blob/v0.23.0/hull/docs/adopt.md
+- hull adopt guide at the pinned hull release: https://github.com/keelstackhq/keelstack/blob/v0.24.0/hull/docs/adopt.md
