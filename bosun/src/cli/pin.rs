@@ -20,6 +20,21 @@ const VERSION_FILE: &str = ".bosun/version";
 const CHANNEL: &str = ".splice/channels/bosun.toml";
 const BRANCH: &str = "bosun/pin";
 
+/// A failed registry request; `not_found` is HTTP 404 (typed, never read back from a message).
+struct Fetch {
+    err: BosunError,
+    not_found: bool,
+}
+
+impl Fetch {
+    fn other(err: BosunError) -> Fetch {
+        Fetch {
+            err,
+            not_found: false,
+        }
+    }
+}
+
 /// What npm says about one package version.
 struct Meta {
     version: String,
@@ -59,6 +74,10 @@ impl Npm {
     }
 
     fn get(&self, url: &str, what: &str, limit: u64) -> Result<Vec<u8>, BosunError> {
+        self.fetch(url, what, limit).map_err(|f| f.err)
+    }
+
+    fn fetch(&self, url: &str, what: &str, limit: u64) -> Result<Vec<u8>, Fetch> {
         let fail = |d: String| {
             BosunError::error(
                 format!("npm {what}: {d}"),
@@ -70,33 +89,46 @@ impl Npm {
             Some(d) => {
                 let left = d.saturating_duration_since(Instant::now());
                 if left.is_zero() {
-                    return Err(fail("timed out".into()));
+                    return Err(Fetch::other(fail("timed out".into())));
                 }
                 req.config().timeout_global(Some(left)).build().call()
             }
             None => req.call(),
         };
-        let mut resp = resp.map_err(|e| fail(e.to_string()))?;
-        if resp.status().as_u16() != 200 {
-            return Err(fail(format!("HTTP {}", resp.status().as_u16())));
+        let mut resp = resp.map_err(|e| Fetch::other(fail(e.to_string())))?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(Fetch {
+                err: fail(format!("HTTP {status}")),
+                not_found: status == 404,
+            });
         }
         let body = resp.body_mut().with_config().limit(limit).read_to_vec();
-        body.map_err(|e| fail(e.to_string()))
+        body.map_err(|e| Fetch::other(fail(e.to_string())))
     }
 
     /// Metadata of `pkg` at `version` (`latest` or X.Y.Z).
     fn meta(&self, pkg: &str, version: &str) -> Result<Meta, BosunError> {
+        self.meta_typed(pkg, version).map_err(|f| f.err)
+    }
+
+    /// As `meta`, saying whether the registry answered 404 (the version is not published).
+    fn meta_typed(&self, pkg: &str, version: &str) -> Result<Meta, Fetch> {
         // Every fetch starts here; tarballs must sit under this base.
         if !crate::anthropic::https_or_loopback(&self.base) {
-            return Err(BosunError::error(
+            return Err(Fetch::other(BosunError::error(
                 "BOSUN_NPM_REGISTRY must be an https:// URL (http:// only for 127.0.0.1 or localhost)",
                 "unset BOSUN_NPM_REGISTRY to use https://registry.npmjs.org, or set an https:// URL",
-            ));
+            )));
         }
         let what = format!("@keelstackhq/{pkg}@{version}");
         let url = format!("{}/@keelstackhq/{pkg}/{version}", self.base);
-        let v: Value = serde_json::from_slice(&self.get(&url, &what, 1 << 22)?)
-            .map_err(|e| BosunError::error(format!("npm {what}: bad JSON: {e}"), "retry later"))?;
+        let v: Value = serde_json::from_slice(&self.fetch(&url, &what, 1 << 22)?).map_err(|e| {
+            Fetch::other(BosunError::error(
+                format!("npm {what}: bad JSON: {e}"),
+                "retry later",
+            ))
+        })?;
         let s = |p: &str| v.pointer(p).and_then(Value::as_str).map(String::from);
         match (s("/version"), s("/dist/integrity"), s("/dist/tarball")) {
             (Some(version), Some(integrity), Some(tarball)) => Ok(Meta {
@@ -105,10 +137,10 @@ impl Npm {
                 tarball,
                 deprecated: s("/deprecated").filter(|d| !d.is_empty()),
             }),
-            _ => Err(BosunError::error(
+            _ => Err(Fetch::other(BosunError::error(
                 format!("npm {what}: no version, dist.integrity or dist.tarball"),
                 "rerun the same `bosun pin` command (`--latest` or `--to X.Y.Z`); if it persists, pin by hand",
-            )),
+            ))),
         }
     }
 
@@ -237,14 +269,14 @@ fn inspect<'a>(
 /// Metadata of exactly `v`: a version npm does not have, or one marked deprecated (yanked), is
 /// refused with a fix, never pinned.
 fn explicit(npm: &Npm, tool: &str, v: &str) -> Result<Meta, BosunError> {
-    let m = npm.meta(tool, v).map_err(|e| {
-        if e.message.contains("HTTP 404") {
+    let m = npm.meta_typed(tool, v).map_err(|f| {
+        if f.not_found {
             BosunError::error(
                 format!("@keelstackhq/{tool}@{v} is not published on npm"),
                 format!("pass a published release (`npm view @keelstackhq/{tool} versions`), or wait for the release to publish"),
             )
         } else {
-            e
+            f.err
         }
     })?;
     if m.version != v {

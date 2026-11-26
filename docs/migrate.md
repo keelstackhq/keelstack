@@ -6,7 +6,7 @@ Run this in the repo, as a human or as an agent. The repo does not need to be pa
 npx @keelstackhq/keel migrate --pr
 ```
 
-`keel migrate [--to X.Y.Z] [--json] [--dry-run] [--pr] [--mode MODE]` (default target: the release of the keel you run).
+`keel migrate [--to X.Y.Z] [--json] [--dry-run] [--pr] [--base REF] [--mode MODE]` (default target: the release of the keel you run).
 It skips every piece the repo does not use and does, in order, one commit each, on the branch `keel/migrate-vX.Y.Z`:
 
 1. **tools**: installs splice, bosun and hoist at the target version (checksum verified, never an unverified tarball).
@@ -22,7 +22,7 @@ It skips every piece the repo does not use and does, in order, one commit each, 
 `keel migrate --json --pr` is enough. Read the one JSON object: `status` (`done`, `human`, `failed`, `planned`),
 `steps[]` (`id`, `action`, `detail`), `checklist[]` (what only a human can do, `device` `computer` or `phone`, computer
 first) and, on `failed`, `recovery`. Exit codes: 0 done or nothing to do, 1 a step failed (rolled back) or, with
-`--dry-run`, work remains, 2 usage, 3 environment (dirty tree, not a git checkout, no keelstack piece found), 5 a human step is pending.
+`--dry-run`, work remains, 2 usage, 3 environment (see Safety), 5 a human step is pending.
 
 Typical answer after a real run: exit 5 with the checklist `approve-pr` (phone). Hand that to the owner and stop;
 approvals and merges follow the org's rules, keel does neither.
@@ -33,21 +33,28 @@ approvals and merges follow the org's rules, keel does neither.
 |---|---|---|
 | `approve-pr` | always after `--pr` | approve the PR (the owner's chat approval, D-018) and merge it by the repo's rules |
 | `open-pr` | run without `--pr` | `keel migrate --pr` pushes the branch and opens the PR |
-| `setup-snippet` | only when the bootstrap text changed (or could not be compared) | paste `.keel/cloud-setup.sh` into claude.ai/code > Environments > Setup script. It lists the line counts and `.keel/cloud-setup.previous.sh` to `diff` against. It holds no secret. When it did not change, never paste again: each checkout's own `docs/setup-script.sh` carries the new pins |
+| `setup-snippet` | only when the bootstrap text changed (or could not be compared) | paste the file named in the entry (`<git-dir>/keel/cloud-setup.sh`) into claude.ai/code > Environments > Setup script. The entry lists the line counts and the previous file to `diff` against. It holds no secret. When it did not change, never paste again: each checkout's own `docs/setup-script.sh` carries the new pins |
 | `hoist-apply` | hoist reports drift (for example the `release-tags` environment or `[release] reviewers`) | `hoist apply --area github` with an admin token, on a computer |
 | `bosun-doctor`, `hoist-check`, `hoist-init` | a check could not run or found work | the command in the entry |
 | `bosun-mode` | `--mode MODE` | after the PR merges: `bosun migrate --to MODE` (its own gated PR) |
 
+## How it works: your checkout is never touched
+
+keel does all the work in its own temporary git worktree, created from the remote default branch:
+
+- It runs `git fetch origin <default>` (this must succeed: a stale base would migrate old files; exit 3 with the fix, or pass `--base REF` to use a ref you name) and adds a worktree under `<git-dir>/keel/migrate-vX.Y.Z` on branch `keel/migrate-vX.Y.Z` based on `origin/<default>`.
+- Every tool (`splice`, `bosun`, `hoist`) runs in that worktree, the commits are made there and `--pr` pushes from there. The worktree is always removed at the end, on success and on failure.
+- Your checkout, your current branch, the index, the stash, your uncommitted, untracked and ignored files (`.env`, `node_modules/`), and your unpushed commits are never read as input or changed. A dirty tree is fine. Unpushed local commits are not part of the migration; the JSON says how many (`excluded_commits`) and the PR body mentions it.
+- The cloud setup snippet files are written to `<git-dir>/keel/` (`cloud-setup.sh`, `cloud-setup.previous.sh`), not into your checkout; the JSON `setup_snippet.path` is the absolute path.
+- A step that rewrites `.gitignore` so that a file the repo ignores (as of the base) would be committed fails (the files named, nothing committed) and the run is rolled back.
+
 ## Safety
 
-- Exit 3 means keel changed nothing and tells you the fix: not a git checkout; `-C` is not the repo root (the check and the rollback cover the whole repo); HEAD detached or no commit; a dirty tree, tracked or untracked (checked with `--untracked-files=all` over the whole repo, whatever `status.showUntrackedFiles` says: git is the undo button, `git stash -u`); the branch `keel/migrate-vX.Y.Z` already exists and is neither merged, a squash merge of the same tree, nor the branch of a merged PR (`git switch` it to resume, or `git branch -D` it); `gh` missing or logged out with `--pr`; no splice, bosun or hoist piece found.
-- Files git ignores here (`.env`, `node_modules/`) are recorded before the first step and are never committed, pushed or deleted. A step that would un-ignore one (a template that rewrites `.gitignore`) fails with the paths named, unstages them and rolls back; keep them ignored or move them out of the repo, then rerun.
-- A branch left by an earlier migration is replaced silently when it is merged into HEAD, has the same tree as HEAD (a squash merge), or its PR is merged on GitHub. Exception: a branch with commits beyond its merged PR's head is never deleted; keel exits 3 with the `git log` and `git branch -D` advice.
-- Any failed step before the PR rolls back to the untouched starting branch and deletes the migration branch. The rollback never runs `git clean`: it deletes only the untracked files that appeared during the run (none existed before, the preflight proved it), and resets only keel's own branch; the JSON
-  `recovery` says exactly what was undone and what to run next. A repo that is already current changes nothing and exits 0.
-- `--dry-run` installs nothing, writes nothing, creates no branch and pushes nothing.
-- The migration branch starts from the remote default branch (`origin/<default>`, fetched), never from the checked-out HEAD, so unpushed local commits cannot ride into the PR; the JSON has `base` and `excluded_commits` (how many local commits were left out) and the PR body says so. On failure keel returns to your branch with its commits intact.
-- `--pr` opens the PR against the repo's default branch (`--base`); a checked-out branch that is merely ahead of origin, with nothing to migrate, gets no PR and exit 0.
+- Exit 3 means keel changed nothing and tells you the fix: not a git checkout; no `origin` default branch could be found or fetched (fix the remote or pass `--base REF`); `--base REF` does not exist; you are on `keel/migrate-vX.Y.Z` itself (switch to another branch first); that branch exists, is not merged and is behind the base (`git branch -D` it or rebase it); a branch whose PR merged has commits beyond the PR head (`git log`, then `git branch -D`); `gh` missing or logged out with `--pr`; no splice, bosun or hoist piece on the base.
+- A branch left by an earlier migration is replaced silently when it is merged into the base, has the same tree as the base (a squash merge), or its PR is merged on GitHub with the branch at the PR's head. Any other existing migration branch is resumed (re-run with `--pr` to push it).
+- Any failed step before the PR resets the migration branch to where the run started (the branch is deleted when this run created it) and removes the worktree; the JSON `recovery` says exactly what was undone and what to run next. A repo that is already current changes nothing and exits 0.
+- `--dry-run` installs nothing, commits nothing, creates no branch and pushes nothing (it adds and removes a temporary detached worktree and fetches the base).
+- `--pr` opens the PR against the repo's default branch (`gh pr create --base`); nothing to migrate means no PR and exit 0, whatever your branch is ahead by.
 - A tool that is not at the target is installed with keel's embedded sha512 when keel has them for that version. Otherwise keel takes the integrity from `npm view`, which is the registry vouching for itself: it catches a corrupted download, not a compromised registry. Prefer a keel release whose embedded pins cover the target.
 - `--mode`: if `bosun migrate --to MODE --dry-run` fails, the migration stays and the checklist says to run it by hand.
 - keel never merges, tags, releases, publishes or force-pushes.

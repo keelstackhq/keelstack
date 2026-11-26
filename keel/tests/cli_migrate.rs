@@ -32,6 +32,7 @@ case "$name $*" in
   "splice --json --yes update --all")
     [ "$KEEL_SCENARIO" = conflict ] && { echo "<<<<<<< ours" > AGENTS.md; echo '{"ok":false,"exit_code":1}'; exit 1; }
     [ -n "$KEEL_REWRITE_GITIGNORE" ] && printf "dist/\\n" > .gitignore
+    [ -n "$KEEL_CREATE_ENV" ] && echo "TOKEN=from-the-step" > .env
     echo "template v2" > .splice/template.txt
     echo '{"ok":true,"changes":[{"path":".splice/template.txt"}]}';;
   "splice --json check")
@@ -199,6 +200,81 @@ impl Env {
             .collect()
     }
 
+    /// Everything the user can see or lose: every file of the checkout (ignored and untracked
+    /// ones too), `.git/HEAD`, the index bytes, the status and the stash.
+    fn user_state(&self) -> Vec<(String, Vec<u8>)> {
+        fn walk(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
+            let mut es: Vec<_> = std::fs::read_dir(dir)
+                .unwrap()
+                .map(|e| e.unwrap())
+                .collect();
+            es.sort_by_key(|e| e.file_name());
+            for e in es {
+                let p = e.path();
+                let rel = p.strip_prefix(root).unwrap().to_string_lossy().into_owned();
+                if rel == ".git" {
+                    continue;
+                }
+                if e.file_type().unwrap().is_dir() {
+                    walk(root, &p, out);
+                } else {
+                    out.push((rel, std::fs::read(&p).unwrap()));
+                }
+            }
+        }
+        let mut out = Vec::new();
+        walk(&self.repo, &self.repo, &mut out);
+        out.push((
+            ".git/HEAD".into(),
+            std::fs::read(self.repo.join(".git/HEAD")).unwrap(),
+        ));
+        out.push((
+            ".git/index".into(),
+            std::fs::read(self.repo.join(".git/index")).unwrap_or_default(),
+        ));
+        out.push((
+            "status".into(),
+            git(
+                &self.repo,
+                &[
+                    "status",
+                    "--porcelain=v2",
+                    "--branch",
+                    "--ignored",
+                    "--untracked-files=all",
+                ],
+            )
+            .into_bytes(),
+        ));
+        out.push((
+            "stash".into(),
+            git(&self.repo, &["stash", "list"]).into_bytes(),
+        ));
+        out
+    }
+
+    /// Run keel and assert the user's checkout is byte-identical afterwards.
+    fn run_untouched(&self, scenario: &str, args: &[&str]) -> (i32, serde_json::Value) {
+        let before = self.user_state();
+        let r = self.run(scenario, args);
+        let after = self.user_state();
+        assert_eq!(before.len(), after.len(), "files appeared or vanished");
+        for (b, a) in before.iter().zip(&after) {
+            assert_eq!(b.0, a.0);
+            assert!(b.1 == a.1, "{} changed", b.0);
+        }
+        assert!(
+            git(&self.repo, &["worktree", "list"]).lines().count() == 1,
+            "no worktree is left behind"
+        );
+        r
+    }
+
+    /// A file of the migration branch.
+    fn on_branch(&self, branch: &str, path: &str) -> String {
+        git(&self.repo, &["show", &format!("{branch}:{path}")])
+    }
+
     fn head(&self) -> String {
         git(&self.repo, &["rev-parse", "HEAD"]).trim().to_string()
     }
@@ -232,24 +308,32 @@ fn ids(v: &serde_json::Value) -> Vec<String> {
 }
 
 const ALL: [&str; 3] = ["splice", "bosun", "hoist"];
+const BR: &str = "keel/migrate-v0.23.0";
+
+fn no_keel_branch(env: &Env) -> bool {
+    git(&env.repo, &["branch", "--list", "keel/*"])
+        .trim()
+        .is_empty()
+}
 
 #[test]
-fn full_repo_moves_every_piece_on_one_branch_and_lists_what_a_human_must_do() {
+fn full_repo_moves_every_piece_on_one_branch_and_never_touches_the_users_checkout() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["command"], "migrate");
     assert_eq!(v["status"], "human");
     assert_eq!(v["changed"], true);
-    assert_eq!(v["branch"], "keel/migrate-v0.23.0");
-    assert_eq!(env.branch(), "keel/migrate-v0.23.0");
+    assert_eq!(v["branch"], BR);
+    assert_eq!(v["from_branch"], "main");
+    assert_eq!(v["base"], "origin/main");
+    assert_eq!(env.branch(), "main", "the user stays on their branch");
     for s in ["tools", "splice", "bosun-pin"] {
         assert_eq!(action(&v, s), "done", "{s}: {v}");
     }
     assert_eq!(action(&v, "hoist"), "ok");
     assert_eq!(action(&v, "verify"), "ok");
     assert_eq!(action(&v, "pr"), "skipped");
-    // Tools were installed at the target (registry integrity, tarball re-checked).
     let calls = env.calls();
     assert!(
         calls
@@ -269,7 +353,6 @@ fn full_repo_moves_every_piece_on_one_branch_and_lists_what_a_human_must_do() {
             "0.23.0"
         );
     }
-    // Order: decisions alone first, then the rest, then the pin, then verification (read-only).
     let at = |needle: &str| {
         calls
             .iter()
@@ -282,24 +365,15 @@ fn full_repo_moves_every_piece_on_one_branch_and_lists_what_a_human_must_do() {
     );
     assert!(at("splice --json --yes update --all") < at("bosun --json pin --to 0.23.0"));
     assert!(at("bosun --json pin --to 0.23.0") < at("splice --json check"));
-    // One commit per step, decisions alone with the org's message.
-    let log = git(&env.repo, &["log", "--format=%s", "main..HEAD"]);
+    let log = git(&env.repo, &["log", "--format=%s", &format!("main..{BR}")]);
     assert!(log.contains("chore: sync org decisions"), "{log}");
     assert!(
         log.contains("chore: pin keelstack tools to 0.23.0"),
         "{log}"
     );
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".bosun/version"))
-            .unwrap()
-            .trim(),
-        "0.23.0"
-    );
-    // Nothing but the PR step is left, and with no --pr it says so.
+    assert_eq!(env.on_branch(BR, ".bosun/version").trim(), "0.23.0");
     assert_eq!(ids(&v), ["open-pr"]);
-    assert_eq!(v["human_step"]["id"], "open-pr");
     assert_eq!(v["setup_snippet"]["status"], "unchanged");
-    // The main branch is untouched.
     assert_eq!(
         git(&env.repo, &["rev-parse", "main"]).trim(),
         git(&env.repo, &["rev-parse", "origin/main"]).trim()
@@ -307,9 +381,9 @@ fn full_repo_moves_every_piece_on_one_branch_and_lists_what_a_human_must_do() {
 }
 
 #[test]
-fn pr_flag_pushes_and_opens_one_pr_with_gh() {
+fn pr_flag_pushes_from_the_worktree_and_opens_one_pr_with_gh() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["pr"]["action"], "opened");
     assert_eq!(v["pr"]["url"], "https://github.com/owner/name/pull/9");
@@ -323,28 +397,23 @@ fn pr_flag_pushes_and_opens_one_pr_with_gh() {
         .collect();
     assert_eq!(create.len(), 1, "{calls:?}");
     assert!(create[0].contains("--repo owner/name"), "{}", create[0]);
-    assert!(
-        create[0].contains("--head keel/migrate-v0.23.0"),
-        "{}",
-        create[0]
-    );
+    assert!(create[0].contains(&format!("--head {BR}")), "{}", create[0]);
+    let log = std::fs::read_to_string(env.log.join("calls.log")).unwrap();
+    assert!(log.contains("--base main"), "{log}");
     assert!(
         create[0].contains("--title chore: migrate to keelstack v0.23.0"),
         "{}",
         create[0]
     );
-    // The branch is on the remote; no force, no merge.
     assert!(
-        git(&env.repo, &["ls-remote", "--heads", "origin"])
-            .contains("refs/heads/keel/migrate-v0.23.0")
+        git(&env.repo, &["ls-remote", "--heads", "origin"]).contains(&format!("refs/heads/{BR}"))
     );
     assert!(
         !calls
             .iter()
             .any(|c| c.contains("--force") || c.starts_with("gh pr merge"))
     );
-    // Rerun with the PR open: reused, not opened twice; everything else is a no-op.
-    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["pr"]["action"], "existing");
     assert_eq!(
@@ -357,38 +426,43 @@ fn pr_flag_pushes_and_opens_one_pr_with_gh() {
 }
 
 #[test]
+fn run_first_without_pr_then_with_pr_resumes_the_branch_and_opens_the_pr() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    let tip = git(&env.repo, &["rev-parse", BR]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["pr"]["action"], "opened", "{v}");
+    assert_eq!(
+        git(&env.repo, &["rev-parse", BR]),
+        tip,
+        "no new commits: every step was a no-op"
+    );
+}
+
+#[test]
 fn a_second_run_on_an_up_to_date_repo_changes_nothing_and_exits_zero() {
     let env = Env::new(&ALL);
     let (code, _) = env.run("ok", &["--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5);
-    // The PR merges: main gets the work.
-    git(&env.repo, &["checkout", "main"]);
-    git(&env.repo, &["merge", "--ff-only", "keel/migrate-v0.23.0"]);
+    git(&env.repo, &["merge", "--ff-only", BR]);
     git(&env.repo, &["push", "origin", "main"]);
-    let before = env.head();
-    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
     assert_eq!(code, 0, "{v}");
     assert_eq!(v["status"], "done");
     assert_eq!(v["changed"], false);
     assert_eq!(v["branch"], serde_json::Value::Null);
-    assert_eq!(env.head(), before);
-    assert_eq!(env.branch(), "main");
-    assert!(
-        git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
-    );
+    assert!(no_keel_branch(&env));
     assert_eq!(action(&v, "pr"), "skipped");
     assert_eq!(v["checklist"].as_array().unwrap().len(), 0);
-    assert!(git(&env.repo, &["status", "--porcelain"]).trim().is_empty());
 }
 
 #[test]
 fn a_repo_with_only_splice_skips_bosun_and_hoist() {
     let env = Env::new(&["splice"]);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
     assert_eq!(code, 5, "{v}");
-    assert_eq!(v["pieces"]["splice"], true);
     assert_eq!(v["pieces"]["bosun"], false);
     assert_eq!(action(&v, "splice"), "done");
     for s in ["bosun-pin", "hoist", "setup-snippet"] {
@@ -407,9 +481,8 @@ fn a_repo_with_only_splice_skips_bosun_and_hoist() {
 #[test]
 fn a_repo_with_only_bosun_pins_and_checks_the_snippet() {
     let env = Env::new(&["bosun"]);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
     assert_eq!(code, 5, "{v}");
-    assert_eq!(v["pieces"]["splice"], false);
     assert_eq!(action(&v, "splice"), "skipped");
     assert_eq!(action(&v, "bosun-pin"), "done");
     assert!(
@@ -418,16 +491,15 @@ fn a_repo_with_only_bosun_pins_and_checks_the_snippet() {
             .any(|c| c.starts_with("splice ") || c.starts_with("hoist "))
     );
     assert_eq!(
-        std::fs::read_to_string(env.repo.join("docs/setup-script.sh"))
-            .unwrap()
-            .trim(),
+        env.on_branch(BR, "docs/setup-script.sh").trim(),
         "BOSUN_VERSION=0.23.0"
     );
 }
 
 #[test]
-fn a_changed_setup_snippet_is_written_and_named_in_the_checklist() {
+fn a_changed_setup_snippet_is_written_next_to_the_git_dir_not_into_the_checkout() {
     let env = Env::new(&ALL);
+    let before = env.user_state();
     let o = env
         .keel("ok", &["--to", "0.23.0"])
         .env("KEEL_SNIPPET", "changes")
@@ -435,8 +507,17 @@ fn a_changed_setup_snippet_is_written_and_named_in_the_checklist() {
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(o.status.code(), Some(5), "{v}");
+    assert_eq!(
+        env.user_state().len(),
+        before.len(),
+        "nothing appeared in the checkout"
+    );
     assert_eq!(v["setup_snippet"]["status"], "changed");
-    assert_eq!(v["setup_snippet"]["path"], ".keel/cloud-setup.sh");
+    let path = v["setup_snippet"]["path"].as_str().unwrap().to_string();
+    assert!(
+        path.ends_with("/keel/cloud-setup.sh") && path.contains(".git"),
+        "{path}"
+    );
     let summary = v["setup_snippet"]["summary"].as_str().unwrap();
     assert!(summary.contains("lines added"), "{summary}");
     assert!(ids(&v).contains(&"setup-snippet".to_string()), "{v}");
@@ -447,21 +528,19 @@ fn a_changed_setup_snippet_is_written_and_named_in_the_checklist() {
         .find(|e| e["id"] == "setup-snippet")
         .unwrap();
     assert_eq!(entry["device"], "computer");
+    assert!(entry["title"].as_str().unwrap().contains(&path));
     assert!(
-        entry["title"]
-            .as_str()
+        std::fs::read_to_string(&path)
             .unwrap()
-            .contains(".keel/cloud-setup.sh")
+            .contains("echo SNIPPET v2")
     );
-    let script = std::fs::read_to_string(env.repo.join(".keel/cloud-setup.sh")).unwrap();
-    assert!(script.contains("echo SNIPPET v2"), "{script}");
+    let prev = path.replace("cloud-setup.sh", "cloud-setup.previous.sh");
     assert!(
-        std::fs::read_to_string(env.repo.join(".keel/cloud-setup.previous.sh"))
+        std::fs::read_to_string(prev)
             .unwrap()
             .contains("SNIPPET v1")
     );
-    // .keel is scratch space: never committed.
-    assert!(!git(&env.repo, &["ls-files"]).contains(".keel"));
+    assert!(!env.repo.join(".keel").exists());
 }
 
 #[test]
@@ -470,24 +549,19 @@ fn an_unchanged_snippet_asks_for_no_paste() {
     let (_, v) = env.run("ok", &["--to", "0.23.0"]);
     assert_eq!(v["setup_snippet"]["status"], "unchanged");
     assert!(!ids(&v).contains(&"setup-snippet".to_string()));
-    assert!(!env.repo.join(".keel/cloud-setup.sh").exists());
 }
 
 #[test]
 fn dry_run_writes_nothing_installs_nothing_and_reports_the_work() {
     let env = Env::new(&ALL);
-    let head = env.head();
-    let (code, v) = env.run("dry", &["--to", "0.23.0", "--dry-run", "--pr"]);
+    let (code, v) = env.run_untouched("dry", &["--to", "0.23.0", "--dry-run", "--pr"]);
     assert_eq!(code, 1, "{v}");
-    assert_eq!(v["status"], "planned", "{v}");
+    assert_eq!(v["status"], "planned");
     assert_eq!(v["dry_run"], true);
     assert_eq!(action(&v, "tools"), "would-run");
     assert_eq!(action(&v, "splice"), "would-run");
     assert_eq!(action(&v, "bosun-pin"), "would-run");
-    assert_eq!(env.head(), head);
-    assert_eq!(env.branch(), "main");
-    assert!(git(&env.repo, &["status", "--porcelain"]).trim().is_empty());
-    assert!(!env.repo.join(".keel").exists());
+    assert!(no_keel_branch(&env));
     assert!(!env.log.join("ver_splice").exists(), "nothing installed");
     let calls = env.calls();
     for banned in [
@@ -497,7 +571,7 @@ fn dry_run_writes_nothing_installs_nothing_and_reports_the_work() {
         "gh pr create",
     ] {
         assert!(
-            !calls.iter().any(|c| c.starts_with(banned.trim())),
+            !calls.iter().any(|c| c.starts_with(banned)),
             "{banned}: {calls:?}"
         );
     }
@@ -505,10 +579,17 @@ fn dry_run_writes_nothing_installs_nothing_and_reports_the_work() {
 }
 
 #[test]
-fn a_failing_step_rolls_back_to_the_untouched_branch_and_says_how_to_recover() {
+fn a_failing_step_leaves_the_users_checkout_byte_identical_and_names_the_recovery() {
     let env = Env::new(&ALL);
-    let head = env.head();
-    let (code, v) = env.run("conflict", &["--to", "0.23.0"]);
+    write(&env.repo, ".gitignore", "local.env\nnode_modules/\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "ignore"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    write(&env.repo, "local.env", "SECRET=1\n");
+    write(&env.repo, "node_modules/pkg/index.js", "x\n");
+    write(&env.repo, "notes.txt", "untracked\n");
+    write(&env.repo, "README.md", "edited, not committed\n");
+    let (code, v) = env.run_untouched("conflict", &["--to", "0.23.0"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(v["status"], "failed");
     assert_eq!(action(&v, "splice"), "failed");
@@ -516,57 +597,40 @@ fn a_failing_step_rolls_back_to_the_untouched_branch_and_says_how_to_recover() {
     assert_eq!(action(&v, "pr"), "not-reached");
     let rec = v["recovery"].as_str().unwrap();
     assert!(
-        rec.contains("rolled back") && rec.contains("keel migrate"),
+        rec.contains("rolled back")
+            && rec.contains("never touched")
+            && rec.contains("keel migrate"),
         "{rec}"
     );
-    assert_eq!(env.branch(), "main");
-    assert_eq!(env.head(), head);
-    assert!(
-        git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
+    assert!(no_keel_branch(&env));
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("local.env")).unwrap(),
+        "SECRET=1\n"
     );
-    assert!(
-        git(&env.repo, &["status", "--porcelain"]).trim().is_empty(),
-        "no stray files"
-    );
-    // The conflict marker file the stub wrote is gone, and so is the already-committed decisions sync.
-    assert!(!env.repo.join("AGENTS.md").exists());
-    assert!(!env.repo.join("docs/agents/org-decisions.md").exists());
 }
 
 #[test]
 fn a_failing_verification_also_rolls_everything_back() {
     let env = Env::new(&ALL);
-    let head = env.head();
-    let (code, v) = env.run("checkfail", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("checkfail", &["--to", "0.23.0"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(action(&v, "verify"), "failed");
-    assert_eq!(env.head(), head);
-    assert_eq!(env.branch(), "main");
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".bosun/version"))
-            .unwrap()
-            .trim(),
-        "0.22.1"
-    );
+    assert!(no_keel_branch(&env));
 }
 
 #[test]
-fn a_failed_tool_install_fails_the_first_step_without_touching_git() {
+fn a_failed_tool_install_fails_the_first_step() {
     let env = Env::new(&ALL);
-    let head = env.head();
-    let (code, v) = env.run("npmfail", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("npmfail", &["--to", "0.23.0"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(action(&v, "tools"), "failed");
-    assert_eq!(env.head(), head);
-    assert_eq!(env.branch(), "main");
+    assert!(no_keel_branch(&env));
 }
 
 #[test]
 fn hoist_drift_becomes_a_computer_step_not_a_failure() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run("hoistdrift", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("hoistdrift", &["--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(action(&v, "verify"), "pending");
     let list = v["checklist"].as_array().unwrap();
@@ -578,25 +642,23 @@ fn hoist_drift_becomes_a_computer_step_not_a_failure() {
             .unwrap()
             .contains("environment/release-tags")
     );
-    // Computer steps come before the phone step (approve the PR).
     assert_eq!(list[0]["id"], "hoist-apply");
     assert_eq!(list.last().unwrap()["id"], "approve-pr");
 }
 
 #[test]
-fn a_dirty_tree_is_refused_with_exit_3_and_a_fix() {
+fn a_dirty_checkout_is_fine_and_stays_exactly_as_it_was() {
     let env = Env::new(&ALL);
-    std::fs::write(env.repo.join("README.md"), "edited\n").unwrap();
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 3, "{v}");
-    assert_eq!(v["status"], "error");
-    assert!(
-        v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("working tree has changes")
+    write(&env.repo, "README.md", "edited, not committed\n");
+    write(&env.repo, "scratch/untracked.txt", "mine\n");
+    git(&env.repo, &["config", "status.showUntrackedFiles", "no"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["changed"], true);
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join("README.md")).unwrap(),
+        "edited, not committed\n"
     );
-    assert_eq!(env.branch(), "main");
 }
 
 #[test]
@@ -605,7 +667,7 @@ fn a_bad_target_is_exit_2_and_a_repo_without_pieces_is_exit_3() {
     let (code, v) = env.run("ok", &["--to", "latest"]);
     assert_eq!(code, 2, "{v}");
     let empty = Env::new(&[]);
-    let (code, v) = empty.run("ok", &[]);
+    let (code, v) = empty.run_untouched("ok", &[]);
     assert_eq!(code, 3, "{v}");
     assert!(
         v["error"]["message"]
@@ -613,6 +675,7 @@ fn a_bad_target_is_exit_2_and_a_repo_without_pieces_is_exit_3() {
             .unwrap()
             .contains("nothing to migrate")
     );
+    assert!(no_keel_branch(&empty));
 }
 
 #[test]
@@ -630,10 +693,27 @@ fn mode_is_planned_as_a_step_for_after_the_merge() {
 }
 
 #[test]
+fn a_mode_that_cannot_be_planned_is_a_warning_not_a_rollback() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("modefail", &["--to", "0.23.0", "--mode", "booster"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["changed"], true);
+    assert_eq!(action(&v, "mode"), "pending");
+    assert_eq!(v["branch"], BR);
+    let e = v["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == "bosun-mode")
+        .unwrap();
+    assert_eq!(e["command"], "bosun migrate --to booster");
+    assert!(v["recovery"].is_null());
+}
+
+#[test]
 fn text_output_has_steps_and_a_numbered_checklist() {
     let env = Env::new(&ALL);
-    let mut c = env.keel("ok", &["--to", "0.23.0"]);
-    // The same command line without --json (the first args are -C DIR --json migrate ...).
+    let c = env.keel("ok", &["--to", "0.23.0"]);
     let args: Vec<String> = c
         .get_args()
         .map(|a| a.to_string_lossy().into_owned())
@@ -646,7 +726,6 @@ fn text_output_has_steps_and_a_numbered_checklist() {
             t.env(k, v);
         }
     }
-    let _ = &mut c;
     let o = t.args(&args).output().unwrap();
     assert_eq!(o.status.code(), Some(5));
     let out = String::from_utf8(o.stdout).unwrap();
@@ -663,8 +742,7 @@ fn a_target_that_is_not_npm_latest_is_pinned_exactly() {
     assert_eq!(code, 5, "{v}");
     assert_eq!(action(&v, "bosun-pin"), "done", "{v}");
     assert_eq!(
-        std::fs::read_to_string(env.repo.join(".bosun/version"))
-            .unwrap()
+        env.on_branch("keel/migrate-v0.22.9", ".bosun/version")
             .trim(),
         "0.22.9"
     );
@@ -677,229 +755,99 @@ fn a_target_that_is_not_npm_latest_is_pinned_exactly() {
 }
 
 #[test]
-fn untracked_files_are_found_even_when_git_is_told_to_hide_them() {
+fn a_subdirectory_checkout_works_too() {
     let env = Env::new(&ALL);
-    git(&env.repo, &["config", "status.showUntrackedFiles", "no"]);
-    write(&env.repo, "notes/todo.txt", "mine\n");
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 3, "{v}");
-    assert!(
-        v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("working tree has changes"),
-        "{v}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join("notes/todo.txt")).unwrap(),
-        "mine\n"
-    );
-    assert_eq!(env.branch(), "main");
-}
-
-#[test]
-fn a_rollback_never_deletes_a_file_the_user_had_even_an_ignored_one() {
-    let env = Env::new(&ALL);
-    write(&env.repo, ".gitignore", "local.env\n");
-    git(&env.repo, &["add", "-A"]);
-    git(&env.repo, &["commit", "-m", "ignore"]);
-    write(&env.repo, "local.env", "SECRET=1\n");
-    write(&env.repo, "dir/ignored-too/local.env", "x\n");
-    let (code, v) = env.run("conflict", &["--to", "0.23.0"]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join("local.env")).unwrap(),
-        "SECRET=1\n"
-    );
-    // Only what keel's own failed step created is removed.
-    assert!(!env.repo.join("AGENTS.md").exists());
-    assert!(env.repo.join("dir/ignored-too/local.env").exists());
-    assert!(!env.calls().iter().any(|c| c.starts_with("git clean")));
-}
-
-#[test]
-fn a_subdirectory_checkout_is_refused_because_the_status_check_covers_the_whole_repo() {
-    let env = Env::new(&ALL);
-    write(&env.repo, "sub/hoist.toml", "[github]\n");
+    write(&env.repo, "sub/x.txt", "x\n");
     git(&env.repo, &["add", "-A"]);
     git(&env.repo, &["commit", "-m", "sub"]);
-    write(&env.repo, "README.md", "edited at the root\n");
+    git(&env.repo, &["push", "origin", "main"]);
     let sub = env.repo.join("sub");
     let o = env
         .keel_in(&sub, "ok", &["--to", "0.23.0"])
         .output()
         .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
-    assert_eq!(o.status.code(), Some(3), "{v}");
-    assert!(
-        v["error"]["message"]
-            .as_str()
-            .unwrap()
-            .contains("repo root"),
-        "{v}"
-    );
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join("README.md")).unwrap(),
-        "edited at the root\n"
-    );
-    assert_eq!(env.branch(), "main");
-}
-
-#[test]
-fn a_mode_that_cannot_be_planned_is_a_warning_not_a_rollback() {
-    let env = Env::new(&ALL);
-    let (code, v) = env.run("modefail", &["--to", "0.23.0", "--mode", "booster"]);
-    assert_eq!(code, 5, "{v}");
+    assert_eq!(o.status.code(), Some(5), "{v}");
     assert_eq!(v["changed"], true);
-    assert_eq!(action(&v, "mode"), "pending");
-    assert_eq!(env.branch(), "keel/migrate-v0.23.0");
-    let e = v["checklist"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|e| e["id"] == "bosun-mode")
-        .unwrap();
-    assert_eq!(e["command"], "bosun migrate --to booster");
-    assert!(v["recovery"].is_null());
 }
 
 #[test]
-fn a_feature_branch_ahead_of_origin_with_nothing_to_migrate_opens_no_pr() {
+fn a_feature_branch_with_unpushed_commits_keeps_them_out_of_the_pr_and_stays_intact() {
     let env = Env::new(&ALL);
-    let (code, _) = env.run("ok", &["--to", "0.23.0", "--pr"]);
-    assert_eq!(code, 5);
-    git(&env.repo, &["checkout", "main"]);
-    git(&env.repo, &["merge", "--ff-only", "keel/migrate-v0.23.0"]);
-    git(&env.repo, &["push", "origin", "main"]);
-    git(&env.repo, &["branch", "-D", "keel/migrate-v0.23.0"]);
     git(&env.repo, &["checkout", "-b", "feature/x"]);
-    write(&env.repo, "feature.txt", "work\n");
+    write(&env.repo, "feature.txt", "unpushed work\n");
     git(&env.repo, &["add", "-A"]);
     git(&env.repo, &["commit", "-m", "feature work, not pushed"]);
-    let before = env
-        .calls()
-        .iter()
-        .filter(|c| c.starts_with("gh pr create"))
-        .count();
-    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
-    assert_eq!(code, 0, "{v}");
-    assert_eq!(v["changed"], false);
-    assert_eq!(action(&v, "pr"), "skipped");
-    assert_eq!(
-        env.calls()
-            .iter()
-            .filter(|c| c.starts_with("gh pr create"))
-            .count(),
-        before
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["from_branch"], "feature/x");
+    assert_eq!(v["base"], "origin/main");
+    assert_eq!(v["excluded_commits"], 1);
+    let log = git(
+        &env.repo,
+        &["log", "--format=%s", &format!("origin/main..{BR}")],
     );
+    assert!(!log.contains("feature work"), "{log}");
+    assert!(log.contains("chore: pin keelstack tools"), "{log}");
+    let remote = env.repo.parent().unwrap().join("remote.git");
+    assert!(
+        !git(&remote, &["log", "--format=%s", &format!("main..{BR}")]).contains("feature work")
+    );
+    assert_eq!(env.branch(), "feature/x");
+    assert!(env.repo.join("feature.txt").exists());
+}
+
+#[test]
+fn a_failure_on_a_feature_branch_leaves_it_and_its_commit_alone() {
+    let env = Env::new(&ALL);
+    git(&env.repo, &["checkout", "-b", "feature/x"]);
+    write(&env.repo, "feature.txt", "unpushed work\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "feature work"]);
+    let head = env.head();
+    let (code, v) = env.run_untouched("checkfail", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(env.head(), head);
     assert_eq!(env.branch(), "feature/x");
 }
 
 #[test]
-fn a_squash_merged_migration_branch_is_replaced_cleanly() {
+fn the_base_may_track_a_file_the_users_checkout_ignores() {
     let env = Env::new(&ALL);
-    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 5);
-    // The PR is squash-merged: main gets the same tree in one new commit; the branch is no ancestor.
-    git(&env.repo, &["checkout", "main"]);
-    git(&env.repo, &["merge", "--squash", "keel/migrate-v0.23.0"]);
-    git(&env.repo, &["commit", "-m", "squash of the migration"]);
+    // origin/main tracks .env; the user's own branch untracked it and ignores it, with other content.
+    write(&env.repo, ".env", "SHARED=1\n");
+    git(&env.repo, &["add", "-f", ".env"]);
+    git(&env.repo, &["commit", "-m", "track .env"]);
     git(&env.repo, &["push", "origin", "main"]);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 0, "{v}");
-    assert_eq!(v["changed"], false);
-    assert!(
-        git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
-    );
-    assert_eq!(env.branch(), "main");
-}
-
-#[test]
-fn a_leftover_branch_whose_pr_is_merged_is_replaced_and_any_other_gets_exact_advice() {
-    let env = Env::new(&ALL);
-    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 5);
-    git(&env.repo, &["checkout", "main"]);
-    // main moved on in another way (rebase-merge with edits): trees differ, the branch is no ancestor.
-    write(&env.repo, "other.txt", "x\n");
+    git(&env.repo, &["rm", "--cached", "-q", ".env"]);
+    write(&env.repo, ".gitignore", ".env\n");
     git(&env.repo, &["add", "-A"]);
-    git(&env.repo, &["commit", "-m", "other"]);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 3, "{v}");
-    let msg = v["error"]["message"].as_str().unwrap();
-    assert!(
-        msg.contains("git switch keel/migrate-v0.23.0") && msg.contains("git branch -D"),
-        "{msg}"
-    );
-    // Commits on the branch beyond the merged PR's head: never deleted silently.
-    let tip = git(&env.repo, &["rev-parse", "keel/migrate-v0.23.0"])
-        .trim()
-        .to_string();
-    std::fs::write(
-        env.log.join("pr_merged"),
-        "0000000000000000000000000000000000000000",
-    )
-    .unwrap();
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 3, "{v}");
-    assert!(
-        v["error"]["message"].as_str().unwrap().contains("beyond"),
-        "{v}"
-    );
-    assert!(
-        !git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
-    );
-    // The PR head is the branch tip: the branch is spent and replaced.
-    std::fs::write(env.log.join("pr_merged"), &tip).unwrap();
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_ne!(code, 3, "{v}");
-    assert_ne!(v["status"], "failed", "{v}");
-}
-
-/// A repo with a committed `.gitignore` (`.env`, `node_modules/`) and those two ignored files.
-fn with_ignored(env: &Env) {
-    write(&env.repo, ".gitignore", ".env\nnode_modules/\n");
-    git(&env.repo, &["add", "-A"]);
-    git(&env.repo, &["commit", "-m", "gitignore"]);
-    git(&env.repo, &["push", "origin", "main"]);
-    write(&env.repo, ".env", "TOKEN=hunter2\n");
-    write(
-        &env.repo,
-        "node_modules/pkg/index.js",
-        "module.exports = 1;\n",
-    );
-}
-
-fn intact(env: &Env) {
+    git(&env.repo, &["commit", "-m", "untrack .env, ignore it"]);
+    write(&env.repo, ".env", "LOCAL_SECRET=hunter2\n");
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
     assert_eq!(
         std::fs::read_to_string(env.repo.join(".env")).unwrap(),
-        "TOKEN=hunter2\n"
+        "LOCAL_SECRET=hunter2\n"
     );
-    assert!(env.repo.join("node_modules/pkg/index.js").exists());
-}
-
-fn run_rewriting(env: &Env, scenario: &str, args: &[&str]) -> (i32, serde_json::Value) {
-    let o = env
-        .keel(scenario, args)
-        .env("KEEL_REWRITE_GITIGNORE", "1")
-        .output()
-        .unwrap();
-    let v = serde_json::from_slice(&o.stdout).unwrap();
-    (o.status.code().unwrap(), v)
+    assert!(!git(&env.repo, &["show", &format!("{BR}:.env")]).contains("hunter2"));
 }
 
 #[test]
-fn a_step_that_unignores_a_file_fails_and_the_rollback_keeps_it() {
+fn a_step_that_unignores_a_file_it_created_fails_without_committing_it() {
     let env = Env::new(&ALL);
-    with_ignored(&env);
-    let head = env.head();
-    let (code, v) = run_rewriting(&env, "checkfail", &["--to", "0.23.0"]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(action(&v, "splice"), "failed", "{v}");
+    write(&env.repo, ".gitignore", ".env\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "ignore .env"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    let o = env
+        .keel("ok", &["--to", "0.23.0", "--pr"])
+        .env("KEEL_REWRITE_GITIGNORE", "1")
+        .env("KEEL_CREATE_ENV", "1")
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(o.status.code(), Some(1), "{v}");
     let detail = v["steps"]
         .as_array()
         .unwrap()
@@ -913,165 +861,122 @@ fn a_step_that_unignores_a_file_fails_and_the_rollback_keeps_it() {
         detail.contains(".env") && detail.contains("un-ignore"),
         "{detail}"
     );
-    intact(&env);
-    assert_eq!(env.head(), head);
-    assert_eq!(env.branch(), "main");
-    assert!(
-        git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
-    );
-    // The user's .gitignore is back.
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".gitignore")).unwrap(),
-        ".env\nnode_modules/\n"
-    );
-}
-
-#[test]
-fn an_unignored_secret_is_never_committed_or_pushed() {
-    let env = Env::new(&ALL);
-    with_ignored(&env);
-    let (code, v) = run_rewriting(&env, "ok", &["--to", "0.23.0", "--pr"]);
-    assert_eq!(code, 1, "{v}");
-    intact(&env);
     assert!(
         git(&env.repo, &["log", "--all", "--format=%H", "--", ".env"])
             .trim()
             .is_empty()
     );
-    assert!(
-        git(
-            &env.repo,
-            &["log", "--all", "--format=%H", "--", "node_modules"]
-        )
-        .trim()
-        .is_empty()
-    );
-    assert!(
-        git(&env.repo, &["ls-remote", "--heads", "origin"])
-            .lines()
-            .all(|l| !l.contains("keel/"))
-    );
-    let calls = env.calls();
-    assert!(
-        !calls.iter().any(|c| c.starts_with("gh pr create")),
-        "{calls:?}"
-    );
+    assert!(no_keel_branch(&env));
+    assert!(!env.calls().iter().any(|c| c.starts_with("gh pr create")));
 }
 
 #[test]
-fn an_ignored_directory_and_file_survive_a_plain_rollback() {
+fn being_on_the_migration_branch_is_refused_with_the_way_out() {
     let env = Env::new(&ALL);
-    with_ignored(&env);
-    let (code, v) = env.run("conflict", &["--to", "0.23.0"]);
-    assert_eq!(code, 1, "{v}");
-    intact(&env);
-    assert!(!env.repo.join("AGENTS.md").exists());
+    git(&env.repo, &["checkout", "-b", BR]);
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains(BR), "{v}");
 }
 
-/// A user file whose name merely starts with `.keel` (`.keel.env`) is protected like any other.
 #[test]
-fn a_dot_keel_prefixed_ignored_file_is_protected_too() {
+fn a_failed_fetch_is_exit_3_with_a_fix_and_never_a_stale_base() {
     let env = Env::new(&ALL);
-    write(&env.repo, ".gitignore", ".keel.env\n");
-    git(&env.repo, &["add", "-A"]);
-    git(&env.repo, &["commit", "-m", "gitignore"]);
+    git(
+        &env.repo,
+        &["remote", "set-url", "origin", "/nonexistent/remote.git"],
+    );
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("fix:"),
+        "{v}"
+    );
+    assert!(no_keel_branch(&env));
+    // An explicit base works offline.
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--base", "main"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["base"], "main");
+}
+
+#[test]
+fn a_feature_branch_ahead_of_origin_with_nothing_to_migrate_opens_no_pr() {
+    let env = Env::new(&ALL);
+    let (code, _) = env.run("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5);
+    git(&env.repo, &["merge", "--ff-only", BR]);
     git(&env.repo, &["push", "origin", "main"]);
-    write(&env.repo, ".keel.env", "S2\n");
-    let (code, v) = run_rewriting(&env, "ok", &["--to", "0.23.0", "--pr"]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".keel.env")).unwrap(),
-        "S2\n"
-    );
-    assert!(
-        git(
-            &env.repo,
-            &["log", "--all", "--format=%H", "--", ".keel.env"]
-        )
-        .trim()
-        .is_empty()
-    );
-    let (code, v) = run_rewriting(&env, "checkfail", &["--to", "0.23.0"]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".keel.env")).unwrap(),
-        "S2\n"
-    );
-}
-
-fn feature_branch(env: &Env) {
+    git(&env.repo, &["branch", "-D", BR]);
     git(&env.repo, &["checkout", "-b", "feature/x"]);
-    write(&env.repo, "feature.txt", "unpushed work\n");
+    write(&env.repo, "feature.txt", "work\n");
     git(&env.repo, &["add", "-A"]);
     git(&env.repo, &["commit", "-m", "feature work, not pushed"]);
-}
-
-#[test]
-fn the_migration_branch_starts_from_the_default_branch_not_from_unpushed_work() {
-    let env = Env::new(&ALL);
-    feature_branch(&env);
-    let (code, v) = env.run("ok", &["--to", "0.23.0", "--pr"]);
-    assert_eq!(code, 5, "{v}");
-    assert_eq!(v["pr"]["action"], "opened");
-    assert_eq!(v["base"], "origin/main");
-    assert_eq!(v["excluded_commits"], 1);
-    let log = git(
-        &env.repo,
-        &["log", "--format=%s", "origin/main..keel/migrate-v0.23.0"],
-    );
-    assert!(!log.contains("feature work"), "{log}");
-    assert!(log.contains("chore: pin keelstack tools"), "{log}");
-    assert!(
-        !env.repo.join("feature.txt").exists(),
-        "the PR tree has no feature file"
-    );
-    // What the remote got has no feature commit either.
-    let remote = env.repo.parent().unwrap().join("remote.git");
-    let pushed = git(
-        &remote,
-        &["log", "--format=%s", "main..keel/migrate-v0.23.0"],
-    );
-    assert!(!pushed.contains("feature work"), "{pushed}");
-    assert!(git(&env.repo, &["log", "--format=%s", "feature/x"]).contains("feature work"));
-}
-
-#[test]
-fn a_rollback_returns_to_the_feature_branch_with_its_commit_intact() {
-    let env = Env::new(&ALL);
-    feature_branch(&env);
-    let head = env.head();
-    let (code, v) = env.run("checkfail", &["--to", "0.23.0"]);
-    assert_eq!(code, 1, "{v}");
-    assert_eq!(env.branch(), "feature/x");
-    assert_eq!(env.head(), head);
+    let before = env
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("gh pr create"))
+        .count();
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["changed"], false);
+    assert_eq!(action(&v, "pr"), "skipped");
     assert_eq!(
-        std::fs::read_to_string(env.repo.join("feature.txt")).unwrap(),
-        "unpushed work\n"
+        env.calls()
+            .iter()
+            .filter(|c| c.starts_with("gh pr create"))
+            .count(),
+        before
     );
-    assert!(
-        git(&env.repo, &["branch", "--list", "keel/*"])
-            .trim()
-            .is_empty()
-    );
-    assert!(git(&env.repo, &["status", "--porcelain"]).trim().is_empty());
 }
 
 #[test]
-fn a_tracked_file_under_dot_keel_is_never_deleted_by_a_commit() {
+fn a_squash_merged_migration_branch_is_replaced_cleanly() {
     let env = Env::new(&ALL);
-    write(&env.repo, ".keel/notes.md", "mine\n");
-    git(&env.repo, &["add", "-f", ".keel/notes.md"]);
-    git(&env.repo, &["commit", "-m", "track a note under .keel"]);
+    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5);
+    git(&env.repo, &["merge", "--squash", BR]);
+    git(&env.repo, &["commit", "-m", "squash of the migration"]);
     git(&env.repo, &["push", "origin", "main"]);
-    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
-    assert_eq!(code, 5, "{v}");
-    assert!(git(&env.repo, &["ls-files", ".keel/notes.md"]).contains("notes.md"));
-    let diff = git(&env.repo, &["diff", "--name-status", "main..HEAD"]);
-    assert!(!diff.contains(".keel/notes.md"), "{diff}");
-    assert_eq!(
-        std::fs::read_to_string(env.repo.join(".keel/notes.md")).unwrap(),
-        "mine\n"
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 0, "{v}");
+    assert_eq!(v["changed"], false);
+    assert!(no_keel_branch(&env));
+}
+
+#[test]
+fn a_leftover_branch_is_replaced_when_its_pr_merged_and_never_when_it_has_extra_commits() {
+    let env = Env::new(&ALL);
+    let (code, _) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 5);
+    // main moves on (another change lands): the branch is not merged and now behind the base.
+    write(&env.repo, "other.txt", "x\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "other"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    let msg = v["error"]["message"].as_str().unwrap();
+    assert!(
+        msg.contains("behind") && msg.contains("git branch -D"),
+        "{msg}"
     );
+    // Its PR is merged, but the branch has a commit beyond the PR's head: exit 3.
+    let tip = git(&env.repo, &["rev-parse", BR]).trim().to_string();
+    std::fs::write(
+        env.log.join("pr_merged"),
+        "0000000000000000000000000000000000000000",
+    )
+    .unwrap();
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("beyond"),
+        "{v}"
+    );
+    assert!(!no_keel_branch(&env));
+    // The PR head is the branch tip: the branch is spent and replaced.
+    std::fs::write(env.log.join("pr_merged"), &tip).unwrap();
+    let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
+    assert_ne!(code, 3, "{v}");
+    assert_ne!(v["status"], "failed", "{v}");
 }

@@ -44,6 +44,9 @@ pub struct MigrateArgs {
     /// Push the branch and open ONE pull request with `gh` (keel never merges it).
     #[arg(long)]
     pub pr: bool,
+    /// The ref to migrate from (default: `origin/<default branch>` after a fetch that must work).
+    #[arg(long, value_name = "REF")]
+    pub base: Option<String>,
     /// Also plan a bosun mode move (`bosun migrate --to MODE`); it opens its own PR, so keel only
     /// lists it as a step for after this PR merges.
     #[arg(long, value_name = "MODE", value_parser = ["gatekeeper", "steady", "booster", "autonomous"])]

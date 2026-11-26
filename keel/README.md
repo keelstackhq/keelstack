@@ -95,11 +95,11 @@ One command does what used to be `splice update`, `bosun pin`, a hoist check and
 installs the target release's tools (checksum verified), updates splice (the decisions channel alone first,
 as `chore: sync org decisions`), pins bosun and its setup script, refreshes hoist's release workflow, verifies
 (`splice check`, `bosun doctor`, `hoist check`, read-only), commits on `keel/migrate-vX.Y.Z` and, with `--pr`, opens
-ONE PR. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an
+ONE PR. It works in its own temporary git worktree based on `origin/<default>`: your checkout, branch, uncommitted, untracked and ignored files and unpushed commits are never touched. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an
 up-to-date repo changes nothing and exits 0. Flags: `--to X.Y.Z` (default: keel's version), `--dry-run`, `--pr`, `--mode MODE`.
 
 An agent needs only `keel migrate --json --pr`: act on `status`, `steps[]` and `checklist[]` (exit 5 = the checklist
-is what only a human can do; usually "approve the PR", and "paste `.keel/cloud-setup.sh` into the cloud environment"
+is what only a human can do; usually "approve the PR", and "paste the file named in `setup_snippet.path` into the cloud environment"
 only when `setup_snippet.status` is `changed` or `unknown`). Details: [docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md) and
 spec section 11.
 
