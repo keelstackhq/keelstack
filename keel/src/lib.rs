@@ -6,6 +6,7 @@ pub mod engine;
 pub mod error;
 pub mod exec;
 pub mod manifest;
+pub mod migrate;
 pub mod pins;
 pub mod report;
 pub mod step;
@@ -14,6 +15,7 @@ pub mod tools;
 
 pub use cli::{Cli, Command};
 pub use error::KeelError;
+pub use migrate::{render_migrate_json, render_migrate_text};
 pub use report::{render_json, render_json_error, render_json_info, render_text};
 
 use cli::UpArgs;
@@ -156,6 +158,17 @@ pub fn run(cli: Cli) -> Result<Report, KeelError> {
     run_with(cli, &SystemRunner, &sleep, &read_token)
 }
 
+/// Run `keel migrate` with the real tools.
+pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
+    exec::install_signal_handlers();
+    let Command::Migrate(args) = &cli.command else {
+        return Err(KeelError::Usage("not a migrate command".into()));
+    };
+    let verbose = Verbose(&SystemRunner);
+    let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
+    migrate::run(&cli.dir, args, runner)
+}
+
 pub fn run_with(
     cli: Cli,
     runner: &dyn Runner,
@@ -170,6 +183,11 @@ pub fn run_with(
         Command::Up(a) => (a.clone(), Mode::Up),
         Command::Plan(a) => (a.clone(), Mode::Plan),
         Command::Doctor => (UpArgs::default(), Mode::Plan),
+        Command::Migrate(_) => {
+            return Err(KeelError::Usage(
+                "`keel migrate` has its own report: call keel::run_migrate".into(),
+            ));
+        }
     };
     let doctor = matches!(cli.command, Command::Doctor);
     let changed = manifest.merge_flags(&args)?;

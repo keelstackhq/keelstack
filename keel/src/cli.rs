@@ -29,6 +29,25 @@ pub enum Command {
     Plan(UpArgs),
     /// Check preflight and the remote health; writes nothing.
     Doctor,
+    /// Move this repo to a keelstack release in one step: tools, splice, bosun pins, hoist, checks.
+    Migrate(MigrateArgs),
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct MigrateArgs {
+    /// The release to move to, X.Y.Z (default: keel's own version).
+    #[arg(long, value_name = "X.Y.Z")]
+    pub to: Option<String>,
+    /// Report what would change; write nothing, install nothing, run no git command that writes.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Push the branch and open ONE pull request with `gh` (keel never merges it).
+    #[arg(long)]
+    pub pr: bool,
+    /// Also plan a bosun mode move (`bosun migrate --to MODE`); it opens its own PR, so keel only
+    /// lists it as a step for after this PR merges.
+    #[arg(long, value_name = "MODE", value_parser = ["gatekeeper", "steady", "booster", "autonomous"])]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -67,6 +86,7 @@ impl Command {
             Command::Up(_) => "up",
             Command::Plan(_) => "plan",
             Command::Doctor => "doctor",
+            Command::Migrate(_) => "migrate",
         }
     }
 }

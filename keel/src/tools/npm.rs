@@ -116,6 +116,38 @@ pub fn install_pinned(r: &dyn Runner, tool: &str, pin: &ToolPin) -> Result<(), S
     Ok(())
 }
 
+/// The pin of `tool` at `version` for a release that is not in keel's embedded table: the
+/// `dist.integrity` (sha512) npm itself serves for the launcher and this platform's package
+/// (`npm view <spec> dist.integrity`). `install_pinned` then still checks the packed tarballs
+/// against those values, so a tarball that differs from what the registry signed is refused.
+pub fn registry_pin(r: &dyn Runner, tool: &str, version: &str) -> Result<ToolPin, String> {
+    let key = platform_key();
+    let integrity = |spec: &str| -> Result<String, String> {
+        let c = Cmd::new("npm", &["view", spec, "dist.integrity"]);
+        let o = r.run(&c);
+        if o.code != 0 {
+            return Err(super::failure(&c, &o));
+        }
+        let line = o.stdout.trim().trim_matches('"');
+        line.strip_prefix("sha512-")
+            .filter(|b| !b.is_empty())
+            .map(str::to_string)
+            .ok_or_else(|| format!("`{}` printed no sha512 integrity for {spec}", c.line()))
+    };
+    let launcher = integrity(&format!("@keelstackhq/{tool}@{version}"))?;
+    let platform = integrity(&format!(
+        "@keelstackhq/{tool}-{}@{version}",
+        npm_platform(&key)
+    ))?;
+    Ok(ToolPin {
+        version: version.to_string(),
+        sha512: Some(crate::pins::Sha512Set {
+            launcher,
+            platform: std::iter::once((key, platform)).collect(),
+        }),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
