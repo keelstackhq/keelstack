@@ -237,6 +237,9 @@ struct Mig<'a> {
     orig: String,
     /// HEAD when this run started.
     start: String,
+    /// Ignored files and directories (trailing `/`) that existed before the first step: never
+    /// committed, never deleted, whatever a step does to `.gitignore`.
+    protected: Vec<String>,
     /// Commits keel made in this run.
     commits: u32,
     snippet: Snippet,
@@ -269,6 +272,24 @@ impl Mig<'_> {
         if o.code != 0 {
             return Err(failure(&add, &o));
         }
+        // A step that rewrote `.gitignore` may have un-ignored a file the user keeps out of git
+        // (`.env`): it would now be staged. Unstage those (never touching the files), and fail.
+        let staged = self.git(&["diff", "--cached", "--name-only", "-z"]);
+        let bad: Vec<String> = staged
+            .stdout
+            .split('\0')
+            .filter(|p| !p.is_empty() && self.is_protected(p))
+            .map(String::from)
+            .collect();
+        if !bad.is_empty() {
+            let mut a = vec!["reset", "-q", "--"];
+            a.extend(bad.iter().map(String::as_str));
+            let _ = self.git(&a);
+            return Err(format!(
+                "the update would un-ignore {}: git would start to track files that were ignored here (they may hold secrets). Keep them ignored (or move them out of the repo), then rerun",
+                bad.join(", ")
+            ));
+        }
         // Belt and braces: `.keel/` is in .git/info/exclude, but never commit it.
         let _ = self.git(&[
             "rm",
@@ -290,6 +311,32 @@ impl Mig<'_> {
         }
         self.commits += 1;
         Ok(true)
+    }
+
+    /// Is `rel` (a path from git, no leading `./`) one of the ignored files or inside one of the
+    /// ignored directories seen before the first step?
+    fn is_protected(&self, rel: &str) -> bool {
+        self.protected.iter().any(|p| {
+            rel == p.trim_end_matches('/')
+                || rel.starts_with(&format!("{}/", p.trim_end_matches('/')))
+        })
+    }
+
+    /// Ignored paths now (`git ls-files -o -i --exclude-standard --directory`), without `.keel/`.
+    fn ignored_now(&self) -> Vec<String> {
+        let o = self.git(&[
+            "ls-files",
+            "-o",
+            "-i",
+            "--exclude-standard",
+            "--directory",
+            "-z",
+        ]);
+        o.stdout
+            .split('\0')
+            .filter(|p| !p.is_empty() && !p.starts_with(".keel"))
+            .map(String::from)
+            .collect()
     }
 
     fn s_tools(&mut self) -> Res {
@@ -915,6 +962,10 @@ impl Mig<'_> {
             }
         };
         for rel in self.untracked() {
+            // Never a file that was ignored when keel started, even if a step un-ignored it.
+            if self.is_protected(&rel) {
+                continue;
+            }
             let p = self.dir.join(&rel);
             if p.is_file() || p.is_symlink() {
                 std::fs::remove_file(&p).map_err(|e| format!("cannot remove {rel}: {e}"))?;
@@ -992,24 +1043,46 @@ fn keep_scratch_untracked(git: &dyn Fn(&[&str]) -> Out, dir: &Path) {
 
 /// Is the local migration branch spent? Merged into HEAD, or the same tree as HEAD (a squash
 /// merge), or its PR is merged on GitHub (asked only when `gh` works).
-fn leftover(git: &dyn Fn(&[&str]) -> Out, r: &dyn Runner, dir: &Path, branch: &str) -> bool {
+fn leftover(
+    git: &dyn Fn(&[&str]) -> Out,
+    r: &dyn Runner,
+    dir: &Path,
+    branch: &str,
+) -> Result<bool, String> {
     if git(&["merge-base", "--is-ancestor", branch, "HEAD"]).code == 0 {
-        return true;
+        return Ok(true);
     }
     let tree = |rev: &str| {
         let o = git(&["rev-parse", &format!("{rev}^{{tree}}")]);
         (o.code == 0).then(|| o.stdout.trim().to_string())
     };
     if tree(branch).is_some() && tree(branch) == tree("HEAD") {
-        return true;
+        return Ok(true);
     }
     let c = Cmd::new("gh", &["repo", "view", "--json", "nameWithOwner"]).dir(dir);
     let o = r.run(&c);
     let repo = json(&o)
         .and_then(|v| v["nameWithOwner"].as_str().map(String::from))
         .filter(|_| o.code == 0);
-    repo.and_then(|repo| gh::pr_view(r, dir, &repo, branch))
-        .is_some_and(|pr| pr.state == "MERGED")
+    let Some(pr) = repo.and_then(|repo| gh::pr_view(r, dir, &repo, branch)) else {
+        return Ok(false);
+    };
+    if pr.state != "MERGED" {
+        return Ok(false);
+    }
+    let tip = git(&["rev-parse", branch]).stdout.trim().to_string();
+    if !pr.head.is_empty() && pr.head == tip {
+        return Ok(true);
+    }
+    Err(format!(
+        "branch {branch} has commits beyond the head of its merged PR {} (PR head {}, branch at {tip})",
+        pr.url,
+        if pr.head.is_empty() {
+            "unknown"
+        } else {
+            &pr.head
+        }
+    ))
 }
 
 /// An environment error (exit 3) whose message says how to fix it.
@@ -1122,6 +1195,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
         branch: branch.clone(),
         orig: orig.clone(),
         start: start.clone(),
+        protected: Vec::new(),
         commits: 0,
         snippet: Snippet {
             status: "not-checked",
@@ -1142,7 +1216,17 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
                 "--quiet",
                 &format!("refs/heads/{branch}"),
             ]);
-            if exists.code == 0 && leftover(&gitc, r, dir, &branch) {
+            let spent = if exists.code == 0 {
+                leftover(&gitc, r, dir, &branch).map_err(|e| {
+                    env_err(
+                        e,
+                        format!("`git log {branch} --not origin/HEAD` shows them; keep them (`git switch {branch}`) or `git branch -D {branch}` once sure"),
+                    )
+                })?
+            } else {
+                false
+            };
+            if spent {
                 // An earlier migration PR landed (fast-forward, squash or merged on GitHub):
                 // its branch is only a leftover.
                 let _ = gitc(&["branch", "-D", &branch]);
@@ -1164,6 +1248,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
             created = true;
         }
         keep_scratch_untracked(&gitc, dir);
+        m.protected = m.ignored_now();
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
         if p.bosun {
             m.before = std::fs::read_to_string(dir.join(SNIPPET_BEFORE))

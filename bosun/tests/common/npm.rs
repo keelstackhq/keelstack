@@ -31,15 +31,16 @@ impl Registry {
     /// `latest`: tool -> version. `tamper`: serve other bytes than the integrity covers for this package.
     /// `foreign`: this package's tarball URL points at another host.
     pub fn start(latest: &[(&str, &str)], tamper: Option<&str>, foreign: Option<&str>) -> Registry {
-        Registry::start_with(latest, &[], &[], tamper, foreign)
+        Registry::start_with(latest, &[], &[], &[], tamper, foreign)
     }
 
     /// As `start`, plus `older`: tool -> another published version (served by version only, never
-    /// as `latest`), and `deprecated`: versions (or `package@version`) npm marks deprecated (a yanked release).
+    /// as `latest`), and `missing`: `package@version` entries left out of the registry (a 404); `deprecated`: versions (or `package@version`) npm marks deprecated (a yanked release).
     pub fn start_with(
         latest: &[(&str, &str)],
         older: &[(&str, &str)],
         deprecated: &[&str],
+        missing: &[&str],
         tamper: Option<&str>,
         foreign: Option<&str>,
     ) -> Registry {
@@ -56,6 +57,9 @@ impl Registry {
             .collect();
         for (tool, ver, is_latest) in all {
             for p in pkgs(tool) {
+                if missing.contains(&format!("{p}@{ver}").as_str()) {
+                    continue;
+                }
                 let tar = format!("{p}@{ver}").into_bytes();
                 let host = if foreign == Some(p.as_str()) {
                     "http://evil.example"

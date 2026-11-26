@@ -40,6 +40,7 @@ fn an_exact_older_than_latest_release_is_pinned_with_its_own_integrity() {
             ("bosun", "0.9.1"),
         ],
         &[],
+        &[],
         None,
         None,
     );
@@ -90,7 +91,7 @@ fn an_unpublished_release_is_refused_with_a_fix_and_nothing_is_written() {
 fn a_deprecated_release_is_refused() {
     let d = repo();
     let before = read(d.path(), "docs/setup-script.sh");
-    let reg = Registry::start_with(&ALL, &[("bosun", "0.9.1")], &["0.9.1"], None, None);
+    let reg = Registry::start_with(&ALL, &[("bosun", "0.9.1")], &["0.9.1"], &[], None, None);
     let (code, v) = pin_to(d.path(), &reg, &["--to", "0.9.1", "--tool", "bosun"]);
     assert_eq!(code, 1, "{v}");
     assert!(
@@ -112,6 +113,7 @@ fn a_deprecated_platform_package_is_refused_too_and_a_missing_one_is_named() {
         &ALL,
         &[("bosun", "0.9.1")],
         &["bosun-linux-x64@0.9.1"],
+        &[],
         None,
         None,
     );
@@ -136,9 +138,40 @@ fn a_deprecated_platform_package_is_refused_too_and_a_missing_one_is_named() {
 }
 
 #[test]
+fn a_platform_package_that_is_not_published_is_named_in_the_error_and_its_fix() {
+    let d = repo();
+    let before = read(d.path(), "docs/setup-script.sh");
+    let reg = Registry::start_with(
+        &ALL,
+        &[("bosun", "0.9.1")],
+        &[],
+        &["bosun-linux-x64@0.9.1"],
+        None,
+        None,
+    );
+    let (code, v) = pin_to(d.path(), &reg, &["--to", "0.9.1", "--tool", "bosun"]);
+    assert_eq!(code, 1, "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("@keelstackhq/bosun-linux-x64@0.9.1 is not published"),
+        "{v}"
+    );
+    assert!(
+        v["error"]["fix"]
+            .as_str()
+            .unwrap()
+            .contains("@keelstackhq/bosun-linux-x64 versions"),
+        "{v}"
+    );
+    assert_eq!(read(d.path(), "docs/setup-script.sh"), before);
+}
+
+#[test]
 fn a_downgrade_with_to_is_still_a_conflict() {
     let d = repo();
-    let reg = Registry::start_with(&ALL, &[("bosun", "0.8.0")], &[], None, None);
+    let reg = Registry::start_with(&ALL, &[("bosun", "0.8.0")], &[], &[], None, None);
     let (code, v) = pin_to(d.path(), &reg, &["--to", "0.8.0", "--tool", "bosun"]);
     assert_eq!(code, 3, "{v}");
     assert_eq!(read(d.path(), ".bosun/version"), "0.9.0\n");

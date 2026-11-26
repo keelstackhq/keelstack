@@ -152,3 +152,19 @@ test("docs pinning different Action releases throw", () => {
     /different Action releases/,
   );
 });
+
+test("doc Action pins of the monorepo path (keelstackhq/keelstack/splice/action) count too", () => {
+  const mono = (sha, v) => `- uses: keelstackhq/keelstack/splice/action@${sha} # v${v}\n`;
+  assert.equal(
+    checkVersion({ tag: null, cargoToml: cargo("0.5.0"), docs: { "a.md": mono(A, "0.4.0") } }),
+    "0.5.0",
+  );
+  assert.throws(
+    () => checkVersion({ tag: null, cargoToml: cargo("0.5.0"), docs: { "a.md": mono(A, "0.6.0") } }),
+    /a\.md pins the Action at v0\.6\.0, newer than Cargo\.toml 0\.5\.0/,
+  );
+  assert.throws(
+    () => checkVersion({ tag: null, cargoToml: cargo("0.5.0"), docs: { "a.md": mono(A, "0.4.0"), "b.md": pin(B, "0.4.0") } }),
+    /different|pin/,
+  );
+});

@@ -354,6 +354,8 @@ bosun = `.bosun/`; hoist = `hoist.toml`. None of them is exit 3 ("nothing to mig
 **Idempotent.** A repo already at the target changes nothing: no branch is left, no commit, exit 0, `changed:false`. A repo whose migration commits exist from an
 earlier run (on the migration branch) re-runs the steps as no-ops and `--pr` opens the PR.
 
+**Ignored files.** Before the first step keel records every ignored path (`git ls-files -o -i --exclude-standard --directory`, minus `.keel/`). Each commit stages with `git add -A` and then checks the staged paths against that record: a path in it (a step rewrote `.gitignore` and un-ignored `.env`) is unstaged with `git reset -q -- PATH`, the step fails naming the paths ("the update would un-ignore ...") and the run rolls back. The rollback never deletes or resets a recorded path. A leftover migration branch whose PR is merged is deleted only when its tip equals the PR's `headRefOid`; commits beyond it are exit 3 with advice.
+
 **Failure.** A failed step before `pr` rolls back: the untracked files that appeared during the run are deleted one by one (the preflight proved there were none before, so they are keel's; never `git clean`, never an ignored file), `git reset --hard <start>` on keel's own branch only, back to the original branch, the migration branch deleted. The
 original branch is never touched. JSON: `status:"failed"`, the failed step, later steps `not-reached`, and `recovery` (what was undone and the next command; if the
 rollback itself fails, the exact git commands). Globally installed tools stay installed. A failure in `pr` keeps the commits.

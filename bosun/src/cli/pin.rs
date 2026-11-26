@@ -62,7 +62,7 @@ impl Npm {
         let fail = |d: String| {
             BosunError::error(
                 format!("npm {what}: {d}"),
-                "check the network and BOSUN_NPM_REGISTRY, then run `bosun pin --latest` again",
+                "check the network and BOSUN_NPM_REGISTRY, then rerun the same `bosun pin` command (`--latest` or `--to X.Y.Z`)",
             )
         };
         let req = self.agent.get(url);
@@ -107,7 +107,7 @@ impl Npm {
             }),
             _ => Err(BosunError::error(
                 format!("npm {what}: no version, dist.integrity or dist.tarball"),
-                "run `bosun pin --latest` again; if it persists, pin by hand",
+                "rerun the same `bosun pin` command (`--latest` or `--to X.Y.Z`); if it persists, pin by hand",
             )),
         }
     }

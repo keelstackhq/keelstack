@@ -29,7 +29,7 @@ function newer(a, b) {
   return i >= 0 && x[i] > y[i];
 }
 
-const PIN = /keelstackhq\/splice\/action@([0-9a-f]{40}) # v(\d+\.\d+\.\d+\S*)/g;
+const PIN = /keelstackhq\/(?:keelstack\/)?splice\/action@([0-9a-f]{40}) # v(\d+\.\d+\.\d+\S*)/g;
 
 // Docs pin the Action by commit SHA. They name a released tag, so the tag can lag the
 // Cargo version but never lead it, and every doc must pin the same release.

@@ -31,6 +31,7 @@ case "$name $*" in
     echo '{"ok":true,"changes":[{"path":"docs/agents/org-decisions.md"}]}';;
   "splice --json --yes update --all")
     [ "$KEEL_SCENARIO" = conflict ] && { echo "<<<<<<< ours" > AGENTS.md; echo '{"ok":false,"exit_code":1}'; exit 1; }
+    [ -n "$KEEL_REWRITE_GITIGNORE" ] && printf "dist/\\n" > .gitignore
     echo "template v2" > .splice/template.txt
     echo '{"ok":true,"changes":[{"path":".splice/template.txt"}]}';;
   "splice --json check")
@@ -59,7 +60,7 @@ case "$name $*" in
   "gh auth status"*) ;;
   "gh repo view"*) echo '{"nameWithOwner":"owner/name","defaultBranchRef":{"name":"main"}}';;
   "gh pr view"*)
-    [ -f "$KEEL_LOG/pr_merged" ] && { echo '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"MERGED","headRefOid":"abc","mergeCommit":{"oid":"c0"}}'; exit 0; }
+    [ -f "$KEEL_LOG/pr_merged" ] && { printf '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"MERGED","headRefOid":"%s","mergeCommit":{"oid":"c0"}}\n' "$(cat "$KEEL_LOG/pr_merged")"; exit 0; }
     [ -f "$KEEL_LOG/pr_open" ] && echo '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"OPEN","headRefOid":"abc","mergeCommit":null}' || exit 1;;
   "gh pr create"*) : > "$KEEL_LOG/pr_open"; echo "https://github.com/owner/name/pull/9";;
 esac
@@ -831,8 +832,139 @@ fn a_leftover_branch_whose_pr_is_merged_is_replaced_and_any_other_gets_exact_adv
         msg.contains("git switch keel/migrate-v0.23.0") && msg.contains("git branch -D"),
         "{msg}"
     );
-    std::fs::write(env.log.join("pr_merged"), "").unwrap();
+    // Commits on the branch beyond the merged PR's head: never deleted silently.
+    let tip = git(&env.repo, &["rev-parse", "keel/migrate-v0.23.0"])
+        .trim()
+        .to_string();
+    std::fs::write(
+        env.log.join("pr_merged"),
+        "0000000000000000000000000000000000000000",
+    )
+    .unwrap();
+    let (code, v) = env.run("ok", &["--to", "0.23.0"]);
+    assert_eq!(code, 3, "{v}");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains("beyond"),
+        "{v}"
+    );
+    assert!(
+        !git(&env.repo, &["branch", "--list", "keel/*"])
+            .trim()
+            .is_empty()
+    );
+    // The PR head is the branch tip: the branch is spent and replaced.
+    std::fs::write(env.log.join("pr_merged"), &tip).unwrap();
     let (code, v) = env.run("ok", &["--to", "0.23.0"]);
     assert_ne!(code, 3, "{v}");
     assert_ne!(v["status"], "failed", "{v}");
+}
+
+/// A repo with a committed `.gitignore` (`.env`, `node_modules/`) and those two ignored files.
+fn with_ignored(env: &Env) {
+    write(&env.repo, ".gitignore", ".env\nnode_modules/\n");
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "gitignore"]);
+    git(&env.repo, &["push", "origin", "main"]);
+    write(&env.repo, ".env", "TOKEN=hunter2\n");
+    write(
+        &env.repo,
+        "node_modules/pkg/index.js",
+        "module.exports = 1;\n",
+    );
+}
+
+fn intact(env: &Env) {
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".env")).unwrap(),
+        "TOKEN=hunter2\n"
+    );
+    assert!(env.repo.join("node_modules/pkg/index.js").exists());
+}
+
+fn run_rewriting(env: &Env, scenario: &str, args: &[&str]) -> (i32, serde_json::Value) {
+    let o = env
+        .keel(scenario, args)
+        .env("KEEL_REWRITE_GITIGNORE", "1")
+        .output()
+        .unwrap();
+    let v = serde_json::from_slice(&o.stdout).unwrap();
+    (o.status.code().unwrap(), v)
+}
+
+#[test]
+fn a_step_that_unignores_a_file_fails_and_the_rollback_keeps_it() {
+    let env = Env::new(&ALL);
+    with_ignored(&env);
+    let head = env.head();
+    let (code, v) = run_rewriting(&env, "checkfail", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(action(&v, "splice"), "failed", "{v}");
+    let detail = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "splice")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        detail.contains(".env") && detail.contains("un-ignore"),
+        "{detail}"
+    );
+    intact(&env);
+    assert_eq!(env.head(), head);
+    assert_eq!(env.branch(), "main");
+    assert!(
+        git(&env.repo, &["branch", "--list", "keel/*"])
+            .trim()
+            .is_empty()
+    );
+    // The user's .gitignore is back.
+    assert_eq!(
+        std::fs::read_to_string(env.repo.join(".gitignore")).unwrap(),
+        ".env\nnode_modules/\n"
+    );
+}
+
+#[test]
+fn an_unignored_secret_is_never_committed_or_pushed() {
+    let env = Env::new(&ALL);
+    with_ignored(&env);
+    let (code, v) = run_rewriting(&env, "ok", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 1, "{v}");
+    intact(&env);
+    assert!(
+        git(&env.repo, &["log", "--all", "--format=%H", "--", ".env"])
+            .trim()
+            .is_empty()
+    );
+    assert!(
+        git(
+            &env.repo,
+            &["log", "--all", "--format=%H", "--", "node_modules"]
+        )
+        .trim()
+        .is_empty()
+    );
+    assert!(
+        git(&env.repo, &["ls-remote", "--heads", "origin"])
+            .lines()
+            .all(|l| !l.contains("keel/"))
+    );
+    let calls = env.calls();
+    assert!(
+        !calls.iter().any(|c| c.starts_with("gh pr create")),
+        "{calls:?}"
+    );
+}
+
+#[test]
+fn an_ignored_directory_and_file_survive_a_plain_rollback() {
+    let env = Env::new(&ALL);
+    with_ignored(&env);
+    let (code, v) = env.run("conflict", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    intact(&env);
+    assert!(!env.repo.join("AGENTS.md").exists());
 }
