@@ -1,0 +1,1 @@
+- `bosun pin --to X.Y.Z` pins an exact published release (refuses unpublished or deprecated versions); `keel migrate` moves a repo to a release in one command.

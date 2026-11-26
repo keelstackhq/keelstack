@@ -3,10 +3,10 @@
 # the dist.integrity of the launcher and platform packages for that tool's `version`.
 # Values come from the channel setup-script pin blocks (splice/hoist/berth: hoist's, bosun: bosun's).
 [pins]
-splice = "0.6.0"
-bosun = "0.21.0"
-hoist = "0.5.1"
-berth = "0.2.1"
+splice = "0.23.0"
+bosun = "0.23.0"
+hoist = "0.23.0"
+berth = "0.23.0"
 # hull template tag (= commit 3f4a65fda568cdd20c76168ed156d25a28ba5630): keel renders `rust`/`ts` at it.
 hull = "v0.13.0"
 
@@ -18,25 +18,25 @@ sha = "3f4a65fda568cdd20c76168ed156d25a28ba5630"
 repo = "keelstackhq/hull"
 
 [sha512.splice]
-version = "0.6.0"
-launcher = "dMLEVxDdl6qCCLZhCIb0qV+f5BZ1r5rRTglMtYf9cc4uRW81eWSSz1n5fuB1RlotWgMGbBbzSvyX1O7PxDHHSA=="
-linux_x64 = "YmeezoD9hiz3TSvCk2k1VokW7JlQmvqGuSaBBfQGgOJ2DESdWufEv2jQ94xGZUYzTWpBb2TM9euoOTi51bMCvg=="
-linux_arm64 = "1tScSJRc6HhnKqFoDWpz0nMewjR1j3akWw3sthqFHvnzaXAL7W+BMVDmyJ2c9lPa4QF/HBEwFfbe1JmtJx/Frw=="
+version = "0.23.0"
+launcher = "WUPDc7ZO6n1gl2s3MzhFWwivv1vezwq1IAKuRDmCgX8VzSe7VyzzdhUdzycXf87JzOZ1Ryogv041ZKB5PvkpcQ=="
+linux_x64 = "fjp+sM/DfPsFCcharK/bCo9wAvf9mQ6BbQD2jYJwIchb3U3z9k0gRsI7XCLEQ9L/n0WujAfyVU82N40DMBfAVw=="
+linux_arm64 = "tkDRevJwish/bRaJQVbTTr/borefhnnLy5OnuI76O10j4vryeLMJa9NfE3CREF4ZiwzSiZBvWO0j/FrMGqyROQ=="
 
 [sha512.bosun]
-version = "0.21.0"
-launcher = "Kk4l+o3BVptL7fXBIapBnxtQwHI+u2nD1YSGkASQuS7sEYJlR5eJoENGzq2J7g7mRvgU7RQQpean7DbYg3L7mg=="
-linux_x64 = "2CwZv/kUxuY+e2HiARpgntW4RmefsPry5Cyj5P55GeM8YAMGkeWTEThA2rlPL3u4W1XAOAcFRJfcI+FzHOr9Tw=="
-linux_arm64 = "XPezhlupNqjlfOXOAbgOjGuSuubtrgGWhe+WSZADWWqA3VopZuMb7pz9VCLuzwho5y1ab0fzCRwE71JnBa45tQ=="
+version = "0.23.0"
+launcher = "8iZui7IoWbNduA1le+PwiNwz5ry7ClzW4W0Y56ca2GCUxGnzMzZaWn0X7HSF159dVc+QcI2j6UiiV/SbaNR2kA=="
+linux_x64 = "kxiutxjWQ2W5E9IpubFIIgWdWfY7pquvq/69S5/i6tgq1eQ5ERI/xITA/eicbznfAk6dpxRXNKWpY+WWRJHqkQ=="
+linux_arm64 = "2Qe0Xu1EXIAMWRuXlvpHOLZM6YL7rSBcA482Z6KCkpsi9M/jG2BXDkG+8UB3IMgzMZxEMcHUwqr3Wxs+TFh9cg=="
 
 [sha512.hoist]
-version = "0.5.1"
-launcher = "vTS2qXva2OCDTuYbkAntSaN6Rf2w70f3inxOzYCHZkrvqp9bgdGAN4OX8ZMQbcg9VabUiPR3aeXbAjFqKMgmcg=="
-linux_x64 = "4bTuPUbSWvLVvMU4DgMZcKfAhqNhQN5Iy3I0W0eaUtpk9UWKPNvLCbdKp5LWxpeoMFqYArgkVq3/hKJhZj+QzQ=="
-linux_arm64 = "11eq9L45RUw1kqgSGqMzloesUtr/ISc+/7HqRrTfpjNt9dPUlJkZMiTccgLaq3GnPt3kHhEOwvS98o2iV1uB6g=="
+version = "0.23.0"
+launcher = "B/PDA7A7vd27eysupjovclIF0GngS7ZGFe9D6aHsQAzmHvW3Inr1BSTvWdOO+Asi2XUT9nKBD3gqAZ02LS7UOQ=="
+linux_x64 = "I30OZgdTOa3I2AEcRKzj48+Fe8+K2mVXZaqZh0vZudgQsau3321H4xPNcxNXLXxJp4gRt+9uOAvakX3jXhwtbg=="
+linux_arm64 = "5gpeYmF+s5ohHFn0+0yRN3wthsa6khy1MgqZfZ1bDXM2JqgkPO0hJ/NLo8vmYfzeZKSKtJ7n8Syuqlcd6FkLTw=="
 
 [sha512.berth]
-version = "0.2.1"
-launcher = "8PeL8d6meSYVuF+MNmK6CyAfZn+pmDIkLxwAcZIgNzhRoGWoBBKA8pTvG/NAYTHRhF8Ym+3OtCD+N/96N+u3JA=="
-linux_x64 = "vwYKi7HGKAs4NIAWf5V228ci6aaqa+1nPvk/FqomCj61on2ouzGJzSFVZPtSv88U3/LW+I3Kmo5gAtuIIRAF7Q=="
-linux_arm64 = "Y8nO2tpk7f9Pujvsxq42vaO9GjGF0n7jFv4MKN7F8kP8ofACPX7obGESfv+qNYik17X3WXwHgXS15WKorOlAdQ=="
+version = "0.23.0"
+launcher = "w8diKbSmaaWBfpFckykkQ57/1pO/pRKZ13GeLirkApEv+7vQeRxINtnE8DY9LATOE11VOCT60TykyCrGcVjKeg=="
+linux_x64 = "tF988o5ZDiVTGICnCmVj/EF+krDFvJiJSh63gX4+pfTEIZ7AochdGszrOHUPe+rJ4kx9mDjvhknriZTZX3vhkw=="
+linux_arm64 = "Gfjz1llo8apjegpwFgyowd49uTddhbdUgqH8dPdOubQQD9MQZC2rCO4/5emGr/lMVSILjdgUESNVHlpNyBNwFA=="

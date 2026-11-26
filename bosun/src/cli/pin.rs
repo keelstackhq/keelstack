@@ -20,11 +20,28 @@ const VERSION_FILE: &str = ".bosun/version";
 const CHANNEL: &str = ".splice/channels/bosun.toml";
 const BRANCH: &str = "bosun/pin";
 
+/// A failed registry request; `not_found` is HTTP 404 (typed, never read back from a message).
+struct Fetch {
+    err: BosunError,
+    not_found: bool,
+}
+
+impl Fetch {
+    fn other(err: BosunError) -> Fetch {
+        Fetch {
+            err,
+            not_found: false,
+        }
+    }
+}
+
 /// What npm says about one package version.
 struct Meta {
     version: String,
     integrity: String,
     tarball: String,
+    /// npm's `deprecated` message: a yanked release carries one.
+    deprecated: Option<String>,
 }
 
 struct Npm {
@@ -57,10 +74,14 @@ impl Npm {
     }
 
     fn get(&self, url: &str, what: &str, limit: u64) -> Result<Vec<u8>, BosunError> {
+        self.fetch(url, what, limit).map_err(|f| f.err)
+    }
+
+    fn fetch(&self, url: &str, what: &str, limit: u64) -> Result<Vec<u8>, Fetch> {
         let fail = |d: String| {
             BosunError::error(
                 format!("npm {what}: {d}"),
-                "check the network and BOSUN_NPM_REGISTRY, then run `bosun pin --latest` again",
+                "check the network and BOSUN_NPM_REGISTRY, then rerun the same `bosun pin` command (`--latest` or `--to X.Y.Z`)",
             )
         };
         let req = self.agent.get(url);
@@ -68,44 +89,58 @@ impl Npm {
             Some(d) => {
                 let left = d.saturating_duration_since(Instant::now());
                 if left.is_zero() {
-                    return Err(fail("timed out".into()));
+                    return Err(Fetch::other(fail("timed out".into())));
                 }
                 req.config().timeout_global(Some(left)).build().call()
             }
             None => req.call(),
         };
-        let mut resp = resp.map_err(|e| fail(e.to_string()))?;
-        if resp.status().as_u16() != 200 {
-            return Err(fail(format!("HTTP {}", resp.status().as_u16())));
+        let mut resp = resp.map_err(|e| Fetch::other(fail(e.to_string())))?;
+        let status = resp.status().as_u16();
+        if status != 200 {
+            return Err(Fetch {
+                err: fail(format!("HTTP {status}")),
+                not_found: status == 404,
+            });
         }
         let body = resp.body_mut().with_config().limit(limit).read_to_vec();
-        body.map_err(|e| fail(e.to_string()))
+        body.map_err(|e| Fetch::other(fail(e.to_string())))
     }
 
     /// Metadata of `pkg` at `version` (`latest` or X.Y.Z).
     fn meta(&self, pkg: &str, version: &str) -> Result<Meta, BosunError> {
+        self.meta_typed(pkg, version).map_err(|f| f.err)
+    }
+
+    /// As `meta`, saying whether the registry answered 404 (the version is not published).
+    fn meta_typed(&self, pkg: &str, version: &str) -> Result<Meta, Fetch> {
         // Every fetch starts here; tarballs must sit under this base.
         if !crate::anthropic::https_or_loopback(&self.base) {
-            return Err(BosunError::error(
+            return Err(Fetch::other(BosunError::error(
                 "BOSUN_NPM_REGISTRY must be an https:// URL (http:// only for 127.0.0.1 or localhost)",
                 "unset BOSUN_NPM_REGISTRY to use https://registry.npmjs.org, or set an https:// URL",
-            ));
+            )));
         }
         let what = format!("@keelstackhq/{pkg}@{version}");
         let url = format!("{}/@keelstackhq/{pkg}/{version}", self.base);
-        let v: Value = serde_json::from_slice(&self.get(&url, &what, 1 << 22)?)
-            .map_err(|e| BosunError::error(format!("npm {what}: bad JSON: {e}"), "retry later"))?;
+        let v: Value = serde_json::from_slice(&self.fetch(&url, &what, 1 << 22)?).map_err(|e| {
+            Fetch::other(BosunError::error(
+                format!("npm {what}: bad JSON: {e}"),
+                "retry later",
+            ))
+        })?;
         let s = |p: &str| v.pointer(p).and_then(Value::as_str).map(String::from);
         match (s("/version"), s("/dist/integrity"), s("/dist/tarball")) {
             (Some(version), Some(integrity), Some(tarball)) => Ok(Meta {
                 version,
                 integrity,
                 tarball,
+                deprecated: s("/deprecated").filter(|d| !d.is_empty()),
             }),
-            _ => Err(BosunError::error(
+            _ => Err(Fetch::other(BosunError::error(
                 format!("npm {what}: no version, dist.integrity or dist.tarball"),
-                "run `bosun pin --latest` again; if it persists, pin by hand",
-            )),
+                "rerun the same `bosun pin` command (`--latest` or `--to X.Y.Z`); if it persists, pin by hand",
+            ))),
         }
     }
 
@@ -159,7 +194,12 @@ type Found<'a> = (
 );
 
 /// Read the pins of `root` and compare them with npm latest (nothing is written or downloaded).
-fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, BosunError> {
+fn inspect<'a>(
+    root: &Path,
+    only: &'a [String],
+    npm: &Npm,
+    want: Option<&str>,
+) -> Result<Found<'a>, BosunError> {
     if root.join(CHANNEL).exists() {
         return Err(BosunError::error(
             "the bosun channel owns the tool pins in this repo",
@@ -183,7 +223,10 @@ fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, 
                 format!("fix {SCRIPT} by hand"),
             )
         })?;
-        let m = npm.meta(t, "latest")?;
+        let m = match want {
+            None => npm.meta(t, "latest")?,
+            Some(v) => explicit(npm, t, v)?,
+        };
         if *t == "bosun" {
             bosun_latest = Some(m.version.clone());
         }
@@ -198,8 +241,19 @@ fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, 
         let (from, to) = (sv(cur, "pinned")?, sv(&m.version, "latest")?);
         if to < from {
             return Err(BosunError::conflict(
-                format!("{t}: npm latest {} is older than the pin {cur}", m.version),
-                "pins only move up; check the npm dist-tag, or pin by hand",
+                if want.is_some() {
+                    format!(
+                        "{t}: the requested {} is older than the pin {cur}",
+                        m.version
+                    )
+                } else {
+                    format!("{t}: npm latest {} is older than the pin {cur}", m.version)
+                },
+                if want.is_some() {
+                    "pins only move up; pass a newer --to, or pin by hand"
+                } else {
+                    "pins only move up; check the npm dist-tag, or pin by hand"
+                },
             ));
         }
         if to == from {
@@ -212,6 +266,37 @@ fn inspect<'a>(root: &Path, only: &'a [String], npm: &Npm) -> Result<Found<'a>, 
     Ok((script, changed, unchanged, latest, bosun_latest))
 }
 
+/// Metadata of exactly `v`: a version npm does not have, or one marked deprecated (yanked), is
+/// refused with a fix, never pinned.
+fn explicit(npm: &Npm, tool: &str, v: &str) -> Result<Meta, BosunError> {
+    let m = npm.meta_typed(tool, v).map_err(|f| {
+        if f.not_found {
+            BosunError::error(
+                format!("@keelstackhq/{tool}@{v} is not published on npm"),
+                format!("pass a published release (`npm view @keelstackhq/{tool} versions`), or wait for the release to publish"),
+            )
+        } else {
+            f.err
+        }
+    })?;
+    if m.version != v {
+        return Err(BosunError::error(
+            format!(
+                "npm @keelstackhq/{tool}@{v}: answered version {}",
+                m.version
+            ),
+            "do not pin this release; tell the owner, then rerun later",
+        ));
+    }
+    if let Some(d) = &m.deprecated {
+        return Err(BosunError::error(
+            format!("@keelstackhq/{tool}@{v} is deprecated on npm ({d})"),
+            "pin a release that is not deprecated (`--to` another version, or --latest)",
+        ));
+    }
+    Ok(m)
+}
+
 pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
     let start = match dir {
         Some(d) => d.to_path_buf(),
@@ -220,7 +305,7 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
     let root: PathBuf =
         git_out(&start, &["rev-parse", "--show-toplevel"]).map_or(start, PathBuf::from);
     let npm = Npm::new(None);
-    let (script, changed, unchanged, latest, _) = inspect(&root, &a.tool, &npm)?;
+    let (script, changed, unchanged, latest, _) = inspect(&root, &a.tool, &npm, a.to.as_deref())?;
     if a.check {
         return Ok(Outcome::data(
             json!({"behind": changed, "unchanged": unchanged}),
@@ -262,7 +347,12 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
         let launcher = npm.verified(t, m)?;
         let arch = |suffix: &str| -> Result<String, BosunError> {
             let pkg = format!("{t}-linux-{suffix}");
-            let am = npm.meta(&pkg, &m.version)?;
+            // An exact `--to` also refuses a platform package that is missing or deprecated.
+            let am = if a.to.is_some() {
+                explicit(&npm, &pkg, &m.version)?
+            } else {
+                npm.meta(&pkg, &m.version)?
+            };
             if am.version != m.version {
                 return Err(BosunError::error(
                     format!(
@@ -362,7 +452,9 @@ pub fn run(dir: Option<&Path>, a: &PinArgs) -> CmdResult {
         })
         .collect();
     let body = format!(
-        "Tool pins moved by `bosun pin --latest` (tarballs checked against npm dist.integrity):\n{}\n\nGated R-gov: needs owner approval.{}",
+        "Tool pins moved by `bosun pin {}` (tarballs checked against npm dist.integrity):\n{}\n\nGated R-gov: needs owner approval.{}",
+        a.to.as_deref()
+            .map_or_else(|| "--latest".to_string(), |v| format!("--to {v}")),
         moves.join("\n"),
         if ci_findings.is_empty() {
             String::new()
@@ -499,7 +591,7 @@ pub fn update_check(dir: &Path) -> Check {
             Err(e) => return failed(&e),
         }
     } else {
-        match inspect(&root, &[], &npm) {
+        match inspect(&root, &[], &npm, None) {
             Ok((_, behind, _, _, latest)) => {
                 let moves = behind
                     .iter()

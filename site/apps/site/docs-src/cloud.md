@@ -62,20 +62,20 @@ if [ -f scripts/proxy-ca.sh ]; then bash scripts/proxy-ca.sh install || echo "se
 # Pinned tool versions.
 NODE_MAJOR=24
 PNPM_VERSION=12.15.0
-SPLICE_VERSION=0.6.0
+SPLICE_VERSION=0.23.0
 # npm's dist.integrity (sha512) of each tool's launcher and linux binary packages, from
 # `npm view @keelstackhq/<package>@<version> dist.integrity`; move them with the version.
-SPLICE_SHA512=dMLEVxDdl6qCCLZhCIb0qV+f5BZ1r5rRTglMtYf9cc4uRW81eWSSz1n5fuB1RlotWgMGbBbzSvyX1O7PxDHHSA==
-SPLICE_LINUX_X64_SHA512=YmeezoD9hiz3TSvCk2k1VokW7JlQmvqGuSaBBfQGgOJ2DESdWufEv2jQ94xGZUYzTWpBb2TM9euoOTi51bMCvg==
-SPLICE_LINUX_ARM64_SHA512=1tScSJRc6HhnKqFoDWpz0nMewjR1j3akWw3sthqFHvnzaXAL7W+BMVDmyJ2c9lPa4QF/HBEwFfbe1JmtJx/Frw==
-HOIST_VERSION=0.5.1
-HOIST_SHA512=vTS2qXva2OCDTuYbkAntSaN6Rf2w70f3inxOzYCHZkrvqp9bgdGAN4OX8ZMQbcg9VabUiPR3aeXbAjFqKMgmcg==
-HOIST_LINUX_X64_SHA512=4bTuPUbSWvLVvMU4DgMZcKfAhqNhQN5Iy3I0W0eaUtpk9UWKPNvLCbdKp5LWxpeoMFqYArgkVq3/hKJhZj+QzQ==
-HOIST_LINUX_ARM64_SHA512=11eq9L45RUw1kqgSGqMzloesUtr/ISc+/7HqRrTfpjNt9dPUlJkZMiTccgLaq3GnPt3kHhEOwvS98o2iV1uB6g==
-BERTH_VERSION=0.2.1
-BERTH_SHA512=8PeL8d6meSYVuF+MNmK6CyAfZn+pmDIkLxwAcZIgNzhRoGWoBBKA8pTvG/NAYTHRhF8Ym+3OtCD+N/96N+u3JA==
-BERTH_LINUX_X64_SHA512=vwYKi7HGKAs4NIAWf5V228ci6aaqa+1nPvk/FqomCj61on2ouzGJzSFVZPtSv88U3/LW+I3Kmo5gAtuIIRAF7Q==
-BERTH_LINUX_ARM64_SHA512=Y8nO2tpk7f9Pujvsxq42vaO9GjGF0n7jFv4MKN7F8kP8ofACPX7obGESfv+qNYik17X3WXwHgXS15WKorOlAdQ==
+SPLICE_SHA512=WUPDc7ZO6n1gl2s3MzhFWwivv1vezwq1IAKuRDmCgX8VzSe7VyzzdhUdzycXf87JzOZ1Ryogv041ZKB5PvkpcQ==
+SPLICE_LINUX_X64_SHA512=fjp+sM/DfPsFCcharK/bCo9wAvf9mQ6BbQD2jYJwIchb3U3z9k0gRsI7XCLEQ9L/n0WujAfyVU82N40DMBfAVw==
+SPLICE_LINUX_ARM64_SHA512=tkDRevJwish/bRaJQVbTTr/borefhnnLy5OnuI76O10j4vryeLMJa9NfE3CREF4ZiwzSiZBvWO0j/FrMGqyROQ==
+HOIST_VERSION=0.23.0
+HOIST_SHA512=B/PDA7A7vd27eysupjovclIF0GngS7ZGFe9D6aHsQAzmHvW3Inr1BSTvWdOO+Asi2XUT9nKBD3gqAZ02LS7UOQ==
+HOIST_LINUX_X64_SHA512=I30OZgdTOa3I2AEcRKzj48+Fe8+K2mVXZaqZh0vZudgQsau3321H4xPNcxNXLXxJp4gRt+9uOAvakX3jXhwtbg==
+HOIST_LINUX_ARM64_SHA512=5gpeYmF+s5ohHFn0+0yRN3wthsa6khy1MgqZfZ1bDXM2JqgkPO0hJ/NLo8vmYfzeZKSKtJ7n8Syuqlcd6FkLTw==
+BERTH_VERSION=0.23.0
+BERTH_SHA512=w8diKbSmaaWBfpFckykkQ57/1pO/pRKZ13GeLirkApEv+7vQeRxINtnE8DY9LATOE11VOCT60TykyCrGcVjKeg==
+BERTH_LINUX_X64_SHA512=tF988o5ZDiVTGICnCmVj/EF+krDFvJiJSh63gX4+pfTEIZ7AochdGszrOHUPe+rJ4kx9mDjvhknriZTZX3vhkw==
+BERTH_LINUX_ARM64_SHA512=Gfjz1llo8apjegpwFgyowd49uTddhbdUgqH8dPdOubQQD9MQZC2rCO4/5emGr/lMVSILjdgUESNVHlpNyBNwFA==
 # cargo-deny's prebuilt binary as npm packages (@keelstackhq/cargo-deny, its launcher, and
 # cargo-deny-linux-<arch>), pinned like the tools above. Empty until their first publish: then the
 # Rust step builds it with `cargo install --locked cargo-deny` (minutes) instead.
@@ -104,10 +104,10 @@ SUPERPOWERS_SHA=22f0b463e7a5e579904dd6211a520321035526f7
 CAVEMAN_SHA=a9cc1f7b82598852e8c6b8e599dde6ac2491b26e
 # The bosun release the cloud environment installs (the newest published one this script was
 # checked against; independent of .bosun/version, which may say `unreleased`).
-BOSUN_VERSION=0.22.1
-BOSUN_SHA512=ifeB8W7rWVUVYSd9BWv5A/fF6c3fhI6lpxSSBGKZfnmxAZzRZ+nOECrOEGmAC1R3FIh3AcSDCCH32XhrkxBo7g==
-BOSUN_LINUX_X64_SHA512=B8orcgb/Jjwc3cTaIpfMWn4FItj6VVf7tIrC/xQrvdo5B41+oQb3xl/QaReBhiNfEdoqh2lzCSQBDp0i4VdEIQ==
-BOSUN_LINUX_ARM64_SHA512=+h2sCikqyRsQxNcYLLSjf2h9A1MhudGFjdDLk73XIYdNWUJCZkWvhbSQ9aoOZe2NzYGjHCY/r8281cLCKASTZA==
+BOSUN_VERSION=0.23.0
+BOSUN_SHA512=8iZui7IoWbNduA1le+PwiNwz5ry7ClzW4W0Y56ca2GCUxGnzMzZaWn0X7HSF159dVc+QcI2j6UiiV/SbaNR2kA==
+BOSUN_LINUX_X64_SHA512=kxiutxjWQ2W5E9IpubFIIgWdWfY7pquvq/69S5/i6tgq1eQ5ERI/xITA/eicbznfAk6dpxRXNKWpY+WWRJHqkQ==
+BOSUN_LINUX_ARM64_SHA512=2Qe0Xu1EXIAMWRuXlvpHOLZM6YL7rSBcA482Z6KCkpsi9M/jG2BXDkG+8UB3IMgzMZxEMcHUwqr3Wxs+TFh9cg==
 
 # Stacks of this checkout: Rust steps run only with a Cargo.toml or a toolchain file, pnpm only
 # with a pnpm-lock.yaml, a pnpm-workspace.yaml or a package.json `packageManager` of pnpm.

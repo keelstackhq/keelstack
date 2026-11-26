@@ -77,6 +77,7 @@ fn device_of(id: &str, url: &str) -> &'static str {
         || id.starts_with("crates-trust:")
         || id.starts_with("app:")
         || id.starts_with("app-install")
+        || id == "approve-pr"
         || url.contains("/installations/new");
     if phone { "phone" } else { "computer" }
 }

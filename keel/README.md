@@ -23,6 +23,7 @@ Node 24+ (checked in preflight).
 - `keel up`: run the steps, stop at the first human step or failure.
 - `keel plan`: same checks, writes nothing, shows what `up` would do.
 - `keel doctor`: check the toolchain and the repo for drift (no installs).
+- `keel migrate`: move an existing repo to a keelstack release in one step (below).
 
 Global flags: `-C DIR` (checkout, default `.`), `--json`, `-v`. `up` and `plan` also take
 `--repo`, `--template rust|ts|SOURCE`, `--template-ref REF`, `--pieces ID[:NAME],...`, `--plan FILE`, `--wait SECS`,
@@ -83,6 +84,24 @@ account_id = "..."                # optional; 32 lowercase hex chars; env CLOUDF
 
 Unknown keys are an error. keel never reads or prints `CLOUDFLARE_API_TOKEN` or a Fly token: it
 only checks that the Cloudflare one is set, and hoist and the hull script move the secrets.
+
+## Migrate a repo to a new release
+
+```bash
+npx @keelstackhq/keel migrate --pr          # run in the repo; --dry-run first if you want to see the plan
+```
+
+One command does what used to be `splice update`, `bosun pin`, a hoist check and the setup-snippet by hand: it
+installs the target release's tools (checksum verified), updates splice (the decisions channel alone first,
+as `chore: sync org decisions`), pins bosun and its setup script, refreshes hoist's release workflow, verifies
+(`splice check`, `bosun doctor`, `hoist check`, read-only), commits on `keel/migrate-vX.Y.Z` and, with `--pr`, opens
+ONE PR. It works in its own temporary git worktree based on `origin/<default>`: your checkout, branch, uncommitted, untracked and ignored files and unpushed commits are never touched. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an
+up-to-date repo changes nothing and exits 0. Flags: `--to X.Y.Z` (default: keel's version), `--dry-run`, `--pr`, `--mode MODE`.
+
+An agent needs only `keel migrate --json --pr`: act on `status`, `steps[]` and `checklist[]` (exit 5 = the checklist
+is what only a human can do; usually "approve the PR", and "paste the file named in `setup_snippet.path` into the cloud environment"
+only when `setup_snippet.status` is `changed` or `unknown`). Details: [docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md) and
+spec section 11.
 
 ## Existing repo (`template = "none"`)
 

@@ -44,6 +44,35 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     let command = cli.command.name();
+    if matches!(cli.command, keel::Command::Migrate(_)) {
+        return match keel::run_migrate(&cli) {
+            Ok(report) => {
+                if json {
+                    println!("{}", keel::render_migrate_json(&report));
+                } else {
+                    print!("{}", keel::render_migrate_text(&report));
+                }
+                ExitCode::from(report.exit_code.clamp(0, 255) as u8)
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                if json {
+                    println!(
+                        "{}",
+                        render_json_error(
+                            command,
+                            err.exit_code(),
+                            &err.to_string(),
+                            err.fix().unwrap_or(
+                                "the message says what to change; see `keel migrate --help`"
+                            )
+                        )
+                    );
+                }
+                ExitCode::from(err.exit_code() as u8)
+            }
+        };
+    }
     match keel::run(cli) {
         Ok(report) => {
             if json {
@@ -81,7 +110,7 @@ fn command_name(args: &[String]) -> String {
         } else if a == "--" {
             break;
         } else if !a.starts_with('-') {
-            return if ["up", "plan", "doctor"].contains(&a.as_str()) {
+            return if ["up", "plan", "doctor", "migrate"].contains(&a.as_str()) {
                 a.clone()
             } else {
                 String::new()

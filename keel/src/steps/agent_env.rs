@@ -14,6 +14,14 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }
 
+/// The file to paste: the repo name and the proxy-CA prelude, then bosun's snippet.
+pub fn compose(repo_name: &str, script: &str) -> String {
+    format!(
+        "KEEL_REPO_DIR={}\n{PRELUDE}\n{script}\n",
+        shell_quote(repo_name)
+    )
+}
+
 impl Step for AgentEnv {
     fn id(&self) -> &'static str {
         "agent-env"
@@ -53,10 +61,7 @@ impl Step for AgentEnv {
             .repo
             .as_deref()
             .and_then(|r| r.rsplit('/').next());
-        let text = format!(
-            "KEEL_REPO_DIR={}\n{PRELUDE}\n{script}\n",
-            shell_quote(name.unwrap_or(""))
-        );
+        let text = compose(name.unwrap_or(""), script);
         let wrote = path
             .parent()
             .map_or(Ok(()), std::fs::create_dir_all)

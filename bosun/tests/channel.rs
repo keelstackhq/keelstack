@@ -374,7 +374,7 @@ fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
         .lines()
         .find_map(|l| l.strip_prefix("SPLICE_VERSION="))
         .expect("the setup script pins SPLICE_VERSION");
-    assert_eq!(pinned, "0.6.0");
+    assert_eq!(pinned, "0.23.0");
     // Every splice pin (both setup scripts, both splice.yml) is at least the channel's min_splice.
     let ver = |v: &str| -> Vec<u64> { v.split('.').map(|n| n.parse().unwrap()).collect() };
     let m = toml_at(&channel().join("splice.toml"));
@@ -634,7 +634,7 @@ fn root_splice_bots() -> Vec<(std::path::PathBuf, String)> {
             let y = fs::read_to_string(&p).unwrap();
             (p, y)
         })
-        .filter(|(_, y)| y.contains("uses: keelstackhq/splice/action@"))
+        .filter(|(_, y)| y.contains("uses: keelstackhq/keelstack/splice/action@"))
         .collect();
     out.sort();
     out
@@ -649,7 +649,7 @@ fn the_splice_action_is_pinned_by_commit() {
         let y = fs::read_to_string(&f).unwrap();
         let uses: Vec<&str> = y
             .lines()
-            .filter_map(|l| l.split_once("uses: keelstackhq/splice/action@"))
+            .filter_map(|l| l.split_once("uses: keelstackhq/keelstack/splice/action@"))
             .map(|(_, r)| r)
             .collect();
         assert!(!uses.is_empty(), "{}", f.display());
@@ -659,7 +659,7 @@ fn the_splice_action_is_pinned_by_commit() {
                 sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()),
                 "{r}"
             );
-            assert_eq!(tag, "v0.6.0", "{r}");
+            assert_eq!(tag, "v0.23.0", "{r}");
         }
     }
 }

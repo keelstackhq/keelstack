@@ -14,6 +14,9 @@ bosun `pr --single` flags are assumed behind adapters until upstream relays the 
 Issue #45: a step timeout kills the whole process group (fly-setup.sh and flyctl stop too); dns says so when hoist
 has no dns_record item (not "remove old records"); verify names the newer run when a push cancelled the deploy.
 
+`keel migrate` (spec section 11) moves a consumer repo to a release in one command: tools, splice, bosun pins, hoist,
+setup snippet, verification, one PR. Docs: `docs/migrate.md` at the repo root.
+
 ## Blocked
 
 Nothing for releases: `keelstack-cli` (crate), `@keelstackhq/keel` and its five platform packages

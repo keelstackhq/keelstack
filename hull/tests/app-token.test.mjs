@@ -83,7 +83,7 @@ test("splice.yml: App token step pinned and gated, token precedence app > PAT > 
       "workflows",
     ]);
     assert.equal(job.environment, "splice-bot");
-    const bot = job.steps.find((s) => s.uses?.startsWith("keelstackhq/splice/action"));
+    const bot = job.steps.find((s) => s.uses?.startsWith("keelstackhq/keelstack/splice/action"));
     assert.equal(
       bot.with.token,
       "${{ steps.app.outputs.token || secrets.SPLICE_BOT_TOKEN || github.token }}",
@@ -116,7 +116,7 @@ test("release.yml prepare: App token step pinned and gated, precedence app > PAT
   for (const f of [SPLICE, RUST_SPLICE, TS_SPLICE])
     assert.match(
       readFileSync(path(f), "utf8"),
-      /uses: keelstackhq\/splice\/action@85c95b63f53836301f2405368767c6ae9138109f # v0\.5\.0\n/,
+      /uses: keelstackhq\/keelstack\/splice\/action@5553c1a9da6e4b5e666207d0c884d91739b169c0 # v0\.23\.0\n/,
       f,
     );
   assert.ok(raw.includes("--ignore-scripts"));

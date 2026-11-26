@@ -736,8 +736,8 @@ fn splice_pins_its_version() {
         .iter()
         .filter(|(p, _)| !p.contains("/channel/"))
     {
-        if yaml.contains("uses: keelstackhq/splice/action@") {
-            assert!(yaml.contains("          version: \"0.6.0\"\n"), "{path}");
+        if yaml.contains("uses: keelstackhq/keelstack/splice/action@") {
+            assert!(yaml.contains("          version: \"0.23.0\"\n"), "{path}");
         }
     }
 }
