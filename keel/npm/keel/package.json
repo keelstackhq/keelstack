@@ -1,6 +1,6 @@
 {
   "name": "@keelstackhq/keel",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "description": "Bootstrap a repo across the keelstackhq tools with one manifest (npm launcher for the keel binary)",
   "license": "MIT",
   "repository": {
@@ -21,10 +21,10 @@
     "access": "public"
   },
   "optionalDependencies": {
-    "@keelstackhq/keel-linux-x64": "0.23.0",
-    "@keelstackhq/keel-linux-arm64": "0.23.0",
-    "@keelstackhq/keel-darwin-x64": "0.23.0",
-    "@keelstackhq/keel-darwin-arm64": "0.23.0",
-    "@keelstackhq/keel-win32-x64": "0.23.0"
+    "@keelstackhq/keel-linux-x64": "0.24.0",
+    "@keelstackhq/keel-linux-arm64": "0.24.0",
+    "@keelstackhq/keel-darwin-x64": "0.24.0",
+    "@keelstackhq/keel-darwin-arm64": "0.24.0",
+    "@keelstackhq/keel-win32-x64": "0.24.0"
   }
 }

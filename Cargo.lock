@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "keel-berth"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "keel-bosun"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1907,7 +1907,7 @@ dependencies = [
 
 [[package]]
 name = "keel-hoard"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "anyhow",
  "aws-sdk-s3",
@@ -1934,7 +1934,7 @@ dependencies = [
 
 [[package]]
 name = "keel-hoist"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "assert_cmd",
  "base64",
@@ -1963,7 +1963,7 @@ dependencies = [
 
 [[package]]
 name = "keel-splice"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "assert_cmd",
  "clap",
@@ -1989,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "keelstack-cli"
-version = "0.23.0"
+version = "0.24.0"
 dependencies = [
  "assert_cmd",
  "base64",

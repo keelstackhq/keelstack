@@ -1,1 +1,0 @@
-- The CI signer key is rotated to `signer-ci-2026-11` (the earlier `signer-ci` secret was not a PKCS#8 PEM).

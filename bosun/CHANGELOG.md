@@ -4,6 +4,11 @@ All notable changes to bosun. The format follows [Keep a Changelog](https://keep
 
 ## Unreleased
 
+## 0.24.0 (2026-11-26)
+
+- `bosun pin --to X.Y.Z` pins an exact published release (refuses unpublished or deprecated versions); `keel migrate` moves a repo to a release in one command.
+- The CI signer key is rotated to `signer-ci-2026-11` (the earlier `signer-ci` secret was not a PKCS#8 PEM).
+
 ## 0.23.0 (2026-11-25)
 
 - bosun guard: no-regression rule — deny when the new guard or the vendored legacy judge (main's guard) denies, except three enumerated literal allows (bump-version, parse-only, pathspec-glob); differential test over every review probe.
