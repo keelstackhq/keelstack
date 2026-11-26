@@ -278,7 +278,7 @@ fn value(secret: &(&str, &str, Option<&str>)) -> Result<Secret, HoistError> {
 
 /// Deploy, then set the secrets. Values are read before the first request, so a bad value
 /// stops the run before anything is written.
-pub(crate) fn apply(http: &Http, writes: &[Write]) -> Result<Vec<Item>, HoistError> {
+pub(crate) fn resolve(writes: &[Write]) -> Result<Values, HoistError> {
     let mut values = Vec::new();
     for w in writes {
         if let Write::SetSecret { secret, .. } = w
@@ -287,6 +287,17 @@ pub(crate) fn apply(http: &Http, writes: &[Write]) -> Result<Vec<Item>, HoistErr
             values.push((*secret, value(s)?));
         }
     }
+    Ok(values)
+}
+
+/// Resolved secret values, by Worker secret name.
+pub(crate) type Values = Vec<(&'static str, Secret)>;
+
+pub(crate) fn apply(
+    http: &Http,
+    writes: &[Write],
+    values: &Values,
+) -> Result<Vec<Item>, HoistError> {
     let mut failed = Vec::new();
     let mut deployed_ok = true;
     for w in writes {

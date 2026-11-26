@@ -38,9 +38,15 @@ pub struct FlyCfg {
 }
 
 pub(super) fn validate(cfg: &FlyCfg) -> Result<(), String> {
-    if !crate::fly::valid_app(&cfg.org) {
+    let org_ok = !cfg.org.is_empty()
+        && !cfg.org.starts_with('-')
+        && cfg
+            .org
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    if !org_ok {
         return Err(format!(
-            "[fly] org `{}` must be a Fly organization slug (letters, digits, `-`)",
+            "[fly] org `{}` must be a Fly organization slug (lower-case letters, digits, `-`)",
             cfg.org
         ));
     }
@@ -139,7 +145,8 @@ fn text<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn cert_ready(c: &Value) -> bool {
-    text(c, "status").is_none_or(|s| {
+    // No `status` field: not proven issued, so not ok (fail safe).
+    text(c, "status").is_some_and(|s| {
         ["ready", "issued", "active"]
             .iter()
             .any(|ok| s.eq_ignore_ascii_case(ok))

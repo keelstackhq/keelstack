@@ -18,8 +18,7 @@ services": GitHub org, Cloudflare, npmjs, crates.io, Google Search Console and F
 - The service list is closed: GitHub org, Cloudflare, npm, crates.io, Google Search Console, Fly.io.
   Adding a seventh needs a new decision.
 - Fly.io is section `[fly]` of `org.toml` in `hoist/` (spec §16.7), with the same engine, exit codes
-  (D-020: 2 = human step, `unknown` when unreadable) and rules as the other sections: `hoist org
-plan` and `check` send only GET requests, `apply` writes after the preflight, no secret is ever
+  (D-020: 2 = human step, `unknown` when unreadable) and rules as the other sections: `hoist org plan` and `check` send only GET requests, `apply` writes after the preflight, no secret is ever
   printed. It manages the org slug, apps (name, primary region), app secrets by name only and
   certificates for custom domains, through the Fly Machines HTTP API with `FLY_API_TOKEN` (a
   proxy-injected dummy value works, spec §16.5). hoist never sets a secret value on Fly, never

@@ -313,12 +313,14 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             declined = !yes && !confirm(&lines)?;
         }
         if !lines.is_empty() && !declined {
+            // Bridge secret values are read and validated before the first write (spec §16.8).
+            let br_values = bridge::resolve(br_writes)?;
             // Cloudflare, then Search Console, then GitHub (spec §16.4).
             if let (Some(http), false) = (cf_http.as_ref(), cf_writes.is_empty()) {
                 failed.extend(cloudflare::apply(http, cf_writes)?);
             }
             if let (Some(http), false) = (cf_http.as_ref(), br_writes.is_empty()) {
-                failed.extend(bridge::apply(http, br_writes)?);
+                failed.extend(bridge::apply(http, br_writes, &br_values)?);
             }
             if let (Some(http), Some(c), false) = (sc_http.as_ref(), sc, sc_writes.is_empty()) {
                 let out = search_console::apply(http, cf_http.as_ref(), sc_writes, &c.sites)?;

@@ -283,6 +283,8 @@ fn apply_updates_a_missing_certificate_of_an_existing_app_and_reports_a_refusal(
 fn fly_validation_errors_are_exit_3() {
     for bad in [
         "[fly]\norg = \"\"\n",
+        "[fly]\norg = \"Acme\"\n",
+        "[fly]\norg = \"a_b\"\n",
         "[fly]\norg = \"a\"\n[[fly.apps]]\nname = \"Bad_Name\"\n",
         "[fly]\norg = \"a\"\n[[fly.apps]]\nname = \"x\"\nregion = \"FRA\"\n",
         "[fly]\norg = \"a\"\n[[fly.apps]]\nname = \"x\"\nsecrets = [\"A=B\"]\n",
@@ -540,5 +542,57 @@ fn worker_config_errors_are_exit_3() {
         ),
         &[],
         3,
+    );
+}
+
+#[test]
+fn a_bad_bridge_value_stops_the_run_before_any_write_of_any_section() {
+    let toml = format!(
+        "{BRIDGE_TOML}[[cloudflare.zones]]\nname = \"example.dev\"\n[[cloudflare.zones.records]]\ntype = \"TXT\"\nname = \"example.dev\"\ncontent = \"v=spf1 -all\"\n"
+    );
+    let cf = api(&[
+        (
+            "GET /zones?name=example.dev",
+            200,
+            r#"{"success":true,"result":[{"id":"z1"}]}"#,
+        ),
+        (
+            "GET /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":[],"result_info":{"page":1,"total_pages":1}}"#,
+        ),
+        (
+            "POST /zones/z1/dns_records",
+            200,
+            r#"{"success":true,"result":{"id":"r"}}"#,
+        ),
+    ]);
+    let d = dir(&toml);
+    let mut envs = bridge_env(&cf);
+    envs.push(("HOIST_BRIDGE_TOKEN", "hunter2".into()));
+    envs.push(("HOIST_BRIDGE_SA_KEY", SA_KEY.into()));
+    run(&["apply", "--yes"], &d, &envs, 3);
+    let reqs = cf.requests();
+    assert!(
+        reqs.iter().any(|q| q.path.starts_with("/zones")),
+        "planned a record"
+    );
+    assert!(reqs.iter().all(|q| q.method == "GET"), "no write: {reqs:?}");
+}
+
+#[test]
+fn a_certificate_without_a_status_is_not_ok() {
+    let mut routes = fly_ok_routes();
+    routes.retain(|r| !r.0.ends_with("/certificates"));
+    routes.push((
+        "GET /apps/acme-api/certificates",
+        200,
+        r#"{"certificates":[{"hostname":"api.example.dev"}]}"#,
+    ));
+    let api = api(&routes);
+    let r = run(&["check"], &dir(FLY_TOML), &fly_env(&api), 2);
+    assert_eq!(
+        item(&r, "certificate", "acme-api/api.example.dev")["action"],
+        "pending"
     );
 }
