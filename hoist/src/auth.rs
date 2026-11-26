@@ -114,3 +114,14 @@ pub fn cloudflare_token_with_source() -> Result<(Secret, TokenSource), HoistErro
             )
         })
 }
+
+/// `FLY_API_TOKEN` (a Fly deploy or org token; a proxy-injected dummy works, spec §16.5).
+pub fn fly_token() -> Result<Secret, HoistError> {
+    from_env("FLY_API_TOKEN").ok_or_else(|| {
+        HoistError::Usage(
+            "no Fly.io token found. Set FLY_API_TOKEN to an org-scoped Fly token \
+             (`fly tokens create org`), or let the sandbox proxy inject it (value `proxy-injected`)"
+                .to_string(),
+        )
+    })
+}

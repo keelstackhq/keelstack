@@ -24,6 +24,8 @@ pub enum Service {
     /// The Search Console bridge Worker (`hoist org`, spec §16); always built with
     /// [`Http::with_base`].
     SearchConsole,
+    /// The Fly.io Machines API (`hoist org`, spec §16.7).
+    Fly,
 }
 
 /// crates.io answers 403 to requests without an identifying User-Agent.
@@ -43,6 +45,7 @@ impl Service {
             Service::Crates => "crates.io",
             Service::ActionsOidc => "GitHub Actions OIDC",
             Service::SearchConsole => "Search Console bridge",
+            Service::Fly => "Fly.io",
         }
     }
 
@@ -56,6 +59,7 @@ impl Service {
             Service::GithubUploads => ("HOIST_GITHUB_UPLOADS", "https://uploads.github.com"),
             Service::Npm => ("HOIST_NPM_REGISTRY", "https://registry.npmjs.org"),
             Service::Crates => ("HOIST_CRATES_API", "https://crates.io"),
+            Service::Fly => ("HOIST_FLY_API", "https://api.machines.dev/v1"),
             Service::ActionsOidc => panic!(
                 "Service::ActionsOidc has no base URL from env; build it with Http::with_base"
             ),
@@ -189,6 +193,7 @@ impl fmt::Display for HttpError {
                     Service::ActionsOidc =>
                         "ACTIONS_ID_TOKEN_REQUEST_TOKEN (the job needs `permissions: id-token: write`)",
                     Service::SearchConsole => "HOIST_SEARCH_CONSOLE_TOKEN",
+                    Service::Fly => "FLY_API_TOKEN",
                 }
             ),
             HttpError::PageLimit { service, path } => write!(

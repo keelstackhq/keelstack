@@ -3,10 +3,18 @@
 Google access tokens expire hourly, so a static proxy-injected credential cannot reach the
 Search Console or Site Verification APIs. This Worker holds the service-account key and gives
 `hoist org` one static bearer token instead (hoist spec §16, decision D-026). It is reference
-code: deploy it in your own Cloudflare account; hoist never deploys it.
+code: `hoist org apply` deploys it for you from `[search_console.worker]` (spec §16.8; the source is
+`hoist/src/org/bridge_worker.js`). The manual steps below remain as the fallback.
 
 It forwards only `GET`, `POST` and `PUT` on `/sv/*` (Site Verification v1) and `/wm/*`
 (Search Console v3). Anything else is refused.
+
+## One command
+
+Set `[search_console.worker] name = "sc-bridge"` in `org.toml` and run `hoist org apply --area
+search_console` in a terminal. hoist uploads the Worker and sets `BRIDGE_TOKEN` and `SA_KEY` from
+`HOIST_BRIDGE_TOKEN` and `HOIST_BRIDGE_SA_KEY` / `HOIST_BRIDGE_SA_KEY_FILE`, or a hidden prompt.
+You still do the Google steps (1 below) and give hoist the same token (3 below).
 
 ## Human steps (once)
 

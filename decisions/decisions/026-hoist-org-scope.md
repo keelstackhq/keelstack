@@ -26,7 +26,9 @@ org once its secrets and a short list of one-click human steps exist, without an
 - Google Search Console goes through a bridge Worker the owner deploys from
   `hoist/examples/search-console-bridge/` (reference code, not a tool or hull piece); hoist
   verifies domains with a DNS TXT record it writes through its Cloudflare client.
-- Fly and other personal services stay out of hoist (owner's private control-plane repo).
+- ~~Fly and other personal services stay out of hoist.~~ Amended by D-029 (2026-11-26): Fly.io
+  joins as `[fly]`; the service list is closed (GitHub, Cloudflare, npm, crates.io, Search
+  Console, Fly). Everything else in this decision stands; its status stays accepted.
 
 ## Consequences
 
