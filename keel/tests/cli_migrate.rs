@@ -112,6 +112,8 @@ impl Env {
         for t in ["npm", "splice", "bosun", "hoist", "gh"] {
             symlink(&script, stubs.join(t)).unwrap();
         }
+        // No sha512 for any version: keel takes the registry's integrity (the stub npm's).
+        std::fs::write(root.path().join("pins.toml"), "[pins]\n").unwrap();
         git(&remote, &["init", "--bare", "-b", "main"]);
         git(&repo, &["init", "-b", "main"]);
         git(
@@ -157,6 +159,7 @@ impl Env {
             .env("GIT_COMMITTER_NAME", "t")
             .env("GIT_COMMITTER_EMAIL", "t@t")
             .env("KEEL_LOG", &self.log)
+            .env("KEEL_PINS", self._root.path().join("pins.toml"))
             .env("KEEL_SCENARIO", scenario)
             .env("KEEL_INTEGRITY", integrity)
             .arg("-C")
