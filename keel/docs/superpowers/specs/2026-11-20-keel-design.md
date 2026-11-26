@@ -363,4 +363,3 @@ rollback itself fails, the exact git commands). Globally installed tools stay in
 **Report.** `{version, ok, command:"migrate", status, exit_code, target, dry_run, from_branch, branch, pieces, steps[{id,action,detail}], changed, pr:{action,url}|null,
 setup_snippet, checklist[], human_step, recovery}`. Actions: `ok` `done` `would-run` `skipped` `pending` `failed` `not-reached`. The checklist is keel's (D-009: `computer` first,
 `phone` last): `approve-pr` (phone) with `--pr`, else `open-pr`; plus the entries above. Only a non-empty checklist makes exit 5.
-
