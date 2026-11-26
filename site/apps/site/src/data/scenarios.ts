@@ -261,7 +261,7 @@ export const UPGRADE_NOTE =
   script.hoist +
   " and berth " +
   script.berth +
-  ", so a cloud session runs those until a later bosun release moves them. Merge only when ci-ok is green.";
+  ", so a cloud session runs those until `bosun pin` (or the next release) moves them. Merge only when ci-ok is green.";
 
 export const approveBlock: string = [
   "bosun approve --list   # ready PRs and heads",
