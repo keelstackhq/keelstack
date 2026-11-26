@@ -28,10 +28,15 @@ pub struct SearchConsoleCfg {
     pub bridge: Option<String>,
     #[serde(default)]
     pub sites: Vec<Site>,
+    /// Deploy the bridge Worker from `hoist org apply` (spec §16.8).
+    pub worker: Option<super::bridge::WorkerCfg>,
 }
 
 /// `zone` equals or is a parent of `domain`; sitemaps are https URLs on the domain or below.
 pub(super) fn validate(cfg: &SearchConsoleCfg) -> Result<(), String> {
+    if let Some(w) = &cfg.worker {
+        super::bridge::validate(w)?;
+    }
     for s in &cfg.sites {
         if !super::under(&s.domain, &s.zone) {
             return Err(format!(
@@ -234,10 +239,14 @@ fn is_verified(list: &Value, domain: &str) -> bool {
 pub(crate) fn read(
     cfg: &SearchConsoleCfg,
     http: Option<&Http>,
+    blocked: Option<&str>,
 ) -> Result<SectionPlan<SiteWrite>, HoistError> {
     let mut p = SectionPlan::default();
     let Some(http) = http else {
-        let reason = unavailable(cfg).unwrap_or_default();
+        let reason = blocked
+            .map(str::to_string)
+            .or_else(|| unavailable(cfg))
+            .unwrap_or_default();
         for s in &cfg.sites {
             for (kind, key) in site_keys(s) {
                 p.items

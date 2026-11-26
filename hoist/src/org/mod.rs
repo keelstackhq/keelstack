@@ -12,8 +12,10 @@ use serde::Deserialize;
 use std::io::IsTerminal;
 use std::path::Path;
 
+pub mod bridge;
 pub mod cloudflare;
 pub mod crates;
+pub mod fly;
 pub mod github;
 pub mod npm;
 pub mod search_console;
@@ -28,6 +30,7 @@ pub struct OrgCfg {
     pub npm: Option<npm::NpmCfg>,
     pub crates: Option<crates::CratesCfg>,
     pub search_console: Option<search_console::SearchConsoleCfg>,
+    pub fly: Option<fly::FlyCfg>,
 }
 
 /// What one section's read found: items, human steps, the writes `apply` would do and a hint.
@@ -165,8 +168,22 @@ fn validate(cfg: &OrgCfg) -> Result<(), String> {
     }
     if let Some(s) = &cfg.search_console {
         search_console::validate(s)?;
+        if s.worker.is_some() && bridge_account(cfg).is_none() {
+            return Err(
+                "[search_console.worker] needs a Cloudflare account id ([cloudflare] account_id or env CLOUDFLARE_ACCOUNT_ID)"
+                    .into(),
+            );
+        }
+    }
+    if let Some(f) = &cfg.fly {
+        fly::validate(f)?;
     }
     Ok(())
+}
+
+/// The Cloudflare account the bridge Worker lives in.
+fn bridge_account(cfg: &OrgCfg) -> Option<String> {
+    cloudflare::account_id(&cfg.cloudflare.clone().unwrap_or_default())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -190,6 +207,8 @@ struct Read {
     npm: Option<SectionPlan<NoWrite>>,
     crates: Option<SectionPlan<NoWrite>>,
     sc: Option<SectionPlan<search_console::SiteWrite>>,
+    bridge: Option<SectionPlan<bridge::Write>>,
+    fly: Option<SectionPlan<fly::Write>>,
 }
 
 fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report, HoistError> {
@@ -220,7 +239,19 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
     let npm_http = npm.and_then(|_| npm::client(verbose));
     let crates_http = crates.and_then(|_| crates::client(verbose));
     let sc_http = sc.and_then(|c| search_console::client(c, verbose));
+    let fly = wants(OrgArea::Fly).then_some(cfg.fly.as_ref()).flatten();
+    let fly_http = fly.and_then(|_| fly::client(verbose));
+    let worker = sc.and_then(|c| c.worker.as_ref());
+    let account = bridge_account(&cfg).unwrap_or_default();
     let read = || -> Result<Read, HoistError> {
+        let bridge = worker
+            .map(|w| bridge::read(w, &account, cf_http.as_ref()))
+            .transpose()?;
+        // Sites wait for a deployed, configured Worker (spec §16.8).
+        let blocked = bridge
+            .as_ref()
+            .filter(|b| !bridge::ready(b))
+            .map(|_| "the bridge Worker is not deployed or configured yet; run `hoist org apply` again once search_console/worker is ok");
         Ok(Read {
             gh: gh.map(|c| github::read(c, gh_http.as_ref())).transpose()?,
             cf: cf
@@ -231,8 +262,13 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
                 .map(|c| crates::read(c, crates_http.as_ref()))
                 .transpose()?,
             sc: sc
-                .map(|c| search_console::read(c, sc_http.as_ref()))
+                .map(|c| {
+                    let http = sc_http.as_ref().filter(|_| blocked.is_none());
+                    search_console::read(c, http, blocked)
+                })
                 .transpose()?,
+            bridge,
+            fly: fly.map(|c| fly::read(c, fly_http.as_ref())).transpose()?,
         })
     };
     let mut state = read()?;
@@ -245,8 +281,13 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             // Surfaces the missing-token message (spec §16.5).
             crate::auth::cloudflare_token()?;
         }
+        if fly.is_some() && fly_http.is_none() {
+            crate::auth::fly_token()?;
+        }
+        let bridge_pending = state.bridge.as_ref().is_some_and(|b| !bridge::ready(b));
         if let (Some(c), None) = (sc, &sc_http)
             && !c.sites.is_empty()
+            && !bridge_pending
         {
             return Err(HoistError::Usage(
                 search_console::unavailable(c).unwrap_or_default(),
@@ -254,6 +295,8 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
         }
         let cf_writes = state.cf.as_ref().map_or(&[][..], |p| &p.writes[..]);
         let sc_writes = state.sc.as_ref().map_or(&[][..], |p| &p.writes[..]);
+        let br_writes = state.bridge.as_ref().map_or(&[][..], |p| &p.writes[..]);
+        let fly_writes = state.fly.as_ref().map_or(&[][..], |p| &p.writes[..]);
         let gh_writes = state.gh.as_ref().map_or(&[][..], |p| &p.writes[..]);
         if sc_writes.iter().any(|w| w.needs_cloudflare()) && cf_http.is_none() {
             crate::auth::cloudflare_token()?;
@@ -261,7 +304,9 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
         let lines: Vec<String> = cf_writes
             .iter()
             .map(|w| w.label())
+            .chain(br_writes.iter().map(|w| w.label()))
             .chain(sc_writes.iter().map(|w| w.label()))
+            .chain(fly_writes.iter().map(|w| w.label()))
             .chain(gh_writes.iter().map(|w| w.label()))
             .collect();
         if !lines.is_empty() {
@@ -272,11 +317,17 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
             if let (Some(http), false) = (cf_http.as_ref(), cf_writes.is_empty()) {
                 failed.extend(cloudflare::apply(http, cf_writes)?);
             }
+            if let (Some(http), false) = (cf_http.as_ref(), br_writes.is_empty()) {
+                failed.extend(bridge::apply(http, br_writes)?);
+            }
             if let (Some(http), Some(c), false) = (sc_http.as_ref(), sc, sc_writes.is_empty()) {
                 let out = search_console::apply(http, cf_http.as_ref(), sc_writes, &c.sites)?;
                 failed.extend(out.failed);
                 sc_pending = out.pending;
                 sc_steps = out.steps;
+            }
+            if let (Some(http), false) = (fly_http.as_ref(), fly_writes.is_empty()) {
+                failed.extend(fly::apply(http, fly_writes)?);
             }
             if let (Some(http), false) = (gh_http.as_ref(), gh_writes.is_empty()) {
                 failed.extend(github::apply(http, gh_writes)?);
@@ -321,7 +372,13 @@ fn drive(dir: &Path, args: &OrgArgs, mode: Mode, verbose: bool) -> Result<Report
     if let Some(p) = state.crates {
         absorb(p.items, p.steps, p.hint);
     }
+    if let Some(p) = state.bridge {
+        absorb(p.items, p.steps, p.hint);
+    }
     if let Some(p) = state.sc {
+        absorb(p.items, p.steps, p.hint);
+    }
+    if let Some(p) = state.fly {
         absorb(p.items, p.steps, p.hint);
     }
     if let Some(p) = state.gh {

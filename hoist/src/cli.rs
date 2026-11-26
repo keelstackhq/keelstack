@@ -24,6 +24,7 @@ pub enum OrgArea {
     Npm,
     Crates,
     SearchConsole,
+    Fly,
 }
 
 #[derive(Debug, Subcommand)]

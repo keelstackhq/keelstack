@@ -1,0 +1,86 @@
+# org.toml: the owner's control plane (spec §16, D-026, D-029). Fill in the <...> values, keep
+# it in a private owner repo, then run `hoist org check --file org.toml`. Every section is
+# optional; a section you delete is not read. No secret value belongs in this file (names only).
+#
+# Credentials (never in this file; in a cloud session they come from the environment's credential
+# form / the proxy, which injects the real value, the process holds a dummy such as `proxy-injected`):
+#   GitHub      GITHUB_TOKEN or GH_TOKEN (read-only reads; writes only in Actions with the app token)
+#   Cloudflare  CLOUDFLARE_API_TOKEN (+ CLOUDFLARE_ACCOUNT_ID or account_id below)
+#   npm         NPM_TOKEN                  (optional, trusted-publisher reads)
+#   crates.io   CARGO_REGISTRY_TOKEN       (optional, trusted-publisher reads)
+#   Search Console bridge   HOIST_SEARCH_CONSOLE_TOKEN (+ HOIST_SEARCH_CONSOLE_BRIDGE or `bridge`)
+#   Fly.io      FLY_API_TOKEN
+
+# 1. GitHub org: apps installed on all repositories, and the provisioning repo's environment.
+[github]
+org = "<org>"
+apps = ["claude", "<provisioner-app-slug>"]
+
+[github.provision]
+repo = "provision"
+environment = "provision"
+branch = "main"
+secrets = ["SPLICE_BOT_TOKEN", "CLOUDFLARE_API_TOKEN", "PROVISIONER_KEY"]   # names only
+
+[github.cloud_environment]               # not readable by any API: hoist asks you to confirm it
+name = "<cloud-environment-name>"
+
+# 2. Cloudflare: zones must exist already; hoist writes records and Pages domains, never deletes.
+[cloudflare]
+account_id = "<cloudflare-account-id>"
+
+[[cloudflare.zones]]
+name = "<example.dev>"
+
+[[cloudflare.zones.records]]
+type = "CNAME"
+name = "api.<example.dev>"
+content = "<acme-api>.fly.dev"           # the Fly app the certificate below serves
+proxied = false
+
+[[cloudflare.pages_domains]]
+project = "<site>"
+domain = "<example.dev>"
+
+# 3. npm: scope without `@`; `trusted_publisher` is checked for every package.
+[npm]
+scope = "<scope>"
+packages = ["@<scope>/<tool>"]
+
+[npm.trusted_publisher]
+repository = "<org>/<repo>"
+workflow = "release.yml"
+environment = "release"
+
+# 4. crates.io: owners are logins or github:<org>:<team>.
+[crates]
+crates = ["<crate>"]
+owners = ["github:<org>:owners"]
+
+[crates.trusted_publisher]
+repository = "<org>/<repo>"
+workflow = "release.yml"
+environment = "release"
+
+# 5. Google Search Console, through the bridge Worker that `hoist org apply` deploys (§16.8).
+#    BRIDGE_TOKEN and SA_KEY are set from HOIST_BRIDGE_TOKEN / HOIST_BRIDGE_SA_KEY(_FILE) or a hidden prompt.
+[search_console]
+bridge = "https://sc-bridge.<account-subdomain>.workers.dev"
+
+[search_console.worker]
+name = "sc-bridge"
+
+[[search_console.sites]]
+domain = "<example.dev>"
+zone = "<example.dev>"                   # Cloudflare zone that receives the verification TXT record
+sitemaps = ["https://<example.dev>/sitemap.xml"]
+
+# 6. Fly.io (§16.7): hoist creates missing apps and certificates; secret values stay yours.
+[fly]
+org = "<fly-org-slug>"
+
+[[fly.apps]]
+name = "<acme-api>"
+region = "<fra>"
+secrets = ["DATABASE_URL"]               # names only: set with `fly secrets set NAME -a <app>`
+certificates = ["api.<example.dev>"]

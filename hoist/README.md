@@ -263,16 +263,23 @@ nothing is written. The `release` environment is not read for branch policies.
 
 ## Org (`hoist org`)
 
-`hoist org plan|check|apply [--file PATH] [--area github|cloudflare|npm|crates|search_console] [--yes]`
-diffs an org's GitHub, Cloudflare, npm, crates.io and Search Console setup against `org.toml`
-(default `./org.toml`, separate from `hoist.toml`). `plan` and `check` send GET requests only
-(`plan` exits 0, `check` uses the usual exit codes); `apply` writes Cloudflare records and Pages
-domains, the Search Console verification, property and sitemaps (through a bridge Worker, see
-`examples/search-console-bridge/README.md`), and the GitHub `provision` environment only inside
-GitHub Actions with an app token; everything else is a listed human step. The `org.toml` format
-and the items are in spec section 16.3 and 16.2; the credentials, headers and API bases are in the
-table of section 16.5 (`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `HOIST_SEARCH_CONSOLE_TOKEN`,
-`HOIST_SEARCH_CONSOLE_BRIDGE`).
+`hoist org plan|check|apply [--file PATH] [--area github|cloudflare|npm|crates|search_console|fly] [--yes]`
+diffs an org's GitHub, Cloudflare, npm, crates.io, Search Console and Fly.io setup against
+`org.toml` (default `./org.toml`, separate from `hoist.toml`; a ready-to-fill one is
+`examples/org.toml`). These six services are the whole control plane (D-029). `plan` and `check`
+send GET requests only (`plan` exits 0, `check` uses the usual exit codes); `apply` writes
+Cloudflare records and Pages domains, the Search Console bridge Worker (deployed from the binary,
+`[search_console.worker]`) and its verification, property and sitemaps, Fly apps and
+certificates, and the GitHub `provision` environment only inside GitHub Actions with an app
+token; everything else is a listed human step (create the Fly org and token, the Google service
+account, the npm org). Secret values (Fly app secrets, the bridge Worker's two secrets) never go
+through argv: Fly secrets are only checked by name (`fly secrets set NAME -a APP`), the Worker
+secrets come from `HOIST_BRIDGE_TOKEN` / `HOIST_BRIDGE_SA_KEY(_FILE)` or a hidden prompt. The
+`org.toml` format and the items are in spec section 16.3 and 16.2 (Fly 16.7, bridge 16.8); the
+credentials, headers and API bases are in the table of section 16.5 (`NPM_TOKEN`,
+`CARGO_REGISTRY_TOKEN`, `HOIST_SEARCH_CONSOLE_TOKEN`, `HOIST_SEARCH_CONSOLE_BRIDGE`,
+`FLY_API_TOKEN`, `HOIST_FLY_API`). In a sandbox whose proxy injects the credentials, set each
+token to `proxy-injected`.
 
 ## Apply
 

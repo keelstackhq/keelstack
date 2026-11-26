@@ -24,7 +24,7 @@ src/github.rs, src/cloudflare.rs   live reads (LiveGithub, LiveCloudflare)
 src/change.rs    typed write plan (`plan_changes`), live deploy token (R29/R33)
 src/github_write.rs, src/cloudflare_write.rs   writers; Cloudflare token mint/revoke
 src/seal.rs      sealed GitHub secrets; src/timeutil.rs  RFC 3339, HOIST_NOW
-src/org/         `hoist org` (spec §16): mod (org.toml, drive), github, cloudflare, npm, crates, search_console; each `read(cfg, http)` (GET only) + `apply`
+src/org/         `hoist org` (spec §16): mod (org.toml, drive), github, cloudflare, npm, crates, search_console, bridge (Worker deploy, `bridge_worker.js`), fly; each `read(cfg, http)` (GET only) + `apply`
 src/ops/         one module per command: explain, plan, check, apply, import, init, secrets, auth_check; src/ops/changeset/ changeset add|init|status
 src/changeset/   changeset model: file, config, plan, range, changelog, words
 src/release/     release model: commits, planner, git log, editors, launcher, registry, OIDC, tools
@@ -60,7 +60,7 @@ Run the fast checks (fmt, clippy, test) before every commit. Release: lockstep, 
 - **Never leak secrets:** token values never reach stdout, stderr, JSON or logs. Tokens come
   from env or `gh auth token`, never argv.
 - **rustls only**, no OpenSSL; `#![forbid(unsafe_code)]`.
-- **API bases** come from `HOIST_GITHUB_API` and `HOIST_CLOUDFLARE_API`; tests point them at a
+- **API bases** come from `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API` and `HOIST_FLY_API`; tests point them at a
   fake server or `http://127.0.0.1:9`.
 - **`hoist.toml` unknown keys are an error** (exit 3, names the key and file).
 - Ruleset name `hoist: default branch`; minted-token prefix `hoist:` (M2).

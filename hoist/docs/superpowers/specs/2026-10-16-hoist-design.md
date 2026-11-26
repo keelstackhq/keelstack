@@ -1573,12 +1573,12 @@ Moved to [2026-10-16-hoist-secrets-repos.md](2026-10-16-hoist-secrets-repos.md) 
 ## 16. Org scope (`hoist org`)
 
 Issue #65, decision D-026. hoist's scope is "a repo's **and its org's** GitHub, Cloudflare,
-registry and Search Console setup". The org half is `hoist org plan|check|apply`, driven by
+registry, Search Console and Fly.io setup" (D-029 closes the list at those six services). The org half is `hoist org plan|check|apply`, driven by
 `org.toml` (separate from `hoist.toml`; it can live in a private owner repo). It reuses the
 engine: `Item`/`HumanStep`/`Report`, the `--json` envelope, `check`'s exit policy (0 in sync,
 1 drift or failed write/verification, 2 human step pending, 3 usage/config/auth/API error),
 `http.rs` (retries, no redirects on writes, `seg()`), the GitHub token lookup (§8.1) and the
-Cloudflare client. No new tool, no PAT. Fly stays out (owner's private repo).
+Cloudflare client. No new tool, no PAT. Fly.io joined by D-029 (§16.7).
 
 ### 16.1 CLI
 
@@ -1589,7 +1589,7 @@ hoist org apply [--file PATH] [--area A]... [--yes]
 ```
 
 `--file` defaults to `org.toml` in `-C DIR` (else `.`). `A` is `github`, `cloudflare`, `npm`,
-`crates` or `search_console`. `apply` confirms on a terminal like `hoist apply`; without one it
+`crates`, `search_console` or `fly`. `apply` confirms on a terminal like `hoist apply`; without one it
 needs `--yes` (else exit 3 before any write). `command` in `--json` is `org plan`, `org check`,
 `org apply`. Missing file: exit 3 naming the path. Unknown keys: exit 3 naming key and file.
 
@@ -1647,13 +1647,25 @@ bridge = "https://sc-bridge.example.workers.dev"   # else env HOIST_SEARCH_CONSO
 domain = "example.dev"
 zone = "example.dev"                         # Cloudflare zone for the TXT record
 sitemaps = ["https://example.dev/sitemap.xml"]
+[search_console.worker]                      # optional: hoist deploys the bridge Worker (§16.8)
+name = "sc-bridge"                           # needs an account id ([cloudflare] or env)
+
+[fly]                                        # §16.7
+org = "acme"                                 # Fly organization slug
+[[fly.apps]]
+name = "acme-api"
+region = "fra"                               # optional, checked against the machines
+secrets = ["DATABASE_URL"]                   # names only
+certificates = ["api.example.dev"]           # custom domains
 ```
 
 Validation (exit 3): `github.org` non-empty; `github.provision.repo` required (`environment` defaults to
 `provision`, `branch` to `main`); no TXT record with `proxied = true`; record `type` in the list; record `name` equal to
 or under its zone; `pages_domains` need `account_id`; site `zone` equal to or a parent of
 `domain`; sitemaps are `https://` URLs on `domain` or a subdomain of it; npm packages are
-`@<scope>/…`.
+`@<scope>/…`; `[fly]`: `org` and app names are Fly slugs (lower-case letters, digits, `-`), unique app
+names, `region` three lower-case letters, secret names `[A-Za-z_][A-Za-z0-9_]*`, certificates host
+names with a dot; `search_console.worker.name` lower-case letters, digits, `-`.
 
 ### 16.3 Items
 
@@ -1676,6 +1688,13 @@ or under its zone; `pages_domains` need `account_id`; site `zone` equal to or a 
 | search_console | verification | `<domain>` | bridge `GET /sv/webResource` (`dns://<domain>` listed) | absent: `create` |
 | search_console | property | `sc-domain:<domain>` | bridge `GET /wm/sites` | absent: `create` |
 | search_console | sitemap | `<url>` | bridge `GET /wm/sites/{site}/sitemaps` | absent: `create` |
+| search_console | worker | `<name>` | `/accounts/{a}/workers/scripts/{name}/settings` | absent: `create` (§16.8) |
+| search_console | worker_secret | `<name>/BRIDGE_TOKEN`, `<name>/SA_KEY` | `…/scripts/{name}/secrets` (names) | absent: `create` when a value source exists (env or terminal), else `pending` + step |
+| fly | org | `<org>` | `/apps?org_slug={org}` (Machines API) | 404: `pending`, step `fly:org:<org>`; 401/403/no token: `unknown` |
+| fly | app | `<name>` | the same list | absent: `create` |
+| fly | region | `<app>` | `/apps/{app}/machines` (`region`) | no machine in the region: `pending`, step; no machines yet: `ok` |
+| fly | secret | `<app>/<NAME>` | `/apps/{app}/secrets` (names) | absent: `pending`, step `fly:secret:…` (hoist never sets values) |
+| fly | certificate | `<app>/<host>` | `/apps/{app}/certificates` (`hostname`, `status`) | absent: `create`; not issued: `pending`, step `fly:certificate:…` |
 
 Any 403, any missing token or any unreadable parent makes the affected items `unknown` with
 the reason (the GitHub, npm and crates readers and the bridge: never an error). A 401 from
@@ -1691,7 +1710,7 @@ github` replaces the README checklist.
 
 ### 16.4 Apply
 
-Order: Cloudflare (records, Pages domains), then Search Console, then GitHub. Each write is one
+Order: Cloudflare (records, Pages domains), the bridge Worker (§16.8), Search Console, Fly (§16.7), then GitHub. Each write is one
 request; a failed write is exit 1 with the API's message and later writes in the same area
 still run. After writing, apply re-reads and reports like `check` (§16.3), so the exit code is
 the state after the run.
@@ -1748,9 +1767,10 @@ needs the real value and never prints one.
 | npm | `NPM_TOKEN` (optional, trust reads only) | `Authorization: Bearer` | `NPM_TOKEN=proxy-injected` |
 | crates.io | `CARGO_REGISTRY_TOKEN` (optional, trust reads only) | `Authorization: <token>` on GETs (no `Bearer`, as cargo sends it) | `CARGO_REGISTRY_TOKEN=proxy-injected` |
 | Search Console bridge | `HOIST_SEARCH_CONSOLE_TOKEN` | `Authorization: Bearer` | `HOIST_SEARCH_CONSOLE_TOKEN=proxy-injected` |
+| Fly.io | `FLY_API_TOKEN` | `Authorization: Bearer` | `FLY_API_TOKEN=proxy-injected` |
 
 API bases: `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API`, `HOIST_NPM_REGISTRY`,
-`HOIST_CRATES_API`, and the bridge from `search_console.bridge` or
+`HOIST_CRATES_API`, `HOIST_FLY_API` (default `https://api.machines.dev/v1`), and the bridge from `search_console.bridge` or
 `HOIST_SEARCH_CONSOLE_BRIDGE` (env wins; tests point it at the fake). A missing Cloudflare
 token makes Cloudflare items `unknown` in `plan`/`check`; `apply` with a `[cloudflare]` section
 in scope exits 3 without it (the writes cannot be known without reading). A missing bridge URL
@@ -1771,4 +1791,58 @@ or token makes Search Console items `unknown` in `plan`/`check` and is exit 3 in
   `hoist/examples/search-console-bridge/` (docs, not a tool or a hull piece). The owner deploys it
   in their own Cloudflare account with the service-account key as a Worker secret and one
   static bearer token. It forwards only `/sv/*` (Site Verification v1) and `/wm/*`
-  (Webmasters v3) to Google with a minted, cached access token. hoist does not deploy it.
+  (Webmasters v3) to Google with a minted, cached access token. Since D-029 hoist deploys it
+  itself (§16.8); deploying by hand with wrangler still works.
+
+### 16.7 Fly.io (`[fly]`, D-029)
+
+Fly.io is section `[fly]` of `org.toml`, with the engine of the other sections (items, human
+steps, `--json`, D-020 exit codes). It uses the Machines HTTP API (`Service::Fly`, base
+`HOIST_FLY_API`, default `https://api.machines.dev/v1`), not the `fly` CLI (which `dns` and the R2
+sink still use), so a proxy-injected static credential works (§16.5): the process holds
+`FLY_API_TOKEN=proxy-injected`, the proxy sets the real `Authorization: Bearer`.
+
+- Reads (GET only): `/apps?org_slug=`, `/apps/{app}/machines`, `/apps/{app}/secrets`,
+  `/apps/{app}/certificates`. No token, 401, 403 or an unreadable answer is `unknown` with the
+  reason (a 401 is not exit 3 here: Fly answers 401 for tokens scoped to another org). An org that
+  answers 404 is `pending` with the human step `fly:org:<org>`. Without a token one
+  `confirm` step `fly:token:FLY_API_TOKEN` says how to create it (`fly tokens create org`).
+- Writes (`apply`, after the confirmation or `--yes`): `POST /apps {app_name, org_slug}` for a
+  missing app, then `POST /apps/{app}/certificates/acme {hostname}` for a missing certificate
+  (also for an app created in the same run). A refused write is exit 1 with the API's message.
+  `apply` with a `[fly]` section and no token is exit 3.
+- Never done: setting a secret value (values would have to pass through hoist; the step prints
+  `fly secrets set NAME -a APP`, which prompts or reads stdin, and hoist verifies the name),
+  deleting anything, creating the org or its token, moving machines (a region mismatch is a
+  `pending` step: set `primary_region` and deploy), IP allocation (GraphQL only; not covered).
+- The secrets and certificates endpoints of the Machines API are as documented by Fly (2026-11);
+  like §16.6's registry reads they are verified against fakes only until a first real run.
+
+### 16.8 Search Console bridge deploy (`[search_console.worker]`, D-029)
+
+`[search_console.worker] name = "<script>"` makes `hoist org` deploy the bridge: the Worker source
+ships inside the binary (`src/org/bridge_worker.js`; `examples/search-console-bridge/` keeps the
+README and a `wrangler.toml` that points at it). It needs the Cloudflare account id and a
+Cloudflare token with Workers Scripts: Edit, and uses the Cloudflare client.
+
+- Items: `search_console/worker` (`GET …/scripts/{name}/settings`; absent is `create`) and
+  `search_console/worker_secret` for `BRIDGE_TOKEN` and `SA_KEY` (`GET …/scripts/{name}/secrets`,
+  names only).
+- Writes, in order: `PUT /accounts/{a}/workers/scripts/{name}` (multipart: `metadata` with
+  `main_module` and `compatibility_date`, and the module), `POST …/subdomain
+  {"enabled":true}` (workers.dev), then `PUT …/secrets {name, text, type:"secret_text"}` per
+  missing secret. An existing Worker is never redeployed (update it with `wrangler deploy`).
+- Secret values: env `HOIST_BRIDGE_TOKEN` (32+ characters), `HOIST_BRIDGE_SA_KEY` or
+  `HOIST_BRIDGE_SA_KEY_FILE` (the service-account JSON, validated for `client_email` and
+  `private_key`), else a hidden prompt (`rpassword`) on a terminal. Values are read and validated
+  before the first request (a bad one is exit 3, nothing written), go only into the request body
+  and never into argv, items, JSON or logs. Without a source the secret item is `pending` with one
+  step (`search_console:worker_secret:<name>/<SECRET>`) telling the owner to run apply in a
+  terminal or set the variable.
+- The sites (§16.3) read through the bridge only when the Worker and both secrets are `ok`; until
+  then they are `unknown` ("run `hoist org apply` again once search_console/worker is ok"), so
+  one `apply` deploys and a second one verifies and registers the sites. `search_console.bridge`
+  (or `HOIST_SEARCH_CONSOLE_BRIDGE`) is the Worker URL `https://<name>.<account>.workers.dev`;
+  `HOIST_SEARCH_CONSOLE_TOKEN` is the same value as `BRIDGE_TOKEN` (the proxy injects it).
+- Human steps that remain: the Google Cloud project, the two APIs, the service account and key;
+  the account's workers.dev subdomain (once, in the Cloudflare dashboard).
