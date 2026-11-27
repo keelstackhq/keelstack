@@ -1,1 +1,3 @@
 - splice: legacy sources repoint to the monorepo on update; bosun/legacy-tags.txt (S1)
+- splice: channel post commands run in the channel's `only` root and are skipped without a manifest (S2)
+- splice: new `splice set [--channel NAME] K=V...` re-renders owned files for a var change (S3)
