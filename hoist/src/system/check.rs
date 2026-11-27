@@ -127,7 +127,9 @@ pub fn system_check(dir: &Path, file: Option<&Path>, live_on: bool) -> Result<Re
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let uses = repo_uses(dir)?;
     let today = now_secs().div_euclid(86_400);
-    let (items, human_steps) = run_checks(&sys, &text, &uses, today, live_on.then(live::probes));
+    let shown = file.map_or_else(|| FILE.to_string(), |f| f.display().to_string());
+    let probes = live_on.then(live::probes);
+    let (items, human_steps) = run_checks(&sys, &text, &shown, &uses, today, probes);
     let exit_code = crate::ops::check::exit_code(&items);
     Ok(Report {
         command: "system check".into(),
@@ -142,6 +144,7 @@ pub fn system_check(dir: &Path, file: Option<&Path>, live_on: bool) -> Result<Re
 pub(crate) fn run_checks(
     sys: &SystemFile,
     text: &str,
+    file: &str,
     uses: &Uses,
     today: i64,
     probes: Option<Vec<Box<dyn live::LiveProbe>>>,
@@ -161,7 +164,7 @@ pub(crate) fn run_checks(
         }
     }
     for c in &sys.credentials {
-        let src = source_of(text, FILE, &c.id);
+        let src = source_of(text, file, &c.id);
         let before = items.len();
         let keys = c.keys();
         let actual: BTreeSet<&str> = keys
@@ -260,17 +263,17 @@ pub(crate) fn run_checks(
                 rotate = Some(format!("expires {}", day_str(at)));
             }
         }
-        if let (Some(ttl), Some(created)) = (c.max_ttl.as_deref(), created) {
-            let limit = add_duration(created, ttl).unwrap_or(created);
-            match expiry {
-                Some(Expiry::Never) => items.push(item(
+        if let Some(ttl) = c.max_ttl.as_deref() {
+            let limit = created.and_then(|d| add_duration(d, ttl));
+            match (expiry, limit) {
+                (Some(Expiry::Never), _) => items.push(item(
                     "max_ttl",
                     &c.id,
                     Action::Drift,
                     format!("expires_at is never but max_ttl is {ttl}"),
                     src.clone(),
                 )),
-                Some(Expiry::On(at)) if at > limit => items.push(item(
+                (Some(Expiry::On(at)), Some(limit)) if at > limit => items.push(item(
                     "max_ttl",
                     &c.id,
                     Action::Drift,
@@ -358,7 +361,7 @@ fn keyless(sys: &SystemFile, c: &Credential) -> Option<String> {
             "personal access token: use a GitHub App installation token (or set keyless_exempt)"
                 .into(),
         ),
-        SaKey => Some(
+        SaKey if matches!(c.provider.as_str(), "gsc" | "google" | "gcp") => Some(
             "service-account key: use workload identity federation (or set keyless_exempt)".into(),
         ),
         _ => None,

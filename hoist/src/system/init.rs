@@ -547,17 +547,13 @@ pub fn system_init(dir: &Path, print: bool) -> Result<Report, HoistError> {
             Some(text),
             None,
         )
-    } else if path.exists() {
+    } else if !write_new(&path, &text)? {
         (
             item(Action::Ok, "exists, left unchanged"),
             None,
             Some("system.toml exists; `hoist system init --print` shows a fresh draft\n".into()),
         )
     } else {
-        std::fs::write(&path, &text).map_err(|e| HoistError::Config {
-            file: FILE.into(),
-            message: format!("cannot write: {e}"),
-        })?;
         (
             item(
                 Action::Create,
@@ -579,4 +575,22 @@ pub fn system_init(dir: &Path, print: bool) -> Result<Report, HoistError> {
         text: out,
         hint: hint.map(String::into_boxed_str),
     })
+}
+
+/// Create `path` with `text`; `false` when it already exists (never overwritten, no race).
+fn write_new(path: &Path, text: &str) -> Result<bool, HoistError> {
+    use std::io::Write;
+    let fail = |e: std::io::Error| HoistError::Config {
+        file: FILE.into(),
+        message: format!("cannot write: {e}"),
+    };
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+    {
+        Ok(mut f) => f.write_all(text.as_bytes()).map(|()| true).map_err(fail),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(fail(e)),
+    }
 }

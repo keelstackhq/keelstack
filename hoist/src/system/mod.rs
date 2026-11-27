@@ -459,12 +459,19 @@ impl SystemFile {
     }
 }
 
-/// `path:line` of the first line containing `id = "<id>"`, else the file.
+/// `path:line` of the `id = "<id>"` line inside a `[[credential]]` block, else the file.
 pub(crate) fn source_of(text: &str, file: &str, id: &str) -> String {
     let needle = format!("id = \"{id}\"");
-    text.lines()
-        .position(|l| l.trim_start().starts_with(&needle))
-        .map_or_else(|| file.to_string(), |n| format!("{file}:{}", n + 1))
+    let mut in_cred = false;
+    for (n, l) in text.lines().enumerate() {
+        let t = l.trim_start();
+        if t.starts_with('[') {
+            in_cred = t.starts_with("[[credential]]");
+        } else if in_cred && t.starts_with(&needle) {
+            return format!("{file}:{}", n + 1);
+        }
+    }
+    file.to_string()
 }
 
 #[cfg(test)]

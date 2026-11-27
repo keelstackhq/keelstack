@@ -1959,13 +1959,13 @@ Reads `system.toml`, the workflows, `hoist.toml` and `secrets.toml`; no HTTP. Ti
 | kind | action | when |
 | --- | --- | --- |
 | `undeclared` | drift | a secret read by a workflow, listed in `[github] optional_secrets` or `secrets.toml` has no credential whose `storage[].key` names it |
-| `unused` | drift | an `active` credential no workflow reads and with no `runtime` consumer |
+| `unused` | drift | an `active` credential no workflow reads, with no `runtime` consumer and no key listed in `secrets.toml` or `optional_secrets` |
 | `consumer` | drift | a listed `{workflow, job}` consumer does not read any of its keys, or a job reads one and is not listed |
 | `expiry` | drift / pending | expired (drift); expires in ≤ 30 days (pending + human step `rotate:<id>`) |
 | `rotation` | pending | `created_at + rotate_every <= now` (human step `rotate:<id>`) |
 | `metadata` | drift | `purpose` empty or `TODO`, `owner` missing or `TODO`, `expires_at` missing, `created_at` missing (no dates for `role = "config"`: a non-secret value such as an account id kept as a secret) |
 | `max_ttl` | drift | `expires_at - created_at > max_ttl`, or `expires_at = "never"` with a `max_ttl` |
-| `keyless` | drift | a long-lived credential where keyless exists: npm/crates `publish` (OIDC trusted publishing), a GitHub `api_token` (a GitHub App), a Google `sa_key` (workload identity federation); or an `active` credential whose role a `[[trust]]` on its provider `replaces`. `keyless_exempt` (a reason) turns it `ok` |
+| `keyless` | drift | a long-lived credential where keyless exists: npm/crates `publish` (OIDC trusted publishing), a GitHub `api_token` (a GitHub App), an `sa_key` of provider `gsc`, `google` or `gcp` (workload identity federation); or an `active` credential whose role a `[[trust]]` on its provider `replaces`. `keyless_exempt` (a reason) silences the first three, never a `[[trust]]` replacement (revoke the credential) |
 | `credential` | ok | one summary item per credential when nothing above fired |
 
 `deprecated` and `revoked` credentials are checked only for `undeclared` matching (a revoked

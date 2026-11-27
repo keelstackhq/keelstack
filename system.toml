@@ -147,8 +147,8 @@ purpose = "S3 key pair for the hoard self-test's R2 bucket (warm writes, hit rea
 owner = "urbanisierung"
 principal = "R2 API token"
 scopes = ["Workers R2 Storage Bucket Item Read", "Workers R2 Storage Bucket Item Write"]
-created_via = "hoist apply --secrets-to gh-env:hoard-r2 (R2 token, spec §6.2), or the Cloudflare dashboard > R2 > Manage API tokens"
-rotation = { strategy = "assisted", command = "hoist apply --secrets-to gh-env:hoard-r2", steps = ["Mint a new R2 token with the command", "Re-run hoard-self-test.yml", "Revoke the old token in the dashboard"] }
+created_via = "Cloudflare dashboard > R2 > Manage API tokens; then `hoist secrets set R2_ACCESS_KEY_ID` and `hoist secrets set R2_SECRET_ACCESS_KEY`"
+rotation = { strategy = "manual", steps = ["Mint a new R2 API token (bucket item read and write) in the dashboard", "hoist secrets set R2_ACCESS_KEY_ID and hoist secrets set R2_SECRET_ACCESS_KEY", "Re-run hoard-self-test.yml", "Revoke the old token in the dashboard"] }
 storage = [
   { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_ACCESS_KEY_ID" },
   { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_SECRET_ACCESS_KEY" },

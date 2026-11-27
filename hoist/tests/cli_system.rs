@@ -233,6 +233,10 @@ fn missing_metadata_and_ttl_are_drift() {
     let d = repo(Some(&never));
     let r = run(d.path(), &["system", "check"], 1);
     assert_eq!(items(&r, "max_ttl").len(), 1, "{r}");
+    let never_no_created = never.replacen("created_at = \"2026-11-01\"\n", "", 1);
+    let d = repo(Some(&never_no_created));
+    let r = run(d.path(), &["system", "check"], 1);
+    assert_eq!(items(&r, "max_ttl").len(), 1, "{r}");
     let none = GOOD.replace("expires_at = \"2027-01-20\"\n", "");
     let d = repo(Some(&none));
     let r = run(d.path(), &["system", "check"], 1);
@@ -272,6 +276,14 @@ fn trust_replacing_an_active_role_is_keyless_drift() {
             .unwrap()
             .contains("replaced")
     );
+}
+
+#[test]
+fn file_flag_names_the_real_path_and_credential_line() {
+    let d = repo(None);
+    fs::write(d.path().join("other.toml"), GOOD).unwrap();
+    let r = run(d.path(), &["system", "check", "--file", "other.toml"], 0);
+    assert_eq!(items(&r, "credential")[0]["source"], "other.toml:20", "{r}");
 }
 
 #[test]

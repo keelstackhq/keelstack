@@ -198,7 +198,10 @@ pub fn system_explain(
     let sys = SystemFile::load(&path)?;
     let md = render(&sys);
     let out = path.parent().unwrap_or(dir).join(OUT);
-    let current = std::fs::read_to_string(&out).ok();
+    // A CRLF checkout of the same text is current.
+    let current = std::fs::read_to_string(&out)
+        .ok()
+        .map(|c| c.replace("\r\n", "\n"));
     let item = |action, reason: &str| Item {
         area: "system".into(),
         kind: "file".into(),

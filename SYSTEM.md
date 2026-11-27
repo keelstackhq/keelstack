@@ -160,12 +160,12 @@ flowchart LR
 
 - Principal: R2 API token
 - Scopes: Workers R2 Storage Bucket Item Read, Workers R2 Storage Bucket Item Write
-- Created via: `hoist apply --secrets-to gh-env:hoard-r2 (R2 token, spec §6.2), or the Cloudflare dashboard > R2 > Manage API tokens`
-- Strategy: assisted
-- Command: `hoist apply --secrets-to gh-env:hoard-r2`
-1. Mint a new R2 token with the command
-2. Re-run hoard-self-test.yml
-3. Revoke the old token in the dashboard
+- Created via: `Cloudflare dashboard > R2 > Manage API tokens; then `hoist secrets set R2_ACCESS_KEY_ID` and `hoist secrets set R2_SECRET_ACCESS_KEY``
+- Strategy: manual
+1. Mint a new R2 API token (bucket item read and write) in the dashboard
+2. hoist secrets set R2_ACCESS_KEY_ID and hoist secrets set R2_SECRET_ACCESS_KEY
+3. Re-run hoard-self-test.yml
+4. Revoke the old token in the dashboard
 
 ### hoard-r2-config
 
