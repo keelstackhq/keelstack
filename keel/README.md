@@ -93,7 +93,7 @@ npx -y @keelstackhq/keel@<version> migrate --pr   # run in the repo; --dry-run f
 ```
 
 One command does what used to be `splice update`, `bosun pin`, a hoist check and the setup-snippet by hand: it
-installs the target release's tools (checksum verified), updates splice (the decisions channel alone first,
+installs the target release's tools (checksum verified), repoints legacy `gh:keelstackhq/<tool>` splice sources to the monorepo (its own `repoint` step, before the update), updates splice (the decisions channel alone first,
 as `chore: sync org decisions`), pins bosun and its setup script, refreshes hoist's release workflow, verifies
 (`splice check`, `bosun doctor`, `hoist check`, read-only), commits on `keel/migrate-vX.Y.Z` and, with `--pr`, opens
 ONE PR. It works in its own temporary git worktree based on `origin/<default>`: your checkout, branch, uncommitted, untracked and ignored files and unpushed commits are never touched. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an

@@ -278,6 +278,8 @@ struct Mig<'a> {
     not_updated: Vec<String>,
     /// Warnings for the JSON `notes`.
     notes: Vec<String>,
+    /// The `repointed <old> to <new> at <commit> (<tag>)` messages `splice update` reported.
+    repointed: Vec<String>,
     /// Dry-run: tools that were not installed, fetched into `cache` (name -> binary).
     fetched: std::collections::HashMap<String, PathBuf>,
     /// The temp cache of those tools; removed when the run ends.
@@ -574,11 +576,15 @@ impl Mig<'_> {
 
     /// One `splice update`; `Ok(None)` when splice refused only because of owned files that were
     /// already drifted on the base (that source is not updated, the run goes on).
-    fn splice_try(&self, extra: &[&str]) -> Result<Option<String>, String> {
+    fn splice_try(&mut self, extra: &[&str]) -> Result<Option<String>, String> {
         let mut a = vec!["--json", "--yes", "update"];
         a.extend(extra);
         let c = self.tool("splice", &a);
         let o = self.r.run(&c);
+        if let Some(v) = json(&o) {
+            let found = repointed_messages(&v);
+            self.repointed.extend(found);
+        }
         match o.code {
             0 => {
                 let n = json(&o)
@@ -649,6 +655,89 @@ impl Mig<'_> {
             }
         }
         Ok(done.join(", "))
+    }
+
+    /// Lock sources still on an archived `gh:keelstackhq/<tool>` repo (main and channels):
+    /// `splice update` repoints them to the monorepo before it updates.
+    fn legacy_sources(&self) -> Vec<String> {
+        let mut files = vec![self.dir.join(".splice/lock.toml")];
+        if let Ok(d) = std::fs::read_dir(self.dir.join(".splice/channels")) {
+            files.extend(
+                d.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "toml")),
+            );
+        }
+        let mut out: Vec<String> = Vec::new();
+        for f in files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            for l in text.lines() {
+                let Some(v) = l.trim().strip_prefix("source") else {
+                    continue;
+                };
+                let src = v
+                    .trim_start()
+                    .trim_start_matches('=')
+                    .trim()
+                    .trim_matches('"');
+                if let Some(rest) = src.strip_prefix("gh:keelstackhq/")
+                    && !rest.starts_with("keelstack/")
+                    && !rest.starts_with("keelstack.git")
+                    && rest != "keelstack"
+                    && !out.iter().any(|o| o == src)
+                {
+                    out.push(src.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// The `repoint` step is decided here (before `splice`) and filled in from what the first
+    /// `splice update` reports: splice has no repoint-only call, it repoints inside `update`.
+    fn s_repoint(&mut self) -> Res {
+        if !self.p.splice {
+            return Ok((MAction::Skipped, "no .splice/lock.toml or channel".into()));
+        }
+        let legacy = self.legacy_sources();
+        if legacy.is_empty() {
+            return Ok((
+                MAction::Skipped,
+                "no legacy gh:keelstackhq/<tool> source".into(),
+            ));
+        }
+        if self.dry {
+            return Ok((
+                MAction::WouldRun,
+                format!(
+                    "splice update would repoint to the monorepo: {}",
+                    legacy.join(", ")
+                ),
+            ));
+        }
+        Ok((MAction::Ok, format!("legacy: {}", legacy.join(", "))))
+    }
+
+    /// After `splice`: the repoint step says what splice reported.
+    fn settle_repoint(&mut self) {
+        if self.dry {
+            return;
+        }
+        let msgs = self.repointed.join("; ");
+        let Some(s) = self.steps.iter_mut().find(|s| s.id == "repoint") else {
+            return;
+        };
+        if s.action == MAction::Skipped {
+            return;
+        }
+        if msgs.is_empty() {
+            s.detail = format!("splice update repointed nothing ({})", s.detail);
+        } else {
+            s.action = MAction::Done;
+            s.detail = msgs;
+        }
     }
 
     fn s_splice(&mut self) -> Res {
@@ -1315,6 +1404,20 @@ fn behind_list(v: &Value) -> String {
         .unwrap_or_default()
 }
 
+/// The `repointed <old> to <new> at <commit> (<tag>)` lines of a `splice update` report.
+fn repointed_messages(v: &Value) -> Vec<String> {
+    v["messages"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .filter(|m| m.starts_with("repointed "))
+                .map(String::from)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 fn human_steps(v: &Value) -> Vec<HumanStep> {
     v["human_steps"]
         .as_array()
@@ -1682,6 +1785,7 @@ fn in_worktree(
         base_drift: Vec::new(),
         not_updated: Vec::new(),
         notes: Vec::new(),
+        repointed: Vec::new(),
         fetched: std::collections::HashMap::new(),
         cache: None,
     };
@@ -1699,6 +1803,7 @@ fn in_worktree(
 
     let order = [
         "tools",
+        "repoint",
         "splice",
         "bosun-pin",
         "hoist",
@@ -1734,6 +1839,7 @@ fn in_worktree(
         }
         let res = match *id {
             "tools" => m.s_tools(),
+            "repoint" => m.s_repoint(),
             "splice" => m.s_splice(),
             "bosun-pin" => m.s_bosun_pin(),
             "hoist" => m.s_hoist(),
@@ -1742,7 +1848,11 @@ fn in_worktree(
             "mode" => m.s_mode(),
             _ => m.s_pr(),
         };
-        if !m.push_step(id, res) {
+        let ok = m.push_step(id, res);
+        if *id == "splice" {
+            m.settle_repoint();
+        }
+        if !ok {
             failed = Some(i);
         }
     }
