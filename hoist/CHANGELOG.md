@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `hoist system init|check|explain` and `system.toml` (D-031, spec §17): a cleartext description of a repo's external systems, credentials and keyless trusts; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and long-lived credentials where keyless exists; `explain --write` renders `SYSTEM.md`.
+
 ## 0.25.0 (2026-11-27)
 
 - `hoist --json init` with no publishable package: the exit-3 error object carries the stable `error.kind` `nothing-to-publish` (keel migrate reads it).

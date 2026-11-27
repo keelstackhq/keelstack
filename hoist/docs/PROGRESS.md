@@ -9,6 +9,8 @@ Milestones M1
 (read-only), M2 (provisioning), M3 (releasing), M4 (npm launcher) and M5 (secrets repos) are done;
 container publish and required-check sources shipped after. Plans: `docs/superpowers/plans/`.
 
+`hoist system init|check|explain` and `system.toml` (D-031, spec §17) are in progress.
+
 The hardening round (JSON errors, pinned CI actions, release action, agent skill) is done; see the task log.
 
 Task log: `docs/archive/PROGRESS-done.md`. Quickstart: `docs/QUICKSTART.md`.

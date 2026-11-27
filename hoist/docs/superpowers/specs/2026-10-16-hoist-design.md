@@ -1846,3 +1846,166 @@ Cloudflare token with Workers Scripts: Edit, and uses the Cloudflare client.
   `HOIST_SEARCH_CONSOLE_TOKEN` is the same value as `BRIDGE_TOKEN` (the proxy injects it).
 - Human steps that remain: the Google Cloud project, the two APIs, the service account and key;
   the account's workers.dev subdomain (once, in the Cloudflare dashboard).
+
+## 17. System description (`system.toml`, `hoist system`)
+
+Decision D-031. Every repo carries a machine-readable description of the external systems it
+uses and of every credential it holds, so no secret grows unknown. `system.toml` at the repo root
+is cleartext TOML and holds **names and metadata, never values**. hoist owns the format; the JSON
+Schema is `hoist/schema/system.schema.json` (draft 2020-12, `additionalProperties: false`
+everywhere). This section was asked for as "§16"; §16 was already `hoist org`, so it is §17.
+
+### 17.1 CLI
+
+```
+hoist system init    [--print]                 # draft system.toml from the repo; writes only if absent
+hoist system check   [--file PATH] [--live]    # offline checks (17.4); --live adds per-provider reads (17.5)
+hoist system explain [--file PATH] [--write | --check]  # SYSTEM.md on stdout; --write writes it, --check diffs it
+```
+
+`--file` defaults to `system.toml` in `-C DIR`. `command` in `--json` is `system init`,
+`system check`, `system explain`; the envelope is the usual one object
+`{version:1, command, ok, exit_code, items, human_steps}`. Exit codes (D-020 with hoist's
+overrides): 0 ok · 1 drift (a check failed; `explain --check`: SYSTEM.md is stale) · 2 a human
+step is pending (rotation due) · 3 usage, config or API error (missing file, invalid TOML,
+unknown key, bad enum/date/duration, duplicate id, reference to an undeclared provider).
+Items have `area = "system"`. No command prints a secret value: hoist never reads one for
+these commands (agents never hold keys).
+
+### 17.2 `system.toml`
+
+```toml
+version = 1                      # required, must be 1
+
+[system]                         # required
+name = "keelstackhq/keelstack"   # required
+owner = "urbanisierung"          # required: who answers for the system
+description = "…"
+
+[[provider]]                     # one per external system
+id = "cloudflare"                # unique; github|cloudflare|fly|npm|crates|gsc|anthropic|…
+capability = "dns+cdn"           # catalog capability (17.6): paas.container, dns+cdn,
+                                 # registry.npm, registry.crates, vcs+ci, search-console, llm.api…
+account = "keelstackhq"          # account, org or project at the provider
+console = "https://dash.cloudflare.com/"
+docs = "https://developers.cloudflare.com/"
+clis = [{ tool = "wrangler", version = "4.40.0", mise = "npm:wrangler" }]
+alternatives = ["bunny", "fastly"]   # catalog provider ids for the same capability
+
+[[credential]]                   # one per secret (or non-secret value stored as a secret)
+id = "site-deploy"               # unique slug [a-z0-9][a-z0-9._-]*
+provider = "cloudflare"          # must name a [[provider]]
+kind = "api_token"               # api_token|deploy_token|app_key|sa_key|ssh_key|age_key|other
+role = "deploy"                  # deploy|dns-edit|publish|read|sign|review|config|…
+purpose = "Deploy site/ to Pages project keelstack-landing"   # required; "TODO" fails check
+owner = "urbanisierung"          # required
+principal = "token keelstack-site"   # who the provider sees (token name, app, account)
+scopes = ["Account.Cloudflare Pages:Edit"]
+resources = ["pages:keelstack-landing"]
+created_at = "2026-11-21"        # YYYY-MM-DD
+created_by = "urbanisierung"
+created_via = "Cloudflare dashboard > API Tokens > Create (template Edit Cloudflare Pages)"
+expires_at = "2027-02-19"        # YYYY-MM-DD or "never"; required
+max_ttl = "90d"                  # <n>d|w|m|y: expires_at - created_at must not exceed it
+rotate_every = "90d"             # due once created_at + rotate_every <= now
+rotation = { strategy = "assisted", command = "hoist secrets rotate CLOUDFLARE_API_TOKEN", steps = ["…"] }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_API_TOKEN" }]
+consumers = [{ workflow = "deploy-site.yml", job = "deploy", environment = "site" }]
+provider_ref = "token id 0123…"  # the provider's id for it (no value)
+status = "active"                # active|deprecated|revoked (default active)
+keyless_exempt = "…"             # why keyless (17.4 `keyless`) does not apply here
+notes = "…"
+
+[[trust]]                        # keyless trust that replaces a long-lived credential
+provider = "npm"
+kind = "oidc-trusted-publishing" # oidc-trusted-publishing|github-app|wif
+subject = "keelstackhq/keelstack:release.yml@environment:release"
+replaces = "publish"             # the role it stands in for
+```
+
+- `storage[].kind`: `gh-secret` (repo secret: `repo`, `key`), `gh-env-secret` (`repo`, `env`,
+  `key`), `sops` (`path`, `key`), `fly-secret` (`app`, `key`), `worker-secret` (`app` = the
+  Worker, `key`). `key` is the secret's name there and is required for every kind.
+- `consumers[]` is either `{workflow, job, environment?}` (a GitHub Actions job: `workflow` is the
+  file name under `.github/workflows/`) or `{runtime = "fly:app" | "worker:name" | "…"}` (read
+  outside Actions; not checked offline).
+- `rotation.strategy`: `auto` (hoist rotates: `hoist secrets rotate NAME`), `assisted` (hoist
+  prints the steps and does part), `manual` (only `steps`).
+- Durations: `^[1-9][0-9]*[dwmy]$`; `m` and `y` are calendar months (`y` = 12 months).
+- The secret names a credential stands for are its `storage[].key` values. `GITHUB_TOKEN` is
+  never a credential.
+
+### 17.3 `hoist system init`
+
+Drafts `system.toml` from what the repo already says: `${{ secrets.X }}` in
+`.github/workflows/*.yml` (job, environment; §4), `hoist.toml` (`[github] optional_secrets`,
+`tags_bypass = "deploy_key"` → `RELEASE_TAG_KEY` ssh_key in `tags_key_environment`), `secrets.toml`
+(env var names → `sops` storage), `access.toml` (recipients → `age_key`, their `expires`),
+`org.toml` (one provider per section; Fly app secret names → `fly-secret`) and `keel.toml`
+(`[token]` → `SPLICE_BOT_TOKEN`-style secret in its environment). Providers are guessed from
+the name (`CLOUDFLARE_*`/`R2_*` → cloudflare, `FLY_*` → fly, `NPM_*` → npm,
+`CARGO_REGISTRY_*`/`CRATES_*` → crates, `ANTHROPIC_*` → anthropic, `*_APP_KEY`/`GH_*` → github,
+else `other`); kinds from the name and source. Every unknown field is `"TODO"` (`purpose`,
+`owner`, `created_at` omitted). Output is deterministic (sorted by id). It writes `system.toml`
+only when absent (item `create`, exit 0); an existing file is left alone (item `ok`, exit 0,
+hint `--print`). `--print` never writes and prints the draft on stdout (table mode; `--json`
+reports the item only).
+
+### 17.4 `hoist system check` (offline)
+
+Reads `system.toml`, the workflows, `hoist.toml` and `secrets.toml`; no HTTP. Time comes from
+`HOIST_NOW` (`timeutil::now_secs`). Item `kind`, action and meaning:
+
+| kind | action | when |
+| --- | --- | --- |
+| `undeclared` | drift | a secret read by a workflow, listed in `[github] optional_secrets` or `secrets.toml` has no credential whose `storage[].key` names it |
+| `unused` | drift | an `active` credential no workflow reads and with no `runtime` consumer |
+| `consumer` | drift | a listed `{workflow, job}` consumer does not read any of its keys, or a job reads one and is not listed |
+| `expiry` | drift / pending | expired (drift); expires in ≤ 30 days (pending + human step `rotate:<id>`) |
+| `rotation` | pending | `created_at + rotate_every <= now` (human step `rotate:<id>`) |
+| `metadata` | drift | `purpose` empty or `TODO`, `owner` missing or `TODO`, `expires_at` missing, `created_at` missing (no dates for `role = "config"`: a non-secret value such as an account id kept as a secret) |
+| `max_ttl` | drift | `expires_at - created_at > max_ttl`, or `expires_at = "never"` with a `max_ttl` |
+| `keyless` | drift | a long-lived credential where keyless exists: npm/crates `publish` (OIDC trusted publishing), a GitHub `api_token` (a GitHub App), a Google `sa_key` (workload identity federation); or an `active` credential whose role a `[[trust]]` on its provider `replaces`. `keyless_exempt` (a reason) turns it `ok` |
+| `credential` | ok | one summary item per credential when nothing above fired |
+
+`deprecated` and `revoked` credentials are checked only for `undeclared` matching (a revoked
+credential still read by a workflow is `consumer` drift). Exit policy as `hoist check`: 1 on any
+drift, else 2 on any pending, else 0.
+
+### 17.5 `--live` seam (phase 2)
+
+`src/system/live.rs` defines `trait LiveProbe { fn provider(&self) -> &str; fn probe(&self,
+cred: &Credential) -> LiveResult }` with `LiveResult::{Ok(String), Drift(String),
+Unknown(String)}` and `probes() -> Vec<Box<dyn LiveProbe>>`. `--live` adds one item
+`kind = "live"` per active credential: the probe for its provider, or `unknown` ("no live probe
+for <provider>") when none is registered. Phase 1 registers none. Live probes are GET-only and
+read token values only from env (never print them).
+
+### 17.6 Org catalog of alternatives
+
+Data only (phase 3 ships it in the decisions channel as `catalog.toml`); `system.toml`
+`alternatives` and `capability` name its ids.
+
+```toml
+version = 1
+[[capability]]
+id = "paas.container"            # unique
+description = "Run a container behind HTTPS"
+[[alternative]]
+id = "fly"                       # provider id, unique
+capability = "paas.container"    # must name a [[capability]]
+name = "Fly.io"
+docs = "https://fly.io/docs/"
+keyless = ["oidc"]               # keyless auth the provider offers (may be empty)
+migration = "flyctl deploy from the same Dockerfile; move secrets with `fly secrets import`"
+```
+
+### 17.7 `hoist system explain`
+
+Renders `SYSTEM.md` from `system.toml` alone, deterministically (same input, same bytes; no
+dates from the clock): a header with name, owner and description; a mermaid `flowchart LR`
+(repo → provider → credential → consumer); per provider a table (capability, account, console,
+docs, CLIs, alternatives) and one table of its credentials (id, kind, role, purpose, storage,
+consumers, created, expires, rotate); a "Rotation" section per credential with `strategy`,
+`command` and numbered `steps`; keyless trusts. `--write` writes `SYSTEM.md` next to the file
+(item `create`/`update`/`ok`); `--check` is exit 1 when `SYSTEM.md` differs (item `drift`).

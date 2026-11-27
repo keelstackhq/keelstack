@@ -77,9 +77,24 @@ fn main() -> ExitCode {
             ..
         }
     );
+    // `system init --print` and plain `system explain` print only their text (TOML, Markdown),
+    // so stdout can be redirected into a file.
+    let raw = matches!(
+        cli.command,
+        hoist::Command::System {
+            command: hoist::cli::SystemCommand::Init { print: true }
+                | hoist::cli::SystemCommand::Explain {
+                    write: false,
+                    check: false,
+                    ..
+                },
+        }
+    );
     match hoist::run(cli) {
         Ok(report) => {
-            if json {
+            if raw && !json {
+                print!("{}", report.text.as_deref().unwrap_or_default());
+            } else if json {
                 println!("{}", render_json(&report));
             } else {
                 if emit {

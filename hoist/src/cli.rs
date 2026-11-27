@@ -49,6 +49,39 @@ pub enum OrgCommand {
     },
 }
 
+/// `hoist system` (spec §17): system.toml, the repo's external systems and credentials.
+#[derive(Debug, Subcommand)]
+pub enum SystemCommand {
+    /// Draft system.toml from workflows, hoist.toml, secrets.toml, access.toml, org.toml and
+    /// keel.toml; writes only when absent
+    Init {
+        /// Print the draft on stdout and write nothing
+        #[arg(long)]
+        print: bool,
+    },
+    /// Check system.toml against the repo (offline): undeclared, unused, expiring, metadata
+    Check {
+        /// The system file (default: system.toml in -C DIR)
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// Also ask each provider (GET only); providers without a probe are `unknown`
+        #[arg(long)]
+        live: bool,
+    },
+    /// Render SYSTEM.md from system.toml on stdout
+    Explain {
+        /// The system file (default: system.toml in -C DIR)
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// Write SYSTEM.md next to system.toml
+        #[arg(long)]
+        write: bool,
+        /// Exit 1 when SYSTEM.md is missing or stale
+        #[arg(long)]
+        check: bool,
+    },
+}
+
 #[derive(Debug, clap::Args)]
 pub struct OrgArgs {
     /// The org file (default: org.toml in -C DIR)
@@ -166,6 +199,11 @@ pub enum Command {
     Org {
         #[command(subcommand)]
         command: OrgCommand,
+    },
+    /// Describe the repo's external systems and credentials (system.toml; never values)
+    System {
+        #[command(subcommand)]
+        command: SystemCommand,
     },
     /// Manage GitHub Actions secrets (values come from the environment or a hidden prompt)
     Secrets {
@@ -395,6 +433,15 @@ impl Command {
             Command::Org {
                 command: OrgCommand::Apply { .. },
             } => "org apply",
+            Command::System {
+                command: SystemCommand::Init { .. },
+            } => "system init",
+            Command::System {
+                command: SystemCommand::Check { .. },
+            } => "system check",
+            Command::System {
+                command: SystemCommand::Explain { .. },
+            } => "system explain",
             Command::Release {
                 command: ReleaseCommand::Plan,
             } => "release plan",

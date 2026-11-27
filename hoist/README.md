@@ -281,6 +281,17 @@ credentials, headers and API bases are in the table of section 16.5 (`NPM_TOKEN`
 `FLY_API_TOKEN`, `HOIST_FLY_API`). In a sandbox whose proxy injects the credentials, set each
 token to `proxy-injected`.
 
+## System description (`hoist system`)
+
+`hoist system init|check|explain [--file PATH]` works on `system.toml` (D-031), a cleartext
+description of the repo's external systems, credentials (purpose, owner, scopes, storage,
+consumers, expiry, rotation) and keyless trusts, never values. `init [--print]` drafts it from
+workflows, `hoist.toml`, `secrets.toml`, `access.toml`, `org.toml` and `keel.toml` and writes only
+if absent; `check [--live]` fails on undeclared or unused secrets, expiry, missing metadata,
+`max_ttl` and long-lived credentials where keyless exists; `explain [--write|--check]` renders
+`SYSTEM.md`. No HTTP, no secret value. Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`), 2 rotation
+due, 3 usage or config error. Format: spec section 17; schema: `schema/system.schema.json`.
+
 ## Apply
 
 `hoist apply [--yes] [--prune] [--area ...]` plans, writes, then verifies like `check`.

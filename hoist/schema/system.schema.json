@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/keelstackhq/keelstack/blob/main/hoist/schema/system.schema.json",
+  "title": "system.toml",
+  "description": "A repo's external systems and credentials, names and metadata only, never values (hoist spec §17, D-031).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "system"],
+  "properties": {
+    "version": { "const": 1 },
+    "system": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "owner"],
+      "properties": {
+        "name": { "type": "string" },
+        "owner": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "provider": { "type": "array", "items": { "$ref": "#/$defs/provider" } },
+    "credential": { "type": "array", "items": { "$ref": "#/$defs/credential" } },
+    "trust": { "type": "array", "items": { "$ref": "#/$defs/trust" } }
+  },
+  "$defs": {
+    "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]*$" },
+    "day": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$" },
+    "duration": { "type": "string", "pattern": "^[1-9][0-9]{0,4}[dwmy]$" },
+    "strings": { "type": "array", "items": { "type": "string" } },
+    "provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "capability"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "capability": { "type": "string" },
+        "account": { "type": "string" },
+        "console": { "type": "string" },
+        "docs": { "type": "string" },
+        "clis": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool"],
+            "properties": {
+              "tool": { "type": "string" },
+              "version": { "type": "string" },
+              "mise": { "type": "string" }
+            }
+          }
+        },
+        "alternatives": { "$ref": "#/$defs/strings" }
+      }
+    },
+    "credential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "provider", "kind", "role"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "provider": { "$ref": "#/$defs/id" },
+        "kind": {
+          "enum": ["api_token", "deploy_token", "app_key", "sa_key", "ssh_key", "age_key", "other"]
+        },
+        "role": { "type": "string" },
+        "purpose": { "type": "string" },
+        "owner": { "type": "string" },
+        "principal": { "type": "string" },
+        "scopes": { "$ref": "#/$defs/strings" },
+        "resources": { "$ref": "#/$defs/strings" },
+        "created_at": { "$ref": "#/$defs/day" },
+        "created_by": { "type": "string" },
+        "created_via": { "type": "string" },
+        "expires_at": {
+          "anyOf": [{ "$ref": "#/$defs/day" }, { "const": "never" }]
+        },
+        "max_ttl": { "$ref": "#/$defs/duration" },
+        "rotate_every": { "$ref": "#/$defs/duration" },
+        "rotation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["strategy"],
+          "properties": {
+            "strategy": { "enum": ["auto", "assisted", "manual"] },
+            "command": { "type": "string" },
+            "steps": { "$ref": "#/$defs/strings" }
+          }
+        },
+        "storage": { "type": "array", "items": { "$ref": "#/$defs/storage" } },
+        "consumers": { "type": "array", "items": { "$ref": "#/$defs/consumer" } },
+        "provider_ref": { "type": "string" },
+        "status": { "enum": ["active", "deprecated", "revoked"] },
+        "keyless_exempt": { "type": "string" },
+        "notes": { "type": "string" }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "key"],
+      "properties": {
+        "kind": { "enum": ["gh-secret", "gh-env-secret", "sops", "fly-secret", "worker-secret"] },
+        "repo": { "type": "string" },
+        "env": { "type": "string" },
+        "path": { "type": "string" },
+        "app": { "type": "string" },
+        "key": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        { "if": { "properties": { "kind": { "const": "gh-secret" } } }, "then": { "required": ["repo"] } },
+        { "if": { "properties": { "kind": { "const": "gh-env-secret" } } }, "then": { "required": ["repo", "env"] } },
+        { "if": { "properties": { "kind": { "const": "sops" } } }, "then": { "required": ["path"] } },
+        { "if": { "properties": { "kind": { "enum": ["fly-secret", "worker-secret"] } } }, "then": { "required": ["app"] } }
+      ]
+    },
+    "consumer": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["workflow", "job"],
+          "properties": {
+            "workflow": { "type": "string" },
+            "job": { "type": "string" },
+            "environment": { "type": "string" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime"],
+          "properties": { "runtime": { "type": "string" } }
+        }
+      ]
+    },
+    "trust": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider", "kind", "subject"],
+      "properties": {
+        "provider": { "$ref": "#/$defs/id" },
+        "kind": { "enum": ["oidc-trusted-publishing", "github-app", "wif"] },
+        "subject": { "type": "string" },
+        "replaces": { "type": "string" }
+      }
+    }
+  }
+}
