@@ -180,6 +180,28 @@ pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
     migrate::run(&cli.dir, args, runner)
 }
 
+/// Which side `keel up` takes (`.splice/lock.toml`, `--new`, `--existing`) and why; `None` for
+/// every other command. An error is a usage error (exit 2).
+pub fn up_path(cli: &Cli) -> Result<Option<(steps::up::UpPath, String)>, KeelError> {
+    match &cli.command {
+        Command::Up(a) => steps::up::choose(&cli.dir, a).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// Run the `keel up` upgrade pipeline with the real tools.
+pub fn run_up(cli: &Cli, reason: &str) -> Result<steps::up::UpReport, KeelError> {
+    exec::install_signal_handlers();
+    let verbose = Verbose(&SystemRunner);
+    let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
+    steps::up::run(cli, reason, runner)
+}
+
+/// A bootstrap `up` report as JSON: the usual object plus `data.path` and `data.reason`.
+pub fn render_up_json(report: &Report, path: steps::up::UpPath, reason: &str) -> String {
+    steps::up::render_json(report, path, reason, None)
+}
+
 pub fn run_with(
     cli: Cli,
     runner: &dyn Runner,

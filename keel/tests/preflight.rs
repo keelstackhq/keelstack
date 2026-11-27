@@ -206,3 +206,24 @@ fn missing_repo_scope_blocks() {
         .code(5);
     assert!(stdout(&a).contains("scope-repo"));
 }
+
+#[test]
+fn ci_provider_none_in_keel_toml_lifts_the_free_private_block_to_a_warning() {
+    let env = Env::new();
+    std::fs::write(
+        env.repo.join("keel.toml"),
+        "repo = \"owner/name\"\n[ci]\nprovider = \"none\"\n",
+    )
+    .unwrap();
+    let a = env
+        .keel("true", "free", &["--json", "preflight"])
+        .assert()
+        .code(0);
+    let v: serde_json::Value = serde_json::from_str(stdout(&a).trim()).unwrap();
+    let f = &v["findings"][0];
+    assert_eq!(
+        (f["id"].as_str(), f["severity"].as_str()),
+        (Some("plan-free-private"), Some("warn"))
+    );
+    assert_eq!(v["status"], "warn");
+}

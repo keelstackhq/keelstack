@@ -384,3 +384,23 @@ earlier run (the unmerged branch) is resumed in the worktree: the steps are no-o
 **Report.** `{version, ok, command:"migrate", status, exit_code, target, dry_run, from_branch, branch, pieces, steps[{id,action,detail}], changed, pr:{action,url}|null,
 setup_snippet, checklist[], human_step, recovery}`. Actions: `ok` `done` `would-run` `skipped` `pending` `failed` `not-reached`. The checklist is keel's (D-009: `computer` first,
 `phone` last): `approve-pr` (phone) with `--pr`, else `open-pr`; plus the entries above. Only a non-empty checklist makes exit 5.
+
+## 12. `keel up` on an existing repo (K5)
+
+One command for both cases. `keel up` takes the **upgrade** path when `.splice/lock.toml` exists (unless
+`keel.toml` names a `template`, or `--template`/`--pieces` is given: the repo is mid-bootstrap and the bootstrap
+continues), else the **bootstrap** path (sections 3 to 8, unchanged). `--new` forces the bootstrap, `--existing` the
+upgrade (exit 2 without a lock file); they conflict (exit 2). `--to`, `--mode`, `--branch`, `--dry-run` are
+upgrade-only (exit 2 on the bootstrap path). The JSON report of `up` carries `data: {path: "bootstrap"|"upgrade",
+reason}`; on the upgrade path also `target`, `mode`, `dry_run`, `branch`, `pr` and the whole `migrate` report.
+
+Upgrade pipeline, after preflight (section 5, which gates both paths and stops before any write): `migrate::run`
+(`--pr`, `--drift seed`; with `--branch` a plain push and no PR; the PR body ends with the pipeline steps and the owner
+line), step `mode-preset`: `bosun --json migrate --to MODE` (default `autonomous`), step `gate-app` (autonomous
+only): `bosun --json gate-app advance` (exit 2 or not found: `pending`; its `data.phase`, `data.pr` and `data.owner`
+are shown, `owner = "done"` means the owner's run is finished), step `owner` (autonomous only): the checklist entry
+`owner` with the command `npx -y @keelstackhq/keel@X owner` until the owner is done. Exit 5 while the checklist is
+not empty (`owner` computer first, then `approve-pr` phone). A rerun after the owner finishes makes PR B.
+
+`[ci]` in keel.toml: `provider = "github"` (default) or `"none"`; `none` lifts the preflight `plan-free-private` block
+to a warning (no rulesets, auto-merge or environment secrets on a private Free-plan repo). Unknown keys are errors.

@@ -17,6 +17,7 @@ pub mod preflight;
 pub mod render;
 pub mod settings;
 pub mod token;
+pub mod up;
 pub mod verify;
 
 /// The steps for the manifest: `template = "none"` is an existing repo (preflight and settings

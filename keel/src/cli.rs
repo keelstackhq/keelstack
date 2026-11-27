@@ -63,6 +63,9 @@ pub struct MigrateArgs {
     /// files; `take` forces the template side; `keep` keeps the local side.
     #[arg(long, value_name = "MODE", default_value = "seed", value_parser = ["seed", "take", "keep"])]
     pub drift: String,
+    /// Set by `keel up`: appended to the PR body (the pipeline steps and the owner line).
+    #[arg(skip)]
+    pub body_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -93,6 +96,25 @@ pub struct UpArgs {
     /// hand; stores the fly app). Repeatable.
     #[arg(long = "confirm", value_name = "STEP")]
     pub confirm: Vec<String>,
+    /// Upgrade path only: the release to move to, X.Y.Z (default: keel's own version).
+    #[arg(long, value_name = "X.Y.Z")]
+    pub to: Option<String>,
+    /// Upgrade path only: the bosun mode to move to (default `autonomous`).
+    #[arg(long, value_name = "MODE", value_parser = ["gatekeeper", "steady", "booster", "autonomous"])]
+    pub mode: Option<String>,
+    /// Upgrade path only: commit and push to this branch (cloud sessions) instead of
+    /// `keel/migrate-vX`, and open no PR. Plain push, never forced.
+    #[arg(long, value_name = "NAME")]
+    pub branch: Option<String>,
+    /// Force the bootstrap path even when `.splice/lock.toml` exists.
+    #[arg(long, conflicts_with = "existing")]
+    pub new: bool,
+    /// Force the upgrade path (an existing keelstack repo); fails when `.splice/lock.toml` is absent.
+    #[arg(long, conflicts_with = "new")]
+    pub existing: bool,
+    /// Upgrade path only: report what would change; write, push and advance nothing.
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 impl Command {

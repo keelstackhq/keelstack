@@ -319,6 +319,9 @@ pub struct Inputs<'a> {
     /// Running in a cloud agent session (`CLAUDE_CODE_REMOTE=true`).
     pub cloud: bool,
     pub pins: Option<&'a Pins>,
+    /// `[ci] provider = "none"` in keel.toml: no GitHub-side gates, so a private Free-plan repo
+    /// is a warning, not a block.
+    pub ci_none: bool,
 }
 
 /// `OWNER/NAME` of a GitHub remote URL (https, ssh or a proxy path), if it looks like one.
@@ -404,7 +407,7 @@ pub fn findings(r: &dyn Runner, i: &Inputs) -> Vec<Finding> {
                 }
             }
             if let Some(repo) = i.repo {
-                repo_findings(r, repo, i.gate, &mut out);
+                repo_findings(r, repo, i.gate, i.ci_none, &mut out);
             }
         }
         _ => {}
@@ -459,7 +462,7 @@ pub fn findings(r: &dyn Runner, i: &Inputs) -> Vec<Finding> {
 }
 
 /// Plan, visibility and admin rights of `repo`.
-fn repo_findings(r: &dyn Runner, repo: &str, gate: Gate, out: &mut Vec<Finding>) {
+fn repo_findings(r: &dyn Runner, repo: &str, gate: Gate, ci_none: bool, out: &mut Vec<Finding>) {
     let Some(info) = gh::repo_info(r, repo) else {
         if gate == Gate::Full {
             out.push(finding(
@@ -487,6 +490,12 @@ fn repo_findings(r: &dyn Runner, repo: &str, gate: Gate, out: &mut Vec<Finding>)
     if info.private == Some(true) {
         let org = info.owner.as_deref().filter(|_| info.owner_is_org);
         match gh::plan_name(r, org).as_deref() {
+            Some("free") if ci_none => out.push(finding(
+                "plan-free-private",
+                "warn",
+                format!("{repo} is private on a GitHub Free plan: no rulesets, no auto-merge and no environment secrets; `[ci] provider = \"none\"` in keel.toml accepts running without GitHub-side gates"),
+                "upgrade the plan or make the repo public to get the gates; remove `[ci] provider = \"none\"` then",
+            )),
             Some("free") => out.push(finding(
                 "plan-free-private",
                 "block",
@@ -594,6 +603,7 @@ pub fn gate(r: &dyn Runner, cli: &crate::cli::Cli) -> Option<PreflightReport> {
         Command::Doctor => return None,
     };
     let manifest = Manifest::load(&cli.dir).ok();
+    let ci_none = manifest.as_ref().is_some_and(|m| m.ci_none());
     let repo = flag_repo
         .or_else(|| manifest.as_ref().and_then(|m| m.repo.clone()))
         .or_else(|| git::origin(r, &cli.dir).and_then(|u| repo_of_url(&u)));
@@ -609,6 +619,7 @@ pub fn gate(r: &dyn Runner, cli: &crate::cli::Cli) -> Option<PreflightReport> {
             gate,
             cloud,
             pins: pins.as_ref(),
+            ci_none,
         },
     );
     let report = PreflightReport::new(cli.command.name(), list);

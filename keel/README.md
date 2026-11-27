@@ -20,7 +20,10 @@ Node 24+ (checked in preflight).
 
 ## Commands
 
-- `keel up`: run the steps, stop at the first human step or failure.
+- `keel up`: run the steps, stop at the first human step or failure. One command for both cases:
+  without `.splice/lock.toml` it bootstraps a new repo (this table of steps); with it, it moves an
+  existing repo to the current release (see "Upgrade with `keel up`"). `--new` / `--existing` force a side;
+  the JSON `data.path` (`bootstrap` / `upgrade`) and `data.reason` say which ran.
 - `keel plan`: same checks, writes nothing, shows what `up` would do.
 - `keel doctor`: check the toolchain and the repo for drift (no installs).
 - `keel preflight`: read-only checks (token scopes, admin, plan and visibility, legacy sources, tools, drift); exit 5 on a block, with the choices. It also runs first in `up`, `plan` and `migrate`.
@@ -86,7 +89,23 @@ account_id = "..."                # optional; 32 lowercase hex chars; env CLOUDF
 Unknown keys are an error. keel never reads or prints `CLOUDFLARE_API_TOKEN` or a Fly token: it
 only checks that the Cloudflare one is set, and hoist and the hull script move the secrets.
 
-## Migrate a repo to a new release
+## Upgrade with `keel up`
+
+```bash
+npx -y @keelstackhq/keel@<version> up --json   # in an existing keelstack repo (it has .splice/lock.toml)
+```
+
+Flags (upgrade only): `--to X.Y.Z` (default: keel's version), `--mode MODE` (default `autonomous`), `--branch NAME`
+(cloud sessions: plain push to that branch, no PR), `--dry-run`. Pipeline: preflight (a private Free-plan repo
+blocks before any write, unless `keel.toml` has `[ci]` / `provider = "none"`), repoint + `keel migrate --pr`
+(one PR whose body lists every step), `bosun migrate --to MODE`, `bosun gate-app advance` (PR A), then ONE owner
+line, `npx -y @keelstackhq/keel@X owner`. Run `keel up` again after the owner is done: PR B. Details:
+[docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md).
+
+`keel.toml` `[ci]` table: `provider = "github"` (default) or `"none"` (no GitHub-side gates; lifts the preflight
+`plan-free-private` block to a warning). Unknown keys are an error.
+
+## Migrate a repo to a new release (`keel migrate`, the subset `up` runs)
 
 ```bash
 npx -y @keelstackhq/keel@<version> migrate --pr   # run in the repo; --dry-run first to see the plan; -y skips the "Ok to proceed?" prompt

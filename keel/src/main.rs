@@ -82,10 +82,40 @@ fn main() -> ExitCode {
             }
         };
     }
+    let up = match keel::up_path(&cli) {
+        Ok(up) => up,
+        Err(err) => return fail(command, json, &err),
+    };
+    if let Some((keel::steps::up::UpPath::Upgrade, reason)) = &up {
+        return match keel::run_up(&cli, reason) {
+            Ok(u) => {
+                if json {
+                    println!(
+                        "{}",
+                        keel::steps::up::render_json(
+                            &u.report,
+                            keel::steps::up::UpPath::Upgrade,
+                            reason,
+                            Some(&u)
+                        )
+                    );
+                } else {
+                    print!("{}", keel::steps::up::render_text(&u));
+                }
+                ExitCode::from(u.report.exit_code.clamp(0, 255) as u8)
+            }
+            Err(err) => fail(command, json, &err),
+        };
+    }
     match keel::run(cli) {
         Ok(report) => {
             if json {
-                println!("{}", render_json(&report));
+                match &up {
+                    Some((path, reason)) => {
+                        println!("{}", keel::render_up_json(&report, *path, reason))
+                    }
+                    None => println!("{}", render_json(&report)),
+                }
             } else {
                 print!("{}", render_text(&report));
             }
@@ -108,6 +138,23 @@ fn main() -> ExitCode {
             ExitCode::from(err.exit_code() as u8)
         }
     }
+}
+
+fn fail(command: &str, json: bool, err: &keel::KeelError) -> ExitCode {
+    eprintln!("error: {err}");
+    if json {
+        println!(
+            "{}",
+            render_json_error(
+                command,
+                err.exit_code(),
+                &err.to_string(),
+                err.fix()
+                    .unwrap_or("the message says what to change; see `keel up --help`")
+            )
+        );
+    }
+    ExitCode::from(err.exit_code() as u8)
 }
 
 /// The subcommand word of the command line, skipping flags and the value of `-C`.
