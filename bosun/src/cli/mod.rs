@@ -690,7 +690,7 @@ pub struct ManifestArgs {
     #[arg(long)]
     pub name: Option<String>,
     /// Seconds to wait for you to confirm the App on GitHub.
-    #[arg(long, default_value_t = 600, value_name = "SECS")]
+    #[arg(long, default_value_t = 600, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..=3600))]
     pub timeout_secs: u64,
     /// Skip the browser flow: you made the App by hand.
     #[arg(long)]

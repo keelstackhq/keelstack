@@ -25,6 +25,8 @@ type Result<T> = std::result::Result<T, BosunError>;
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_HEAD: usize = 8192;
 const MAX_PEM: usize = 16 * 1024;
+/// One request gets this long in total (never per read), and never past the flow deadline.
+const REQUEST_BUDGET: Duration = Duration::from_secs(5);
 const GITHUB: &str = "https://github.com";
 
 pub struct FlowConfig {
@@ -88,6 +90,7 @@ pub struct Flow {
     port: u16,
     state: OneTimeState,
     cfg: FlowConfig,
+    start_served: bool,
 }
 
 enum Served {
@@ -122,6 +125,7 @@ impl Flow {
             port,
             state: OneTimeState::new()?,
             cfg,
+            start_served: false,
         })
     }
 
@@ -136,7 +140,12 @@ impl Flow {
 
     /// Serve until a valid callback arrives (exchanged once through `gh`) or the timeout ends.
     pub fn run(mut self, gh: &dyn Github) -> Result<AppCredentials> {
-        let deadline = Instant::now() + self.cfg.timeout;
+        let Some(deadline) = Instant::now().checked_add(self.cfg.timeout) else {
+            return Err(BosunError::usage(
+                "the timeout is too large",
+                "pass `--timeout-secs` between 1 and 3600",
+            ));
+        };
         loop {
             if Instant::now() >= deadline {
                 return Err(BosunError::error(
@@ -152,7 +161,7 @@ impl Flow {
                     if !peer.ip().is_loopback() {
                         continue;
                     }
-                    if let Served::Code(mut code) = self.serve(stream)? {
+                    if let Served::Code(mut code) = self.serve(stream, deadline)? {
                         let result = gh.convert_manifest(&code);
                         code.zeroize();
                         return result;
@@ -171,11 +180,15 @@ impl Flow {
         }
     }
 
-    fn serve(&mut self, mut stream: TcpStream) -> Result<Served> {
+    fn serve(&mut self, mut stream: TcpStream, flow_deadline: Instant) -> Result<Served> {
         let _ = stream.set_nonblocking(false);
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
-        let Some(req) = read_request(&mut stream) else {
+        let request_deadline = flow_deadline.min(Instant::now() + REQUEST_BUDGET);
+        let _ = stream.set_write_timeout(Some(
+            request_deadline
+                .saturating_duration_since(Instant::now())
+                .max(Duration::from_millis(1)),
+        ));
+        let Some(req) = read_request(&mut stream, request_deadline) else {
             respond(&mut stream, 400, "text/plain", "bad request");
             return Ok(Served::Continue);
         };
@@ -189,7 +202,12 @@ impl Flow {
         }
         let (path, query) = req.target.split_once('?').unwrap_or((&req.target, ""));
         match path {
+            "/start" if query.is_empty() && self.start_served => {
+                respond(&mut stream, 410, "text/plain", "already used");
+                Ok(Served::Continue)
+            }
             "/start" if query.is_empty() => {
+                self.start_served = true;
                 let page = self.start_page();
                 respond(&mut stream, 200, "text/html", &page);
                 Ok(Served::Continue)
@@ -285,11 +303,15 @@ struct Request {
     hosts: Vec<String>,
 }
 
-fn read_request(stream: &mut TcpStream) -> Option<Request> {
+fn read_request(stream: &mut TcpStream, deadline: Instant) -> Option<Request> {
     let mut buf = Vec::new();
     let mut chunk = [0u8; 1024];
     while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
         if buf.len() > MAX_HEAD {
+            return None;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() || stream.set_read_timeout(Some(left)).is_err() {
             return None;
         }
         match stream.read(&mut chunk) {
@@ -405,12 +427,7 @@ pub fn manual(id: u64, client_id: &str, slug: &str, key: &KeySource) -> Result<A
         ));
     }
     let pem = match key {
-        KeySource::File(path) => Secret::new(std::fs::read_to_string(path).map_err(|e| {
-            BosunError::error(
-                format!("cannot read the key file {}: {}", path.display(), e.kind()),
-                "pass the path of the .pem file GitHub downloaded",
-            )
-        })?),
+        KeySource::File(path) => read_key_file(path)?,
         KeySource::Stdin => read_key_stdin()?,
     };
     if !looks_like_pem(pem.expose()) {
@@ -427,6 +444,49 @@ pub fn manual(id: u64, client_id: &str, slug: &str, key: &KeySource) -> Result<A
     })
 }
 
+/// Open the key file without following a symlink, require a regular file of at most
+/// `MAX_PEM` bytes (checked before reading, and the read is capped), warn when it is group or
+/// other readable. The file is never deleted here.
+fn read_key_file(path: &std::path::Path) -> Result<Secret> {
+    let bad = |why: &str| {
+        BosunError::error(
+            format!("cannot use the key file {}: {why}", path.display()),
+            "pass the path of the .pem file GitHub downloaded (a regular file, not a link, under 16 KiB)",
+        )
+    };
+    let link = std::fs::symlink_metadata(path).map_err(|e| bad(&format!("{:?}", e.kind())))?;
+    if !link.file_type().is_file() {
+        return Err(bad("not a regular file or it is a symlink"));
+    }
+    let file = std::fs::File::open(path).map_err(|e| bad(&format!("{:?}", e.kind())))?;
+    let meta = file
+        .metadata()
+        .map_err(|e| bad(&format!("{:?}", e.kind())))?;
+    {
+        use std::os::unix::fs::MetadataExt;
+        if !meta.is_file() || meta.dev() != link.dev() || meta.ino() != link.ino() {
+            return Err(bad("the file changed while opening"));
+        }
+        if meta.mode() & 0o077 != 0 {
+            eprintln!(
+                "bosun: warning: {} is readable by group or others; run `chmod 600` on it",
+                path.display()
+            );
+        }
+    }
+    if meta.len() > MAX_PEM as u64 {
+        return Err(bad("it is larger than 16 KiB"));
+    }
+    let mut text = Secret::new(String::new());
+    file.take(MAX_PEM as u64 + 1)
+        .read_to_string(&mut text.0)
+        .map_err(|e| bad(&format!("{:?}", e.kind())))?;
+    if text.0.len() > MAX_PEM {
+        return Err(bad("it is larger than 16 KiB"));
+    }
+    Ok(text)
+}
+
 fn looks_like_pem(s: &str) -> bool {
     let t = s.trim();
     t.len() <= MAX_PEM
@@ -440,14 +500,18 @@ fn looks_like_pem(s: &str) -> bool {
 /// Turns terminal echo off while alive; `stty` restores it on every exit path.
 struct NoEcho(bool);
 
+/// `stty` by absolute path (no PATH lookup); `/bin` first, then `/usr/bin`.
+fn stty(arg: &str) -> bool {
+    ["/bin/stty", "/usr/bin/stty"].iter().any(|p| {
+        std::process::Command::new(p)
+            .arg(arg)
+            .status()
+            .is_ok_and(|s| s.success())
+    })
+}
+
 impl NoEcho {
     fn on() -> Result<NoEcho> {
-        let stty = |arg: &str| {
-            std::process::Command::new("stty")
-                .arg(arg)
-                .status()
-                .is_ok_and(|s| s.success())
-        };
         if !std::io::stdin().is_terminal() {
             return Ok(NoEcho(false));
         }
@@ -465,7 +529,7 @@ impl NoEcho {
 impl Drop for NoEcho {
     fn drop(&mut self) {
         if self.0 {
-            let _ = std::process::Command::new("stty").arg("echo").status();
+            let _ = stty("echo");
         }
     }
 }

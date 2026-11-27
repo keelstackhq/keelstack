@@ -413,3 +413,106 @@ fn manifest_cli_end_to_end_prints_no_key_material() {
     no_key_material(&stdout, seen.as_bytes());
     assert!(!seen.contains(&state), "the state leaked");
 }
+
+fn manifest_cli(args: &[&str]) -> std::process::Output {
+    let mut a = vec!["owner", "manifest"];
+    a.extend_from_slice(args);
+    bosun().args(a).output().unwrap()
+}
+
+#[test]
+fn timeout_secs_is_range_checked_and_never_panics() {
+    for v in ["0", "3601", "18446744073709551615", "-1", "x"] {
+        let out = manifest_cli(&["--timeout-secs", v]);
+        assert_eq!(out.status.code(), Some(2), "{v}: {out:?}");
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
+    }
+    let e = Flow::bind(cfg(Duration::from_secs(u64::MAX)))
+        .unwrap()
+        .run(&gh(&FakeGithub::start()))
+        .unwrap_err();
+    assert!(!e.fix.trim().is_empty());
+}
+
+#[test]
+fn a_slow_client_cannot_extend_the_flow_deadline() {
+    let fake = fake_with_code();
+    let t0 = std::time::Instant::now();
+    let (port, h) = spawn_flow(&fake, Duration::from_millis(1500));
+    let drip = std::thread::spawn(move || {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        for _ in 0..40 {
+            if s.write_all(b"G").is_err() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(400));
+        }
+    });
+    let e = h.join().unwrap().unwrap_err();
+    assert!(e.message.contains("timed out"), "{e}");
+    assert!(t0.elapsed() < Duration::from_secs(8), "{:?}", t0.elapsed());
+    drop(drip);
+}
+
+#[test]
+fn start_page_is_served_once_then_gone() {
+    let fake = fake_with_code();
+    let (port, h) = spawn_flow(&fake, Duration::from_secs(20));
+    let state = state_of(port);
+    let (status, body) = get(port, "/start").unwrap();
+    assert!(matches!(status, 404 | 410), "{status}");
+    assert!(!body.contains(&state));
+    assert_eq!(
+        get(port, &format!("/callback?code={CODE}&state={state}"))
+            .unwrap()
+            .0,
+        200
+    );
+    h.join().unwrap().unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn key_file_must_be_a_small_regular_file_and_is_kept() {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("k.pem");
+    std::fs::write(&real, KEY).unwrap();
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let link = dir.path().join("link.pem");
+    symlink(&real, &link).unwrap();
+    assert!(manual(5, "Iv1.abc", "acme-gate", &KeySource::File(link)).is_err());
+    assert!(
+        manual(
+            5,
+            "Iv1.abc",
+            "acme-gate",
+            &KeySource::File(dir.path().into())
+        )
+        .is_err()
+    );
+    let big = dir.path().join("big.pem");
+    std::fs::write(&big, format!("{KEY}{}", "A".repeat(20_000))).unwrap();
+    assert!(manual(5, "Iv1.abc", "acme-gate", &KeySource::File(big)).is_err());
+    assert!(manual(5, "Iv1.abc", "acme-gate", &KeySource::File(real.clone())).is_ok());
+    assert!(real.exists(), "the key file is not deleted here");
+
+    // A group/other readable key warns on stderr, never with key material.
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o644)).unwrap();
+    let out = manifest_cli(&[
+        "--manual",
+        "--app-id",
+        "5",
+        "--client-id",
+        "Iv1.abc",
+        "--slug",
+        "acme-gate",
+        "--key-file",
+        real.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("readable"), "{err}");
+    no_key_material(&out.stdout, &out.stderr);
+    assert!(real.exists());
+}
