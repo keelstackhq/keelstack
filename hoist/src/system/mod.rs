@@ -5,6 +5,8 @@ pub mod check;
 pub mod explain;
 pub mod init;
 pub mod live;
+pub mod rotate;
+pub mod stamp;
 
 use crate::error::HoistError;
 use crate::timeutil::{add_months, parse_date};

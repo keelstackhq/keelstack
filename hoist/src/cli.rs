@@ -68,6 +68,30 @@ pub enum SystemCommand {
         #[arg(long)]
         live: bool,
     },
+    /// Record when, how and by whom a credential was created and when it expires (edits
+    /// system.toml in place; no HTTP, never commits)
+    Stamp {
+        /// The credential id
+        id: String,
+        /// Creation day, YYYY-MM-DD
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        created: String,
+        /// Expiry day, YYYY-MM-DD, or `never`
+        #[arg(long, value_name = "YYYY-MM-DD|never")]
+        expires: Option<String>,
+        /// Who created it (`created_by`)
+        #[arg(long, value_name = "WHO")]
+        by: Option<String>,
+        /// How it was created (`created_via`)
+        #[arg(long, value_name = "TEXT")]
+        via: Option<String>,
+        /// The provider's id for it (`provider_ref`; never a value)
+        #[arg(long = "ref", value_name = "PROVIDER_REF")]
+        provider_ref: Option<String>,
+        /// The system file (default: system.toml in -C DIR)
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+    },
     /// Render SYSTEM.md from system.toml on stdout
     Explain {
         /// The system file (default: system.toml in -C DIR)
@@ -299,9 +323,10 @@ pub enum SecretsCommand {
         #[arg(last = true, required = true, num_args = 1.., value_name = "CMD")]
         cmd: Vec<OsString>,
     },
-    /// Rotate a secret hoist minted (CLOUDFLARE_API_TOKEN): mint, verify, seal, revoke the old
+    /// Rotate CLOUDFLARE_API_TOKEN (mint, verify, seal, revoke the old), or a system.toml
+    /// credential by id (auto: create, test, set, revoke old; assisted/manual: human steps)
     Rotate {
-        /// Secret to rotate; all rotatable secrets when omitted
+        /// Secret or system.toml credential id to rotate; CLOUDFLARE_API_TOKEN when omitted
         name: Option<String>,
     },
 }
@@ -439,6 +464,9 @@ impl Command {
             Command::System {
                 command: SystemCommand::Check { .. },
             } => "system check",
+            Command::System {
+                command: SystemCommand::Stamp { .. },
+            } => "system stamp",
             Command::System {
                 command: SystemCommand::Explain { .. },
             } => "system explain",

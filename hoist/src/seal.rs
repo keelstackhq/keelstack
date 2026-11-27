@@ -64,6 +64,18 @@ pub fn put_secret(http: &Http, d: &Desired, name: &str, value: &Secret) -> Resul
     put_at(http, &format!("{repo}/actions"), &what, name, value)
 }
 
+/// Create or update the repository Actions secret `name` of `owner/name` with `value`, sealed
+/// (no `Desired` needed: `system.toml` storages name their repo).
+pub fn put_repo_secret(
+    http: &Http,
+    (owner, name): (&str, &str),
+    key: &str,
+    value: &Secret,
+) -> Result<(), HoistError> {
+    let base = format!("/repos/{}/{}/actions", seg(owner), seg(name));
+    put_at(http, &base, &format!("{owner}/{name}"), key, value)
+}
+
 /// `name` where `secret_scope` keeps it: every environment of the jobs that read it, else
 /// the repository. In environment scope it is never written to the repository.
 pub fn put_home(http: &Http, d: &Desired, name: &str, value: &Secret) -> Result<(), HoistError> {

@@ -134,6 +134,29 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
         } => system::check::system_check(&dir, file.as_deref(), live, cli.verbose),
         Command::System {
             command:
+                cli::SystemCommand::Stamp {
+                    ref id,
+                    ref created,
+                    ref expires,
+                    ref by,
+                    ref via,
+                    ref provider_ref,
+                    ref file,
+                },
+        } => system::stamp::system_stamp(
+            &dir,
+            file.as_deref(),
+            &system::stamp::StampArgs {
+                id,
+                created,
+                expires: expires.as_deref(),
+                by: by.as_deref(),
+                via: via.as_deref(),
+                provider_ref: provider_ref.as_deref(),
+            },
+        ),
+        Command::System {
+            command:
                 cli::SystemCommand::Explain {
                     ref file,
                     write,
