@@ -128,6 +128,8 @@ pub struct MigrateReport {
     pub human_step: Option<HumanStep>,
     /// On failure: what was rolled back and the exact commands to recover.
     pub recovery: Option<String>,
+    /// Warnings that are not steps (for example a baseline `splice check` that could not run).
+    pub notes: Vec<String>,
 }
 
 #[derive(Serialize)]
@@ -175,6 +177,9 @@ pub fn render_migrate_text(r: &MigrateReport) -> String {
     }
     if let Some(p) = &r.pr {
         out.push_str(&format!("pr: {} ({})\n", p.url, p.action));
+    }
+    for n in &r.notes {
+        out.push_str(&format!("note: {n}\n"));
     }
     if let Some(rec) = &r.recovery {
         out.push_str(&format!("\nrecovery: {rec}\n"));
@@ -269,6 +274,10 @@ struct Mig<'a> {
     pr: Option<PrInfo>,
     /// `splice check` drift that exists on the base, before any step ran: not the migration's doing.
     base_drift: Vec<Drift>,
+    /// Sources `splice update` refused because of local edits already on the base.
+    not_updated: Vec<String>,
+    /// Warnings for the JSON `notes`.
+    notes: Vec<String>,
 }
 
 /// One path `splice check --json` reports as drifted, with where it comes from.
@@ -289,16 +298,41 @@ impl Drift {
         }
     }
 
+    /// Same path with the same cause (a file edited on the base stays "the same" drift).
+    fn same_as(&self, o: &Drift) -> bool {
+        self.path == o.path && self.cause == o.cause
+    }
+
     /// What the owner can do about it, in splice's own words (reference.md, Channels).
     fn choices(&self) -> String {
-        match &self.channel {
-            Some(c) => format!(
-                "keep local: `splice update --channel {c} --exclude {p}` (replaces that channel's stored filters; keep the ones in .splice/channels/{c}.toml); take the template's: `splice update --channel {c} --force`",
+        match (&self.channel, self.path.contains('#')) {
+            (Some(c), true) => format!(
+                "restore the block: `splice update --channel {c} --force`; to keep a different text, change it in the channel's source or drop that section piece (a local edit of a channel-owned block is overwritten by the next update)"
+            ),
+            (Some(c), false) => format!(
+                "keep local: `splice update --channel {c} --exclude {p}` (replaces that channel's stored filters; keep the ones in .splice/channels/{c}.toml); take template: `splice update --channel {c} --force`",
                 p = self.path
             ),
-            None => "keep local: move the local notes into the seed file the template provides (e.g. `<target>/CLAUDE.md`), then `splice update --force`; take the template's: `splice update --force`".into(),
+            (None, _) => "keep local: move the local notes into the seed file the template provides (e.g. `<target>/CLAUDE.md`), then `splice update --force`; take template: `splice update --force`".into(),
         }
     }
+}
+
+/// The paths a refused `splice update` names (`` `P` is owned by X but was edited locally ``),
+/// or None when the refusal names none (some other reason).
+fn refusal_paths(v: &Value) -> Option<Vec<String>> {
+    let paths: Vec<String> = v["messages"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .filter(|m| m.contains("` is owned by ") && m.ends_with("was edited locally"))
+        .filter_map(|m| {
+            let a = m.find('`')?;
+            let rest = &m[a + 1..];
+            Some(rest[..rest.find('`')?].to_string())
+        })
+        .collect();
+    (!paths.is_empty()).then_some(paths)
 }
 
 /// The drifted paths of a `splice --json check` report (`changes` + the message that names each).
@@ -315,12 +349,18 @@ fn parse_drift(v: &Value) -> Vec<Drift> {
                     let path = c["path"].as_str()?.to_string();
                     let needle = format!("`{path}`");
                     let msg = msgs.iter().find(|m| m.contains(&needle)).copied();
-                    let channel = msg.and_then(|m| {
-                        let rest = m.strip_prefix("channel ")?;
-                        let (name, _) = rest.split_once(": ")?;
-                        Some(name.to_string())
-                    });
-                    let cause = if c["action"] == "conflict" {
+                    // A section block is reported as `HOST#CHANNEL`: the channel is the suffix.
+                    let channel = match path.split_once('#') {
+                        Some((_, name)) => Some(name.to_string()),
+                        None => msg.and_then(|m| {
+                            let rest = m.strip_prefix("channel ")?;
+                            let (name, _) = rest.split_once(": ")?;
+                            Some(name.to_string())
+                        }),
+                    };
+                    let cause = if path.contains('#') {
+                        "block edited, deleted or broken"
+                    } else if c["action"] == "conflict" {
                         "unresolved conflict markers"
                     } else if msg.is_some_and(|m| m.contains("was deleted")) {
                         "deleted"
@@ -484,7 +524,24 @@ impl Mig<'_> {
         npm::registry_pin(self.r, &self.dir, tool, &self.target)
     }
 
-    fn splice_update(&self, extra: &[&str]) -> Result<String, String> {
+    /// `splice check` on the base with the target splice, before any update: the drift that is
+    /// already there. An error (not 0/1) leaves it unknown and is noted.
+    fn baseline(&mut self) {
+        let c = self.tool("splice", &["--json", "check"]);
+        let o = self.r.run(&c);
+        match o.code {
+            0 => {}
+            1 => self.base_drift = json(&o).map(|v| parse_drift(&v)).unwrap_or_default(),
+            _ => self.notes.push(format!(
+                "baseline `splice check` could not run ({}): drift on the base is unknown, so any drift after the update fails the migration",
+                failure(&c, &o)
+            )),
+        }
+    }
+
+    /// One `splice update`; `Ok(None)` when splice refused only because of owned files that were
+    /// already drifted on the base (that source is not updated, the run goes on).
+    fn splice_try(&self, extra: &[&str]) -> Result<Option<String>, String> {
         let mut a = vec!["--json", "--yes", "update"];
         a.extend(extra);
         let c = self.tool("splice", &a);
@@ -494,16 +551,66 @@ impl Mig<'_> {
                 let n = json(&o)
                     .and_then(|v| v["changes"].as_array().map(|a| a.len()))
                     .unwrap_or(0);
-                Ok(format!("{n} file changes"))
+                Ok(Some(format!("{n} file changes")))
             }
-            1 => Err(format!(
-                "{}; conflicts or edited owned files need a decision: run `splice update {}` by hand, \
-                 resolve them, then rerun keel migrate",
-                failure(&c, &o),
-                extra.join(" ")
-            )),
+            1 => {
+                let only_old = json(&o).and_then(|v| refusal_paths(&v)).is_some_and(|ps| {
+                    ps.iter()
+                        .all(|p| self.base_drift.iter().any(|b| &b.path == p))
+                });
+                if only_old {
+                    return Ok(None);
+                }
+                Err(format!(
+                    "{}; conflicts or edited owned files need a decision: run `splice update {}` by hand, \
+                     resolve them, then rerun keel migrate",
+                    failure(&c, &o),
+                    extra.join(" ")
+                ))
+            }
             _ => Err(failure(&c, &o)),
         }
+    }
+
+    fn mark_not_updated(&mut self, label: &str) {
+        if !self.not_updated.iter().any(|l| l == label) {
+            self.not_updated.push(label.to_string());
+        }
+    }
+
+    /// Every source on its own, after `--all` refused: the clean ones update, the drifted stay.
+    fn update_each_source(&mut self) -> Result<String, String> {
+        let mut sources: Vec<(String, Vec<String>)> = Vec::new();
+        if self.dir.join(".splice/lock.toml").is_file() {
+            sources.push(("main template".into(), Vec::new()));
+        }
+        let mut names: Vec<String> = std::fs::read_dir(self.dir.join(".splice/channels"))
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter_map(|e| {
+                        let p = e.path();
+                        (p.extension()? == "toml")
+                            .then(|| p.file_stem()?.to_str().map(String::from))?
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        for n in names {
+            sources.push((format!("channel {n}"), vec!["--channel".into(), n]));
+        }
+        let mut done = Vec::new();
+        for (label, args) in sources {
+            if self.not_updated.contains(&label) {
+                continue;
+            }
+            let a: Vec<&str> = args.iter().map(String::as_str).collect();
+            match self.splice_try(&a)? {
+                Some(d) => done.push(format!("{label}: {d}")),
+                None => self.mark_not_updated(&label),
+            }
+        }
+        Ok(done.join(", "))
     }
 
     fn s_splice(&mut self) -> Res {
@@ -525,14 +632,29 @@ impl Mig<'_> {
         }
         let mut notes = Vec::new();
         if self.p.decisions_channel {
-            let d = self.splice_update(&["--channel", "decisions"])?;
-            if self.commit_all("chore: sync org decisions")? {
-                notes.push(format!("decisions channel ({d})"));
+            match self.splice_try(&["--channel", "decisions"])? {
+                Some(d) => {
+                    if self.commit_all("chore: sync org decisions")? {
+                        notes.push(format!("decisions channel ({d})"));
+                    }
+                }
+                None => self.mark_not_updated("channel decisions"),
             }
         }
-        let d = self.splice_update(&["--all"])?;
+        let d = match self.splice_try(&["--all"])? {
+            Some(d) => d,
+            // `--all` writes nothing when any source has drifted owned files: go source by source.
+            None => self.update_each_source()?,
+        };
         if self.commit_all("chore: splice update to the latest template and channels")? {
             notes.push(format!("template and channels ({d})"));
+        }
+        if !self.not_updated.is_empty() {
+            notes.push(format!(
+                "NOT updated because of local edits: {}",
+                self.not_updated.join(", ")
+            ));
+            return Ok((MAction::Pending, notes.join(", ")));
         }
         if notes.is_empty() {
             Ok((MAction::Ok, "up to date".into()))
@@ -791,7 +913,7 @@ impl Mig<'_> {
             // migration; only drift a step introduced (or anything that is not drift) fails it.
             let new: Vec<&Drift> = now
                 .iter()
-                .filter(|d| !self.base_drift.iter().any(|b| b.path == d.path))
+                .filter(|d| !self.base_drift.iter().any(|b| b.same_as(d)))
                 .collect();
             let only_old_drift = o.code == 1 && !now.is_empty() && new.is_empty();
             // Dry-run reports the work `check` finds; the real run must end clean.
@@ -812,7 +934,7 @@ impl Mig<'_> {
                     failure(&c, &o)
                 ));
             }
-            if only_old_drift || (self.dry && !now.is_empty()) {
+            if only_old_drift || (self.dry && !now.is_empty()) || !self.not_updated.is_empty() {
                 let list = now
                     .iter()
                     .map(|d| {
@@ -827,12 +949,20 @@ impl Mig<'_> {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
+                let head = if self.not_updated.is_empty() {
+                    format!(
+                        "Settle {} splice drift path(s) that were already on the base (not caused by this migration)",
+                        now.len()
+                    )
+                } else {
+                    format!(
+                        "These sources were NOT updated because of local edits: {}. Resolve each path (keep local or take the template's), then rerun `keel migrate`",
+                        self.not_updated.join(", ")
+                    )
+                };
                 self.human(
                     "splice-drift",
-                    format!(
-                        "Settle {} splice drift path(s) that were already on the base (not caused by this migration); per path: {list}",
-                        now.len()
-                    ),
+                    format!("{head}; per path: {list}"),
                     "",
                     "splice check",
                 );
@@ -1042,6 +1172,15 @@ impl Mig<'_> {
             "Moves this repo to keelstack v{} with `keel migrate`.\n\n## Steps\n",
             self.target
         );
+        if !self.not_updated.is_empty() {
+            b.insert_str(
+                0,
+                &format!(
+                    "**Partial migration:** these splice sources were NOT updated because of local edits already on the base: {}. See \"Left for a human\" below; rerun `keel migrate` once resolved.\n\n",
+                    self.not_updated.join(", ")
+                ),
+            );
+        }
         if self.excluded > 0 {
             b.insert_str(
                 0,
@@ -1471,14 +1610,9 @@ fn in_worktree(
         before: None,
         pr: None,
         base_drift: Vec::new(),
+        not_updated: Vec::new(),
+        notes: Vec::new(),
     };
-    if p.splice {
-        // Drift the base already has, before any step: `verify` fails only on what a step adds.
-        let o = r.run(&m.tool("splice", &["--json", "check"]));
-        if o.code == 1 {
-            m.base_drift = json(&o).map(|v| parse_drift(&v)).unwrap_or_default();
-        }
-    }
     if !dry && p.bosun {
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
         let kept = keel_dir.join(SNIPPET_BEFORE);
@@ -1522,6 +1656,9 @@ fn in_worktree(
                 },
             });
             continue;
+        }
+        if *id == "splice" && p.splice {
+            m.baseline();
         }
         let res = match *id {
             "tools" => m.s_tools(),
@@ -1629,6 +1766,7 @@ fn in_worktree(
         checklist,
         human_step,
         recovery,
+        notes: m.notes,
     })
 }
 

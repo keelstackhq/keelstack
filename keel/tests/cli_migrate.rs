@@ -27,9 +27,16 @@ case "$name $*" in
   "bosun --version") echo "bosun $(ver bosun)";;
   "hoist --version") echo "hoist $(ver hoist)";;
   "splice --json --yes update --channel decisions")
+    [ "$KEEL_SCENARIO" = refuse ] && { echo '{"ok":false,"command":"update","changes":[],"messages":["`apps/site/astro.config.mjs` is owned by channel decisions but was edited locally","nothing was written; revert the files above or pass --force to replace them"]}'; exit 1; }
     mkdir -p docs/agents; echo "decisions v2" > docs/agents/org-decisions.md
     echo '{"ok":true,"changes":[{"path":"docs/agents/org-decisions.md"}]}';;
+  "splice --json --yes update")
+    [ "$KEEL_SCENARIO" = refuse ] || [ "$KEEL_SCENARIO" = refuse-main ] && { echo '{"ok":false,"command":"update","changes":[],"messages":["`crates/x/AGENTS.md` is owned by the template but was edited locally","nothing was written; revert the files above or pass --force to replace them"]}'; exit 1; }
+    echo template v2 > .splice/template.txt; echo '{"ok":true,"changes":[]}';;
   "splice --json --yes update --all")
+    [ "$KEEL_SCENARIO" = refuse ] && { echo '{"ok":false,"command":"update","changes":[],"messages":["main: `crates/x/AGENTS.md` is owned by the template but was edited locally","channel decisions: `apps/site/astro.config.mjs` is owned by channel decisions but was edited locally","nothing was written; revert the files above or pass --force to replace them (broken markers are fixed by hand)"]}'; exit 1; }
+    [ "$KEEL_SCENARIO" = refuse-main ] && { echo '{"ok":false,"command":"update","changes":[],"messages":["main: `crates/x/AGENTS.md` is owned by the template but was edited locally","nothing was written; revert the files above or pass --force to replace them"]}'; exit 1; }
+    [ "$KEEL_SCENARIO" = refuse-other ] && { echo '{"ok":false,"command":"update","changes":[],"messages":["main: `other.md` is owned by the template but was edited locally","nothing was written"]}'; exit 1; }
     [ "$KEEL_SCENARIO" = conflict ] && { echo "<<<<<<< ours" > AGENTS.md; echo '{"ok":false,"exit_code":1}'; exit 1; }
     [ -n "$KEEL_REWRITE_GITIGNORE" ] && printf "dist/\\n" > .gitignore
     [ -n "$KEEL_CREATE_ENV" ] && echo "TOKEN=from-the-step" > .env
@@ -38,7 +45,10 @@ case "$name $*" in
   "splice --json check")
     DRIFT='{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"},{"path":"apps/site/astro.config.mjs","action":"update","class":"owned"}],"messages":["`crates/x/AGENTS.md` is owned by the template but was edited locally; `splice update --force` restores it, or revert the change","channel hull: `apps/site/astro.config.mjs` is owned by this channel but was deleted; revert the change","channel hull: 1 managed path(s) differ from .splice/channels/hull.toml"]}'
     NEWDRIFT='{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"},{"path":".splice/template.txt","action":"update","class":"owned"}],"messages":["`.splice/template.txt` is owned by the template but was edited locally"]}'
-    [ "$KEEL_SCENARIO" = predrift ] && { echo "$DRIFT"; exit 1; }
+    [ "$KEEL_SCENARIO" = predrift ] || [ "$KEEL_SCENARIO" = refuse ] || [ "$KEEL_SCENARIO" = refuse-main ] && { echo "$DRIFT"; exit 1; }
+    [ "$KEEL_SCENARIO" = sections ] && { echo '{"ok":false,"command":"check","changes":[{"path":"AGENTS.md#decisions","action":"update","class":"owned"}],"messages":[]}'; exit 1; }
+    [ "$KEEL_SCENARIO" = cause-change ] && { if grep -q "template v2" .splice/template.txt 2>/dev/null; then echo '{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"}],"messages":["`crates/x/AGENTS.md` is owned by the template but was deleted"]}'; else echo '{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"}],"messages":["`crates/x/AGENTS.md` is owned by the template but was edited locally"]}'; fi; exit 1; }
+    [ "$KEEL_SCENARIO" = basebroken ] && { if grep -q "template v2" .splice/template.txt 2>/dev/null; then echo "$DRIFT"; exit 1; else echo "boom" >&2; exit 3; fi; }
     [ "$KEEL_SCENARIO" = predrift-new ] && { if grep -q "template v2" .splice/template.txt 2>/dev/null; then echo "$NEWDRIFT"; else echo "$DRIFT"; fi; exit 1; }
     [ "$KEEL_SCENARIO" = checkfail ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
     [ "$KEEL_SCENARIO" = dry ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
@@ -1153,4 +1163,101 @@ fn no_commits_but_a_changed_setup_snippet_exits_5_with_no_pr() {
     assert_eq!(v["pr"], serde_json::Value::Null);
     assert_eq!(ids(&v), vec!["setup-snippet"]);
     assert!(!env.calls().iter().any(|c| c.starts_with("gh pr create")));
+}
+
+#[test]
+fn splice_refusing_owned_drift_marks_the_source_not_updated_and_the_run_goes_on() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("refuse-main", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(action(&v, "splice"), "pending");
+    // the other source and the later steps still ran and were committed
+    assert_ne!(action(&v, "bosun-pin"), "failed");
+    assert_eq!(v["changed"], true);
+    assert_eq!(v["pr"]["action"], "opened");
+    let log = git(&env.repo, &["log", "--format=%s", &format!("main..{BR}")]);
+    assert!(log.contains("chore: sync org decisions"), "{log}");
+    let t = entry(&v, "splice-drift")["title"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(t.contains("NOT updated"), "{t}");
+    assert!(t.contains("main template"), "{t}");
+    assert!(t.contains("then rerun `keel migrate`"), "{t}");
+}
+
+#[test]
+fn every_source_refusing_leaves_no_commits_and_no_pr() {
+    let env = Env::new(&["splice"]);
+    let (code, v) = env.run_untouched("refuse", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["status"], "human");
+    assert_eq!(v["pr"], serde_json::Value::Null);
+    assert_eq!(v["changed"], false);
+    let t = entry(&v, "splice-drift")["title"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        t.contains("main template") && t.contains("channel decisions"),
+        "{t}"
+    );
+}
+
+#[test]
+fn a_refusal_for_a_path_that_was_not_drifted_on_the_base_fails_and_rolls_back() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("refuse-other", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(action(&v, "splice"), "failed");
+    assert!(no_keel_branch(&env));
+}
+
+#[test]
+fn section_drift_belongs_to_its_channel_and_never_suggests_exclude() {
+    let env = Env::new(&["splice"]);
+    commit_base(
+        &env,
+        &[
+            (".splice/template.txt", "template v2\n"),
+            ("docs/agents/org-decisions.md", "decisions v2\n"),
+        ],
+    );
+    let (code, v) = env.run_untouched("sections", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    let t = entry(&v, "splice-drift")["title"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        t.contains("AGENTS.md#decisions") && t.contains("channel decisions"),
+        "{t}"
+    );
+    assert!(
+        t.contains("splice update --channel decisions --force"),
+        "{t}"
+    );
+    assert!(!t.contains("--exclude AGENTS.md#decisions"), "{t}");
+}
+
+#[test]
+fn drift_on_the_same_path_with_a_new_cause_counts_as_introduced() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("cause-change", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(action(&v, "verify"), "failed");
+}
+
+#[test]
+fn a_baseline_check_that_errors_is_noted_and_treated_as_unknown() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("basebroken", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    let notes = v["notes"].as_array().unwrap();
+    assert!(
+        notes
+            .iter()
+            .any(|n| n.as_str().unwrap().contains("baseline")),
+        "{v}"
+    );
 }
