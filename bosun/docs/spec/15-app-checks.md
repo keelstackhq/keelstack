@@ -284,3 +284,25 @@ or `-v` logs. The private key is a `Secret` (redacting `Debug`, no `Display`, wi
 the client and webhook secrets are wiped on arrival. stdout holds only `app_id`, `client_id`,
 `slug`, `source`. `--manual --app-id N --client-id C --slug S (--key-file PEM | --key-stdin)` is
 the fallback: the key comes from a file or stdin (echo off on a terminal via `stty`), never argv.
+
+### `bosun owner setup`: the App and the signer in one run (B2 T2)
+
+`bosun owner setup [--manual ... | --org/--name] [--dry-run] [--delete-key-file] [--remote origin]`
+runs on the owner's computer inside the repo. Each step reads what exists and skips it, so a rerun
+changes nothing and a cut run resumes; the App is never created twice (`.bosun/gate-app.toml`, on
+the branch or on main, names it). Steps: (1) the App from the manifest flow or `--manual`; (2) the
+environments `bosun-app` and `bosun-signer` with deployment branch policy `main` only and no
+reviewers (an environment that allows other branches is fixed; one with extra custom branches
+is exit 5); (3) the variable `BOSUN_APP_CLIENT_ID` and the secret `BOSUN_APP_KEY` in `bosun-app`;
+(4) a signer ed25519 key as `bosun keygen` makes it, generated in memory, sealed as
+`BOSUN_SIGNER_KEY` into `bosun-signer` and enrolled with `role = "signer"` in
+`.bosun/approvers.toml`; (5) the keys are wiped from memory (the owner's `--key-file` is deleted
+only with `--delete-key-file`); (6) the branch `bosun/gate-app` (approvers.toml and
+`.bosun/gate-app.toml` with `id` and `slug` only) is pushed with a plain push, never forced. No
+PR, no merge: an agent opens the PR and the owner approves it on GitHub (a PR cannot enroll its
+own key). Secrets are sealed with the environment public key from the API (libsodium sealed box),
+never sent in plaintext. A known App whose key or client id is missing needs `--manual` (exit 5):
+bosun cannot read a key back and never replaces one it cannot prove it should. A signer secret
+with no enrolled key is replaced by a new enrolled key. `--dry-run` writes, pushes and mutates
+nothing; its `steps` list each step with `device` (`owner-computer` or `agent`). stdout holds
+public ids only.

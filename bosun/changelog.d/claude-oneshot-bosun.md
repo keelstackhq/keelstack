@@ -1,1 +1,2 @@
 - `[intake] trusted_authors` (`any` default, `members` or a login list): claim, spawn, wave plan (listed in `data.skipped`) and comment records skip issues and comments of untrusted authors.
+- `bosun owner setup`: one run sets up the gate App environments, sealed secrets, the enrolled signer key and the `bosun/gate-app` branch (B2 T2).

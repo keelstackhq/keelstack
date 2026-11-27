@@ -7,21 +7,36 @@ use serde_json::json;
 
 use super::{ManifestArgs, OwnerCmd};
 use crate::app::App;
+use crate::github::AppCredentials;
 use crate::output::{BosunError, CmdResult, Outcome};
 use app_manifest::{Flow, FlowConfig, KeySource};
 
 pub mod app_manifest;
+pub mod setup;
 
 pub fn run(dir: Option<&Path>, cmd: &OwnerCmd) -> CmdResult {
     match cmd {
         OwnerCmd::Manifest(a) => manifest(dir, a),
+        OwnerCmd::Setup(a) => setup::run(dir, a),
     }
 }
 
 /// Create (or, with `--manual`, take) the gate App and report its public ids. The private key
 /// lives in memory only and is wiped when this returns: `owner setup` (T2) uses the library.
 fn manifest(dir: Option<&Path>, a: &ManifestArgs) -> CmdResult {
-    let (creds, source) = if a.manual {
+    let (creds, source) = credentials(dir, None, a)?;
+    Ok(Outcome::data(json!({
+        "app_id": creds.id, "client_id": creds.client_id, "slug": creds.slug, "source": source,
+    })))
+}
+
+/// The App's credentials: the manifest flow, or with `--manual` the values and key given.
+pub(super) fn credentials(
+    dir: Option<&Path>,
+    app: Option<&App>,
+    a: &ManifestArgs,
+) -> Result<(AppCredentials, &'static str), BosunError> {
+    if a.manual {
         let usage = |m: &str| {
             BosunError::usage(
                 m.to_string(),
@@ -40,9 +55,16 @@ fn manifest(dir: Option<&Path>, a: &ManifestArgs) -> CmdResult {
                 ));
             }
         };
-        (app_manifest::manual(id, client_id, slug, &key)?, "manual")
+        Ok((app_manifest::manual(id, client_id, slug, &key)?, "manual"))
     } else {
-        let app = App::load(dir)?;
+        let loaded;
+        let app = match app {
+            Some(app) => app,
+            None => {
+                loaded = App::load(dir)?;
+                &loaded
+            }
+        };
         let cfg = FlowConfig {
             app_name: a
                 .name
@@ -57,9 +79,6 @@ fn manifest(dir: Option<&Path>, a: &ManifestArgs) -> CmdResult {
             flow.start_url(),
             a.timeout_secs
         );
-        (flow.run(&*app.gh)?, "manifest")
-    };
-    Ok(Outcome::data(json!({
-        "app_id": creds.id, "client_id": creds.client_id, "slug": creds.slug, "source": source,
-    })))
+        Ok((flow.run(&*app.gh)?, "manifest"))
+    }
 }

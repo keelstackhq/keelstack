@@ -369,6 +369,7 @@ impl Command {
             Command::Hook(HookCmd::PreCompact) => "hook pre-compact",
             Command::Doctor(_) => "doctor",
             Command::Owner(OwnerCmd::Manifest(_)) => "owner manifest",
+            Command::Owner(OwnerCmd::Setup(_)) => "owner setup",
             Command::Budget(BudgetCmd::Record(_)) => "budget record",
             Command::Plan(PlanCmd::Check(_)) => "plan check",
             Command::Plan(PlanCmd::Import(_)) => "plan import",
@@ -679,6 +680,27 @@ pub enum OwnerCmd {
     /// Create the gate GitHub App with the manifest flow (a loopback callback), or take one made
     /// by hand with `--manual`. Prints only the App's public ids; the key is never printed.
     Manifest(ManifestArgs),
+    /// One run sets up the gate App and the CI signer: the App (reused when `.bosun/gate-app.toml`
+    /// names it), the environments `bosun-app` and `bosun-signer` (main only, no reviewers), the
+    /// variable and both secrets (sealed), the signer key enrolled in `.bosun/approvers.toml`,
+    /// and a plain push of the branch `bosun/gate-app`. Every step is skipped when done; no
+    /// private key is kept on disk or printed. No PR, no merge.
+    Setup(SetupArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    #[command(flatten)]
+    pub app: ManifestArgs,
+    /// Read and report only: no write, push or mutating call; list the steps and their device.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Delete the `--key-file` after the App key is stored (never deleted otherwise).
+    #[arg(long, requires = "key_file")]
+    pub delete_key_file: bool,
+    /// The git remote that receives the branch `bosun/gate-app`.
+    #[arg(long, default_value = "origin")]
+    pub remote: String,
 }
 
 #[derive(Debug, Args)]

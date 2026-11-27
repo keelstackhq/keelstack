@@ -13,6 +13,9 @@ wave plan = {epic: int, shape: str, warnings: [str], run: [{issue: int, plan_id:
     skipped: [{issue: int, reason: str}]};
 msg = {session: str, chars: int};
 owner manifest = {app_id: int, client_id: str, slug: str, source: str};
+owner setup = {dry_run: bool, app_id: int | null, slug: str | null, client_id?: str, branch: str,
+    pushed: bool, signer_id?: str, signer_public_key?: str, steps: [{step: str, device: str, status: str,
+    detail: str}]};
 keygen = {id: str, role: str, path: str, public_key: str, enrolled: bool, toml: str, steps: [str]};
 test-integrity = {base: str, files_checked: int, integrity: str, integrity_reason?: str,
     findings: [{file: str, kind: str, base: int, head: int | null, allowed: bool, reason?: str}],

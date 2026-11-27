@@ -10,6 +10,13 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub const PAGE_SIZE: usize = 2;
+/// The id of the environment public key the fake serves.
+pub const ENV_KEY_ID: &str = "fake-env-key-1";
+
+/// The secret half of the fake's environment public key: a test unseals what was sent.
+pub fn env_secret_key() -> crypto_box::SecretKey {
+    crypto_box::SecretKey::from([9u8; 32])
+}
 const TS: &str = "2026-10-22T10:00:00Z";
 
 #[derive(Debug, Clone)]
@@ -74,6 +81,12 @@ pub struct State {
     pub comments: Vec<FakeComment>,
     pub labels: Vec<(String, String)>,
     pub variables: HashMap<String, String>,
+    /// Environment variables set through the API: `env/NAME` -> value.
+    pub env_vars: HashMap<String, String>,
+    /// Environment secrets set through the API: `env/NAME` -> (`key_id`, sealed value as sent).
+    pub env_secrets: HashMap<String, (String, String)>,
+    /// The `reviewers` of every `PUT /environments/<name>` body, newest last.
+    pub env_reviewers: HashMap<String, Value>,
     /// Repo paths that answer 200: `actions/secrets/N`, `environments/E[/secrets/N|/variables/N]`.
     pub present: Vec<String>,
     /// Environment name -> (`deployment_branch_policy`, its `branch_policies` [{name, type}]).
@@ -2161,6 +2174,81 @@ fn route(
                 msg(404, "Branch not protected")
             } else {
                 ok(json!({"contexts": s.classic_checks, "checks": []}))
+            }
+        }
+        ("PUT", ["environments", name]) => {
+            s.environments.insert(
+                name.to_string(),
+                (
+                    json!({"protected_branches": false, "custom_branch_policies": true}),
+                    json!([]),
+                ),
+            );
+            s.env_reviewers
+                .insert(name.to_string(), body["reviewers"].clone());
+            ok(json!({"name": name}))
+        }
+        ("POST", ["environments", name, "deployment-branch-policies"])
+            if s.environments.contains_key(*name) =>
+        {
+            let policy = json!({"name": body["name"], "type": body["type"]});
+            let list = s
+                .environments
+                .get_mut(*name)
+                .unwrap()
+                .1
+                .as_array_mut()
+                .unwrap();
+            if list.iter().any(|p| p["name"] == body["name"]) {
+                return msg(422, "Validation Failed: already exists");
+            }
+            list.push(policy.clone());
+            ok(policy)
+        }
+        ("GET", ["environments", name, "secrets", "public-key"])
+            if s.environments.contains_key(*name) =>
+        {
+            let pk = env_secret_key().public_key();
+            ok(json!({"key_id": ENV_KEY_ID,
+                "key": bosun::github::b64::encode(pk.as_bytes())}))
+        }
+        ("PUT", ["environments", name, "secrets", secret])
+            if s.environments.contains_key(*name) =>
+        {
+            let sealed = body["encrypted_value"].as_str().unwrap_or("");
+            let well_formed = bosun::github::b64::decode(sealed).is_some_and(|b| b.len() > 48);
+            if body["key_id"] != ENV_KEY_ID || !well_formed {
+                return msg(422, "Validation Failed: bad key_id or encrypted_value");
+            }
+            let key = format!("{name}/{secret}");
+            let status = if s.env_secrets.contains_key(&key) {
+                204
+            } else {
+                201
+            };
+            s.env_secrets
+                .insert(key, (ENV_KEY_ID.to_string(), sealed.to_string()));
+            (status, Value::Null, vec![])
+        }
+        ("GET", ["environments", name, "secrets", secret])
+            if s.env_secrets.contains_key(&format!("{name}/{secret}")) =>
+        {
+            ok(json!({"name": secret}))
+        }
+        ("POST", ["environments", name, "variables"]) if s.environments.contains_key(*name) => {
+            let var = body["name"].as_str().unwrap_or("");
+            let key = format!("{name}/{var}");
+            if var.is_empty() || s.env_vars.contains_key(&key) {
+                return msg(409, "Already exists");
+            }
+            s.env_vars
+                .insert(key, body["value"].as_str().unwrap_or("").to_string());
+            (201, Value::Null, vec![])
+        }
+        ("GET", ["environments", name, "variables", var]) => {
+            match s.env_vars.get(&format!("{name}/{var}")) {
+                Some(v) => ok(json!({"name": var, "value": v})),
+                None => msg(404, "Not Found"),
             }
         }
         ("GET", ["actions", "variables", name]) => match s.variables.get(*name) {
