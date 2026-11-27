@@ -56,6 +56,9 @@ folders and has one required check, `ci-ok` (D-007: run it locally first, push o
   archived, their `gh:keelstackhq/<tool>` sources still render. New sources:
   `gh:keelstackhq/keelstack//hull/template`, `gh:keelstackhq/keelstack//decisions/channel`
   (only for repos outside the monorepo), actions `keelstackhq/keelstack/<tool>@vX`.
+- D-030: cascivo is the default UI layer: `@cascivo/react` + `--cascivo-*` tokens first; Preact via
+  `preact/compat` (CSR only), Astro via `@astrojs/react` islands + `@cascivo/astro`; another UI
+  library, Tailwind or CSS-in-JS needs a decision.
 - All other decisions: `decisions/DECISIONS.md`. Change one with a PR to `decisions/` (D-002).
 
 ## Where notes live
