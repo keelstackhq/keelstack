@@ -96,6 +96,8 @@ pub fn render_json(report: &Report) -> String {
 struct JsonErrorBody<'a> {
     message: &'a str,
     fix: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    kind: Option<&'a str>,
 }
 
 #[derive(Serialize)]
@@ -112,6 +114,16 @@ struct JsonError<'a> {
 /// The `--json` object for an exit-3 error (usage, config, auth, API): the same envelope as a
 /// report, `ok` false, no items, and `error.message` / `error.fix`.
 pub fn render_json_error(command: &str, message: &str, fix: &str) -> String {
+    render_json_error_kind(command, message, fix, None)
+}
+
+/// Like [`render_json_error`] with a stable `error.kind` (only some errors promise one).
+pub fn render_json_error_kind(
+    command: &str,
+    message: &str,
+    fix: &str,
+    kind: Option<&str>,
+) -> String {
     let view = JsonError {
         version: 1,
         command,
@@ -119,7 +131,7 @@ pub fn render_json_error(command: &str, message: &str, fix: &str) -> String {
         exit_code: 3,
         items: [],
         human_steps: [],
-        error: JsonErrorBody { message, fix },
+        error: JsonErrorBody { message, fix, kind },
     };
     serde_json::to_string(&view).expect("error serializes")
 }

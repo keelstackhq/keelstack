@@ -88,7 +88,7 @@ only checks that the Cloudflare one is set, and hoist and the hull script move t
 ## Migrate a repo to a new release
 
 ```bash
-npx @keelstackhq/keel migrate --pr          # run in the repo; --dry-run first if you want to see the plan
+npx -y @keelstackhq/keel@<version> migrate --pr   # run in the repo; --dry-run first to see the plan; -y skips the "Ok to proceed?" prompt
 ```
 
 One command does what used to be `splice update`, `bosun pin`, a hoist check and the setup-snippet by hand: it
@@ -97,6 +97,8 @@ as `chore: sync org decisions`), pins bosun and its setup script, refreshes hois
 (`splice check`, `bosun doctor`, `hoist check`, read-only), commits on `keel/migrate-vX.Y.Z` and, with `--pr`, opens
 ONE PR. It works in its own temporary git worktree based on `origin/<default>`: your checkout, branch, uncommitted, untracked and ignored files and unpushed commits are never touched. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an
 up-to-date repo changes nothing and exits 0. Flags: `--to X.Y.Z` (default: keel's version), `--dry-run`, `--pr`, `--mode MODE`.
+
+An npm warning about an unknown user config comes from your `~/.npmrc`, not from keel. Drift `splice check` already reports on the base does not fail the run: it becomes the checklist entry `splice-drift` (per path: keep local or take the template's, with the exact commands); a repo with nothing to publish skips the hoist step silently. With no commits and a human step left, the result is exit 5, `changed: false`, `pr: null`.
 
 An agent needs only `keel migrate --json --pr`: act on `status`, `steps[]` and `checklist[]` (exit 5 = the checklist
 is what only a human can do; usually "approve the PR", and "paste the file named in `setup_snippet.path` into the cloud environment"

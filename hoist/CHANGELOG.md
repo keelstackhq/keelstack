@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- `hoist --json init` with no publishable package: the exit-3 error object carries the stable `error.kind` `nothing-to-publish` (keel migrate reads it).
+
 ## 0.24.0 (2026-11-26)
 
 - `hoist org` gains `[fly]` (D-029, spec §16.7): Fly.io org, apps (create), primary region (checked), app secrets by name (never values) and certificates (create), through the Machines HTTP API with `FLY_API_TOKEN` (a proxy-injected dummy works; `HOIST_FLY_API` overrides the base). `--area fly`.

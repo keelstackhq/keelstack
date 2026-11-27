@@ -33,7 +33,8 @@ pub mod verify;
 pub use cli::{Area, Cli, Command};
 pub use error::HoistError;
 pub use report::{
-    Action, HumanStep, Item, Report, Verify, render_json, render_json_error, render_table,
+    Action, HumanStep, Item, Report, Verify, render_json, render_json_error,
+    render_json_error_kind, render_table,
 };
 
 /// Run the parsed command and return its report.

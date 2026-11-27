@@ -15,7 +15,8 @@ Issue #45: a step timeout kills the whole process group (fly-setup.sh and flyctl
 has no dns_record item (not "remove old records"); verify names the newer run when a push cancelled the deploy.
 
 `keel migrate` (spec section 11) moves a consumer repo to a release in one command: tools, splice, bosun pins, hoist,
-setup snippet, verification, one PR. Docs: `docs/migrate.md` at the repo root.
+setup snippet, verification, one PR. Docs: `docs/migrate.md` at the repo root. Pre-existing `splice check` drift on the base no
+longer fails it (checklist `splice-drift`); hoist "nothing to publish" (hoist `error.kind`) is a silent skip.
 
 ## Blocked
 
