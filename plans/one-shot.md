@@ -23,9 +23,10 @@ Friction seen (anu, 2026-11-27), each fixed by the task named:
 | 8 | CI signer: App, key, 2 environments, variable, 2 secrets, keygen, 3 PRs, a ruleset apply, in a fixed order | B2, B3 |
 | 9 | GitHub Free + private repo (no rulesets, no auto-merge, maybe no env secrets) found after the owner did everything | K1 |
 | 10 | `hoist check` cannot resolve a private App slug from a cloud session | H1 |
-| 11 | Cloud container had no cargo-deny/cargo-nextest; pinned versions not installed | B4 |
+| 11 | Cloud container had no cargo-deny/cargo-nextest; pinned versions not installed | BT |
 | 12 | Seed text goes stale (`Generated from hull-rust 0.13.0`, pins.toml splice/bosun values) | S4 |
 | 13 | `keel migrate --pr` makes its own branch; cloud sessions must push to an assigned branch | K1 |
+| 15 | Public repo: no way to make agents act only on issues and comments from owners/members | BA |
 | 14 | Merged-branch reuse: agent needed a force push to restart the session branch | K4 |
 
 ## Global constraints
@@ -232,7 +233,7 @@ depends: B2, S3, H1
 
 - UC-B3-1: from `.bosun/gate-app.toml` present to signer active with one owner approval (PR A) and no other owner touch.
 
-## B4: Setup script installs the pinned tools
+## BT: Setup script installs the pinned tools
 
 area: bosun
 depends: seed
@@ -245,7 +246,22 @@ depends: seed
 
 ### Done when
 
-- UC-B4-1: a fresh cloud session of a rust repo runs every CI step without installing anything.
+- UC-BT-1: a fresh cloud session of a rust repo runs every CI step without installing anything.
+
+## BA: Trusted authors for intake
+
+area: bosun
+depends: seed
+
+### Tasks
+
+- T1: `[intake] trusted_authors = "members"` (default `"any"`; also a login list): `bosun claim`, `wave plan`, spawn and issue pick-up skip issues, and `bosun` commands ignore comments, whose author is not the owner, a `governance/owners.toml` owner or an org member/collaborator (`author_association` OWNER, MEMBER, COLLABORATOR); skipped items are listed with the reason
+  touch: bosun/src/config.rs, bosun/src/cli/claim.rs, bosun/src/core/intake_trust.rs, bosun/tests/intake_trust.rs
+  size: 250
+
+### Done when
+
+- UC-BA-1: with `trusted_authors = "members"`, an issue opened by an outside user is never claimed or spawned, and `wave plan` lists it as skipped.
 
 ## H1: hoist pins by id
 
@@ -265,7 +281,7 @@ depends: seed
 ## K5: keel up
 
 area: keel
-depends: K3, K4, B1, B3, B4, S4
+depends: K3, K4, B1, B3, BT, S4
 
 `keel up [--to X.Y.Z] [--mode autonomous] [--branch B] [--json]` (new name for the whole flow;
 `keel migrate` stays as today's subset): preflight, repoint, migrate, settle drift, mode
