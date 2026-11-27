@@ -2081,16 +2081,23 @@ breaks the legacy name, any other name then reports the parse error, exit 3) fol
   failed test, or a first write that fails with nothing written, revokes the new credential; a
   partial set keeps both, adds human step `partial:ID` naming the new token id and the storages
   written and not written, and records the new id in `rotation.pending_ref` (space-separated ids,
-  appended to any already there; never a value)). A rerun cannot reuse a pending token (its value is
+  appended to any already there; never a value); a `provider_ref` that is a name is then set to
+`token id OLD_ID` in the same write, since the new token reuses the old one's name). Cloudflare
+lookup skips every id in `pending_ref`; an id match wins, else exactly one name match must
+remain (several: exit 3, "set it to the old token's id", `hoist system stamp … --ref`). A rerun cannot reuse a pending token (its value is
   never kept), so it mints a fresh one and, once it is stored everywhere, clears `pending_ref`
   and revokes each pending id (never the one it just minted). On success hoist re-reads `system.toml`, edits that credential (toml_edit,
   comments kept) and writes it atomically (temp file, rename): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
   `provider_ref` when the new id is known, `pending_ref` removed. Order: create, test, set, stamp,
   revoke pending ids, revoke the old one last. A failed stamp is item `system/stamp/ID` (exit 1)
-  with human step `stamp:ID` (`hoist system stamp ID --created … --expires … --ref NEW_ID`).
+  with human step `stamp:ID` (`hoist system stamp ID --created … --expires … --ref NEW_ID`);
+then the pending ids are not revoked (item `pending`, "kept ID"): `pending_ref` still names them,
+so the next rotation revokes them; the old token, replaced everywhere, is still revoked.
 
 `hoist system stamp ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF]`
-records a rotation done by hand: it sets those keys of that credential only (other bytes kept),
+records a rotation done by hand: it sets those keys of that credential only (other bytes kept;
+it never touches `rotation.pending_ref`, so tokens a partial rotation left live stay recorded and
+the next `hoist secrets rotate ID` revokes them; revoke them by hand and remove the key to end it sooner),
 re-validates the file and writes `system.toml` (no HTTP, never commits). Item
 `system/stamp/ID` (`update`, or `ok` when nothing changed); exit 0; unknown id or bad date exit 3
 with nothing written.

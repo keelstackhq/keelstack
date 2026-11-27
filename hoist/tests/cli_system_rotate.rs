@@ -940,7 +940,12 @@ struct FlyRun {
 /// Rotate `fly-deploy` (provider_ref `old-id`, one fly-secret storage) with a `fly` stub whose
 /// `first` case arms run before the defaults, and `GET /apps/myapp` answering `probe`.
 fn fly_case(first: &str, probe: u16, code: i32) -> FlyRun {
-    let text = system(&[&FLY_CRED.replace("REF", "old-id")]);
+    fly_case_with(&FLY_CRED.replace("REF", "old-id"), first, probe, code)
+}
+
+/// `fly_case` with this credential text.
+fn fly_case_with(cred: &str, first: &str, probe: u16, code: i32) -> FlyRun {
+    let text = system(&[cred]);
     let dir = repo(&text);
     let tools = tempfile::tempdir_in(common::tmpdir()).unwrap();
     let t = tools.path().display();
@@ -1092,4 +1097,129 @@ fn stamp_failure_step_names_the_new_token_ref() {
         "{:?}",
         run.log
     );
+}
+
+#[test]
+fn failed_stamp_keeps_pending_tokens_live_and_recorded() {
+    // The stamp cannot be written, so pending_ref still names the pending token: it is not
+    // revoked now (the next rotation revokes it), and the old token, replaced everywhere, is.
+    let cred = FLY_CRED.replace("REF", "old-id").replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "tok-p" }"#,
+    );
+    let run = fly_case_with(
+        &cred,
+        r#""secrets import") cat > /dev/null; echo '[[credential' >> '{d}/system.toml';;"#,
+        200,
+        1,
+    );
+    assert!(
+        !run.log.contains(&"tokens revoke tok-p".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        run.log.contains(&"tokens revoke old-id".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        run.after.contains(r#"pending_ref = "tok-p""#),
+        "{}",
+        run.after
+    );
+    let items = run.json["items"].as_array().unwrap();
+    assert!(
+        items
+            .iter()
+            .any(|i| i["action"] == "pending" && i["reason"].as_str().unwrap().contains("tok-p")),
+        "{items:?}"
+    );
+}
+
+#[test]
+fn stamp_ref_leaves_pending_ref_for_the_next_rotation() {
+    let text = system(&[&CF_CRED.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "tok-p" }"#,
+    )]);
+    let dir = repo(&text);
+    stamp(
+        dir.path(),
+        &["site-deploy", "--created", "2026-11-27", "--ref", "tok-9"],
+        0,
+    );
+    let after = read(dir.path());
+    assert!(after.contains(r#"pending_ref = "tok-p""#), "{after}");
+    assert!(after.contains(r#"provider_ref = "tok-9""#), "{after}");
+}
+
+const NAME_REF: &str = r#"provider_ref = "hoist-site""#;
+
+#[test]
+fn partial_write_with_a_name_ref_pins_the_old_token_id() {
+    let text = system(&[&CF_CRED.replace(r#"provider_ref = "tok-1""#, NAME_REF)]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[(PUT_ENV, 500, "empty.json")]);
+    rotate(&api, dir.path(), "site-deploy", 1);
+    let after = read(dir.path());
+    assert!(
+        after.contains(r#"provider_ref = "token id tok-1""#),
+        "{after}"
+    );
+    assert!(after.contains(r#"pending_ref = "new-id""#), "{after}");
+}
+
+/// The token list after a partial rotation: the pending token reuses the old one's name.
+const TWO_NAMED: &str = r#"{"success":true,"errors":[],"messages":[],"result":[
+ {"id":"tok-p","name":"hoist-site","status":"active","policies":[
+  {"id":"p2","effect":"allow","resources":{"com.cloudflare.api.account.acc":"*"},
+   "permission_groups":[{"id":"g-pages","name":"Pages Write"}]}]},
+ {"id":"tok-1","name":"hoist-site","status":"active","policies":[
+  {"id":"p1","effect":"allow","resources":{"com.cloudflare.api.account.acc":"*"},
+   "permission_groups":[{"id":"g-pages","name":"Pages Write"}]}]}]}"#;
+
+#[test]
+fn rerun_with_a_name_ref_skips_pending_tokens_and_revokes_the_old_one() {
+    let text = system(&[&CF_CRED
+        .replace(r#"provider_ref = "tok-1""#, NAME_REF)
+        .replace(
+            r#"rotation = { strategy = "auto" }"#,
+            r#"rotation = { strategy = "auto", pending_ref = "tok-p" }"#,
+        )]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(
+        &key_json,
+        &[
+            ("GET /user/tokens", 200, TWO_NAMED),
+            ("DELETE /user/tokens/tok-p", 200, DELETED),
+        ],
+    );
+    rotate(&api, dir.path(), "site-deploy", 0);
+    let w = writes(&api);
+    assert!(
+        w.contains(&"DELETE /user/tokens/tok-p".to_string()),
+        "{w:?}"
+    );
+    assert_eq!(w.last().map(String::as_str), Some(DEL_OLD), "{w:?}");
+    assert!(!read(dir.path()).contains("pending_ref"));
+}
+
+#[test]
+fn ambiguous_cloudflare_name_ref_exits_3_before_any_write() {
+    let text = system(&[&CF_CRED.replace(r#"provider_ref = "tok-1""#, NAME_REF)]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[("GET /user/tokens", 200, TWO_NAMED)]);
+    let run = rotate(&api, dir.path(), "site-deploy", 3);
+    assert!(writes(&api).is_empty(), "{:?}", writes(&api));
+    assert!(
+        run.all.contains("matches 2 Cloudflare tokens"),
+        "{}",
+        run.all
+    );
+    assert!(run.all.contains("--ref"), "{}", run.all);
+    assert_eq!(read(dir.path()), text);
 }

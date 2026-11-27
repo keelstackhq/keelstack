@@ -403,8 +403,13 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
             old_id,
         }
     } else {
-        find_cloudflare(reference, ctx.verbose)?
+        find_cloudflare(reference, &pending, ctx.verbose)?
     };
+    // A name ref is pinned to the old token's id on a partial set: the new token reuses the
+    // name, so a rerun must not resolve the name to it.
+    let pin = Some(prov.old_id())
+        .filter(|old| !old.is_empty() && *old != reference)
+        .map(|old| format!("token id {old}"));
 
     // First write: create the new token.
     let mut out = Out {
@@ -438,7 +443,14 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                     s.label()
                 )));
             }
-            let note = partial(ctx, &mut out, &new, &pending, &written, &rest);
+            let note = partial(
+                ctx,
+                &mut out,
+                &new,
+                &pending,
+                pin.as_deref(),
+                (&written, &rest),
+            );
             return Ok(out.fail(&format!(
                 "writing {}: {why}; the new value is stored in {} but not in {}; both tokens \
                  are kept (new token {}){note}",
@@ -497,6 +509,7 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         .and_then(|t| {
             write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
         });
+    let stamp_ok = stamped.is_ok();
     match stamped {
         Ok(()) => out.push(
             "system",
@@ -528,12 +541,28 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         }
     }
     // Revoke what the new value replaced only now, after every write and the stamp: tokens
-    // an earlier partial rotation left behind, then the old one last.
+    // an earlier partial rotation left behind, then the old one last. When the stamp failed,
+    // `pending_ref` still names the pending tokens: they stay live and recorded, so the next
+    // rotation revokes them (revoking them now would leave the record naming dead ids).
     let url = console(ctx.sys.provider(&c.provider), &c.provider, c.kind);
     for p in pending
         .iter()
         .filter(|p| Some(p.as_str()) != new.id.as_deref())
     {
+        if !stamp_ok {
+            out.push(
+                tokens,
+                "api_token",
+                &c.id,
+                Action::Pending,
+                format!(
+                    "kept {p}: still in rotation.pending_ref; the next `hoist secrets rotate {}` \
+                     revokes it",
+                    c.id
+                ),
+            );
+            continue;
+        }
         match prov.revoke(ctx, p) {
             Ok(()) => out.push(
                 tokens,
@@ -575,47 +604,68 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
 /// A partial set: the new token stays live in `written`. Record its id in
 /// `rotation.pending_ref` (so the next rotation revokes it instead of leaving it behind) and add
 /// a human step naming it and the storages; the returned note says what happened to the record.
+/// `pin` (`token id OLD`) replaces a name `provider_ref`, which the new token now shares.
 fn partial(
     ctx: &Ctx,
     out: &mut Out,
     new: &New,
     pending: &[String],
-    written: &[String],
-    rest: &[String],
+    pin: Option<&str>,
+    (written, rest): (&[String], &[String]),
 ) -> String {
     let c = ctx.cred;
     let rerun = format!("hoist secrets rotate {}", c.id);
-    let (who, note) = match &new.id {
-        Some(id) => {
-            let mut ids: Vec<&str> = pending.iter().map(String::as_str).collect();
-            if !ids.contains(&id.as_str()) {
-                ids.push(id);
-            }
-            let joined = ids.join(" ");
-            let recorded = std::fs::read_to_string(ctx.path)
-                .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
-                .and_then(|t| set_pending(&t, ctx.shown, &c.id, Some(&joined)))
-                .and_then(|t| {
-                    write_atomic(ctx.path, &t)
-                        .map_err(|e| HoistError::Io(format!("cannot write: {e}")))
-                });
-            let note = match recorded {
-                Ok(()) => format!(
-                    "; recorded in {FILE} rotation.pending_ref, `{rerun}` revokes it once the \
-                     value is stored everywhere"
-                ),
-                Err(e) => format!(
-                    "; recording it in {FILE} failed ({e}): add `pending_ref = \"{joined}\"` to \
-                     its rotation"
-                ),
-            };
-            (format!("new token {id}"), note)
+    let joined = new.id.as_ref().map(|id| {
+        let mut ids: Vec<&str> = pending.iter().map(String::as_str).collect();
+        if !ids.contains(&id.as_str()) {
+            ids.push(id);
         }
-        None => (
+        ids.join(" ")
+    });
+    let recorded = if joined.is_none() && pin.is_none() {
+        Ok(())
+    } else {
+        std::fs::read_to_string(ctx.path)
+            .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
+            .and_then(|t| match &joined {
+                Some(j) => set_pending(&t, ctx.shown, &c.id, Some(j)),
+                None => Ok(t),
+            })
+            .and_then(|t| match pin {
+                Some(r) => set_keys(&t, ctx.shown, &c.id, &[("provider_ref", r)]),
+                None => Ok(t),
+            })
+            .and_then(|t| {
+                write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
+            })
+    };
+    let mut fix: Vec<String> = Vec::new();
+    if let Some(j) = &joined {
+        fix.push(format!("`pending_ref = \"{j}\"` to its rotation"));
+    }
+    if let Some(r) = pin {
+        fix.push(format!("`provider_ref = \"{r}\"`"));
+    }
+    let (who, mut note) = match (&new.id, &recorded) {
+        (Some(id), Ok(())) => (
+            format!("new token {id}"),
+            format!(
+                "; recorded in {FILE} rotation.pending_ref, `{rerun}` revokes it once the value \
+                 is stored everywhere"
+            ),
+        ),
+        (Some(id), Err(_)) => (format!("new token {id}"), String::new()),
+        (None, _) => (
             "the new token (id unknown)".to_string(),
             "; its id is unknown: revoke it by hand after the rerun".to_string(),
         ),
     };
+    if let Err(e) = &recorded {
+        note.push_str(&format!(
+            "; recording it in {FILE} failed ({e}): set {}",
+            fix.join(" and ")
+        ));
+    }
     out.r.human_steps.push(HumanStep {
         id: format!("partial:{}", c.id),
         title: format!(
@@ -715,7 +765,9 @@ fn set_storage(ctx: &Ctx, gh: Option<&Http>, s: &Storage, value: &Secret) -> Res
 }
 
 /// Find the old Cloudflare token by id or name: the user's tokens, then the account's.
-fn find_cloudflare(reference: &str, verbose: bool) -> Result<Prov, HoistError> {
+/// Tokens listed in `pending` (left live by a partial rotation, named like the old one) are
+/// never the old token; more than one remaining name match is a usage error.
+fn find_cloudflare(reference: &str, pending: &[String], verbose: bool) -> Result<Prov, HoistError> {
     let http = Http::new(Service::Cloudflare, cloudflare_token()?).verbose(verbose);
     let mut bases = vec!["/user/tokens".to_string()];
     if let Some(acc) = crate::auth::from_env("CLOUDFLARE_ACCOUNT_ID") {
@@ -737,11 +789,30 @@ fn find_cloudflare(reference: &str, verbose: bool) -> Result<Prov, HoistError> {
             }
         };
         let str_of = |t: &Value, k: &str| t.get(k).and_then(Value::as_str).map(str::to_string);
-        let Some(old) = list.iter().find(|t| {
-            str_of(t, "id").as_deref() == Some(reference)
-                || str_of(t, "name").as_deref() == Some(reference)
-        }) else {
-            continue;
+        let live: Vec<&Value> = list
+            .iter()
+            .filter(|t| !str_of(t, "id").is_some_and(|id| pending.contains(&id)))
+            .collect();
+        let by_id = live
+            .iter()
+            .copied()
+            .find(|t| str_of(t, "id").as_deref() == Some(reference));
+        let named: Vec<&Value> = live
+            .iter()
+            .copied()
+            .filter(|t| str_of(t, "name").as_deref() == Some(reference))
+            .collect();
+        let old: &Value = match (by_id, &named[..]) {
+            (Some(t), _) | (None, &[t]) => t,
+            (None, []) => continue,
+            (None, many) => {
+                return Err(usage(format!(
+                    "provider_ref `{reference}` matches {} Cloudflare tokens in GET {base}; set \
+                     it to the old token's id (`hoist system stamp <id> --created YYYY-MM-DD \
+                     --ref <token id>`)",
+                    many.len()
+                )));
+            }
         };
         let policies: Vec<Value> = old
             .get("policies")
