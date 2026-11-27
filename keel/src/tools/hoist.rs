@@ -356,7 +356,13 @@ fn lacks_system(o: &Out) -> bool {
                     .as_str()
                     .is_some_and(|m| named(m) || m.to_lowercase().contains("unknown command"))
         }
-        None => o.code == 2 || (o.code == 3 && named(&o.stderr)),
+        // Old hoist: a clap usage error (exit 2, or 3 once main mapped it) naming `system` or
+        // printing usage; an exit 2 with no usage text is a real failure, not "too old".
+        None => {
+            let usage = |s: &str| named(s) || s.contains("Usage:");
+            (o.code == 2 && (usage(&o.stderr) || usage(&o.stdout)))
+                || (o.code == 3 && named(&o.stderr))
+        }
     }
 }
 

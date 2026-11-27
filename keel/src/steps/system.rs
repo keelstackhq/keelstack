@@ -174,6 +174,18 @@ mod tests {
     }
 
     #[test]
+    fn exit_2_without_usage_text_is_not_too_old() {
+        for out in [Out::with(2, "", ""), Out::with(2, "garbled", "boom")] {
+            let r = FakeRunner::new().on(&["hoist", "--json", "system", "check"], out);
+            let (c, _, _) = run(&r, true);
+            assert!(
+                !matches!(&c, Check::Done(m) if m.contains("hoist too old")),
+                "{c:?}"
+            );
+        }
+    }
+
+    #[test]
     fn absent_hoist_skips_and_a_config_error_fails() {
         let r = FakeRunner::new().on(
             &["hoist", "--json", "system", "check"],

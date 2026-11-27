@@ -113,7 +113,7 @@ jobs:
             {
               printf 'hoist system check --live exited %s (offline %s; 1 drift, 2 rotation due, 3 config). Run: %s\n\n' "$EXIT" "$OFFLINE" "$RUN_URL"
               printf '| kind | key | action | reason |\n| --- | --- | --- | --- |\n'
-              jq -r '.items[] | select(.action != "ok") | "| \(.kind) | \(.key) | \(.action) | \(.reason | gsub("[|\n]"; " ")) |"' "$json"
+              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@\u200b"); .items[] | select(.action != "ok") | "| \(.kind | cell) | \(.key | cell) | \(.action | cell) | \(.reason | cell) |"' "$json"
               printf '\nFix: edit system.toml, then `hoist system explain --write`. Only metadata is listed, never values.\n'
             } > "$RUNNER_TEMP/body.md"
           fi
