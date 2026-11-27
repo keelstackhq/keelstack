@@ -53,15 +53,14 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-fn run(repo: &Path, cache: &Path, args: &[&str]) -> (String, assert_cmd::assert::Assert) {
-    let a = splice_cmd()
+fn run(repo: &Path, cache: &Path, args: &[&str]) -> assert_cmd::assert::Assert {
+    splice_cmd()
         .env("SPLICE_CACHE_DIR", cache)
         .arg("-C")
         .arg(repo)
         .args(["--yes", "--json"])
         .args(args)
-        .assert();
-    (String::new(), a)
+        .assert()
 }
 
 fn stderr(a: &assert_cmd::assert::Assert) -> String {
@@ -70,7 +69,7 @@ fn stderr(a: &assert_cmd::assert::Assert) -> String {
 
 fn add_channel(repo: &Path, cache: &Path, src: &Path, only: &str) {
     let spec = format!("{}//channel", src.display());
-    let (_, a) = run(
+    let a = run(
         repo,
         cache,
         &["channel", "add", &spec, "--ref", "v1.0.0", "--only", only],
@@ -90,7 +89,7 @@ fn update_without_root_package_json_skips_pnpm_and_exits_0() {
     commit_all(repo.path());
     add_channel(repo.path(), cache.path(), ch.path(), "apps/site/**");
 
-    let (_, a) = run(repo.path(), cache.path(), &["update", "--channel", "t"]);
+    let a = run(repo.path(), cache.path(), &["update", "--channel", "t"]);
     let a = a.success();
     let err = stderr(&a);
     assert!(
@@ -118,7 +117,7 @@ fn missing_only_root_skips_the_command() {
     let repo = bare_repo();
     let cache = tempfile::tempdir().unwrap();
     let spec = format!("{}//channel", ch.path().display());
-    let (_, a) = run(
+    let a = run(
         repo.path(),
         cache.path(),
         &[
@@ -146,4 +145,20 @@ fn pnpm_runs_where_package_json_exists() {
     commit_all(repo.path());
     add_channel(repo.path(), cache.path(), ch.path(), "apps/site/**");
     assert!(repo.path().join("apps/site/ran.txt").exists());
+}
+
+#[test]
+fn post_without_only_root_still_fails_without_package_json() {
+    let ch = channel_with_post("pnpm install", false);
+    let repo = bare_repo();
+    let cache = tempfile::tempdir().unwrap();
+    let spec = format!("{}//channel", ch.path().display());
+    // No `only`: the command runs from the repo root (no package.json) and fails as before.
+    let a = run(
+        repo.path(),
+        cache.path(),
+        &["channel", "add", &spec, "--ref", "v1.0.0"],
+    );
+    let a = a.code(3);
+    assert!(!stderr(&a).contains("skipped"), "{}", stderr(&a));
 }

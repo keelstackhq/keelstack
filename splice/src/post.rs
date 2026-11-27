@@ -168,6 +168,10 @@ pub fn only_root(only: &[String]) -> Option<String> {
         let mut dir: Vec<&str> = Vec::new();
         for (i, seg) in segs.iter().enumerate() {
             let last = i + 1 == segs.len();
+            if *seg == ".." {
+                // A root must stay inside the repo: reject, no root.
+                return None;
+            }
             if last || seg.contains(['*', '?', '[', '{']) || seg.is_empty() || *seg == "." {
                 break;
             }
@@ -239,12 +243,12 @@ pub fn run_post_groups(
             let dir = root
                 .as_ref()
                 .map_or_else(|| repo.to_path_buf(), |r| repo.join(r));
-            if let Some(why) = skip_reason(&dir, &cmd.run) {
-                eprintln!(
-                    "skipped post command `{}` in `{}`: {why}",
-                    cmd.run,
-                    root.as_deref().unwrap_or(".")
-                );
+            // Only a channel with an `only` root may skip; main and rootless channels run from
+            // the repo root and fail as before.
+            if let Some(r) = &root
+                && let Some(why) = skip_reason(&dir, &cmd.run)
+            {
+                eprintln!("skipped post command `{}` in `{r}`: {why}", cmd.run);
                 continue;
             }
             let status = run_shell(&dir, &cmd.run, &[])?.map_err(|e| spawn_error(&cmd.run, &e))?;
@@ -468,6 +472,14 @@ mod tests {
         assert_eq!(r(&["**/*.md"]), None);
         assert_eq!(r(&["README.md"]), None);
         assert_eq!(r(&[]), None);
+    }
+
+    #[test]
+    fn only_root_rejects_parent_segments() {
+        let r = |g: &[&str]| only_root(&g.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(r(&["../x/**"]), None);
+        assert_eq!(r(&["apps/../../x/**"]), None);
+        assert_eq!(r(&["apps/site/**", "apps/../y/**"]), None);
     }
 
     #[test]
