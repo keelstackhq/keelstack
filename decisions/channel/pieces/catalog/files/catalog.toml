@@ -101,8 +101,8 @@ id = "fly"
 capability = "paas.container"
 name = "Fly.io"
 docs = "https://fly.io/docs/"
-keyless = ["oidc"]
-migration = "`fly launch` and `fly deploy` from the same Dockerfile; move secrets with `fly secrets import`"
+keyless = []
+migration = "`fly launch` and `fly deploy` from the same Dockerfile; move secrets with `fly secrets import`. CI deploys need a Fly token (`fly tokens create deploy`): Fly accepts no GitHub OIDC"
 
 [[alternative]]
 id = "cloud-run"
@@ -126,7 +126,7 @@ capability = "registry.npm"
 name = "npm"
 docs = "https://docs.npmjs.com/"
 keyless = ["oidc"]
-migration = "Configure a trusted publisher per package and publish from CI with `npm publish`; no token is needed"
+migration = "The first publish of a new package needs a token (`npm publish` locally or `hoist release bootstrap`); then configure a trusted publisher per package and publish from CI with `npm publish` in a job with `permissions: id-token: write`, no token"
 
 [[alternative]]
 id = "jsr"
@@ -150,7 +150,7 @@ capability = "registry.crates"
 name = "crates.io"
 docs = "https://crates.io/docs/trusted-publishing"
 keyless = ["oidc"]
-migration = "Add a trusted publisher per crate and publish from CI with `cargo publish`"
+migration = "The first publish of a new crate needs a token (`cargo publish` locally or `hoist release bootstrap`); then add a trusted publisher per crate and publish from CI with `cargo publish` in a job with `permissions: id-token: write` (rust-lang/crates-io-auth-action), no long-lived token"
 
 [[alternative]]
 id = "kellnr"

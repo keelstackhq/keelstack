@@ -19,9 +19,9 @@ owns the format and the commands; agents never hold a key and hoist never prints
    system as a `[[provider]]` with its `capability`, `console` and `docs`.
 3. **check.** `hoist system check` (offline, no HTTP) exits 1 when a secret a workflow reads has
    no credential (`undeclared`), a credential nothing reads (`unused`), a job and its listed
-   consumers disagree, a credential is expired or expires within 30 days, `purpose`, `owner` or
-   dates are missing, `max_ttl` is exceeded, or a long-lived credential exists where a keyless
-   option does. It exits 2 when a rotation is due and 3 on a broken file. `hoist system check
+   consumers disagree, a credential is expired, `purpose`, `owner` or dates are missing,
+   `max_ttl` is exceeded, or a long-lived credential exists where a keyless option does. It
+   exits 2 when a rotation is due (a credential expires within 30 days) and 3 on a broken file. `hoist system check
    --live` also asks each provider, GET only, with tokens taken from the environment; a missing
    token is `unknown` with the fix, never a failure.
 4. **rotate.** `hoist secrets rotate <credential-id>` follows the credential's

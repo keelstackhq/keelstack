@@ -125,6 +125,7 @@ principal = "hoist-minted token (name prefix `hoist:`)"
 scopes = ["Pages Write"]
 resources = ["pages:keelstack-landing"]
 created_via = "hoist apply (mints the token for one year and seals it)"
+provider_ref = "hoist:keelstackhq/keelstack:deploy"
 max_ttl = "1y"
 rotation = { strategy = "auto", command = "hoist secrets rotate site-deploy" }
 storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_API_TOKEN" }]
