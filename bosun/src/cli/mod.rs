@@ -1494,4 +1494,11 @@ pub struct MigrateArgs {
     /// A plan file to amend with --finish (repeatable; the plans of open epics are added).
     #[arg(long = "plan", value_name = "FILE")]
     pub plan: Vec<String>,
+    /// The flow written with the mode: `autonomous` (default for --to autonomous: the D-028 set
+    /// in bosun.toml) or `gatekeeper` (only `[mode]`, no preset).
+    #[arg(long, value_name = "FLOW", value_parser = ["autonomous", "gatekeeper"], conflicts_with = "finish")]
+    pub flow: Option<String>,
+    /// `[cloud] environment_id` to write with the autonomous preset (omitted: the key is not written).
+    #[arg(long, value_name = "VALUE", conflicts_with = "finish")]
+    pub cloud_env: Option<String>,
 }
