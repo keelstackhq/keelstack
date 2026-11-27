@@ -307,7 +307,8 @@ impl Drift {
     fn choices(&self) -> String {
         match (&self.channel, self.path.contains('#')) {
             (Some(c), true) => format!(
-                "restore the block: `splice update --channel {c} --force`; to keep a different text, change it in the channel's source or drop that section piece (a local edit of a channel-owned block is overwritten by the next update)"
+                "revert your edit between the splice markers of {h} (`git diff <base> -- {h}` shows it); `splice update --channel {c} --force` rewrites a block only when the channel has a newer version; to keep different text, change the channel's source",
+                h = self.path.split('#').next().unwrap_or("")
             ),
             (Some(c), false) => format!(
                 "keep local: `splice update --channel {c} --exclude {p}` (replaces that channel's stored filters; keep the ones in .splice/channels/{c}.toml); take template: `splice update --channel {c} --force`",
@@ -318,20 +319,21 @@ impl Drift {
     }
 }
 
-/// The paths a refused `splice update` names (`` `P` is owned by X but was edited locally ``),
-/// or None when the refusal names none (some other reason).
+/// The paths a refused `splice update` names (`` `P` is owned by X but was edited locally ``).
+/// None when the refusal has any other line (broken markers, filters, ...) or names no path: that
+/// is not drift on the base and must fail.
 fn refusal_paths(v: &Value) -> Option<Vec<String>> {
-    let paths: Vec<String> = v["messages"]
-        .as_array()?
-        .iter()
-        .filter_map(Value::as_str)
-        .filter(|m| m.contains("` is owned by ") && m.ends_with("was edited locally"))
-        .filter_map(|m| {
-            let a = m.find('`')?;
-            let rest = &m[a + 1..];
-            Some(rest[..rest.find('`')?].to_string())
-        })
-        .collect();
+    let mut paths = Vec::new();
+    for m in v["messages"].as_array()?.iter().filter_map(Value::as_str) {
+        if m.starts_with("nothing was written") {
+            continue;
+        }
+        if !(m.contains("` is owned by ") && m.ends_with("was edited locally")) {
+            return None;
+        }
+        let rest = &m[m.find('`')? + 1..];
+        paths.push(rest[..rest.find('`')?].to_string());
+    }
     (!paths.is_empty()).then_some(paths)
 }
 
@@ -606,7 +608,12 @@ impl Mig<'_> {
             }
             let a: Vec<&str> = args.iter().map(String::as_str).collect();
             match self.splice_try(&a)? {
-                Some(d) => done.push(format!("{label}: {d}")),
+                Some(d) => {
+                    // splice refuses a dirty tree (never --allow-dirty): commit before the next source.
+                    if self.commit_all(&format!("chore: splice update ({label})"))? {
+                        done.push(format!("{label}: {d}"));
+                    }
+                }
                 None => self.mark_not_updated(&label),
             }
         }
@@ -641,13 +648,20 @@ impl Mig<'_> {
                 None => self.mark_not_updated("channel decisions"),
             }
         }
-        let d = match self.splice_try(&["--all"])? {
-            Some(d) => d,
-            // `--all` writes nothing when any source has drifted owned files: go source by source.
-            None => self.update_each_source()?,
-        };
-        if self.commit_all("chore: splice update to the latest template and channels")? {
-            notes.push(format!("template and channels ({d})"));
+        match self.splice_try(&["--all"])? {
+            Some(d) => {
+                if self.commit_all("chore: splice update to the latest template and channels")? {
+                    notes.push(format!("template and channels ({d})"));
+                }
+            }
+            // `--all` writes nothing when any source has drifted owned files: go source by
+            // source, one commit each (already made by `update_each_source`).
+            None => {
+                let d = self.update_each_source()?;
+                if !d.is_empty() {
+                    notes.push(format!("source by source ({d})"));
+                }
+            }
         }
         if !self.not_updated.is_empty() {
             notes.push(format!(
@@ -1773,6 +1787,21 @@ fn in_worktree(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_with_broken_markers_is_not_old_drift() {
+        let drift = "channel c: `a.md` is owned by channel c but was edited locally";
+        let ok = serde_json::json!({"messages": [drift, "nothing was written; revert"]});
+        assert_eq!(refusal_paths(&ok), Some(vec!["a.md".to_string()]));
+        let mixed = serde_json::json!({"messages": [
+            drift,
+            "channel c: AGENTS.md: unbalanced splice:c marker at line 1; restore it",
+            "nothing was written; revert"
+        ]});
+        assert_eq!(refusal_paths(&mixed), None);
+        let none = serde_json::json!({"messages": ["nothing was written"]});
+        assert_eq!(refusal_paths(&none), None);
+    }
 
     #[test]
     fn release_numbers_are_x_y_z() {
