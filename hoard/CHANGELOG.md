@@ -4,6 +4,8 @@ Newest first. The version in `Cargo.toml` is the last release; "Unreleased" ship
 
 ## Unreleased
 
+## 0.25.0 — 2026-11-27
+
 ## 0.24.0 — 2026-11-26
 
 ## 0.23.0 — 2026-11-25

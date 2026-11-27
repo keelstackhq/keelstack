@@ -245,9 +245,17 @@ set_progress_status() {
 [ ! -f splice/docs/PROGRESS.md ] || apply splice/docs/PROGRESS.md set_progress_status
 
 # --- 6c. hull docs/adopt.md pins the hosted assess script to the release (hull/tests/adopt-doc) --
+# Its check-before-run line carries the sha256 of the ready.mjs this release ships.
+assess_src=hull/template/pieces/base/files/scripts/ready.mjs
+assess_sha=
+if [ -f "$assess_src" ]; then
+  assess_sha=$( (sha256sum "$assess_src" 2>/dev/null || shasum -a 256 "$assess_src") | cut -d' ' -f1)
+fi
 set_adopt_pin() {
+  local sha_expr=()
+  [ -z "$assess_sha" ] || sha_expr=(-e "s#^echo \"[0-9a-f]{64}  /tmp/assess\.mjs\"#echo \"$assess_sha  /tmp/assess.mjs\"#")
   sed -E -e "s#keelstack\.dev/assess/v[0-9]+\.[0-9]+\.[0-9]+\.mjs#keelstack.dev/assess/v$ver.mjs#g" \
-    -e "s#hull v[0-9]+\.[0-9]+\.[0-9]+'s #hull v$ver's #g"
+    -e "s#hull v[0-9]+\.[0-9]+\.[0-9]+'s #hull v$ver's #g" "${sha_expr[@]}"
 }
 [ ! -f hull/docs/adopt.md ] || apply hull/docs/adopt.md set_adopt_pin
 

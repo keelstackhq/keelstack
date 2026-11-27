@@ -4,6 +4,8 @@ All notable changes to bosun. The format follows [Keep a Changelog](https://keep
 
 ## Unreleased
 
+## 0.25.0 (2026-11-27)
+
 ## 0.24.0 (2026-11-26)
 
 - `bosun pin --to X.Y.Z` pins an exact published release (refuses unpublished or deprecated versions); `keel migrate` moves a repo to a release in one command.
