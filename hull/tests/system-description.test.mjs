@@ -3,8 +3,16 @@
 // workflow reads is undeclared, consumers match the jobs that read each key, metadata is there
 // except the dates `hoist system stamp` records. The file also validates against hoist's schema.
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from "node:fs";
 import { mkdtemp } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -125,7 +133,7 @@ for (const combo of COMBOS) {
     const cls = Object.fromEntries(result.changes.map((c) => [c.path, c.class]));
     assert.equal(cls["system.toml"], "seed");
     assert.equal(cls[".github/workflows/system-check.yml"], "owned");
-    assert.equal(cls[".github/scripts/system-issue.mjs"], "owned");
+    assert.equal(cls[".github/scripts/system-issue.mjs"], undefined, "no repo script edits issues");
     const text = readFileSync(join(dir, "system.toml"), "utf8");
     assert.ok(!/\n\n\n/.test(text), "no triple newline");
     assert.ok(!/\{\{|\{%/.test(text), "fully rendered");
@@ -221,42 +229,87 @@ for (const tpl of ["template", "template-rust"]) {
 }
 
 const WF = ".github/workflows/system-check.yml";
-const SCRIPT = ".github/scripts/system-issue.mjs";
 const BASE = join(HULL, "template/pieces/base/files");
+const RUST = join(HULL, "template-rust/pieces/base/files");
+const ROOT_WF = join(HULL, "../.github/workflows/system-check.yml");
 const wfText = readFileSync(join(BASE, WF), "utf8");
+const rustText = readFileSync(join(RUST, WF), "utf8");
+const rootText = readFileSync(ROOT_WF, "utf8");
+const TEMPLATES = { template: wfText, "template-rust": rustText };
 
-test("system-check.yml: weekly, default branch, one job, least privilege, no secrets", () => {
-  const wf = YAML.parse(wfText);
-  assert.deepEqual(Object.keys(wf.on).sort(), ["schedule", "workflow_dispatch"]);
-  assert.equal(wf.on.schedule.length, 1);
-  assert.match(wf.on.schedule[0].cron, /^\d{1,2} \d{1,2} \* \* \d$/);
-  assert.deepEqual(wf.permissions, { contents: "read" });
-  assert.deepEqual(Object.keys(wf.jobs), ["check"]);
-  const job = wf.jobs.check;
-  assert.match(job.if, /github\.event_name == 'schedule'/);
-  assert.match(job.if, /github\.event_name == 'workflow_dispatch'/);
-  assert.match(job.if, /default_branch/);
-  assert.deepEqual(job.permissions, { contents: "read", issues: "write" });
-  assert.ok(!/secrets\./.test(wfText), "live tokens: github.token only");
-  assert.match(wfText, /hoist system check --live --json/);
-  assert.match(wfText, /npm install -g --ignore-scripts "@keelstackhq\/hoist@\$HOIST_VERSION"/);
-  assert.match(job.steps.find((s) => s.env?.HOIST_VERSION).env.HOIST_VERSION, /^\d+\.\d+\.\d+$/);
-  assert.match(wfText, new RegExp(`node ${SCRIPT.replace(/\./g, "\\.")}`));
-  assert.deepEqual(ciMinutes(wfText), []);
+for (const [tpl, text] of Object.entries(TEMPLATES)) {
+  test(`system-check.yml (${tpl}): weekly, default branch, check reads, report writes issues only`, () => {
+    const wf = YAML.parse(text);
+    assert.deepEqual(Object.keys(wf.on).sort(), ["schedule", "workflow_dispatch"]);
+    assert.equal(wf.on.schedule.length, 1);
+    assert.match(wf.on.schedule[0].cron, /^\d{1,2} \d{1,2} \* \* \d$/);
+    assert.deepEqual(wf.permissions, { contents: "read" });
+    assert.deepEqual(Object.keys(wf.jobs), ["check", "report"]);
+    for (const job of Object.values(wf.jobs)) {
+      assert.match(job.if, /github\.event_name == 'schedule'/);
+      assert.match(job.if, /github\.event_name == 'workflow_dispatch'/);
+      assert.match(job.if, /default_branch/);
+    }
+    const { check, report } = wf.jobs;
+    assert.deepEqual(check.permissions, { contents: "read" });
+    assert.deepEqual(report.permissions, { issues: "write" });
+    assert.equal(report.needs, "check");
+    // The privileged job runs no repo code: no checkout, only the artifact, jq and gh.
+    const uses = report.steps.filter((s) => s.uses).map((s) => s.uses.split("@")[0]);
+    assert.deepEqual(uses, ["actions/download-artifact"]);
+    for (const st of report.steps.filter((s) => s.run))
+      assert.doesNotMatch(st.run, /\bnode\b|\.github\/|scripts\/|\.\/target|^\s*hoist /m, st.name);
+    assert.ok(check.steps.some((s) => (s.uses ?? "").startsWith("actions/upload-artifact@")));
+    assert.ok(!/secrets\./.test(text), "live tokens: github.token only");
+    assert.match(text, /hoist system check --live --json/);
+    assert.match(text, /npm install -g --ignore-scripts "@keelstackhq\/hoist@\$HOIST_VERSION"/);
+    assert.deepEqual(ciMinutes(text), []);
+  });
+}
+
+const hoistEnv = (text) =>
+  YAML.parse(text).jobs.check.steps.find((s) => s.env?.HOIST_VERSION).env.HOIST_VERSION;
+
+test("system-check.yml (template): HOIST_VERSION is a literal scripts/bump-version.sh moves", () => {
+  assert.match(hoistEnv(wfText), /^\d+\.\d+\.\d+$/);
+  assert.match(wfText, /bump-version\.sh keeps\n\s*# HOIST_VERSION in lockstep/);
 });
 
-test("system-check.yml: metadata-only offline drift (fresh seed) warns, real drift or exit 3 fails", () => {
-  const job = YAML.parse(wfText).jobs.check;
-  const fail = job.steps.find((s) => /Fail on offline drift/.test(s.name ?? ""));
-  assert.ok(fail, "fail step");
-  assert.match(wfText, /hoist system check --json > "\$RUNNER_TEMP\/system-offline\.json"/);
-  assert.equal(fail.env.OFFLINE_REPORT, "${{ runner.temp }}/system-offline.json");
-  assert.match(
-    fail.run,
-    /select\(\.action == "drift"\)\] \| length > 0 and all\(\.kind == "metadata"\)/,
+test("system-check.yml (template-rust): hoist comes from pins.toml, at a release with `hoist system`", () => {
+  assert.equal(hoistEnv(rustText), "${{ steps.pins.outputs.hoist }}");
+  const steps = YAML.parse(rustText).jobs.check.steps;
+  assert.equal(
+    steps.find((s) => s.id === "pins").run,
+    'node scripts/pins.mjs --github-output >> "$GITHUB_OUTPUT"',
   );
-  assert.match(fail.run, /\*\) echo .*exit 1 ;;/);
-  assert.match(wfText, /bump-version\.sh keeps\n\s*# HOIST_VERSION in lockstep/);
+  const pin = parseToml(readFileSync(join(RUST, "pins.toml"), "utf8")).pins.hoist;
+  const [maj, min] = pin.split(".").map(Number);
+  assert.ok(maj > 0 || min >= 26, `pins.toml hoist ${pin} has no \`hoist system\` (0.26.0)`);
+});
+
+test("system-check.yml: the two templates differ only in where the hoist version comes from", () => {
+  const strip = (t) => {
+    const wf = YAML.parse(t);
+    wf.jobs.check.steps = wf.jobs.check.steps.filter((s) => s.id !== "pins");
+    for (const s of wf.jobs.check.steps) if (s.env?.HOIST_VERSION) s.env.HOIST_VERSION = "X";
+    return wf;
+  };
+  assert.deepEqual(strip(rustText), strip(wfText));
+});
+
+test("system-check.yml: the root workflow behaves the same (title, label, concurrency, report, exits)", () => {
+  const [root, tpl] = [rootText, wfText].map((t) => YAML.parse(t));
+  assert.deepEqual(Object.keys(root.on).sort(), Object.keys(tpl.on).sort());
+  assert.deepEqual(root.concurrency, tpl.concurrency);
+  assert.deepEqual(root.permissions, tpl.permissions);
+  assert.deepEqual(Object.keys(root.jobs), Object.keys(tpl.jobs));
+  assert.equal(root.jobs.check.if, tpl.jobs.check.if);
+  assert.deepEqual(root.jobs.check.permissions, tpl.jobs.check.permissions);
+  const norm = (job) => ({
+    ...job,
+    steps: job.steps.map(({ uses, ...s }) => ({ ...s, uses: uses?.split("@")[0] })),
+  });
+  assert.deepEqual(norm(root.jobs.report), norm(tpl.jobs.report));
 });
 
 test("system-check.yml: every action pinned to a SHA another template workflow already uses", () => {
@@ -269,19 +322,65 @@ test("system-check.yml: every action pinned to a SHA another template workflow a
     if (/workflows\/(?!system-check)[^/]+\.ya?ml(\.jinja)?$/.test(f))
       for (const m of readFileSync(f, "utf8").matchAll(/uses: (\S+@[0-9a-f]{40}) (# v\S+)/g))
         known.add(`${m[1]} ${m[2]}`);
-  const uses = [...wfText.matchAll(/uses: (\S+) (#.*)$/gm)].map((m) => `${m[1]} ${m[2]}`);
-  assert.ok(uses.length >= 2);
-  for (const u of uses) assert.ok(known.has(u), u);
+  for (const text of Object.values(TEMPLATES)) {
+    const uses = [...text.matchAll(/uses: (\S+) (#.*)$/gm)].map((m) => `${m[1]} ${m[2]}`);
+    assert.ok(uses.length >= 4);
+    for (const u of uses) assert.ok(known.has(u), u);
+  }
 });
 
-test("system-check.yml and system-issue.mjs are shared byte for byte with template-rust", () => {
-  const rust = join(HULL, "template-rust/pieces/base/files");
-  for (const f of [WF, SCRIPT])
-    assert.equal(readFileSync(join(rust, f), "utf8"), readFileSync(join(BASE, f), "utf8"), f);
-});
-
-const { plan, TITLE, LABEL } = await import(join(BASE, SCRIPT));
-const open = (n, body = "old") => ({ number: n, title: TITLE, body });
+// Run a report-job step with a fake `gh` that logs its calls and keeps each --body-file.
+const reportStep = (name) => YAML.parse(wfText).jobs.report.steps.find((s) => s.name === name);
+function runStep(name, { env = {}, live, issues = [] }) {
+  const dir = join(mkdtempSyncish(), "run");
+  mkdirSync(join(dir, "bin"), { recursive: true });
+  mkdirSync(join(dir, "system-check"), { recursive: true });
+  if (live !== undefined)
+    writeFileSync(
+      join(dir, "system-check/live.json"),
+      typeof live === "string" ? live : JSON.stringify(live),
+    );
+  writeFileSync(join(dir, "issues.json"), JSON.stringify(issues));
+  writeFileSync(
+    join(dir, "bin/gh"),
+    `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "${dir}/gh.log"
+prev=""
+for a in "$@"; do
+  if [ "$prev" = "--body-file" ]; then cp "$a" "${dir}/body.md"; fi
+  prev=$a
+done
+if [ "$1 $2" = "issue list" ]; then cat "${dir}/issues.json"; fi
+`,
+  );
+  chmodSync(join(dir, "bin/gh"), 0o755);
+  const step = reportStep(name);
+  // The step's own env, with `${{ runner.temp }}` resolved; the test's env wins.
+  const own = Object.fromEntries(
+    Object.entries(step.env ?? {}).map(([k, v]) => [k, v.replace("${{ runner.temp }}", dir)]),
+  );
+  const r = spawnSync("bash", ["-c", step.run], {
+    encoding: "utf8",
+    env: {
+      ...own,
+      PATH: `${join(dir, "bin")}:${process.env.PATH}`,
+      RUNNER_TEMP: dir,
+      RUN_URL: "https://github.com/o/r/actions/runs/1",
+      ...env,
+    },
+  });
+  const read = (f) => (existsSync(join(dir, f)) ? readFileSync(join(dir, f), "utf8") : "");
+  return { ...r, log: read("gh.log"), body: read("body.md") };
+}
+let tmpCount = 0;
+function mkdtempSyncish() {
+  const d = join(tmpdir(), `hull-syscheck-${process.pid}-${tmpCount++}`);
+  mkdirSync(d, { recursive: true });
+  return d;
+}
+const UPDATE = "Update the system-check issue";
+const FAIL = "Fail on drift or a broken file";
+const TITLE = "system.toml: drift or credentials to rotate";
 const report = (items, steps = []) => ({
   version: 1,
   command: "system check",
@@ -300,45 +399,88 @@ const drift = {
 };
 const okItem = { ...drift, kind: "credential", action: "ok", reason: "fine" };
 
-test("system-issue plan: drift or pending creates the issue with the findings only", () => {
-  const p = plan({ exit: 1, report: report([drift, okItem]), issues: [] });
-  assert.equal(p.action, "create");
-  assert.equal(p.title, TITLE);
-  assert.equal(LABEL, "system-check");
-  assert.match(p.body, /missing created_at/);
-  assert.doesNotMatch(p.body, /fine/);
-  const pend = plan({
-    exit: 2,
-    report: report([], [{ id: "rotate:a", title: "Rotate a" }]),
-    issues: [],
-  });
-  assert.equal(pend.action, "create");
-  assert.match(pend.body, /Rotate a/);
-});
-
-test("system-issue plan: updates the lowest open issue, no-op when unchanged, closes when clean", () => {
-  const issues = [open(9), { number: 2, title: "other", body: "" }, open(4)];
-  const u = plan({ exit: 1, report: report([drift]), issues });
-  assert.equal(u.action, "update");
-  assert.equal(u.number, 4);
-  assert.equal(
-    plan({ exit: 1, report: report([drift]), issues: [open(4, u.body)] }).action,
-    "none",
+test("system-check report: drift creates the labelled issue with the findings only", () => {
+  const r = runStep(UPDATE, { env: { EXIT: "1", OFFLINE: "1" }, live: report([drift, okItem]) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.log, /^label create system-check --color fbca04 /m);
+  assert.match(
+    r.log,
+    new RegExp(`^issue create --title ${TITLE} --label system-check --body-file `, "m"),
   );
-  const c = plan({ exit: 0, report: report([okItem]), issues: [open(4)] });
-  assert.equal(c.action, "close");
-  assert.ok(c.comment);
-  assert.equal(plan({ exit: 0, report: report([]), issues: [] }).action, "none");
+  assert.match(r.body, /missing created_at/);
+  assert.doesNotMatch(r.body, /fine/);
 });
 
-test("system-issue plan: an unreadable report or exit 3 still opens the issue; long bodies cut", () => {
-  const p = plan({ exit: 3, report: null, raw: "error: unknown key", issues: [] });
-  assert.equal(p.action, "create");
-  assert.match(p.body, /unknown key/);
+test("system-check report: neutralizes @mentions and backticks, keeps only plain https step urls", () => {
+  const evil = { ...drift, key: "@org/team", reason: "x `rm` | y\nz @someone" };
+  const steps = [
+    { id: "a", title: "Rotate @admin", url: "https://dash.cloudflare.com/profile/api-tokens" },
+    { id: "b", title: "Bad", url: "javascript:alert(1)" },
+    { id: "c", title: "Sneaky", url: "https://x.example/) [click](https://evil" },
+  ];
+  const r = runStep(UPDATE, { env: { EXIT: "2", OFFLINE: "2" }, live: report([evil], steps) });
+  assert.equal(r.status, 0, r.stderr);
+  assert.doesNotMatch(r.body, /(^|[^​])@(org|someone|admin)/);
+  assert.match(r.body, /@​org/);
+  assert.doesNotMatch(
+    r.body
+      .split("\n")
+      .filter((l) => l.startsWith("|"))
+      .join("\n"),
+    /`/,
+  );
+  assert.match(r.body, /<https:\/\/dash\.cloudflare\.com\/profile\/api-tokens>/);
+  assert.doesNotMatch(r.body, /javascript:|evil/);
+});
+
+test("system-check report: updates the lowest open issue, closes it when clean, no-op when none", () => {
+  const issues = [
+    { number: 9, title: TITLE },
+    { number: 2, title: "other" },
+    { number: 4, title: TITLE },
+  ];
+  const u = runStep(UPDATE, { env: { EXIT: "1", OFFLINE: "1" }, live: report([drift]), issues });
+  assert.equal(u.status, 0, u.stderr);
+  assert.match(u.log, /^issue edit 4 --title /m);
+  const c = runStep(UPDATE, { env: { EXIT: "0", OFFLINE: "0" }, live: report([okItem]), issues });
+  assert.equal(c.status, 0, c.stderr);
+  assert.match(c.log, /^issue close 4 --comment /m);
+  const n = runStep(UPDATE, { env: { EXIT: "0", OFFLINE: "0" }, live: report([]) });
+  assert.equal(n.status, 0, n.stderr);
+  assert.doesNotMatch(n.log, /issue (create|edit|close)/);
+});
+
+test("system-check report: no report or exit 3 still opens the issue; long bodies are cut", () => {
+  const p = runStep(UPDATE, {
+    env: { EXIT: "3", OFFLINE: "3" },
+    live: "error: unknown key `x` @y",
+  });
+  assert.equal(p.status, 0, p.stderr);
+  assert.match(p.log, /^issue create /m);
+  assert.match(p.body, /exited 3 without a JSON report/);
+  assert.doesNotMatch(p.body, /unknown key/);
   const many = Array.from({ length: 3000 }, (_, i) => ({
     ...drift,
     key: `k${i}`,
     reason: "x".repeat(40),
   }));
-  assert.ok(plan({ exit: 1, report: report(many), issues: [] }).body.length < 65536);
+  const l = runStep(UPDATE, { env: { EXIT: "1", OFFLINE: "1" }, live: report(many) });
+  assert.equal(l.status, 0, l.stderr);
+  assert.ok(Buffer.byteLength(l.body) < 65536, `${Buffer.byteLength(l.body)} bytes`);
+  assert.match(l.body, /truncated/);
+});
+
+test("system-check report: exit 0 and 2 pass, metadata-only drift warns, other drift and 3 fail", () => {
+  const run = (code, live) => runStep(FAIL, { env: { EXIT: code }, live });
+  assert.equal(run("0", report([])).status, 0);
+  assert.equal(run("2", report([{ ...drift, kind: "expiry", action: "pending" }])).status, 0);
+  const meta = run("1", report([drift, okItem]));
+  assert.equal(meta.status, 0);
+  assert.match(meta.stdout, /::warning::/);
+  assert.equal(
+    run("1", report([drift, { ...drift, kind: "expiry", reason: "expired 3 days ago" }])).status,
+    1,
+  );
+  assert.equal(run("1", "not json").status, 1);
+  assert.equal(run("3", report([])).status, 1);
 });

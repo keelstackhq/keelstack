@@ -1,15 +1,21 @@
 name: system-check
 
 # Weekly `hoist system check --live` against system.toml (D-031, hoist spec §17.4-17.5; D-007:
-# crons at most weekly). It keeps ONE issue labelled `system-check` current: opened or updated on
-# drift or a due rotation, closed when clean. Live reads use github.token only; a provider whose
-# token is missing reports `unknown`, never a failure. The job fails only on real offline drift
-# (`hoist system check` exit 1: undeclared or unused secrets, expiry, consumers, max_ttl, keyless)
-# or an invalid system.toml (exit 3). Drift that is ONLY `metadata` (the seeded TODO owners and
-# missing dates of a fresh repo) is listed in the issue but keeps the job green, so a new repo is
-# not red from week one; `hoist system stamp` clears it. It reads no secret; a read-only provider
-# token would be one more credential and needs its own [[credential]] entry first. Run it by
-# hand: Actions > system-check.
+# crons at most weekly, no comment, label or edit trigger). It keeps ONE issue labelled
+# `system-check` current: opened or edited while something is off, closed when clean. Same
+# behaviour as the keelstack monorepo's own system-check.yml.
+#
+# Two jobs, so no repo code ever runs with `issues: write`: `check` (contents: read) installs
+# hoist, runs `hoist system check --live --json` and the offline `hoist system check --json`, and
+# uploads both reports with their exit codes; `report` (issues: write, no checkout, no repo
+# script) reads that artifact and edits the issue with jq and gh only.
+#
+# Exits follow the live run: 0 clean and 2 (a rotation due, a human step) pass; 1 (drift) fails,
+# except drift that is ONLY `metadata` (the seeded TODO owners and missing dates of a fresh repo:
+# listed in the issue, a warning, green; `hoist system stamp` clears it); 3 (invalid system.toml)
+# fails. Live reads use github.token only; a provider whose token is missing reports `unknown`,
+# never a failure. A read-only provider token would be one more credential and needs its own
+# [[credential]] entry first. Run it by hand: Actions > system-check.
 on:
   schedule:
     - cron: "41 5 * * 3"
@@ -17,7 +23,7 @@ on:
 
 concurrency:
   group: system-check
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -29,51 +35,120 @@ jobs:
     timeout-minutes: 10
     permissions:
       contents: read
-      issues: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
+      # hoist comes from pins.toml (the one source, as in release.yml); 0.26.0 is the first
+      # release with `hoist system`.
+      - id: pins
+        run: node scripts/pins.mjs --github-output >> "$GITHUB_OUTPUT"
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: "24"
           package-manager-cache: false
-      # hoist 0.26.0 is the first release with `hoist system`; scripts/bump-version.sh keeps
-      # HOIST_VERSION in lockstep with the template on every release.
       - run: npm install -g --ignore-scripts "@keelstackhq/hoist@$HOIST_VERSION"
         env:
-          HOIST_VERSION: "0.26.0"
-      - id: check
-        shell: bash
+          HOIST_VERSION: ${{ steps.pins.outputs.hoist }}
+      - name: hoist system check --live and offline
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           set +e
-          hoist system check --live --json > "$RUNNER_TEMP/system-check.json"
-          echo "live=$?" >> "$GITHUB_OUTPUT"
-          hoist system check --json > "$RUNNER_TEMP/system-offline.json"
-          echo "offline=$?" >> "$GITHUB_OUTPUT"
-      - name: Open, update or close the system-check issue
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          SYSTEM_EXIT: ${{ steps.check.outputs.live }}
-          SYSTEM_REPORT: ${{ runner.temp }}/system-check.json
-        run: node .github/scripts/system-issue.mjs
-      - name: Fail on offline drift or an invalid system.toml
-        env:
-          OFFLINE: ${{ steps.check.outputs.offline }}
-          OFFLINE_REPORT: ${{ runner.temp }}/system-offline.json
+          out="$RUNNER_TEMP/system-check"
+          mkdir -p "$out"
+          hoist system check --live --json > "$out/live.json"
+          echo "$?" > "$out/live.exit"
+          hoist system check --json > "$out/offline.json"
+          echo "$?" > "$out/offline.exit"
+          echo "hoist system check --live exited $(cat "$out/live.exit"), offline $(cat "$out/offline.exit")"
+          exit 0
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: system-check
+          path: ${{ runner.temp }}/system-check
+          retention-days: 7
+          if-no-files-found: error
+
+  # Privileged: no checkout and no repo code; only the artifact above, jq and gh.
+  report:
+    needs: check
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: system-check
+          path: ${{ runner.temp }}/system-check
+      - name: Read the exit codes
+        id: check
         run: |
-          case "$OFFLINE" in
-            0 | 2) echo "hoist system check: exit $OFFLINE (0 clean, 2 rotation due)" ;;
+          set -euo pipefail
+          for k in live offline; do
+            code=$(head -c 8 "$RUNNER_TEMP/system-check/$k.exit" 2>/dev/null | tr -d '[:space:]' || true)
+            [[ $code =~ ^[0-9]{1,3}$ ]] || code=3
+            echo "$k=$code" >> "$GITHUB_OUTPUT"
+          done
+      # Every cell loses `|`, newlines and backticks and every @ gets a zero-width space (no
+      # mentions, no code spans); a human step's url is kept only when it is a plain https URL.
+      - name: Update the system-check issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EXIT: ${{ steps.check.outputs.live }}
+          OFFLINE: ${{ steps.check.outputs.offline }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          json="$RUNNER_TEMP/system-check/live.json"
+          body="$RUNNER_TEMP/body.md"
+          title="system.toml: drift or credentials to rotate"
+          gh label create system-check --color fbca04 --description "hoist system check --live" --force >/dev/null
+          number=$(gh issue list --label system-check --state open --limit 100 --json number,title | jq -r --arg t "$title" '[.[] | select(.title == $t)] | sort_by(.number) | .[0].number // empty')
+          if [ "$EXIT" = "0" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "The weekly system check is clean again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          if ! jq -e '.items | type == "array"' "$json" >/dev/null 2>&1; then
+            printf 'hoist system check --live exited %s without a JSON report; see %s\n' "$EXIT" "$RUN_URL" > "$body"
+          else
+            {
+              printf 'hoist system check --live exited %s (offline %s; 1 drift, 2 rotation due, 3 config). Run: %s\n\n' "$EXIT" "$OFFLINE" "$RUN_URL"
+              printf '| action | kind | key | reason | source |\n| --- | --- | --- | --- | --- |\n'
+              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); .items[] | select(.action != "ok") | "| \(.action | cell) | \(.kind | cell) | \(.key | cell) | \(.reason | cell) | \(.source // "" | cell) |"' "$json"
+              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); def link: if type == "string" and test("^https://[A-Za-z0-9._~/?#&=%+:-]+$") then " <\(.)>" else "" end; (.human_steps // []) as $s | if ($s | length) > 0 then "\nHuman steps:\n", ($s[] | "- \(.title | cell)\(.url | link)") else empty end' "$json"
+              printf '\nFix: edit system.toml (dates: `hoist system stamp`), rotate what is due, then `hoist system explain --write`. Only metadata is listed, never values. This issue closes itself on a clean run.\n'
+            } > "$body"
+          fi
+          if [ "$(wc -c < "$body")" -gt 60000 ]; then
+            head -c 60000 "$body" > "$body.cut"
+            printf '\n\n... (truncated; see %s)\n' "$RUN_URL" >> "$body.cut"
+            mv "$body.cut" "$body"
+          fi
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --title "$title" --body-file "$body"
+          else
+            gh issue create --title "$title" --label system-check --body-file "$body"
+          fi
+      - name: Fail on drift or a broken file
+        env:
+          EXIT: ${{ steps.check.outputs.live }}
+          REPORT: ${{ runner.temp }}/system-check/live.json
+        run: |
+          case "$EXIT" in
+            0 | 2) echo "hoist system check --live: exit $EXIT (0 clean, 2 rotation due)" ;;
             1)
-              # Only `metadata` drift (TODO owner or purpose, missing dates): warn, stay green.
-              if jq -e '[.items[] | select(.action == "drift")] | length > 0 and all(.kind == "metadata")' "$OFFLINE_REPORT" > /dev/null 2>&1; then
-                echo "::warning::hoist system check: only metadata drift (TODO or missing dates); see the system-check issue"
+              # Only `metadata` drift (TODO or missing dates): warn, stay green.
+              if jq -e '[.items[] | select(.action == "drift")] | length > 0 and all(.kind == "metadata")' "$REPORT" > /dev/null 2>&1; then
+                echo "::warning::hoist system check --live: only metadata drift (TODO or missing dates); see the system-check issue"
               else
-                echo "hoist system check: exit 1 (drift); see the system-check issue" >&2
-                exit 1
+                echo "::error::hoist system check --live exited 1 (drift); see the system-check issue"; exit 1
               fi
               ;;
-            *) echo "hoist system check: exit $OFFLINE (3 invalid system.toml); see the system-check issue" >&2; exit 1 ;;
+            *) echo "::error::hoist system check --live exited $EXIT (3 invalid system.toml or API error); see the system-check issue"; exit 1 ;;
           esac

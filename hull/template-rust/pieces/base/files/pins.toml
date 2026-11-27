@@ -12,7 +12,8 @@ bosun = "0.21.0"
 # crate tags; from 0.22.0 it asks `hoist release publish --dry-run`. hoist.toml keys newer than
 # the pin (`[publish] npm.build`, environment `tags`) need a pin that knows them. Not moved by
 # scripts/bump-version.sh: the pin moves in a reviewed PR once that release is on npm.
-hoist = "0.5.1"
+# system-check.yml installs it too: 0.26.0 is the first release with `hoist system`.
+hoist = "0.26.0"
 
 # Crates several pieces share: every workspace crate pins them to exactly these versions
 # (`=x.y.z`); `node scripts/pins.mjs --check` fails on drift. Checked on crates.io 2026-11-20.

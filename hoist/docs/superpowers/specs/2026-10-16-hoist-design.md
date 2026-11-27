@@ -1981,6 +1981,11 @@ list every drift, but treat exit 1 whose drift items are all `metadata` (a fresh
 owners and missing dates; `hoist system stamp` clears them) as a warning, not a failure: a new repo
 is not red from week one. Dates are never seeded at render or `init` time (they come from the
 provider's console). Any other drift kind, or exit 3, fails.
+The weekly workflow is two jobs with one behaviour everywhere (title `system.toml: drift or
+credentials to rotate`, label `system-check`, no cancel-in-progress): `check` (`contents: read`)
+runs `system check --live --json` and the offline check and uploads both reports; `report`
+(`issues: write`, no checkout, no repo code) edits the one issue with jq and gh, defusing `@`
+and backticks, and fails on the live exit as above (2, a rotation due, passes).
 
 ### 17.5 `hoist system check --live`
 
@@ -1991,7 +1996,13 @@ bases from `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API`, `HOIST_NPM_REGISTRY`, `HO
 `HOIST_GOOGLE_API`; Fly runs the read-only `fly tokens list -a APP --json` and
 `fly secrets list -a APP --json` (`HOIST_FLY`, token only in the child's env). A credential's own
 value is used when an env var named by one of its `storage[].key` is set (a job that reads it);
-else the provider token below. A missing token, a 401/403 or an API error is `unknown` with a fix,
+else the provider token below. hoist only ever reads the token env names a provider owns
+(`github`: `GH_TOKEN`, `GH_PAT` (`GITHUB_TOKEN` is the job's own, never a credential's value);
+`cloudflare`: `CLOUDFLARE_API_TOKEN`; `fly`: `FLY_API_TOKEN`, `FLY_ACCESS_TOKEN`; `npm`:
+`NPM_TOKEN`; `crates`: `CARGO_REGISTRY_TOKEN`; `google`/`gcp`/`gsc`:
+`GOOGLE_OAUTH_ACCESS_TOKEN`), never an arbitrary env var: a storage key with any other name is
+not read, and when no owned token is set the item is `unknown` naming that key and the env name
+to export the value as. A missing token, a 401/403 or an API error is `unknown` with a fix,
 never a failure of the check; exit codes stay 17.1 (`unknown` alone is exit 0).
 
 | provider | token (env) | reads | drift when |
@@ -2007,7 +2018,11 @@ never a failure of the check; exit codes stay 17.1 (`unknown` alone is exit 0).
 provider_ref …"). Providers without a probe stay `unknown` ("no live probe for <provider>").
 A credential's own value (its storage key read from env) is only ever sent to its own
 provider's API: the Fly sweep uses `FLY_API_TOKEN` or the value of a credential whose provider
-is `fly`, never another provider's. An app whose secrets cannot be listed (no token, a failed
+is `fly`, never another provider's. Every `fly` child hoist runs starts from an empty env plus `PATH`, `HOME`, `TMPDIR`, the proxy
+vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`, upper and lower case), the CA vars
+(`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`), the Windows process basics, and
+`FLY_API_TOKEN`: the operator's, or the credential's own value where a probe sends it (never
+`FLY_ACCESS_TOKEN` or another tool's token). An app whose secrets cannot be listed (no token, a failed
 `fly secrets list`) is a `live` item `fly:<app>` (`unknown`, with the fix). `provider_ref`
 matches an id first; a name that matches several tokens is `unknown` ("set it to the token id");
 an npm masked-prefix match needs a `provider_ref` word of at least 8 characters.
@@ -2085,11 +2100,16 @@ breaks the legacy name, any other name then reports the parse error, exit 3) fol
 `token id OLD_ID` in the same write, since the new token reuses the old one's name). Cloudflare
 lookup skips every id in `pending_ref`; an id match wins, else exactly one name match must
 remain (several: exit 3, "set it to the old token's id", `hoist system stamp … --ref`). A rerun cannot reuse a pending token (its value is
-  never kept), so it mints a fresh one and, once it is stored everywhere, clears `pending_ref`
-  and revokes each pending id (never the one it just minted). On success hoist re-reads `system.toml`, edits that credential (toml_edit,
+  never kept), so it mints a fresh one and, once it is stored everywhere, revokes each pending id
+  (never the one it just minted) and only then drops it from `pending_ref`; an id whose revoke
+  fails stays recorded (plus the `revoke-token:ID` human step). Pending ids are deduped, and an
+  id equal to the current token (`provider_ref`, or the id a name ref resolves to) is never
+  pending: it is the old token, revoked once, last. On success hoist re-reads `system.toml`, edits that credential (toml_edit,
   comments kept) and writes it atomically (temp file, rename): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
-  `provider_ref` when the new id is known, `pending_ref` removed. Order: create, test, set, stamp,
-  revoke pending ids, revoke the old one last. A failed stamp is item `system/stamp/ID` (exit 1)
+  `provider_ref` when the new id is known (`pending_ref` kept). Order: create, test, set, stamp,
+  revoke pending ids, rewrite `pending_ref` to the ids still live (removed when none; a failed
+  rewrite is item `system/pending_ref/ID`, exit 1, naming the value to set), revoke the old one
+  last. A failed stamp is item `system/stamp/ID` (exit 1)
   with human step `stamp:ID` (`hoist system stamp ID --created … --expires … --ref NEW_ID`);
 then the pending ids are not revoked (item `pending`, "kept ID"): `pending_ref` still names them,
 so the next rotation revokes them; the old token, replaced everywhere, is still revoked.
@@ -2098,6 +2118,6 @@ so the next rotation revokes them; the old token, replaced everywhere, is still 
 records a rotation done by hand: it sets those keys of that credential only (other bytes kept;
 it never touches `rotation.pending_ref`, so tokens a partial rotation left live stay recorded and
 the next `hoist secrets rotate ID` revokes them; revoke them by hand and remove the key to end it sooner),
-re-validates the file and writes `system.toml` (no HTTP, never commits). Item
+re-validates the file and writes `system.toml` (or `--file PATH`, relative to `-C`) (no HTTP, never commits). Item
 `system/stamp/ID` (`update`, or `ok` when nothing changed); exit 0; unknown id or bad date exit 3
 with nothing written.

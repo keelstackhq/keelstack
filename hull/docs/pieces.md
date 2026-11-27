@@ -66,7 +66,6 @@ Files (owned):
 - `.github/workflows/release.yml`
 - `.github/workflows/splice.yml`
 - `.github/workflows/system-check.yml`
-- `.github/scripts/system-issue.mjs`
 - `.github/scripts/release-plan.mjs`
 - `scripts/agents-index.mjs`
 - `scripts/ready.mjs`

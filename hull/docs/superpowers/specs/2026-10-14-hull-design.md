@@ -267,13 +267,18 @@ Root files (class in brackets):
   a comment. `tests/system-description.test.mjs` validates every combo against
   `hoist/schema/system.schema.json` and mirrors the offline check. SYSTEM.md is not shipped
   (`hoist system explain --write` makes it on demand; PR CI has no hoist).
-- `.github/workflows/system-check.yml` + `.github/scripts/system-issue.mjs` [owned, shared with
-  template-rust by `scripts/sync-shared.mjs`]: weekly cron + `workflow_dispatch`, one job gated
-  to those events on the default branch, `contents: read` + `issues: write`, no secrets (live
-  probes get `github.token`; a missing provider token is `unknown`). It installs the pinned
-  `@keelstackhq/hoist` from npm, runs `hoist system check --live --json` (the issue body) and
-  `hoist system check --json` (the gate), keeps one issue labelled `system-check` (create or
-  update on exit 1/2/3, close on 0) and fails only on offline exit 1 or 3.
+- `.github/workflows/system-check.yml` [owned; the same in template-rust except where the hoist
+  version comes from: a `HOIST_VERSION` literal `scripts/bump-version.sh` moves here, `pins.toml`
+  `hoist` (via `scripts/pins.mjs --github-output`) there]: weekly cron + `workflow_dispatch`,
+  both jobs gated to those events on the default branch, no secrets (live probes get
+  `github.token`; a missing provider token is `unknown`). Job `check` (`contents: read`)
+  installs the pinned `@keelstackhq/hoist` from npm, runs `hoist system check --live --json` and
+  `hoist system check --json` and uploads both reports with their exit codes; job `report`
+  (`issues: write`, no checkout, no repo code: the artifact, jq and gh only) keeps one issue
+  labelled `system-check` (create or edit on exit 1/2/3, close on 0; cells lose `|`, newlines and
+  backticks, `@` is defused, step urls only as plain https) and fails on live exit 1 (unless the
+  drift is only `metadata`, a warning) or 3. Title, label, concurrency, report job and exits equal
+  the monorepo's own `system-check.yml` (`tests/system-description.test.mjs`).
 - AI layer, §6.9.
 
 ### 6.2 `preact-app`

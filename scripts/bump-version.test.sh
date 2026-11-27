@@ -165,16 +165,24 @@ if [ -f hull/template/pieces/base/files/scripts/ready.mjs ]; then
   fi
 fi
 
-# hull templates' system-check.yml installs hoist at the lockstep version
-for t in template template-rust; do
-  f=hull/$t/pieces/base/files/.github/workflows/system-check.yml
-  [ -f "$f" ] || continue
+# hull template's system-check.yml installs hoist at the lockstep version; template-rust reads
+# it from its pins.toml (moved in a reviewed PR), so the bump leaves that workflow alone
+f=hull/template/pieces/base/files/.github/workflows/system-check.yml
+if [ -f "$f" ]; then
   if [ "$(grep -c '^ *HOIST_VERSION: ' "$f")" = 1 ] && grep -q "^ *HOIST_VERSION: \"$new\"\$" "$f"; then
     ok "$f: HOIST_VERSION $new"
   else
     fail "$f: HOIST_VERSION is not \"$new\""
   fi
-done
+fi
+f=hull/template-rust/pieces/base/files/.github/workflows/system-check.yml
+if [ -f "$f" ]; then
+  if [ "$(grep -c '^ *HOIST_VERSION: ' "$f")" = 1 ] && grep -q '^ *HOIST_VERSION: \${{ steps.pins.outputs.hoist }}$' "$f"; then
+    ok "$f: HOIST_VERSION from pins.toml"
+  else
+    fail "$f: HOIST_VERSION is not \${{ steps.pins.outputs.hoist }}"
+  fi
+fi
 
 # CHANGELOG headings, each in the file's own style
 chk_heading() { # <file> <exact heading line>

@@ -584,7 +584,7 @@ export const CLASH = {
       ".claude/skills/docs-lookup/SKILL.md .claude/skills/ready/SKILL.md " +
       ".claude/skills/verify/SKILL.md .claude/statusline.sh .github/scripts/affected.mjs " +
       ".github/scripts/preview.mjs .github/scripts/release-plan.mjs .github/scripts/rust-affected.mjs " +
-      ".github/scripts/system-issue.mjs .github/scripts/workflows.mjs " +
+      ".github/scripts/workflows.mjs " +
       ".github/workflows/ci.yml .github/workflows/desktop.yml .github/workflows/preview-deploy.yml " +
       ".github/workflows/preview.yml .github/workflows/release.yml .github/workflows/splice.yml " +
       ".github/workflows/system-check.yml " +
@@ -603,7 +603,7 @@ export const CLASH = {
       ".claude/loop.md .claude/settings.json .claude/skills/add-piece/SKILL.md " +
       ".claude/skills/ready/SKILL.md .claude/skills/verify/SKILL.md .claude/statusline.sh " +
       ".config/nextest.toml .github/scripts/advisory-issue.mjs .github/scripts/docs-only.mjs " +
-      ".github/scripts/release-pending.mjs .github/scripts/system-issue.mjs .github/scripts/workflows.mjs " +
+      ".github/scripts/release-pending.mjs .github/scripts/workflows.mjs " +
       ".github/workflows/advisories.yml .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/splice.yml " +
       ".github/workflows/system-check.yml " +
       ".gitattributes .gitignore CLAUDE.md deny.toml docs/agents/guard.md pins.toml renovate.json rust-toolchain.toml rustfmt.toml " +

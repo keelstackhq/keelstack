@@ -6,9 +6,11 @@ name: system-check
 # no probe) and a pending rotation (exit 2) never fail the job. Weekly, not nightly, and no
 # comment, label or edit trigger (D-007); the job-level `if:` skips every other event and any ref
 # but the default branch. hoist is built from this workspace at the default branch head, never
-# downloaded. As in the hull templates' system-check.yml (hoist spec §17.4), drift that is ONLY
-# `metadata` (TODO owner or purpose, missing dates) is listed in the issue but keeps the job
-# green; `hoist system stamp` clears it. Any other drift, or exit 3, fails.
+# downloaded. The issue (title, label), the report job and the exits are the same as in the hull
+# templates' system-check.yml (hoist spec §17.4; hull tests/system-description.test.mjs keeps
+# them equal): drift that is ONLY `metadata` (TODO owner or purpose, missing dates) is listed in
+# the issue but keeps the job green; `hoist system stamp` clears it. Any other drift, or exit 3,
+# fails.
 #
 # Two jobs, so no repo code ever runs with `issues: write`: `check` (contents: read) builds hoist,
 # runs `hoist system check --live --json` and the offline `hoist system check --json`, and uploads
@@ -88,6 +90,8 @@ jobs:
             [[ $code =~ ^[0-9]{1,3}$ ]] || code=3
             echo "$k=$code" >> "$GITHUB_OUTPUT"
           done
+      # Every cell loses `|`, newlines and backticks and every @ gets a zero-width space (no
+      # mentions, no code spans); a human step's url is kept only when it is a plain https URL.
       - name: Update the system-check issue
         env:
           GH_TOKEN: ${{ github.token }}
@@ -98,29 +102,36 @@ jobs:
         run: |
           set -euo pipefail
           json="$RUNNER_TEMP/system-check/live.json"
-          title="system-check: system.toml needs attention"
-          gh label create system-check --color 5319e7 --description "hoist system check --live" --force >/dev/null
-          number=$(gh issue list --label system-check --state open --json number,title | jq -r --arg t "$title" '[.[]|select(.title==$t)][0].number // empty')
+          body="$RUNNER_TEMP/body.md"
+          title="system.toml: drift or credentials to rotate"
+          gh label create system-check --color fbca04 --description "hoist system check --live" --force >/dev/null
+          number=$(gh issue list --label system-check --state open --limit 100 --json number,title | jq -r --arg t "$title" '[.[] | select(.title == $t)] | sort_by(.number) | .[0].number // empty')
           if [ "$EXIT" = "0" ]; then
             if [ -n "$number" ]; then
-              gh issue close "$number" --comment "Clean again: $RUN_URL"
+              gh issue close "$number" --comment "The weekly system check is clean again: $RUN_URL"
             fi
             exit 0
           fi
-          if ! jq -e '.items' "$json" >/dev/null 2>&1; then
-            printf 'hoist exited %s without a report; see %s\n' "$EXIT" "$RUN_URL" > "$RUNNER_TEMP/body.md"
+          if ! jq -e '.items | type == "array"' "$json" >/dev/null 2>&1; then
+            printf 'hoist system check --live exited %s without a JSON report; see %s\n' "$EXIT" "$RUN_URL" > "$body"
           else
             {
               printf 'hoist system check --live exited %s (offline %s; 1 drift, 2 rotation due, 3 config). Run: %s\n\n' "$EXIT" "$OFFLINE" "$RUN_URL"
-              printf '| kind | key | action | reason |\n| --- | --- | --- | --- |\n'
-              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@\u200b"); .items[] | select(.action != "ok") | "| \(.kind | cell) | \(.key | cell) | \(.action | cell) | \(.reason | cell) |"' "$json"
-              printf '\nFix: edit system.toml, then `hoist system explain --write`. Only metadata is listed, never values.\n'
-            } > "$RUNNER_TEMP/body.md"
+              printf '| action | kind | key | reason | source |\n| --- | --- | --- | --- | --- |\n'
+              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); .items[] | select(.action != "ok") | "| \(.action | cell) | \(.kind | cell) | \(.key | cell) | \(.reason | cell) | \(.source // "" | cell) |"' "$json"
+              jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); def link: if type == "string" and test("^https://[A-Za-z0-9._~/?#&=%+:-]+$") then " <\(.)>" else "" end; (.human_steps // []) as $s | if ($s | length) > 0 then "\nHuman steps:\n", ($s[] | "- \(.title | cell)\(.url | link)") else empty end' "$json"
+              printf '\nFix: edit system.toml (dates: `hoist system stamp`), rotate what is due, then `hoist system explain --write`. Only metadata is listed, never values. This issue closes itself on a clean run.\n'
+            } > "$body"
+          fi
+          if [ "$(wc -c < "$body")" -gt 60000 ]; then
+            head -c 60000 "$body" > "$body.cut"
+            printf '\n\n... (truncated; see %s)\n' "$RUN_URL" >> "$body.cut"
+            mv "$body.cut" "$body"
           fi
           if [ -n "$number" ]; then
-            gh issue edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+            gh issue edit "$number" --title "$title" --body-file "$body"
           else
-            gh issue create --title "$title" --label system-check --body-file "$RUNNER_TEMP/body.md"
+            gh issue create --title "$title" --label system-check --body-file "$body"
           fi
       - name: Fail on drift or a broken file
         env:
@@ -128,14 +139,14 @@ jobs:
           REPORT: ${{ runner.temp }}/system-check/live.json
         run: |
           case "$EXIT" in
-            0|2) ;;
+            0 | 2) echo "hoist system check --live: exit $EXIT (0 clean, 2 rotation due)" ;;
             1)
               # Only `metadata` drift (TODO or missing dates): warn, stay green.
               if jq -e '[.items[] | select(.action == "drift")] | length > 0 and all(.kind == "metadata")' "$REPORT" > /dev/null 2>&1; then
                 echo "::warning::hoist system check --live: only metadata drift (TODO or missing dates); see the system-check issue"
               else
-                echo "::error::hoist system check --live exited 1 (drift)"; exit 1
+                echo "::error::hoist system check --live exited 1 (drift); see the system-check issue"; exit 1
               fi
               ;;
-            *) echo "::error::hoist system check --live exited $EXIT"; exit 1 ;;
+            *) echo "::error::hoist system check --live exited $EXIT (3 invalid system.toml or API error); see the system-check issue"; exit 1 ;;
           esac
