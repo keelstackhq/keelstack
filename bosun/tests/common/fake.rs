@@ -75,6 +75,10 @@ pub struct State {
     pub manifest_attempts: Vec<String>,
     /// The PEM the conversion returns (a test key, never real).
     pub manifest_pem: String,
+    /// The slug the manifest conversion answers with (default `acme-bosun-gate`).
+    pub manifest_slug: Option<String>,
+    /// Environments whose `GET` shows a required-reviewers protection rule (a `PUT` clears it).
+    pub env_with_reviewers: Vec<String>,
     /// Issue numbers that GET answers with 410 (deleted).
     pub gone: Vec<u64>,
     pub issues: Vec<FakeIssue>,
@@ -1472,7 +1476,7 @@ fn route(
         s.manifest_codes.remove(at);
         return (
             201,
-            json!({"id": 777, "slug": "acme-bosun-gate", "client_id": "Iv1.fakeclient",
+            json!({"id": 777, "slug": s.manifest_slug.clone().unwrap_or("acme-bosun-gate".into()), "client_id": "Iv1.fakeclient",
                 "client_secret": "FAKE-CLIENT-SECRET", "webhook_secret": "FAKE-WEBHOOK-SECRET",
                 "pem": s.manifest_pem, "name": "acme-bosun-gate"}),
             vec![],
@@ -2177,6 +2181,9 @@ fn route(
             }
         }
         ("PUT", ["environments", name]) => {
+            if body["reviewers"].as_array().is_some_and(Vec::is_empty) {
+                s.env_with_reviewers.retain(|n| n != name);
+            }
             s.environments.insert(
                 name.to_string(),
                 (
@@ -2245,6 +2252,15 @@ fn route(
                 .insert(key, body["value"].as_str().unwrap_or("").to_string());
             (201, Value::Null, vec![])
         }
+        ("PATCH", ["environments", name, "variables", var])
+            if s.env_vars.contains_key(&format!("{name}/{var}")) =>
+        {
+            s.env_vars.insert(
+                format!("{name}/{var}"),
+                body["value"].as_str().unwrap_or("").to_string(),
+            );
+            (204, Value::Null, vec![])
+        }
         ("GET", ["environments", name, "variables", var]) => {
             match s.env_vars.get(&format!("{name}/{var}")) {
                 Some(v) => ok(json!({"name": var, "value": v})),
@@ -2257,7 +2273,13 @@ fn route(
         },
         ("GET", ["environments", name]) if s.environments.contains_key(*name) => {
             let policy = &s.environments[*name].0;
-            ok(json!({"name": name, "deployment_branch_policy": policy}))
+            let rules = if s.env_with_reviewers.iter().any(|n| n == name) {
+                json!([{"type": "required_reviewers", "reviewers": [{"type": "User"}]}])
+            } else {
+                json!([])
+            };
+            ok(json!({"name": name, "deployment_branch_policy": policy,
+                "protection_rules": rules}))
         }
         ("GET", ["environments", name, "deployment-branch-policies"])
             if s.environments.contains_key(*name) =>

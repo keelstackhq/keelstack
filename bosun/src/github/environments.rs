@@ -88,8 +88,28 @@ impl LiveGithub {
 
     pub(super) fn put_env_variable(&self, env: &str, name: &str, value: &str) -> Result<()> {
         let body = json!({"name": name, "value": value});
-        self.http
-            .send_json("POST", &self.env_path(env, "/variables"), &body)
-            .map(|_: Value| ())
+        let one = self.env_path(env, &format!("/variables/{}", enc(name)));
+        match self.http.get_json(&one)? {
+            // Exists: update it only when the value differs.
+            Some(v) if v["value"].as_str() == Some(value) => Ok(()),
+            Some(_) => self
+                .http
+                .send_accepting("PATCH", &one, &body, &[])
+                .map(|_| ()),
+            None => self
+                .http
+                .send_json("POST", &self.env_path(env, "/variables"), &body)
+                .map(|_: Value| ()),
+        }
+    }
+
+    /// Whether the environment has a `required_reviewers` protection rule.
+    pub(super) fn env_has_reviewers(&self, name: &str) -> Result<bool> {
+        let v = self.http.get_json(&self.env_path(name, ""))?;
+        Ok(v.is_some_and(|v| {
+            v["protection_rules"]
+                .as_array()
+                .is_some_and(|r| r.iter().any(|x| x["type"] == "required_reviewers"))
+        }))
     }
 }

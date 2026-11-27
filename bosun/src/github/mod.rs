@@ -243,7 +243,9 @@ pub trait Github {
     /// Create or update environment `name` with no reviewers and the deployment branch policy
     /// `main` only (idempotent).
     fn put_environment_main_only(&self, name: &str) -> Result<()>;
-    /// Set variable `name` of environment `env` (it must not exist yet).
+    /// Whether the environment `name` has a required-reviewers protection rule.
+    fn environment_has_reviewers(&self, name: &str) -> Result<bool>;
+    /// Set variable `name` of environment `env`: created, or updated when it exists.
     fn put_environment_variable(&self, env: &str, name: &str, value: &str) -> Result<()>;
     /// Seal `value` with the environment's public key from the API and set secret `name`; the
     /// plaintext is never sent. Returns nothing: the value is not kept.
@@ -857,6 +859,10 @@ impl Github for LiveGithub {
 
     fn put_environment_variable(&self, env: &str, name: &str, value: &str) -> Result<()> {
         self.put_env_variable(env, name, value)
+    }
+
+    fn environment_has_reviewers(&self, name: &str) -> Result<bool> {
+        self.env_has_reviewers(name)
     }
 
     fn put_environment_secret(&self, env: &str, name: &str, value: &Secret) -> Result<()> {

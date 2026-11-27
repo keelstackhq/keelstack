@@ -210,6 +210,7 @@ impl Git {
         let line = self.opt(&[
             "ls-remote",
             "--heads",
+            "--",
             &self.remote,
             &format!("refs/heads/{BRANCH}"),
         ])?;
@@ -219,23 +220,28 @@ impl Git {
     /// A plain push: no `+`, no `--force`.
     fn push(&self) -> Result<()> {
         let spec = format!("refs/heads/{BRANCH}:refs/heads/{BRANCH}");
-        let o = self.raw(&["push", "-q", &self.remote, &spec], None, &[])?;
+        let o = self.raw(&["push", "-q", "--", &self.remote, &spec], None, &[])?;
         if o.status.success() {
             return Ok(());
         }
-        let why = String::from_utf8_lossy(&o.stderr);
+        let all = String::from_utf8_lossy(&o.stderr);
+        let rejected = all.contains("[rejected]")
+            && (all.contains("non-fast-forward") || all.contains("fetch first"));
         let why = scrub(
-            why.lines()
+            all.lines()
                 .find(|l| !l.trim().is_empty())
                 .unwrap_or("")
                 .trim(),
         );
-        Err(BosunError::conflict(
-            format!("git push of {BRANCH} to {} failed: {why}", self.remote),
-            format!(
-                "everything on GitHub is set up; fix the remote or the branch, then rerun `bosun owner setup` (it only pushes). bosun never forces: if the remote {BRANCH} diverged, delete it there"
-            ),
-        ))
+        let message = format!("git push of {BRANCH} to {} failed: {why}", self.remote);
+        let fix = format!(
+            "everything on GitHub is set up; fix the remote or the branch, then rerun `bosun owner setup` (it only pushes). bosun never forces: if the remote {BRANCH} diverged, delete it there"
+        );
+        Err(if rejected {
+            BosunError::conflict(message, fix)
+        } else {
+            BosunError::error(message, fix)
+        })
     }
 }
 
@@ -280,25 +286,33 @@ fn read_state(git: &Git, gh: &dyn Github) -> Result<State> {
         .iter()
         .find_map(|c| git.show(c, GATE_APP))
         .and_then(|t| parse_gate_app(&t));
-    let approvers = git.show(&parent, APPROVERS).unwrap_or_default();
-    let table: toml::Table = approvers.parse().map_err(|_| {
-        BosunError::error(
-            format!("{APPROVERS} is not valid TOML"),
-            format!("fix {APPROVERS}, then rerun"),
-        )
-    })?;
-    let keys: Vec<&toml::Value> = table
-        .get("key")
-        .and_then(toml::Value::as_array)
-        .map(|a| a.iter().collect())
-        .unwrap_or_default();
-    let key_ids = keys
-        .iter()
-        .filter_map(|k| k.get("id")?.as_str().map(str::to_string))
-        .collect();
-    let signer_enrolled = keys
-        .iter()
-        .any(|k| k.get("role").and_then(toml::Value::as_str) == Some("signer"));
+    // Enrolled on the branch, or already on main (the PR was merged): a stale local branch
+    // must never make a rerun replace a working signer key.
+    let mut key_ids: Vec<String> = Vec::new();
+    let mut signer_enrolled = false;
+    for (i, c) in [&parent, &base].iter().enumerate() {
+        let text = git.show(c, APPROVERS).unwrap_or_default();
+        let Ok(table) = text.parse::<toml::Table>() else {
+            if i == 0 {
+                return Err(BosunError::error(
+                    format!("{APPROVERS} is not valid TOML"),
+                    format!("fix {APPROVERS}, then rerun"),
+                ));
+            }
+            continue;
+        };
+        let keys = table
+            .get("key")
+            .and_then(toml::Value::as_array)
+            .into_iter()
+            .flatten();
+        for k in keys {
+            if let Some(id) = k.get("id").and_then(toml::Value::as_str) {
+                key_ids.push(id.to_string());
+            }
+            signer_enrolled |= k.get("role").and_then(toml::Value::as_str) == Some("signer");
+        }
+    }
 
     let fix = |env: &str| -> Result<bool> {
         match gh.environment_branches(env)? {
@@ -307,7 +321,7 @@ fn read_state(git: &Git, gh: &dyn Github) -> Result<State> {
                 "use a token with Administration (repo) write, or ask the repo admin to run `bosun owner setup`",
             )),
             EnvBranches::Custom(v) if v == [("main".to_string(), "branch".to_string())] => {
-                Ok(false)
+                gh.environment_has_reviewers(env)
             }
             EnvBranches::Custom(v) if !v.is_empty() => Err(BosunError::needs_human(
                 format!("environment {env} allows other branches than main"),
@@ -371,6 +385,12 @@ fn enrolled(approvers: &str, block: &str) -> Result<String> {
 }
 
 pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
+    if a.remote.starts_with('-') {
+        return Err(BosunError::usage(
+            "--remote must be a git remote name or URL, not an option",
+            "pass the name of the remote that receives the branch, such as origin",
+        ));
+    }
     let app = App::load(dir)?;
     let git = Git {
         root: app.ctx.dir.clone(),
@@ -490,6 +510,18 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
                 "pass the id, slug and key of the App named in .bosun/gate-app.toml",
             ));
         }
+        let plain = |s: &str, extra: &[u8]| {
+            !s.is_empty()
+                && s.len() <= 100
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || extra.contains(&b))
+        };
+        if !plain(&c.slug, b"-") || !plain(&c.client_id, b"._-") {
+            return Err(BosunError::error(
+                "the App's slug or client id has an unexpected form",
+                "rerun with `--manual` and the values from the App's settings page",
+            ));
+        }
         key_file_used = a.app.key_file.is_some();
         creds = Some(c);
     }
@@ -542,13 +574,15 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
 
     // 3) The variable and the App key, sealed.
     let mut set_any = false;
+    let mut app_secret_put = false;
     if let Some(c) = &creds {
-        if !st.var_set {
+        if !st.var_set || fresh {
             gh.put_environment_variable(APP_ENV, CLIENT_VAR, &c.client_id)?;
             set_any = true;
         }
         if fresh || !st.app_secret {
             gh.put_environment_secret(APP_ENV, APP_SECRET, &c.key)?;
+            app_secret_put = true;
             set_any = true;
         }
     }
@@ -563,10 +597,10 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
     let mut signer_public = None;
     if need_signer {
         let key = keygen::new_key()?;
-        gh.put_environment_secret(SIGNER_ENV, SIGNER_SECRET, &key.pem)?;
         let block = keygen::key_block(&signer_id, &key.public, "signer");
         let text = git.show(&parent, APPROVERS).unwrap_or_default();
         let joined = enrolled(&text, &block)?;
+        gh.put_environment_secret(SIGNER_ENV, SIGNER_SECRET, &key.pem)?;
         let sha = git.commit_files(
             &parent,
             &[(APPROVERS, &joined)],
@@ -592,6 +626,7 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
     let mut detail = "no private key was written to disk".to_string();
     if a.delete_key_file
         && key_file_used
+        && app_secret_put
         && let Some(p) = &a.app.key_file
     {
         std::fs::remove_file(p).map_err(|e| {

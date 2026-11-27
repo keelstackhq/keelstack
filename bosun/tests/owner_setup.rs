@@ -540,6 +540,211 @@ fn uc_b2_1_with_the_manifest_flow() {
     assert_eq!(e.fake.state.lock().unwrap().manifest_attempts.len(), 1);
 }
 
+fn merge_enrollment_into_main_and_leave_a_stale_branch(e: &Env) {
+    git(
+        e.repo.path(),
+        &["merge", "-q", "--ff-only", "bosun/gate-app"],
+    );
+    git(e.repo.path(), &["push", "-q", "origin", "main"]);
+    git(e.repo.path(), &["branch", "-f", "bosun/gate-app", "HEAD~1"]);
+    git(e.origin.path(), &["branch", "-D", "bosun/gate-app"]);
+}
+
+#[test]
+fn a_stale_local_branch_never_replaces_a_working_signer_key() {
+    let e = Env::new();
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(out.status.success(), "{v}");
+    let before = e.sealed(SIGNER_KEY);
+    merge_enrollment_into_main_and_leave_a_stale_branch(&e);
+    let (out, v) = e.run(&["owner", "setup"], "");
+    assert!(out.status.success(), "{v}");
+    assert_eq!(e.sealed(SIGNER_KEY), before);
+    assert!(v["data"].get("signer_public_key").is_none(), "{v}");
+}
+
+#[test]
+fn a_bad_approvers_file_fails_before_the_signer_secret_is_set() {
+    let e = Env::new();
+    std::fs::create_dir_all(e.repo.path().join(".bosun")).unwrap();
+    std::fs::write(e.repo.path().join(".bosun/approvers.toml"), "key = \"x\"\n").unwrap();
+    git(e.repo.path(), &["add", "-A"]);
+    git(e.repo.path(), &["commit", "-q", "-m", "bad approvers"]);
+    git(e.repo.path(), &["push", "-q", "origin", "main"]);
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(!out.status.success(), "{v}");
+    assert!(e.sealed(SIGNER_KEY).is_none());
+}
+
+#[test]
+fn a_fresh_manual_app_replaces_a_stale_client_id_variable() {
+    let e = Env::new();
+    e.fake
+        .state
+        .lock()
+        .unwrap()
+        .env_vars
+        .insert(APP_VAR.into(), "Iv1.stale".into());
+    // The variable exists in an environment the run creates: make it exist first.
+    e.fake.environment(
+        "bosun-app",
+        serde_json::json!({"protected_branches": false, "custom_branch_policies": true}),
+        serde_json::json!([{"name": "main", "type": "branch"}]),
+    );
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(out.status.success(), "{v}");
+    assert_eq!(
+        e.fake.state.lock().unwrap().env_vars[APP_VAR],
+        "Iv1.fakeclient"
+    );
+}
+
+#[test]
+fn the_key_file_survives_when_the_app_secret_was_not_set_this_run() {
+    let e = Env::new();
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(out.status.success(), "{v}");
+    e.fake.state.lock().unwrap().env_vars.remove(APP_VAR);
+    let dir = tempfile::tempdir().unwrap();
+    let pem = dir.path().join("app.pem");
+    std::fs::write(&pem, KEY).unwrap();
+    std::fs::set_permissions(&pem, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+    let sealed = e.sealed(APP_KEY);
+    let mut args: Vec<&str> = MANUAL[..9].to_vec();
+    args.extend(["--key-file", pem.to_str().unwrap(), "--delete-key-file"]);
+    let (out, v) = e.run(&args, "");
+    assert!(out.status.success(), "{v}");
+    assert_eq!(e.sealed(APP_KEY), sealed, "the App secret is not touched");
+    assert!(pem.exists(), "the key was not stored this run");
+}
+
+#[test]
+fn a_remote_that_looks_like_an_option_is_refused() {
+    let e = Env::new();
+    let (out, v) = e.run(&["owner", "setup", "--remote=-oProxy"], "");
+    assert_eq!(out.status.code(), Some(2), "{v}");
+    assert!(e.mutations().is_empty());
+}
+
+#[test]
+fn a_manifest_slug_with_toml_syntax_is_refused() {
+    let e = Env::new();
+    e.fake.state.lock().unwrap().manifest_slug = Some("x\"\nid = 1\nslug = \"y".into());
+    let (child, stdout, rest) = play_manifest(&e);
+    assert!(!child.success(), "{stdout} {rest}");
+    assert!(!git_ok(
+        e.repo.path(),
+        &["rev-parse", "--verify", "-q", "refs/heads/bosun/gate-app"]
+    ));
+    assert!(e.sealed(APP_KEY).is_none());
+}
+
+#[test]
+fn only_a_rejected_non_fast_forward_push_is_a_conflict() {
+    let e = Env::new();
+    let mut args = MANUAL.to_vec();
+    args.extend(["--remote", "nowhere"]);
+    let (out, v) = e.run(&args, KEY);
+    assert_eq!(out.status.code(), Some(1), "{v}");
+
+    let e = Env::new();
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(out.status.success(), "{v}");
+    let tree = git(e.repo.path(), &["rev-parse", "bosun/gate-app^{tree}"]);
+    let main = git(e.repo.path(), &["rev-parse", "main"]);
+    let x = git(
+        e.repo.path(),
+        &["commit-tree", tree.trim(), "-p", main.trim(), "-m", "other"],
+    );
+    git(
+        e.repo.path(),
+        &["update-ref", "refs/heads/bosun/gate-app", x.trim()],
+    );
+    let (out, v) = e.run(&["owner", "setup"], "");
+    assert_eq!(out.status.code(), Some(3), "{v}");
+}
+
+#[test]
+fn a_main_only_environment_with_reviewers_is_fixed() {
+    let e = Env::new();
+    e.fake.environment(
+        "bosun-app",
+        serde_json::json!({"protected_branches": false, "custom_branch_policies": true}),
+        serde_json::json!([{"name": "main", "type": "branch"}]),
+    );
+    e.fake
+        .state
+        .lock()
+        .unwrap()
+        .env_with_reviewers
+        .push("bosun-app".into());
+    let (out, v) = e.run(&MANUAL, KEY);
+    assert!(out.status.success(), "{v}");
+    assert!(e.fake.state.lock().unwrap().env_with_reviewers.is_empty());
+    assert!(
+        e.mutations()
+            .iter()
+            .any(|m| m == "PUT /repos/acme/widget/environments/bosun-app"),
+        "{:?}",
+        e.mutations()
+    );
+}
+
+/// The browser flow with the browser played by hand: (exit status, stdout, stderr rest).
+fn play_manifest(e: &Env) -> (std::process::ExitStatus, String, String) {
+    let mut child = e
+        .cmd()
+        .args(["owner", "setup", "--timeout-secs", "30"])
+        .spawn_std();
+    let mut err = BufReader::new(child.stderr.take().unwrap());
+    let mut port = None;
+    let mut line = String::new();
+    while port.is_none() {
+        line.clear();
+        assert!(err.read_line(&mut line).unwrap() > 0, "no start URL");
+        port = line
+            .split("http://127.0.0.1:")
+            .nth(1)
+            .and_then(|r| r.split('/').next())
+            .and_then(|p| p.parse::<u16>().ok());
+    }
+    let port = port.unwrap();
+    let get = |target: &str| {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        s.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+        write!(
+            s,
+            "GET {target} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut out = String::new();
+        s.read_to_string(&mut out).unwrap();
+        out
+    };
+    let page = get("/start");
+    let state = page
+        .split("?state=")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .to_string();
+    get(&format!(
+        "/callback?code=c0de1234abcd5678ef90&state={state}"
+    ));
+    let mut rest = String::new();
+    err.read_to_string(&mut rest).unwrap();
+    let mut stdout = String::new();
+    child
+        .stdout
+        .take()
+        .unwrap()
+        .read_to_string(&mut stdout)
+        .unwrap();
+    (child.wait().unwrap(), stdout, rest)
+}
+
 trait SpawnStd {
     fn spawn_std(&mut self) -> std::process::Child;
 }
