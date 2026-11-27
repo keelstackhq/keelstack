@@ -136,6 +136,7 @@ fn check(routes: &[RouteSpec], env: Env) -> (i32, Value, FakeApi) {
     if env.gh {
         cmd.env("GITHUB_TOKEN", GH_TOKEN);
     }
+    cmd.env_remove("GH_PAT");
     if env.pat {
         cmd.env("GH_PAT", PAT);
     }

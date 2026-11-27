@@ -11,7 +11,8 @@ use crate::system::{Credential, Status, StorageKind};
 use serde_json::Value;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::process::Stdio;
+use std::path::Path;
+use std::process::{Command, Stdio};
 
 const NO_TOKEN: &str = "no Fly token: set FLY_API_TOKEN (fly tokens create org/readonly)";
 const NOT_FOUND: &str = "fly CLI not found (HOIST_FLY or PATH)";
@@ -31,13 +32,9 @@ impl<'a> Probe<'a> {
 
     /// The JSON `fly <what> list -a <app> --json` prints, or the unknown text.
     fn run(&self, what: &str, app: &str, tok: &Secret) -> Result<Value, String> {
-        let args = [what, "list", "-a", app, "--json"];
-        let mut cmd = fly_command(&args, self.ctx.dir);
-        cmd.env("FLY_API_TOKEN", tok.expose())
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null());
-        let out = cmd.output().map_err(|_| NOT_FOUND.to_string())?;
+        let out = list_command(what, app, self.ctx.dir, tok)
+            .output()
+            .map_err(|_| NOT_FOUND.to_string())?;
         let no_json = || format!("`fly {what} list --json` gave no JSON (flyctl too old?)");
         if !out.status.success() {
             return Err(no_json());
@@ -206,6 +203,17 @@ impl LiveProbe for Probe<'_> {
     }
 }
 
+/// `fly <what> list -a <app> --json` with only the intended token (`FLY_API_TOKEN`) in its env.
+fn list_command(what: &str, app: &str, dir: &Path, tok: &Secret) -> Command {
+    let args = [what, "list", "-a", app, "--json"];
+    let mut cmd = fly_command(&args, dir);
+    cmd.env("FLY_API_TOKEN", tok.expose())
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    cmd
+}
+
 /// The Fly app a credential lives in: its `fly-secret` storage, `resources` (`app:<n>` or
 /// `fly:<n>`) or a `fly:<app>` runtime consumer.
 fn app_of(cred: &Credential) -> Option<String> {
@@ -264,4 +272,34 @@ fn field(o: &Value, name: &str) -> Option<String> {
 /// Go's zero time, which flyctl prints for "not set".
 fn zero(s: &str) -> bool {
     s.starts_with("0001-")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn list_command_env_holds_only_the_intended_fly_token() {
+        let tok = Secret::from("canary");
+        let cmd = list_command("tokens", "app", Path::new("."), &tok);
+        let envs: Vec<_> = cmd.get_envs().collect();
+        let get = |n: &str| {
+            envs.iter()
+                .find(|(k, _)| *k == OsStr::new(n))
+                .map(|(_, v)| *v)
+        };
+        assert_eq!(get("FLY_API_TOKEN"), Some(Some(OsStr::new("canary"))));
+        for n in [
+            "FLY_ACCESS_TOKEN",
+            "NPM_TOKEN",
+            "CARGO_REGISTRY_TOKEN",
+            "GOOGLE_OAUTH_ACCESS_TOKEN",
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "CLOUDFLARE_API_TOKEN",
+        ] {
+            assert_eq!(get(n), Some(None), "{n} must be removed");
+        }
+    }
 }

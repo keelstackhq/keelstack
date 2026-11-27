@@ -91,12 +91,37 @@ pub fn probe(probes: &[Box<dyn LiveProbe + '_>], cred: &Credential) -> LiveResul
 /// The credential's own value, when one of its `storage[].key` names is set in env (in a job
 /// that reads it), else the first of `fallback` that is set. Never printed.
 pub(crate) fn token_for(cred: &Credential, fallback: &[&str]) -> Option<Secret> {
+    env_names(cred, fallback).into_iter().find_map(from_env)
+}
+
+/// The provider that owns a well-known token env name (`None` for any other name).
+fn name_owner(name: &str) -> Option<&'static str> {
+    match name {
+        "GITHUB_TOKEN" | "GH_TOKEN" | "GH_PAT" => Some("github"),
+        "CLOUDFLARE_API_TOKEN" => Some("cloudflare"),
+        "FLY_API_TOKEN" | "FLY_ACCESS_TOKEN" => Some("fly"),
+        "NPM_TOKEN" => Some("npm"),
+        "CARGO_REGISTRY_TOKEN" => Some("crates"),
+        "GOOGLE_OAUTH_ACCESS_TOKEN" => Some("google"),
+        _ => None,
+    }
+}
+
+/// The env names that may hold `cred`'s value, in order: its storage keys, then `fallback`. A
+/// name another provider owns is skipped, so a credential cannot make hoist send, say,
+/// `GH_PAT` to Cloudflare. `GITHUB_TOKEN` (the job's own token) is never a credential's value.
+fn env_names<'a>(cred: &'a Credential, fallback: &[&'a str]) -> Vec<&'a str> {
+    let provider = match cred.provider.as_str() {
+        "gcp" | "gsc" => "google",
+        p => p,
+    };
     cred.storage
         .iter()
         .map(|s| s.key.as_str())
         .filter(|k| *k != "GITHUB_TOKEN")
         .chain(fallback.iter().copied())
-        .find_map(from_env)
+        .filter(|k| name_owner(k).is_none_or(|o| o == provider))
+        .collect()
 }
 
 /// The value named by one of the credential's storage keys only (no fallback).
@@ -239,6 +264,47 @@ mod tests {
             keyless_exempt: None,
             notes: None,
         }
+    }
+
+    fn with_keys(provider: &str, keys: &[&str]) -> Credential {
+        let mut c = cred(None, None);
+        c.provider = provider.into();
+        c.storage = keys
+            .iter()
+            .map(|k| crate::system::Storage {
+                kind: crate::system::StorageKind::GhSecret,
+                repo: None,
+                env: None,
+                path: None,
+                app: None,
+                key: k.to_string(),
+            })
+            .collect();
+        c
+    }
+
+    #[test]
+    fn token_names_are_limited_to_the_providers_own() {
+        let c = with_keys(
+            "cloudflare",
+            &["GH_PAT", "NPM_TOKEN", "CF_DEPLOY", "GITHUB_TOKEN"],
+        );
+        assert_eq!(
+            env_names(&c, &["CLOUDFLARE_API_TOKEN"]),
+            ["CF_DEPLOY", "CLOUDFLARE_API_TOKEN"]
+        );
+        let c = with_keys("github", &["GH_PAT", "CLOUDFLARE_API_TOKEN"]);
+        assert_eq!(env_names(&c, &[]), ["GH_PAT"]);
+        let c = with_keys("fly", &["GH_TOKEN", "FLY_API_TOKEN"]);
+        assert_eq!(
+            env_names(&c, &["FLY_API_TOKEN"]),
+            ["FLY_API_TOKEN", "FLY_API_TOKEN"]
+        );
+        let c = with_keys("gsc", &["FLY_API_TOKEN"]);
+        assert_eq!(
+            env_names(&c, &["GOOGLE_OAUTH_ACCESS_TOKEN"]),
+            ["GOOGLE_OAUTH_ACCESS_TOKEN"]
+        );
     }
 
     #[test]
