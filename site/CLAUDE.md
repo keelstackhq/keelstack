@@ -39,7 +39,7 @@ Keep subagent reports short. Skills: `verify`, `add-piece`.
 
 ## Pieces
 
-- `apps/*` (astro-site): Astro static sites with Preact islands; see `apps/<name>/CLAUDE.md`.
+- `apps/*` (astro-site): Astro static sites with React islands and cascivo (`@astrojs/react`, `@cascivo/astro`, D-030); see `apps/<name>/CLAUDE.md`.
 
 ## Project
 

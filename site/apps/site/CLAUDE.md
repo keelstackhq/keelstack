@@ -1,10 +1,13 @@
 # Astro site
 
-Astro 7 static site (`output: "static"`) with React islands via `@astrojs/react`, deployed to the
+Astro 7 static site (`output: "static"`) with React islands via `@astrojs/react` and cascivo via `@cascivo/astro` (D-030), deployed to the
 Cloudflare Pages project `keelstack-landing` with `wrangler pages deploy dist` (Pages ignores `wrangler.jsonc`). cascivo (`@cascivo/react`) renders to static HTML
 in `.astro` sections; site CSS is unlayered so it beats cascivo layers.
 
-- `astro.config.mjs` is template-owned but diverges on purpose (adds `@astrojs/react`); keep it.
+- `astro.config.mjs` is template-owned but diverges on purpose (adds `@astrojs/react` and, per D-030,
+  `@cascivo/astro` after it: `cascivo({ theme: "@cascivo/themes/light.css", themeScript: { defaultTheme: "light" } })`,
+  which injects the cascivo `@layer` order, the light theme and the `data-theme="light"` script on every
+  page; `Base.astro` must not import a theme again; `src/lib/cascivo-astro.test.ts`); keep it.
 - One island only: `PiecePicker` in Get started, `client:visible`. Everything else is static HTML.
 - Docs pages are `.md` files in `src/pages/docs/` using `src/layouts/Docs.astro`; page data lives in
   `src/data/docs.ts`. `astro.config.mjs` also sets `markdown.syntaxHighlight: false` on purpose (plain `<pre><code>`)

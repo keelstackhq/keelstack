@@ -18,6 +18,7 @@
   "dependencies": {
     "@astrojs/markdown-satteri": "catalog:",
     "@astrojs/react": "catalog:",
+    "@cascivo/astro": "catalog:",
     "@cascivo/react": "catalog:",
     "@cascivo/themes": "catalog:",
     "@fontsource-variable/archivo": "catalog:",

@@ -20,6 +20,7 @@
   font-family: var(--font-mono);
   font-size: 14px;
   font-weight: 400;
+  line-height: normal;
   min-height: 0;
   height: auto;
   padding: 10px 14px;
@@ -58,6 +59,7 @@
   background: transparent;
   color: var(--paper);
   cursor: pointer;
+  line-height: normal;
   min-height: 0;
   height: auto;
   padding: 7px 14px;
