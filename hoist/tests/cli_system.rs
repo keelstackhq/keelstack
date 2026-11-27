@@ -287,11 +287,13 @@ fn file_flag_names_the_real_path_and_credential_line() {
 }
 
 #[test]
-fn live_adds_unknown_items_until_probes_exist() {
+fn live_without_tokens_is_unknown_not_a_failure() {
     let d = repo(Some(GOOD));
     let r = run(d.path(), &["system", "check", "--live"], 0);
     let l = items(&r, "live");
-    assert_eq!(l.len(), 2);
+    // One per credential plus the GitHub storage sweep (no GitHub token).
+    let keys: Vec<&str> = l.iter().map(|i| i["key"].as_str().unwrap()).collect();
+    assert_eq!(keys, ["site-deploy", "npm-publish", "github"], "{r}");
     assert!(l.iter().all(|i| i["action"] == "unknown"));
 }
 
