@@ -841,7 +841,7 @@ pub const CRITICAL_RULES: [&str; 3] = ["R-secrets", "R-prod-write", "R-unseen"];
 /// approving such a change: a same-repo PR's own `on: pull_request` copy can post a forged
 /// status on its head before anyone approves, so it is no owner gate (spec §8 residual; B2, a
 /// check run from a dedicated GitHub App pinned in the ruleset, closes it).
-pub const CRITICAL_PATHS: [&str; 22] = [
+pub const CRITICAL_PATHS: [&str; 23] = [
     ".bosun/**",
     "governance/**",
     "CODEOWNERS",
@@ -853,6 +853,8 @@ pub const CRITICAL_PATHS: [&str; 22] = [
     "decisions/decisions/025-chat-approvals-retired.md",
     // The required checks `hoist apply` puts in the ruleset: only the root file has `[github]`.
     "hoist.toml",
+    // The system description (D-031): which secrets exist and who may hold them.
+    "system.toml",
     ".github/workflows/**",
     ".github/actions/**",
     // Local composite actions (`uses: ./path`) run inside a workflow.

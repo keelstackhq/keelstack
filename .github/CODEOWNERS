@@ -21,6 +21,7 @@
 CODEOWNERS               @urbanisierung
 codeowners               @urbanisierung
 hoist.toml               @urbanisierung
+system.toml              @urbanisierung
 AGENTS.md                @urbanisierung
 agents.md                @urbanisierung
 CLAUDE.md                @urbanisierung
