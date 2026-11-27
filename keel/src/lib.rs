@@ -244,6 +244,12 @@ pub fn run_with(
     if doctor {
         // Preflight (check only) and the doctor check.
         steps.retain(|s| matches!(s.id(), "preflight" | "doctor"));
+        // system.toml (D-031) is checked by `keel doctor` only, before the bosun doctor gate.
+        let at = steps
+            .iter()
+            .position(|s| s.id() == "doctor")
+            .unwrap_or(steps.len());
+        steps.insert(at, Box::new(steps::system::System));
     }
     let mut report = engine::run_steps(&mut cx, &steps, command)?;
     if doctor {

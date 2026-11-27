@@ -64,6 +64,10 @@ case "$name $*" in
     [ "$KEEL_SCENARIO" = nopublish ] && { echo '{"version":1,"command":"init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"no publishable package found; nothing to write (see `hoist explain`)","fix":"the message says what to change","kind":"nothing-to-publish"}}'; exit 3; }
     [ "$KEEL_SCENARIO" = hoistfail ] && { echo '{"version":1,"command":"init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"GitHub API unreachable","fix":"set GH_TOKEN and retry"}}'; exit 3; }
     echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
+  "hoist --json system init"*)
+    [ "$KEEL_SCENARIO" = sysinitfail ] && { echo '{"version":1,"command":"system init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"cannot read workflows","fix":"run it in the repo root"}}'; exit 3; }
+    [ "$KEEL_SCENARIO" = sysinit ] && printf 'version = 1\n' > system.toml
+    echo '{"ok":true,"exit_code":0,"items":[{"area":"system","kind":"system","key":"system.toml","action":"create","reason":""}],"human_steps":[]}';;
   "hoist --json check")
     [ "$KEEL_SCENARIO" = hoistdrift ] && { echo '{"ok":false,"exit_code":1,"items":[{"area":"github","kind":"environment","key":"release-tags","action":"create","reason":"missing"}],"human_steps":[]}'; exit 1; }
     echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
@@ -1177,4 +1181,45 @@ fn a_baseline_check_that_errors_is_noted_and_treated_as_unknown() {
             .any(|n| n.as_str().unwrap().contains("baseline")),
         "{v}"
     );
+}
+
+#[test]
+fn system_toml_is_drafted_by_hoist_system_init_when_absent_and_committed_on_the_branch() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("sysinit", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(action(&v, "system"), "done", "{v}");
+    assert!(env.calls().iter().any(|c| c == "hoist --json system init"));
+    assert_eq!(env.on_branch(BR, "system.toml"), "version = 1\n");
+    let log = git(&env.repo, &["log", "--format=%s", &format!("main..{BR}")]);
+    assert!(log.contains("chore: add system.toml"), "{log}");
+}
+
+#[test]
+fn an_existing_system_toml_skips_the_step_and_a_repo_without_hoist_never_calls_it() {
+    let env = Env::new(&ALL);
+    commit_base(&env, &[("system.toml", "version = 1\n")]);
+    let (_, v) = env.run_untouched("sysinit", &["--to", "0.23.0"]);
+    assert_eq!(action(&v, "system"), "skipped", "{v}");
+    assert!(!env.calls().iter().any(|c| c.contains("system init")));
+    let env = Env::new(&["splice"]);
+    let (_, v) = env.run_untouched("sysinit", &["--to", "0.23.0"]);
+    assert_eq!(action(&v, "system"), "skipped", "{v}");
+    assert!(!env.calls().iter().any(|c| c.contains("system init")));
+}
+
+#[test]
+fn dry_run_plans_system_init_without_running_it() {
+    let env = Env::new(&ALL);
+    let (_, v) = env.run_untouched("sysinit", &["--to", "0.23.0", "--dry-run"]);
+    assert_eq!(action(&v, "system"), "would-run", "{v}");
+    assert!(!env.calls().iter().any(|c| c.contains("system init")));
+}
+
+#[test]
+fn a_failing_system_init_is_a_checklist_entry_with_the_command_not_a_rollback() {
+    let env = Env::new(&ALL);
+    let (_, v) = env.run_untouched("sysinitfail", &["--to", "0.23.0"]);
+    assert_eq!(action(&v, "system"), "skipped", "{v}");
+    assert_eq!(entry(&v, "system-init")["command"], "hoist system init");
 }

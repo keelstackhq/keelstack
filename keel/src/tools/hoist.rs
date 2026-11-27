@@ -334,6 +334,20 @@ pub fn run_all(
     }
 }
 
+/// `hoist --json system check` (D-031, spec §17.4): `Ok(None)` when hoist is not installed;
+/// exit 0, 1 and 2 are parsed, anything else is an `Err`.
+pub fn system_check(r: &dyn Runner, dir: &Path, t: Duration) -> Result<Option<Parsed>, String> {
+    let c = cmd(&["--json", "system", "check"], Vec::new(), dir, t);
+    let o = r.run(&c);
+    if super::not_found(&o) {
+        return Ok(None);
+    }
+    match o.code {
+        0..=2 => Ok(Some(parse(&o, &envelope(&c, &o)?))),
+        _ => Err(failure(&c, &o)),
+    }
+}
+
 /// The items of `hoist --json explain` with area `cloudflare`.
 pub fn explain_cloudflare(r: &dyn Runner, dir: &Path, t: Duration) -> Result<Vec<Item>, String> {
     let c = cmd(&["--json", "explain"], Vec::new(), dir, t);

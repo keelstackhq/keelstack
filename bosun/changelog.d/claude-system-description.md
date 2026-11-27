@@ -1,0 +1,1 @@
+- R-gov now covers `**/system.toml` (D-031, built-in rules and the channel template); the generated `SYSTEM.md` stays normal risk.
