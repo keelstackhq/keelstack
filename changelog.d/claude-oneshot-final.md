@@ -1,0 +1,2 @@
+- bosun: `gate-app advance` and the waiting `hoist apply` at the end of `owner setup` (B3).
+- keel: `keel up` runs the whole move to the latest release when `.splice/lock.toml` exists (`--new`/`--existing`, `--branch`, `[ci] provider = "none"`), docs/migrate.md rewritten (K5).
