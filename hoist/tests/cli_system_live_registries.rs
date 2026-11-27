@@ -148,12 +148,25 @@ fn npm_matches_a_ref_that_prefixes_the_masked_token() {
     let r = npm_run(
         NPM_LIST,
         200,
-        "provider_ref = \"npm_ab\"",
+        "provider_ref = \"npm_abcdef\"",
         "publish",
         true,
         0,
     );
     expect(&r, "ok", "token npm_ab");
+}
+
+#[test]
+fn npm_short_ref_never_matches_a_masked_prefix() {
+    let r = npm_run(
+        NPM_LIST,
+        200,
+        "provider_ref = \"npm_ab\"",
+        "publish",
+        true,
+        1,
+    );
+    expect(&r, "drift", "not found");
 }
 
 #[test]
@@ -652,4 +665,70 @@ fn fly_sweep_reports_missing_and_undeclared_secrets() {
             .iter()
             .any(|l| l == "secrets list -a myapp --json")
     );
+}
+
+#[test]
+fn fly_sweep_never_sends_another_providers_value_to_fly() {
+    let dir = tempfile::tempdir_in(common::tmpdir()).unwrap();
+    let body = format!(
+        "#!/bin/sh\necho \"tok=$FLY_API_TOKEN\" >> '{d}/seen.log'\necho '[]'\n",
+        d = dir.path().display()
+    );
+    common::write_script(&dir.path().join("fly"), body.as_bytes(), 0o755);
+    let toml = system("cloudflare", "CLOUDFLARE_API_TOKEN", "deploy", "").replace(
+        "storage = [{ kind = \"gh-env-secret\", repo = \"acme/app\", env = \"site\", key = \"CLOUDFLARE_API_TOKEN\" }]",
+        "storage = [{ kind = \"fly-secret\", app = \"myapp\", key = \"CLOUDFLARE_API_TOKEN\" }]",
+    );
+    let d = repo(&toml, "CLOUDFLARE_API_TOKEN");
+    let envs = [
+        ("HOIST_FLY", dir.path().join("fly").display().to_string()),
+        ("CLOUDFLARE_API_TOKEN", "canary-not-a-fly-token".to_string()),
+        ("HOIST_CLOUDFLARE_API", "http://127.0.0.1:9".to_string()),
+    ];
+    let mut cmd = hoist();
+    cmd.env("HOIST_NOW", NOW);
+    for (k, v) in &envs {
+        cmd.env(k, v);
+    }
+    let out = cmd
+        .arg("-C")
+        .arg(d.path())
+        .args(["system", "check", "--live", "--json"])
+        .output()
+        .unwrap();
+    let seen = fs::read_to_string(dir.path().join("seen.log")).unwrap_or_default();
+    assert!(!seen.contains("canary"), "value reached fly: {seen}");
+    assert!(seen.is_empty(), "fly ran without a Fly token: {seen}");
+    let r: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let item = r["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "live" && i["key"] == "fly:myapp")
+        .unwrap_or_else(|| panic!("no live fly:myapp item: {r}"));
+    assert_eq!(item["action"], "unknown");
+    assert!(item.to_string().contains("FLY_API_TOKEN"), "{item}");
+}
+
+#[test]
+fn fly_sweep_failed_secrets_list_is_unknown_with_a_fix() {
+    let stub = Stub::new(Some(FLY_TOKENS), "[]");
+    fs::write(stub.dir.path().join("secrets.out"), "not json").unwrap();
+    let storage = ", { kind = \"fly-secret\", app = \"myapp\", key = \"PRESENT\" }";
+    let d = repo(&fly_system(FLY_EXTRA, storage), "FLY_API_TOKEN");
+    let r = run(
+        d.path(),
+        &[
+            ("HOIST_FLY", stub.path()),
+            ("FLY_API_TOKEN", TOKEN.to_string()),
+        ],
+        0,
+    );
+    let item = r["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["kind"] == "live" && i["key"] == "fly:myapp")
+        .unwrap_or_else(|| panic!("no live fly:myapp item: {r}"));
+    assert_eq!(item["action"], "unknown");
 }

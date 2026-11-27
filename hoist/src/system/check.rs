@@ -335,11 +335,17 @@ pub(crate) fn run_checks(
             items.push(item("live", &c.id, action, reason, src.clone()));
         }
     }
+    let offline: BTreeSet<String> = items
+        .iter()
+        .filter(|i| i.kind == "undeclared")
+        .map(|i| i.key.clone())
+        .collect();
+    let mut swept: BTreeSet<(String, String)> = BTreeSet::new();
     for s in probes.iter().flatten().flat_map(|p| p.sweep()) {
+        // Offline undeclared items dedupe on the key; sweep items on (key, source), so the
+        // same name in two places is two findings.
         let dup = s.kind == "undeclared"
-            && items
-                .iter()
-                .any(|i| i.kind == "undeclared" && i.key == s.key);
+            && (offline.contains(&s.key) || !swept.insert((s.key.clone(), s.source.clone())));
         if !dup {
             items.push(live_item(s));
         }

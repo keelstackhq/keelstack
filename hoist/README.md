@@ -300,7 +300,8 @@ account keys. Tokens come from env (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `FLY
 key); a missing token or a 401/403 is `unknown` with a fix, never a failure.
 
 `hoist secrets rotate ID` rotates a credential of `system.toml`: `strategy = "auto"` (Cloudflare,
-Fly) creates the new credential, tests it, seals it into every storage, and only then revokes the
+Fly) creates the new credential, tests it, writes it into every storage (GitHub storages sealed,
+`fly-secret` on stdin of `fly secrets import`), and only then revokes the
 old one, then stamps `created_at`/`expires_at` in `system.toml`; `assisted`/`manual` print the
 steps (exit 2). `hoist system stamp ID --created DAY [--expires DAY] [--by WHO]` records a
 rotation done by hand. Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`, failed rotation), 2

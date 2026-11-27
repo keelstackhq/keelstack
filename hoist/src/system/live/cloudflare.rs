@@ -2,7 +2,7 @@
 //! `CLOUDFLARE_ACCOUNT_ID` is set) read once; the credential is matched by `provider_ref`.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, last_used, own_token, ref_matches,
+    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, last_used, own_token,
     unknown_err,
 };
 use crate::auth::from_env;
@@ -117,7 +117,11 @@ impl LiveProbe for Probe {
             Ok(t) => t,
             Err(unknown) => return unknown.clone(),
         };
-        let Some(tok) = tokens.iter().find(|t| ref_matches(cred, &t.id, &t.name)) else {
+        let tok = match find_ref(cred, tokens, |t| (t.id.clone(), t.name.clone())) {
+            Ok(t) => t,
+            Err(why) => return LiveResult::Unknown(why),
+        };
+        let Some(tok) = tok else {
             return LiveResult::Drift(format!(
                 "token {reference} not found at Cloudflare (revoked or another account)"
             ));

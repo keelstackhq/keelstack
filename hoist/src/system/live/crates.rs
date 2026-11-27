@@ -1,7 +1,7 @@
 //! The `crates` live probe (spec §17.5): `GET /api/v1/me/tokens`.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, last_used, ref_matches, token_for,
+    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, last_used, token_for,
 };
 use crate::http::{Fetched, Http, Service};
 use crate::system::Credential;
@@ -50,14 +50,17 @@ impl LiveProbe for Probe<'_> {
             Err(e) => return LiveResult::Unknown(format!("{e}: {FIX}")),
         };
         let tokens = body["api_tokens"].as_array().cloned().unwrap_or_default();
-        let found = tokens.iter().find(|t| {
+        let found = match find_ref(cred, &tokens, |t| {
             let id = t["id"]
                 .as_u64()
                 .map(|n| n.to_string())
                 .or_else(|| t["id"].as_str().map(str::to_string))
                 .unwrap_or_default();
-            ref_matches(cred, &id, t["name"].as_str().unwrap_or(""))
-        });
+            (id, t["name"].as_str().unwrap_or("").to_string())
+        }) {
+            Ok(t) => t,
+            Err(why) => return LiveResult::Unknown(why),
+        };
         let Some(t) = found else {
             return LiveResult::Drift("token not found in the crates.io token list".into());
         };

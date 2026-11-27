@@ -2,9 +2,10 @@
 //! with the token in the child's environment (never argv) and stderr discarded.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, expiry_drift, ref_matches, token_for,
+    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, expiry_drift, find_ref, own_token,
+    token_for,
 };
-use crate::auth::Secret;
+use crate::auth::{Secret, from_env};
 use crate::fly::{fly_command, valid_app};
 use crate::system::{Credential, Status, StorageKind};
 use serde_json::Value;
@@ -87,13 +88,16 @@ impl LiveProbe for Probe<'_> {
             Err(m) => return LiveResult::Unknown(m),
         };
         let rows = rows(&list);
-        let Some(t) = rows.iter().find(|o| {
-            ref_matches(
-                cred,
-                &field(o, "id").unwrap_or_default(),
-                &field(o, "name").unwrap_or_default(),
+        let t = match find_ref(cred, &rows, |o| {
+            (
+                field(o, "id").unwrap_or_default(),
+                field(o, "name").unwrap_or_default(),
             )
-        }) else {
+        }) {
+            Ok(t) => t.copied(),
+            Err(why) => return LiveResult::Unknown(why),
+        };
+        let Some(t) = t else {
             return LiveResult::Drift(format!("token not found in fly tokens list for {app}"));
         };
         let name = field(t, "name").unwrap_or_else(|| "?".into());
@@ -139,16 +143,33 @@ impl LiveProbe for Probe<'_> {
                         apps.push((app, None, Vec::new()));
                         apps.len() - 1
                     });
-                if apps[i].1.is_none() {
-                    apps[i].1 = token_for(c, &["FLY_API_TOKEN"]);
+                // Only Fly's own token: env FLY_API_TOKEN, or the value of a credential whose
+                // provider is fly. Another provider's value is never sent to Fly.
+                if apps[i].1.is_none() && c.provider == "fly" {
+                    apps[i].1 = own_token(c);
                 }
                 apps[i].2.push(&s.key);
             }
         }
         for (app, tok, declared) in apps {
-            let Some(tok) = tok else { continue };
-            let Ok(names) = self.secret_names(&app, &tok) else {
+            let unknown = |why: String| Sweep {
+                kind: "live",
+                key: format!("fly:{app}"),
+                source: String::new(),
+                result: LiveResult::Unknown(why),
+            };
+            let Some(tok) = from_env("FLY_API_TOKEN").or(tok) else {
+                out.push(unknown(NO_TOKEN.into()));
                 continue;
+            };
+            let names = match self.secret_names(&app, &tok) {
+                Ok(n) => n,
+                Err(why) => {
+                    out.push(unknown(format!(
+                        "{why}: set FLY_API_TOKEN (fly tokens create org/readonly)"
+                    )));
+                    continue;
+                }
             };
             for c in &self.ctx.sys.credentials {
                 if c.status != Status::Active {

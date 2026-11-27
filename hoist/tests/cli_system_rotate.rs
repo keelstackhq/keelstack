@@ -552,6 +552,212 @@ esac"#
     assert!(after.contains("expires_at = \"2026-12-27\""));
 }
 
+fn bare(api: &FakeApi, dir: &Path, args: &[&str], verbose: bool) -> std::process::Output {
+    let mut cmd = hoist();
+    cmd.env("HOIST_NOW", NOW)
+        .env("HOIST_GITHUB_API", api.url())
+        .env("HOIST_CLOUDFLARE_API", api.url())
+        .env("HOIST_MAX_SLEEP_MS", "0")
+        .env("GITHUB_TOKEN", "gh-test-token")
+        .env("CLOUDFLARE_API_TOKEN", "cf-test-token")
+        .env("CLOUDFLARE_ACCOUNT_ID", "acc")
+        .arg("-C")
+        .arg(dir)
+        .args(args);
+    if verbose {
+        cmd.arg("-v");
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn create_body_copies_the_old_condition_and_not_before() {
+    let tokens = TOKENS.replace(
+        r#""name":"hoist-site","status":"active","#,
+        r#""name":"hoist-site","status":"active","not_before":"2026-01-01T00:00:00Z","condition":{"request.ip":{"in":["10.0.0.0/8"],"not_in":["10.1.0.0/16"]}},"#,
+    );
+    assert_ne!(tokens, TOKENS);
+    let dir = repo(&system(&[CF_CRED]));
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[("GET /user/tokens", 200, &tokens)]);
+    rotate(&api, dir.path(), "site-deploy", 0);
+    let reqs = api.requests();
+    let post = reqs
+        .iter()
+        .find(|r| r.method == "POST" && r.path == "/user/tokens")
+        .unwrap();
+    let body: Value = serde_json::from_str(post.body.as_ref().unwrap()).unwrap();
+    assert_eq!(body["condition"]["request.ip"]["in"][0], "10.0.0.0/8");
+    assert_eq!(body["condition"]["request.ip"]["not_in"][0], "10.1.0.0/16");
+    assert_eq!(body["not_before"], "2026-01-01T00:00:00Z");
+}
+
+#[test]
+fn first_storage_write_failing_revokes_the_new_token_and_changes_nothing() {
+    let text = system(&[CF_CRED]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[(PUT_REPO, 500, "empty.json")]);
+    let run = rotate(&api, dir.path(), "site-deploy", 1);
+    let w = writes(&api);
+    assert!(w.contains(&DEL_NEW.to_string()), "{w:?}");
+    assert!(!w.contains(&DEL_OLD.to_string()), "{w:?}");
+    assert!(!w.contains(&PUT_ENV.to_string()), "{w:?}");
+    assert_eq!(read(dir.path()), text);
+    assert!(run.all.contains("nothing was written"), "{}", run.all);
+}
+
+#[test]
+fn failing_to_revoke_the_old_token_is_a_human_step_and_still_stamps() {
+    let dir = repo(&system(&[CF_CRED]));
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[(DEL_OLD, 500, "empty.json")]);
+    let run = rotate(&api, dir.path(), "site-deploy", 1);
+    let steps = run.json["human_steps"].as_array().unwrap();
+    assert!(
+        steps.iter().any(|s| s["id"] == "revoke-token:tok-1"),
+        "{steps:?}"
+    );
+    let after = read(dir.path());
+    assert!(after.contains("created_at = \"2026-11-27\""), "{after}");
+    assert!(after.contains("provider_ref = \"token id new-id\""));
+    let names: Vec<_> = fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "no temp file left behind: {names:?}");
+}
+
+#[test]
+fn verbose_rotation_never_prints_a_token_value() {
+    let dir = repo(&system(&[CF_CRED]));
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[]);
+    let out = bare(
+        &api,
+        dir.path(),
+        &["secrets", "rotate", "site-deploy", "--json"],
+        true,
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.is_empty());
+    for canary in [CF_CANARY, "test-token", "encrypted_value"] {
+        assert!(!all.contains(canary), "{canary} leaked: {all}");
+    }
+}
+
+#[test]
+fn legacy_rotation_still_runs_with_a_valid_system_toml() {
+    let dir = repo(&system(&[CF_CRED]));
+    let api = cf_api("{}", &[]);
+    let out = bare(
+        &api,
+        dir.path(),
+        &["secrets", "rotate", "CLOUDFLARE_API_TOKEN"],
+        false,
+    );
+    let err = String::from_utf8_lossy(&out.stderr).to_string();
+    // No hoist.toml here: the legacy path reports its own config error, not a system rotation.
+    assert_eq!(out.status.code(), Some(3), "{err}");
+    assert!(!err.contains("only minted secrets"), "{err}");
+    assert!(writes(&api).is_empty());
+    assert!(!api.requests().iter().any(|r| r.path == "/user/tokens"));
+}
+
+#[test]
+fn invalid_system_toml_breaks_other_names_but_not_the_legacy_secret() {
+    let dir = repo("version = 1\n[[credential\n");
+    let api = cf_api("{}", &[]);
+    let legacy = bare(
+        &api,
+        dir.path(),
+        &["secrets", "rotate", "CLOUDFLARE_API_TOKEN"],
+        false,
+    );
+    let err = String::from_utf8_lossy(&legacy.stderr).to_string();
+    assert_eq!(legacy.status.code(), Some(3), "{err}");
+    assert!(
+        !err.contains("system.toml"),
+        "legacy path ignores it: {err}"
+    );
+    let other = bare(
+        &api,
+        dir.path(),
+        &["secrets", "rotate", "site-deploy"],
+        false,
+    );
+    let err = String::from_utf8_lossy(&other.stderr).to_string();
+    assert_eq!(other.status.code(), Some(3), "{err}");
+    assert!(err.contains("system.toml"), "{err}");
+    assert!(!err.contains("only minted secrets"), "{err}");
+}
+
+const FLY_CRED: &str = r#"[[credential]]
+id = "fly-deploy"
+provider = "fly"
+kind = "deploy_token"
+role = "deploy"
+purpose = "Deploy"
+owner = "alice"
+expires_at = "2026-12-20"
+rotate_every = "30d"
+provider_ref = "REF"
+rotation = { strategy = "auto" }
+storage = [
+  { kind = "fly-secret", app = "myapp", key = "FLY_KEY" },
+]
+"#;
+
+fn fly_rotate(list: &str, reference: &str, code: i32) -> (String, String, String) {
+    let text = system(&[&FLY_CRED.replace("REF", reference)]);
+    let dir = repo(&text);
+    let tools = tempfile::tempdir_in(common::tmpdir()).unwrap();
+    let t = tools.path().display();
+    let script = format!(
+        r#"case "$1 $2" in
+"tokens list") if [ -f '{t}/listed' ]; then echo '[{{"id":"old-id","name":"deploy"}},{{"id":"new-fly-id"}}]'; else touch '{t}/listed'; echo '{list}'; fi;;
+"tokens create") echo "{FLY_CANARY}";;
+"secrets import") cat > '{t}/import.in';;
+esac"#
+    );
+    let fly = stub(tools.path(), "fly", &script);
+    let api = FakeApi::start(&[("GET /apps/myapp", 200, r#"{"name":"myapp"}"#, &[])]);
+    hoist()
+        .env("HOIST_NOW", NOW)
+        .env("HOIST_FLY", &fly)
+        .env("HOIST_FLY_API", api.url())
+        .env("HOIST_MAX_SLEEP_MS", "0")
+        .env("FLY_API_TOKEN", "fly-test-token")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["secrets", "rotate", "fly-deploy"])
+        .assert()
+        .code(code);
+    let log = fs::read_to_string(tools.path().join("fly.log")).unwrap_or_default();
+    (log, read(dir.path()), text)
+}
+
+#[test]
+fn fly_name_ref_resolves_to_the_token_id_before_any_write() {
+    let (log, _, _) = fly_rotate(r#"[{"id":"old-id","name":"deploy"}]"#, "deploy", 0);
+    assert!(log.contains("tokens revoke old-id"), "{log}");
+}
+
+#[test]
+fn fly_unresolvable_ref_exits_3_before_any_write() {
+    let (log, after, text) = fly_rotate(r#"[{"id":"old-id","name":"deploy"}]"#, "nope", 3);
+    assert!(
+        !log.contains("create") && !log.contains("import") && !log.contains("revoke"),
+        "{log}"
+    );
+    assert_eq!(after, text);
+}
+
 // ---- `hoist system stamp` ----
 
 fn stamp(dir: &Path, args: &[&str], code: i32) -> Value {

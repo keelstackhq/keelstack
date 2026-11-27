@@ -133,6 +133,36 @@ pub(crate) fn ref_matches(cred: &Credential, id: &str, name: &str) -> bool {
         || (!name.is_empty() && (words.contains(&name) || whole == Some(name)))
 }
 
+/// The entry `provider_ref` names: an id match first; else a name match, which must be unique
+/// (`Err` carries the `unknown` text when several entries share the name).
+pub(crate) fn find_ref<'t, T>(
+    cred: &Credential,
+    list: &'t [T],
+    id_name: impl Fn(&T) -> (String, String),
+) -> Result<Option<&'t T>, String> {
+    let ref_text = cred.provider_ref.as_deref().unwrap_or("").trim();
+    if let Some(t) = list.iter().find(|t| {
+        let (id, _) = id_name(t);
+        ref_matches(cred, &id, "")
+    }) {
+        return Ok(Some(t));
+    }
+    let named: Vec<&T> = list
+        .iter()
+        .filter(|t| {
+            let (_, name) = id_name(t);
+            ref_matches(cred, "", &name)
+        })
+        .collect();
+    match named.len() {
+        0 => Ok(None),
+        1 => Ok(Some(named[0])),
+        n => Err(format!(
+            "provider_ref {ref_text} matches {n} tokens; set it to the token id"
+        )),
+    }
+}
+
 /// The day of an RFC 3339 timestamp or `YYYY-MM-DD…` (the first 10 chars).
 pub(crate) fn day_of(ts: &str) -> Option<i64> {
     parse_date(ts.get(..10)?)
@@ -219,6 +249,26 @@ mod tests {
         let c = cred(Some("hoist:acme/app:deploy"), None);
         assert!(ref_matches(&c, "zz", "hoist:acme/app:deploy"));
         assert!(!ref_matches(&cred(None, None), "", ""));
+    }
+
+    #[test]
+    fn find_ref_prefers_an_id_and_refuses_an_ambiguous_name() {
+        let t = |id: &str, name: &str| (id.to_string(), name.to_string());
+        let id_name = |x: &(String, String)| x.clone();
+        let list = vec![t("a", "dup"), t("b", "dup"), t("dup", "other")];
+        // an id match wins over name matches
+        let c = cred(Some("dup"), None);
+        assert_eq!(find_ref(&c, &list, id_name).unwrap(), Some(&list[2]));
+        let list = vec![t("a", "dup"), t("b", "dup")];
+        let err = find_ref(&c, &list, id_name).unwrap_err();
+        assert!(err.contains("provider_ref dup matches 2 tokens"), "{err}");
+        assert!(err.contains("set it to the token id"), "{err}");
+        let list = vec![t("a", "dup"), t("b", "x")];
+        assert_eq!(find_ref(&c, &list, id_name).unwrap(), Some(&list[0]));
+        assert_eq!(
+            find_ref(&cred(Some("zzz"), None), &list, id_name).unwrap(),
+            None
+        );
     }
 
     #[test]

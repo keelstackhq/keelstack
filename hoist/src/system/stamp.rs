@@ -64,6 +64,40 @@ pub(crate) fn set_keys(
     Ok(out)
 }
 
+/// Write `text` to `path` atomically: a temp file in the same directory, synced, then renamed
+/// over the target (the mode of the old file is kept). A failure leaves `path` untouched.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    use ring::rand::{SecureRandom, SystemRandom};
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut random = [0u8; 8];
+    SystemRandom::new()
+        .fill(&mut random)
+        .map_err(|_| std::io::Error::other("no randomness"))?;
+    let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = path.with_file_name(format!("{name}.tmp-{hex}"));
+    let mode = std::fs::metadata(path).map_or(0o644, |m| {
+        use std::os::unix::fs::PermissionsExt;
+        m.permissions().mode() & 0o7777
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(mode)
+        .open(&tmp)?;
+    let written = file
+        .write_all(text.as_bytes())
+        .and_then(|()| file.sync_all());
+    match written.and_then(|()| std::fs::rename(&tmp, path)) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
 pub fn system_stamp(
     dir: &Path,
     file: Option<&Path>,
@@ -101,7 +135,7 @@ pub fn system_stamp(
     let new = set_keys(&text, &shown, args.id, &pairs)?;
     let changed = new != text;
     if changed {
-        std::fs::write(&path, &new)
+        write_atomic(&path, &new)
             .map_err(|e| config(&shown, format!("cannot write ({e}); nothing was changed")))?;
     }
     let keys: Vec<&str> = pairs.iter().map(|(k, _)| *k).collect();

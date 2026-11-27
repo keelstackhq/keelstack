@@ -7,7 +7,7 @@
 //! exit 1 and the old token is never revoked unless the new value is stored everywhere.
 //! A token value lives only in a `Secret`: never argv, stdout, stderr, JSON or a log.
 
-use super::stamp::set_keys;
+use super::stamp::{set_keys, write_atomic};
 use super::{
     CredKind, Credential, FILE, Provider, Status, Storage, StorageKind, Strategy, SystemFile,
     add_duration, source_of,
@@ -27,6 +27,8 @@ use std::process::Stdio;
 
 /// A fresh token may need a moment before the provider reports it active.
 const TEST_ATTEMPTS: u32 = 3;
+/// The legacy rotation's secret (`hoist secrets rotate CLOUDFLARE_API_TOKEN`).
+const LEGACY: &str = "CLOUDFLARE_API_TOKEN";
 const DEFAULT_TTL: &str = "90d";
 
 /// Rotate `name` when `dir/system.toml` exists and declares a credential with that id;
@@ -37,11 +39,18 @@ pub fn try_rotate(dir: &Path, name: &str, verbose: bool) -> Result<Option<Report
         return Ok(None);
     }
     let shown = path.display().to_string();
-    let text = std::fs::read_to_string(&path).map_err(|e| HoistError::Config {
-        file: shown.clone(),
-        message: format!("cannot read ({e})"),
-    })?;
-    let sys = SystemFile::parse(&text, &shown)?;
+    // An unreadable or invalid system.toml never breaks the legacy rotation of its own secret.
+    let loaded = std::fs::read_to_string(&path)
+        .map_err(|e| HoistError::Config {
+            file: shown.clone(),
+            message: format!("cannot read ({e})"),
+        })
+        .and_then(|text| SystemFile::parse(&text, &shown).map(|sys| (text, sys)));
+    let (text, sys) = match loaded {
+        Ok(v) => v,
+        Err(_) if name == LEGACY => return Ok(None),
+        Err(e) => return Err(e),
+    };
     let Some(cred) = sys.credentials.iter().find(|c| c.id == name) else {
         return Ok(None);
     };
@@ -183,10 +192,16 @@ enum Prov {
         old_id: String,
         name: String,
         policies: Vec<Value>,
+        /// The old token's `condition` (request.ip) and `not_before`, copied so a rotation
+        /// never widens a token.
+        condition: Option<Value>,
+        not_before: Option<Value>,
     },
     Fly {
         app: String,
         old_id: String,
+        /// The ids listed in preflight, to tell the new token's id apart afterwards.
+        before: Option<BTreeSet<String>>,
     },
 }
 
@@ -359,9 +374,12 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                     c.id
                 ))
             })?;
+        let rows = fly_rows(&app, ctx.dir);
+        let old_id = resolve_fly_id(reference, rows.as_deref())?;
         Prov::Fly {
+            before: rows.map(|r| r.into_iter().map(|(id, _)| id).collect()),
             app,
-            old_id: reference.to_string(),
+            old_id,
         }
     } else {
         find_cloudflare(reference, ctx.verbose)?
@@ -458,9 +476,13 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         ("created_via", via.as_str()),
     ];
     pairs.extend(new_ref.as_deref().map(|r| ("provider_ref", r)));
-    let stamped = set_keys(ctx.text, ctx.shown, &c.id, &pairs).and_then(|t| {
-        std::fs::write(ctx.path, t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
-    });
+    // Re-read just before stamping: the file may have changed during the rotation.
+    let stamped = std::fs::read_to_string(ctx.path)
+        .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
+        .and_then(|fresh| set_keys(&fresh, ctx.shown, &c.id, &pairs))
+        .and_then(|t| {
+            write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
+        });
     match stamped {
         Ok(()) => out.push(
             "system",
@@ -602,6 +624,8 @@ fn find_cloudflare(reference: &str, verbose: bool) -> Result<Prov, HoistError> {
             base: base.clone(),
             old_id: str_of(old, "id").unwrap_or_default(),
             name: str_of(old, "name").unwrap_or_else(|| reference.to_string()),
+            condition: old.get("condition").filter(|c| !c.is_null()).cloned(),
+            not_before: old.get("not_before").filter(|c| !c.is_null()).cloned(),
             policies,
             http,
         });
@@ -617,7 +641,40 @@ fn find_cloudflare(reference: &str, verbose: bool) -> Result<Prov, HoistError> {
     )))
 }
 
-fn fly_list(app: &str, dir: &Path) -> Option<BTreeSet<String>> {
+/// The old Fly token's id: `reference` when it is an id in the list, else the one token of that
+/// name. Anything else (no list, no match, several matches) is a usage error before any write.
+fn resolve_fly_id(
+    reference: &str,
+    rows: Option<&[(String, String)]>,
+) -> Result<String, HoistError> {
+    let fix = "set provider_ref to the Fly token id (`fly tokens list`)";
+    let Some(rows) = rows else {
+        return Err(usage(format!(
+            "cannot list Fly tokens to find `{reference}`; {fix}"
+        )));
+    };
+    if rows.iter().any(|(id, _)| id == reference) {
+        return Ok(reference.to_string());
+    }
+    let named: Vec<&str> = rows
+        .iter()
+        .filter(|(_, n)| !n.is_empty() && n == reference)
+        .map(|(id, _)| id.as_str())
+        .collect();
+    match named[..] {
+        [id] => Ok(id.to_string()),
+        [] => Err(usage(format!(
+            "no Fly token with id or name `{reference}`; {fix}"
+        ))),
+        _ => Err(usage(format!(
+            "provider_ref `{reference}` matches {} Fly tokens; {fix}",
+            named.len()
+        ))),
+    }
+}
+
+/// `(id, name)` of every token `fly tokens list` shows, or `None` when it cannot be read.
+fn fly_rows(app: &str, dir: &Path) -> Option<Vec<(String, String)>> {
     let out = fly_command(&["tokens", "list", "-a", app, "--json"], dir)
         .stdin(Stdio::null())
         .stderr(Stdio::null())
@@ -628,9 +685,17 @@ fn fly_list(app: &str, dir: &Path) -> Option<BTreeSet<String>> {
     let arr = v.get("tokens").unwrap_or(&v).as_array()?;
     Some(
         arr.iter()
-            .filter_map(|t| t.get("id").and_then(Value::as_str).map(str::to_string))
+            .filter_map(|t| {
+                let id = t.get("id").and_then(Value::as_str)?;
+                let name = t.get("name").and_then(Value::as_str).unwrap_or_default();
+                Some((id.to_string(), name.to_string()))
+            })
             .collect(),
     )
+}
+
+fn fly_list(app: &str, dir: &Path) -> Option<BTreeSet<String>> {
+    fly_rows(app, dir).map(|r| r.into_iter().map(|(id, _)| id).collect())
 }
 
 impl Prov {
@@ -647,16 +712,23 @@ impl Prov {
                 base,
                 name,
                 policies,
+                condition,
+                not_before,
                 ..
             } => {
                 // Not `PUT <base>/<id>/value` (roll): it invalidates the old value at once,
                 // which would break every consumer until the new value is stored. A second
                 // token keeps the old one valid until it is revoked.
-                let body = json!({
+                let mut body = json!({
                     "name": name,
                     "policies": policies,
                     "expires_on": format_rfc3339(expiry * 86_400),
                 });
+                for (key, v) in [("condition", condition), ("not_before", not_before)] {
+                    if let Some(v) = v {
+                        body[key] = v.clone();
+                    }
+                }
                 let written = http
                     .send_json(Method::Post, base, Some(&body))
                     .map_err(|e| e.to_string())?;
@@ -688,8 +760,8 @@ impl Prov {
                     ),
                 }
             }
-            Prov::Fly { app, .. } => {
-                let before = fly_list(app, ctx.dir);
+            Prov::Fly { app, before, .. } => {
+                let before = before.clone();
                 let expiry = format!("{}h", days * 24);
                 let out = fly_command(
                     &["tokens", "create", "deploy", "-a", app, "--expiry", &expiry],

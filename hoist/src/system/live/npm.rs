@@ -2,7 +2,7 @@
 //! masked prefix, never the value.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, ref_matches, ref_words, token_for,
+    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, ref_words, token_for,
     unknown_err,
 };
 use crate::http::{Fetched, Http, Service};
@@ -78,12 +78,25 @@ impl LiveProbe for Probe<'_> {
             Err(r) => return r,
         };
         let words = ref_words(cred);
-        let found = tokens.iter().find(|t| {
-            let key = t["key"].as_str().unwrap_or("");
-            let name = t["name"].as_str().unwrap_or("");
-            let masked = masked(t);
-            ref_matches(cred, key, name)
-                || (!masked.is_empty() && words.iter().any(|w| masked.starts_with(w)))
+        let by_ref = match find_ref(cred, &tokens, |t| {
+            (
+                t["key"].as_str().unwrap_or("").to_string(),
+                t["name"].as_str().unwrap_or("").to_string(),
+            )
+        }) {
+            Ok(t) => t,
+            Err(why) => return LiveResult::Unknown(why),
+        };
+        // A masked prefix only counts for a long word (>= 8 chars) next to a masked value of
+        // at least 4 chars; the word may be longer than the mask, never shorter than 8.
+        let found = by_ref.or_else(|| {
+            tokens.iter().find(|t| {
+                let masked = masked(t);
+                masked.len() >= 4
+                    && words
+                        .iter()
+                        .any(|w| w.len() >= 8 && (w.starts_with(masked) || masked.starts_with(w)))
+            })
         });
         let Some(t) = found else {
             return LiveResult::Drift("token not found in the npm token list".into());

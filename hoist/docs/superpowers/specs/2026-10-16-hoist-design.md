@@ -1871,7 +1871,8 @@ hoist secrets rotate ID                        # rotate a system.toml credential
 overrides): 0 ok · 1 drift (a check failed; `explain --check`: SYSTEM.md is stale) · 2 a human
 step is pending (rotation due) · 3 usage, config or API error (missing file, invalid TOML,
 unknown key, bad enum/date/duration, duplicate id, reference to an undeclared provider).
-Items have `area = "system"`. No command prints a secret value: offline commands never read
+Items have `area = "system"` (`secrets rotate` also reports `github`, `cloudflare`, `fly` items
+for storages and tokens). No command prints a secret value: offline commands never read
 one; `--live` and `secrets rotate` read token values from env only (never argv) and never print
 them (canary tests).
 
@@ -1998,6 +1999,12 @@ never a failure of the check; exit codes stay 17.1 (`unknown` alone is exit 0).
 
 `provider_ref` is how a probe finds the credential: without it the item is `unknown` ("set
 provider_ref …"). Providers without a probe stay `unknown` ("no live probe for <provider>").
+A credential's own value (its storage key read from env) is only ever sent to its own
+provider's API: the Fly sweep uses `FLY_API_TOKEN` or the value of a credential whose provider
+is `fly`, never another provider's. An app whose secrets cannot be listed (no token, a failed
+`fly secrets list`) is a `live` item `fly:<app>` (`unknown`, with the fix). `provider_ref`
+matches an id first; a name that matches several tokens is `unknown` ("set it to the token id");
+an npm masked-prefix match needs a `provider_ref` word of at least 8 characters.
 
 ### 17.6 Org catalog of alternatives
 
@@ -2031,7 +2038,8 @@ consumers, created, expires, rotate); a "Rotation" section per credential with `
 ### 17.8 Rotation from `system.toml` and `hoist system stamp`
 
 `hoist secrets rotate ID` where `ID` is a `[[credential]] id` of `system.toml` (else the §8.3
-legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged) follows `rotation.strategy`:
+legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged; an absent or invalid `system.toml` never
+breaks the legacy name, any other name then reports the parse error, exit 3) follows `rotation.strategy`:
 
 - `assisted` / `manual` (or no `rotation`): no request, no write; exit 2 with one item
   `system/rotation/ID` (`pending`) and human steps: each `rotation.steps` entry
@@ -2042,16 +2050,18 @@ legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged) follows `rotation.strategy`:
   it into every storage (`gh-secret`, `gh-env-secret` sealed; `fly-secret` via
   `fly secrets import` on stdin), then **revoke** the old one, only after the test and every
   write passed. Cloudflare: find the old token by `provider_ref`, `POST /user/tokens` (or the
-  account endpoint) with its name and policies and `expires_on` = today + `max_ttl` (else
+  account endpoint) with its name, policies, `condition` (request.ip) and `not_before` (never
+  widened) and `expires_on` = today + `max_ttl` (else
   `rotate_every`, else 90d), verify with `GET /user/tokens/verify` as the new token, `DELETE` the
   old. Roll (`PUT /user/tokens/{id}/value`) is not used: it invalidates the old value at once.
-  Fly: `fly tokens create deploy -a APP --expiry <hours>h` (value read from stdout, never argv),
+  Fly: a `provider_ref` that is a name is resolved to the token id from `fly tokens list` in the
+  preflight (unresolvable: exit 3, "set provider_ref to the Fly token id"); `fly tokens create deploy -a APP --expiry <hours>h` (value read from stdout, never argv),
   test `GET /apps/APP` with it, `fly tokens revoke OLD_ID`. Preflight errors (no token, no
   `provider_ref`, a storage hoist cannot write such as `sops` or `worker-secret`, another
   provider) exit 3 before any write; after the first write failures are items with exit 1 (a
   failed test, or a first write that fails with nothing written, revokes the new credential; a
-  partial set keeps both and names the storages that hold the new value). On success hoist edits that credential in `system.toml` (toml_edit,
-  comments kept): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
+  partial set keeps both and names the storages that hold the new value). On success hoist re-reads `system.toml`, edits that credential (toml_edit,
+  comments kept) and writes it atomically (temp file, rename): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
   `provider_ref` when the new id is known.
 
 `hoist system stamp ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF]`
