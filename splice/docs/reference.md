@@ -204,7 +204,7 @@ jobs:
 
 Pin every action by full commit SHA with the tag as a comment, as above; Renovate (or Dependabot)
 bumps SHA and comment together. `create-github-app-token` v3.3.0 is commit `64ab729…`
-(2026-10-12); `keelstackhq/keelstack/splice/action` v0.25.0 is `d9ff733…`.
+(2026-10-12); `keelstackhq/keelstack/splice/action` v0.25.0 is `5816246…`.
 
 It opens or refreshes one pull request (`splice/update`) with a summary of the changes.
 
