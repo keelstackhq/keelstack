@@ -1223,3 +1223,234 @@ fn ambiguous_cloudflare_name_ref_exits_3_before_any_write() {
     assert!(run.all.contains("--ref"), "{}", run.all);
     assert_eq!(read(dir.path()), text);
 }
+
+// ---- pending tokens: recorded until revoked, never the current token, no duplicates ----
+
+/// `FLY_CRED` (provider_ref `old-id`) with `pending_ref` set, when `pending` is not empty.
+fn fly_cred_pending(pending: &str) -> String {
+    let cred = FLY_CRED.replace("REF", "old-id");
+    if pending.is_empty() {
+        return cred;
+    }
+    cred.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        &format!(r#"rotation = {{ strategy = "auto", pending_ref = "{pending}" }}"#),
+    )
+}
+
+/// `fly_cred_pending` with a second fly-secret storage in app `other`.
+fn fly_two_apps(pending: &str) -> String {
+    fly_cred_pending(pending).replace(
+        r#"  { kind = "fly-secret", app = "myapp", key = "FLY_KEY" },"#,
+        "  { kind = \"fly-secret\", app = \"myapp\", key = \"FLY_KEY\" },\n  { kind = \"fly-secret\", app = \"other\", key = \"FLY_KEY\" },",
+    )
+}
+
+fn count(log: &[String], line: &str) -> usize {
+    log.iter().filter(|l| *l == line).count()
+}
+
+#[test]
+fn fly_partial_write_records_the_new_token_in_pending_ref() {
+    let run = fly_case_with(
+        &fly_two_apps(""),
+        r#""secrets import") if [ "$4" = other ]; then cat > /dev/null; exit 1; fi; cat > '{t}/import.in';;"#,
+        200,
+        1,
+    );
+    assert_eq!(
+        count(&run.log, "secrets import -a myapp"),
+        1,
+        "{:?}",
+        run.log
+    );
+    assert!(
+        !run.log.iter().any(|l| l.starts_with("tokens revoke")),
+        "both tokens stay live: {:?}",
+        run.log
+    );
+    assert_eq!(
+        run.after,
+        run.text.replace(
+            r#"rotation = { strategy = "auto" }"#,
+            r#"rotation = { strategy = "auto", pending_ref = "new-fly-id" }"#
+        ),
+        "{}",
+        run.after
+    );
+    let steps = run.json["human_steps"].to_string();
+    assert!(steps.contains("partial:fly-deploy"), "{steps}");
+    assert!(steps.contains("new-fly-id"), "{steps}");
+}
+
+#[test]
+fn fly_partial_write_whose_record_fails_says_what_to_set() {
+    // The first import breaks system.toml, so recording the new token's id fails.
+    let run = fly_case_with(
+        &fly_two_apps(""),
+        r#""secrets import") cat > /dev/null; if [ "$4" = other ]; then exit 1; fi; echo '[[credential' >> '{d}/system.toml';;"#,
+        200,
+        1,
+    );
+    let items = run.json["items"].to_string();
+    assert!(
+        items.contains("recording it in system.toml failed"),
+        "{items}"
+    );
+    assert!(
+        items.contains(r#"set `pending_ref = \"new-fly-id\"` to its rotation"#),
+        "{items}"
+    );
+    assert!(!items.contains("revokes it once the value"), "{items}");
+    assert!(
+        !run.log.iter().any(|l| l.starts_with("tokens revoke")),
+        "{:?}",
+        run.log
+    );
+}
+
+#[test]
+fn fly_rerun_revokes_the_pending_token_while_it_is_still_recorded() {
+    let run = fly_case_with(
+        &fly_cred_pending("tok-p"),
+        r#""tokens revoke") if [ "$3" = tok-p ]; then cp '{d}/system.toml' '{t}/at-pending.toml'; fi;;"#,
+        200,
+        0,
+    );
+    let at = |l: &str| run.log.iter().position(|x| x == l);
+    let (Some(p), Some(o)) = (at("tokens revoke tok-p"), at("tokens revoke old-id")) else {
+        panic!("{:?}", run.log);
+    };
+    assert!(p < o, "old revoked last: {:?}", run.log);
+    // Until the pending token is revoked, system.toml still names it.
+    let at_pending = fs::read_to_string(run.tools.path().join("at-pending.toml")).unwrap();
+    assert!(
+        at_pending.contains(r#"pending_ref = "tok-p""#),
+        "{at_pending}"
+    );
+    assert!(
+        at_pending.contains("provider_ref = \"token id new-fly-id\""),
+        "{at_pending}"
+    );
+    assert!(!run.after.contains("pending_ref"), "{}", run.after);
+    assert!(
+        run.json["items"].to_string().contains("revoked tok-p"),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
+fn a_pending_token_that_cannot_be_revoked_stays_in_pending_ref() {
+    let run = fly_case_with(
+        &fly_cred_pending("tok-p tok-q"),
+        r#""tokens revoke") if [ "$3" = tok-p ]; then exit 1; fi;;"#,
+        200,
+        1,
+    );
+    assert_eq!(count(&run.log, "tokens revoke tok-q"), 1, "{:?}", run.log);
+    assert_eq!(count(&run.log, "tokens revoke old-id"), 1, "{:?}", run.log);
+    assert!(
+        run.after
+            .contains(r#"rotation = { strategy = "auto", pending_ref = "tok-p" }"#),
+        "{}",
+        run.after
+    );
+    assert!(
+        run.json["human_steps"]
+            .to_string()
+            .contains("revoke-token:tok-p"),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
+fn pending_ref_naming_the_current_token_or_twice_is_deduped() {
+    // tok-1 is provider_ref (the current token): it is the old token, revoked once, last.
+    let text = system(&[&CF_CRED.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "tok-1 tok-p tok-p" }"#,
+    )]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[("DELETE /user/tokens/tok-p", 200, DELETED)]);
+    let run = rotate(&api, dir.path(), "site-deploy", 0);
+    let w = writes(&api);
+    let n = |x: &str| w.iter().filter(|y| *y == x).count();
+    assert_eq!(n("DELETE /user/tokens/tok-p"), 1, "{w:?}");
+    assert_eq!(n(DEL_OLD), 1, "{w:?}");
+    assert_eq!(w.last().map(String::as_str), Some(DEL_OLD), "{w:?}");
+    let items = run.json["items"].to_string();
+    assert!(!items.contains("revoking pending token tok-1"), "{items}");
+    assert!(!read(dir.path()).contains("pending_ref"));
+}
+
+#[test]
+fn partial_write_never_records_the_current_token_as_pending() {
+    let text = system(&[&CF_CRED.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "tok-1 tok-p tok-p" }"#,
+    )]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[(PUT_ENV, 500, "empty.json")]);
+    rotate(&api, dir.path(), "site-deploy", 1);
+    let after = read(dir.path());
+    assert!(after.contains(r#"pending_ref = "tok-p new-id""#), "{after}");
+}
+
+#[test]
+fn stamp_file_edits_the_named_file_only() {
+    let text = system(&[CF_CRED, NPM_CRED]);
+    let dir = tempfile::tempdir_in(common::tmpdir()).unwrap();
+    fs::create_dir_all(dir.path().join("ops")).unwrap();
+    let file = dir.path().join("ops/sys.toml");
+    fs::write(&file, &text).unwrap();
+    let r = stamp(
+        dir.path(),
+        &[
+            "npm-publish",
+            "--created",
+            "2026-11-27",
+            "--ref",
+            "tok-9",
+            "--file",
+            "ops/sys.toml",
+        ],
+        0,
+    );
+    assert_eq!(r["items"][0]["action"], "update", "{r}");
+    let after = fs::read_to_string(&file).unwrap();
+    assert!(after.contains(r#"provider_ref = "tok-9""#), "{after}");
+    assert!(after.contains(CF_CRED), "{after}");
+    assert!(!dir.path().join("system.toml").exists());
+    // An absolute --file works too; a missing one exits 3 and writes nothing.
+    let abs = file.display().to_string();
+    let again = stamp(
+        dir.path(),
+        &[
+            "npm-publish",
+            "--created",
+            "2026-11-27",
+            "--ref",
+            "tok-9",
+            "--file",
+            &abs,
+        ],
+        0,
+    );
+    assert_eq!(again["items"][0]["action"], "ok", "{again}");
+    stamp(
+        dir.path(),
+        &[
+            "npm-publish",
+            "--created",
+            "2026-11-27",
+            "--file",
+            "nope.toml",
+        ],
+        3,
+    );
+    assert!(!dir.path().join("nope.toml").exists());
+}

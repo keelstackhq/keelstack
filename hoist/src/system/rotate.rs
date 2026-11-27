@@ -348,15 +348,20 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                 c.id, c.id
             ))
         })?;
-    // Tokens an earlier, partial rotation left live: revoked once this one completes.
-    let pending: Vec<String> = c
+    // Tokens an earlier, partial rotation left live: revoked once this one completes. Each id
+    // once, and never the current token (`provider_ref`): that one is the old token.
+    let mut pending: Vec<String> = Vec::new();
+    for p in c
         .rotation
         .as_ref()
         .and_then(|r| r.pending_ref.as_deref())
         .unwrap_or_default()
         .split_whitespace()
-        .map(str::to_string)
-        .collect();
+    {
+        if p != reference && !pending.iter().any(|q| q == p) {
+            pending.push(p.to_string());
+        }
+    }
     if let Some(bad) = pending.iter().find(|p| !valid_id(p)) {
         return Err(usage(format!(
             "credential `{}`: rotation.pending_ref `{bad}` is not a token id",
@@ -405,6 +410,9 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
     } else {
         find_cloudflare(reference, &pending, ctx.verbose)?
     };
+    // A name ref resolved to an id that pending_ref also lists: still the old token.
+    let old_id = prov.old_id().to_string();
+    pending.retain(|p| *p != old_id);
     // A name ref is pinned to the old token's id on a partial set: the new token reuses the
     // name, so a rerun must not resolve the name to it.
     let pin = Some(prov.old_id())
@@ -500,13 +508,6 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
         .and_then(|fresh| set_keys(&fresh, ctx.shown, &c.id, &pairs))
         .and_then(|t| {
-            if pending.is_empty() {
-                Ok(t)
-            } else {
-                set_pending(&t, ctx.shown, &c.id, None)
-            }
-        })
-        .and_then(|t| {
             write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
         });
     let stamp_ok = stamped.is_ok();
@@ -541,10 +542,12 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         }
     }
     // Revoke what the new value replaced only now, after every write and the stamp: tokens
-    // an earlier partial rotation left behind, then the old one last. When the stamp failed,
-    // `pending_ref` still names the pending tokens: they stay live and recorded, so the next
-    // rotation revokes them (revoking them now would leave the record naming dead ids).
+    // an earlier partial rotation left behind, then the old one last. The stamp keeps
+    // `pending_ref`; it drops each pending id only once that token is revoked, so the record
+    // never forgets a live token. When the stamp failed, the pending tokens stay live and
+    // recorded, so the next rotation revokes them.
     let url = console(ctx.sys.provider(&c.provider), &c.provider, c.kind);
+    let mut still: Vec<&str> = Vec::new();
     for p in pending
         .iter()
         .filter(|p| Some(p.as_str()) != new.id.as_deref())
@@ -571,10 +574,36 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                 Action::Ok,
                 format!("revoked {p}"),
             ),
-            Err(why) => out.manual_revoke(tokens, "pending token", p, &why, &url),
+            Err(why) => {
+                still.push(p);
+                out.manual_revoke(tokens, "pending token", p, &why, &url);
+            }
         }
     }
-    let old = prov.old_id().to_string();
+    if stamp_ok && !pending.is_empty() {
+        let left = (!still.is_empty()).then(|| still.join(" "));
+        let recorded = std::fs::read_to_string(ctx.path)
+            .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
+            .and_then(|t| set_pending(&t, ctx.shown, &c.id, left.as_deref()))
+            .and_then(|t| {
+                write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
+            });
+        if let Err(err) = recorded {
+            let fix = left.map_or_else(
+                || "remove rotation.pending_ref".to_string(),
+                |l| format!("set rotation.pending_ref = \"{l}\""),
+            );
+            out.push(
+                "system",
+                "pending_ref",
+                &c.id,
+                Action::Update,
+                format!("failed: updating {FILE}: {err}; {fix}"),
+            );
+            out.r.exit_code = 1;
+        }
+    }
+    let old = old_id;
     match prov.revoke(ctx, &old) {
         Ok(()) => out.push(
             tokens,

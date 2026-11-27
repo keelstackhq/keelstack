@@ -89,39 +89,81 @@ pub fn probe(probes: &[Box<dyn LiveProbe + '_>], cred: &Credential) -> LiveResul
 // ---- helpers shared by the probes ----
 
 /// The credential's own value, when one of its `storage[].key` names is set in env (in a job
-/// that reads it), else the first of `fallback` that is set. Never printed.
+/// that reads it), else the first of `fallback` that is set. Only names the credential's
+/// provider owns ([`owned_names`]) are ever read; any other name is skipped (see
+/// [`no_token`]). Never printed.
 pub(crate) fn token_for(cred: &Credential, fallback: &[&str]) -> Option<Secret> {
     env_names(cred, fallback).into_iter().find_map(from_env)
 }
 
-/// The provider that owns a well-known token env name (`None` for any other name).
-fn name_owner(name: &str) -> Option<&'static str> {
-    match name {
-        "GITHUB_TOKEN" | "GH_TOKEN" | "GH_PAT" => Some("github"),
-        "CLOUDFLARE_API_TOKEN" => Some("cloudflare"),
-        "FLY_API_TOKEN" | "FLY_ACCESS_TOKEN" => Some("fly"),
-        "NPM_TOKEN" => Some("npm"),
-        "CARGO_REGISTRY_TOKEN" => Some("crates"),
-        "GOOGLE_OAUTH_ACCESS_TOKEN" => Some("google"),
-        _ => None,
+/// `gcp` and `gsc` credentials are Google's.
+fn provider_of(cred: &Credential) -> &str {
+    match cred.provider.as_str() {
+        "gcp" | "gsc" => "google",
+        p => p,
     }
 }
 
-/// The env names that may hold `cred`'s value, in order: its storage keys, then `fallback`. A
-/// name another provider owns is skipped, so a credential cannot make hoist send, say,
-/// `GH_PAT` to Cloudflare. `GITHUB_TOKEN` (the job's own token) is never a credential's value.
-fn env_names<'a>(cred: &'a Credential, fallback: &[&'a str]) -> Vec<&'a str> {
-    let provider = match cred.provider.as_str() {
-        "gcp" | "gsc" => "google",
-        p => p,
-    };
+/// The token env names a provider owns: the only names hoist reads a credential's value from.
+pub(crate) fn owned_names(provider: &str) -> &'static [&'static str] {
+    match provider {
+        "github" => &["GITHUB_TOKEN", "GH_TOKEN", "GH_PAT"],
+        "cloudflare" => &["CLOUDFLARE_API_TOKEN"],
+        "fly" => &["FLY_API_TOKEN", "FLY_ACCESS_TOKEN"],
+        "npm" => &["NPM_TOKEN"],
+        "crates" => &["CARGO_REGISTRY_TOKEN"],
+        "google" | "gcp" | "gsc" => &["GOOGLE_OAUTH_ACCESS_TOKEN"],
+        _ => &[],
+    }
+}
+
+/// The env names that may hold `cred`'s value, in order: its storage keys, then `fallback`,
+/// each kept only when `cred`'s provider owns it, so a credential cannot make hoist read an
+/// arbitrary env var or send, say, `GH_PAT` to Cloudflare. `GITHUB_TOKEN` (the job's own
+/// token) is never a credential's value.
+pub(crate) fn env_names<'a>(cred: &'a Credential, fallback: &[&'a str]) -> Vec<&'a str> {
+    let owned = owned_names(provider_of(cred));
     cred.storage
         .iter()
         .map(|s| s.key.as_str())
         .filter(|k| *k != "GITHUB_TOKEN")
         .chain(fallback.iter().copied())
-        .filter(|k| name_owner(k).is_none_or(|o| o == provider))
+        .filter(|k| owned.contains(k))
         .collect()
+}
+
+/// The storage keys hoist will not read because the provider does not own them.
+pub(crate) fn foreign_keys(cred: &Credential) -> Vec<&str> {
+    let owned = owned_names(provider_of(cred));
+    cred.storage
+        .iter()
+        .map(|s| s.key.as_str())
+        .filter(|k| *k != "GITHUB_TOKEN" && !owned.contains(k))
+        .collect()
+}
+
+/// `unknown` for a token that is not in env: `why`, plus, when a storage key names an env var
+/// the provider does not own, which names hoist reads instead.
+pub(crate) fn no_token(cred: &Credential, why: &str) -> LiveResult {
+    let foreign = foreign_keys(cred);
+    let owned: Vec<&str> = owned_names(provider_of(cred))
+        .iter()
+        .copied()
+        .filter(|n| *n != "GITHUB_TOKEN")
+        .collect();
+    if foreign.is_empty() {
+        return LiveResult::Unknown(why.to_string());
+    }
+    let fix = if owned.is_empty() {
+        format!("hoist reads no env var for provider `{}`", cred.provider)
+    } else {
+        format!("export the value as {} to check it", owned.join(" or "))
+    };
+    LiveResult::Unknown(format!(
+        "{why}; hoist never reads {} (not a {} token env name): {fix}",
+        foreign.join(", "),
+        provider_of(cred)
+    ))
 }
 
 /// The value named by one of the credential's storage keys only (no fallback).
@@ -291,8 +333,9 @@ mod tests {
         );
         assert_eq!(
             env_names(&c, &["CLOUDFLARE_API_TOKEN"]),
-            ["CF_DEPLOY", "CLOUDFLARE_API_TOKEN"]
+            ["CLOUDFLARE_API_TOKEN"]
         );
+        assert_eq!(foreign_keys(&c), ["GH_PAT", "NPM_TOKEN", "CF_DEPLOY"]);
         let c = with_keys("github", &["GH_PAT", "CLOUDFLARE_API_TOKEN"]);
         assert_eq!(env_names(&c, &[]), ["GH_PAT"]);
         let c = with_keys("fly", &["GH_TOKEN", "FLY_API_TOKEN"]);
@@ -305,6 +348,23 @@ mod tests {
             env_names(&c, &["GOOGLE_OAUTH_ACCESS_TOKEN"]),
             ["GOOGLE_OAUTH_ACCESS_TOKEN"]
         );
+    }
+
+    #[test]
+    fn a_storage_key_hoist_does_not_own_is_unknown_with_a_fix() {
+        let c = with_keys("npm", &["MY_NPM_SECRET"]);
+        let LiveResult::Unknown(why) = no_token(&c, "no npm token") else {
+            panic!("not unknown");
+        };
+        assert!(why.starts_with("no npm token"), "{why}");
+        assert!(why.contains("MY_NPM_SECRET"), "{why}");
+        assert!(why.contains("NPM_TOKEN"), "{why}");
+        let c = with_keys("npm", &["NPM_TOKEN"]);
+        assert_eq!(
+            no_token(&c, "no npm token"),
+            LiveResult::Unknown("no npm token".into())
+        );
+        assert!(foreign_keys(&with_keys("github", &["GITHUB_TOKEN"])).is_empty());
     }
 
     #[test]

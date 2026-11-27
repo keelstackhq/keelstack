@@ -1,7 +1,8 @@
 //! The `crates` live probe (spec §17.5): `GET /api/v1/me/tokens`.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, last_used, token_for,
+    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, last_used, no_token,
+    token_for,
 };
 use crate::http::{Fetched, Http, Service};
 use crate::system::Credential;
@@ -27,7 +28,7 @@ impl LiveProbe for Probe<'_> {
 
     fn probe(&self, cred: &Credential) -> LiveResult {
         let Some(tok) = token_for(cred, &["CARGO_REGISTRY_TOKEN"]) else {
-            return LiveResult::Unknown(format!("no crates.io token: {FIX}"));
+            return no_token(cred, &format!("no crates.io token: {FIX}"));
         };
         if cred
             .provider_ref

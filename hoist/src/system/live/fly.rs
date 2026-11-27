@@ -2,8 +2,8 @@
 //! with the token in the child's environment (never argv) and stderr discarded.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, expiry_drift, find_ref, own_token,
-    token_for,
+    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, expiry_drift, find_ref, no_token,
+    own_token, token_for,
 };
 use crate::auth::{Secret, from_env};
 use crate::fly::{fly_command, valid_app};
@@ -65,7 +65,7 @@ impl LiveProbe for Probe<'_> {
 
     fn probe(&self, cred: &Credential) -> LiveResult {
         let Some(tok) = token_for(cred, &["FLY_API_TOKEN"]) else {
-            return LiveResult::Unknown(NO_TOKEN.into());
+            return no_token(cred, NO_TOKEN);
         };
         let Some(app) = app_of(cred) else {
             return LiveResult::Unknown("name the app in resources as app:<name>".into());
@@ -299,7 +299,8 @@ mod tests {
             "GH_TOKEN",
             "CLOUDFLARE_API_TOKEN",
         ] {
-            assert_eq!(get(n), Some(None), "{n} must be removed");
+            // The env is cleared (crate::fly tests), so none may be set again here.
+            assert!(!matches!(get(n), Some(Some(_))), "{n} must not reach fly");
         }
     }
 }

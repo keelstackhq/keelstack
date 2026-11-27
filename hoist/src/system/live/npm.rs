@@ -2,8 +2,8 @@
 //! masked prefix, never the value.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, ref_words, token_for,
-    unknown_err,
+    Ctx, LiveProbe, LiveResult, day_of, day_str, expiry_drift, find_ref, no_token, ref_words,
+    token_for, unknown_err,
 };
 use crate::http::{Fetched, Http, Service};
 use crate::system::Credential;
@@ -61,7 +61,7 @@ impl LiveProbe for Probe<'_> {
 
     fn probe(&self, cred: &Credential) -> LiveResult {
         let Some(tok) = token_for(cred, &["NPM_TOKEN"]) else {
-            return LiveResult::Unknown(format!("no npm token: {FIX}"));
+            return no_token(cred, &format!("no npm token: {FIX}"));
         };
         if cred
             .provider_ref

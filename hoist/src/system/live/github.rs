@@ -4,7 +4,8 @@
 //! provider.
 
 use super::{
-    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, expiry_drift, own_token, unknown_err,
+    Ctx, LiveProbe, LiveResult, Sweep, day_of, day_str, env_names, expiry_drift, no_token,
+    own_token, unknown_err,
 };
 use crate::auth::{from_env, github_token};
 use crate::http::{Fetched, Http, HttpError, Service, seg};
@@ -115,11 +116,10 @@ impl LiveProbe for Probe<'_> {
     }
 
     fn probe(&self, cred: &Credential) -> LiveResult {
-        let key = cred
-            .storage
-            .iter()
-            .map(|s| s.key.as_str())
-            .find(|k| *k != "GITHUB_TOKEN" && from_env(k).is_some());
+        // Only names GitHub owns (`GH_TOKEN`, `GH_PAT`) are read; never an arbitrary env var.
+        let key = env_names(cred, &[])
+            .into_iter()
+            .find(|k| from_env(k).is_some());
         let (Some(key), Some(own), CredKind::ApiToken) = (key, own_token(cred), cred.kind) else {
             let key = cred
                 .storage
@@ -127,9 +127,12 @@ impl LiveProbe for Probe<'_> {
                 .map(|s| s.key.as_str())
                 .find(|k| *k != "GITHUB_TOKEN")
                 .unwrap_or(&cred.id);
-            return LiveResult::Unknown(format!(
-                "the value is not in env; GitHub shows a PAT's expiry only to the token itself (run in a job that reads {key})"
-            ));
+            return no_token(
+                cred,
+                &format!(
+                    "the value is not in env; GitHub shows a PAT's expiry only to the token itself (run in a job that reads {key})"
+                ),
+            );
         };
         let http = Http::new(Service::Github, own).verbose(self.verbose);
         let fix = format!("check {key}");

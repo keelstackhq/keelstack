@@ -183,6 +183,29 @@ fn npm_missing_token_is_unknown_naming_the_env() {
 }
 
 #[test]
+fn npm_storage_key_hoist_does_not_own_is_never_read() {
+    // The value sits in env under a name npm does not own: hoist must not read it.
+    let api = FakeApi::start(&[("GET /-/npm/v1/tokens", 200, NPM_LIST, &[])]);
+    let d = repo(
+        &system(
+            "npm",
+            "MY_NPM_SECRET",
+            "publish",
+            "provider_ref = \"keyabc123\"",
+        ),
+        "MY_NPM_SECRET",
+    );
+    let envs = vec![
+        ("HOIST_NPM_REGISTRY", api.url()),
+        ("MY_NPM_SECRET", TOKEN.to_string()),
+    ];
+    let r = run(d.path(), &envs, 0);
+    expect(&r, "unknown", "MY_NPM_SECRET");
+    expect(&r, "unknown", "NPM_TOKEN");
+    assert_eq!(api.requests().len(), 0, "nothing may be sent");
+}
+
+#[test]
 fn npm_no_provider_ref_is_unknown() {
     let r = npm_run(NPM_LIST, 200, "", "publish", true, 0);
     expect(&r, "unknown", "provider_ref");
