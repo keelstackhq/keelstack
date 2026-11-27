@@ -299,13 +299,14 @@ unchanged. These send no HTTP and read no secret value.
 environment secrets (declared storage present, undeclared secrets, age against `rotate_every`,
 a PAT's expiry header), Fly tokens and app secrets, npm and crates.io tokens, Google service
 account keys. Tokens come from env (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `FLY_API_TOKEN`,
-`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or the credential's own storage
-key); a missing token or a 401/403 is `unknown` with a fix, never a failure.
+`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or a storage key with a name
+that provider owns, such as `GH_PAT` or `FLY_ACCESS_TOKEN`); hoist never reads any other storage key,
+which is `unknown` with the env name to export. A missing token or a 401/403 is `unknown` with a
+fix, never a failure.
 
 `hoist secrets rotate ID` rotates a credential of `system.toml`: `strategy = "auto"` (Cloudflare,
 Fly) creates the new credential, tests it, writes it into every storage (GitHub storages sealed,
-`fly-secret` on stdin of `fly secrets import`), and only then revokes the
-old one, then stamps `created_at`/`expires_at` in `system.toml`; `assisted`/`manual` print the
+`fly-secret` on stdin of `fly secrets import`); `assisted`/`manual` print the
 steps (exit 2). Rotation order: new credential created and tested, stored everywhere, `system.toml`
 stamped, and the old credential revoked last, so a failure before the revoke leaves the old one
 working. `hoist system stamp ID --created YYYY-MM-DD [--expires YYYY-MM-DD|never] [--by WHO]

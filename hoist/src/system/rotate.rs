@@ -349,7 +349,8 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
             ))
         })?;
     // Tokens an earlier, partial rotation left live: revoked once this one completes. Each id
-    // once, and never the current token (`provider_ref`): that one is the old token.
+    // once, and never the current token: a single-id `provider_ref` is dropped here, any other
+    // form once the old id is resolved (`retain` below).
     let mut pending: Vec<String> = Vec::new();
     for p in c
         .rotation

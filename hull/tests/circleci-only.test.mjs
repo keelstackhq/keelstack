@@ -19,7 +19,12 @@ const VARS = { scope: "x", context_prefix: "x" };
 const read = (dir, p) => readFile(join(dir, p), "utf8");
 const has = (dir, p) => existsSync(join(dir, p));
 const wfs = (dir) => readdirSync(join(dir, ".github/workflows")).sort();
-const sha = (text) => createHash("sha256").update(text).digest("hex");
+// The lockstep bump (scripts/bump-version.sh 5b) moves system-check.yml's HOIST_VERSION every
+// release; the snapshot masks it so a release PR does not turn it red.
+const sha = (text) =>
+  createHash("sha256")
+    .update(String(text).replace(/^(\s*HOIST_VERSION:\s*)"\d+\.\d+\.\d+"$/m, '$1"X.Y.Z"'))
+    .digest("hex");
 
 const only = await renderCombo(WEB);
 const mirrorText = await read(PIECE, "files/.github/workflows/circleci-status.yml");

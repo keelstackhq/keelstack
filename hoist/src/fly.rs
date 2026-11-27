@@ -40,19 +40,34 @@ fn command(
     let mut c = Command::new(program);
     c.args(args).current_dir(dir).env_clear();
     for (k, v) in parent {
-        if k == "FLY_API_TOKEN" || k.to_str().is_some_and(|k| PASSED.contains(&k)) {
+        if k.to_str().is_some_and(|k| passes(k, cfg!(windows))) {
             c.env(k, v);
         }
     }
     c
 }
 
+/// Whether the parent's env var `k` reaches `fly`: `FLY_API_TOKEN` or a [`PASSED`] name.
+/// Windows env names are case-insensitive (`Path`, `ComSpec`), Unix names exact.
+fn passes(k: &str, windows: bool) -> bool {
+    let is = |p: &str| {
+        if windows {
+            p.eq_ignore_ascii_case(k)
+        } else {
+            p == k
+        }
+    };
+    is("FLY_API_TOKEN") || PASSED.iter().any(|p| is(p))
+}
+
 /// The env `fly` inherits: where to find programs and its config, temp dirs, proxies and CA
 /// bundles. No token but `FLY_API_TOKEN` (not even `FLY_ACCESS_TOKEN`) ever reaches it.
-pub const PASSED: [&str; 22] = [
+pub const PASSED: [&str; 27] = [
     "PATH",
     "HOME",
     "TMPDIR",
+    "FLY_CONFIG_DIR",
+    "XDG_CONFIG_HOME",
     "HTTPS_PROXY",
     "https_proxy",
     "HTTP_PROXY",
@@ -73,6 +88,9 @@ pub const PASSED: [&str; 22] = [
     "TEMP",
     "TMP",
     "PATHEXT",
+    "ComSpec",
+    "windir",
+    "ProgramData",
 ];
 
 #[cfg(test)]
@@ -120,6 +138,31 @@ mod tests {
                 "no_proxy=localhost",
             ]
         );
+    }
+
+    #[test]
+    fn fly_keeps_its_config_dir() {
+        let env = child_env(&[("FLY_CONFIG_DIR", "/cfg/fly"), ("XDG_CONFIG_HOME", "/cfg")]);
+        assert_eq!(env, ["FLY_CONFIG_DIR=/cfg/fly", "XDG_CONFIG_HOME=/cfg"]);
+    }
+
+    #[test]
+    fn windows_names_match_in_any_case_unix_names_exactly() {
+        for k in [
+            "Path",
+            "PATH",
+            "ComSpec",
+            "COMSPEC",
+            "windir",
+            "ProgramData",
+            "SystemRoot",
+        ] {
+            assert!(passes(k, true), "{k} on Windows");
+        }
+        assert!(passes("PATH", false));
+        assert!(!passes("Path", false), "Unix env names are case-sensitive");
+        assert!(!passes("fly_access_token", true));
+        assert!(!passes("Fly_Api_Token", false));
     }
 
     #[test]

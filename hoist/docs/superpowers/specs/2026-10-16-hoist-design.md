@@ -2020,7 +2020,8 @@ A credential's own value (its storage key read from env) is only ever sent to it
 provider's API: the Fly sweep uses `FLY_API_TOKEN` or the value of a credential whose provider
 is `fly`, never another provider's. Every `fly` child hoist runs starts from an empty env plus `PATH`, `HOME`, `TMPDIR`, the proxy
 vars (`HTTPS_PROXY`, `HTTP_PROXY`, `NO_PROXY`, `ALL_PROXY`, upper and lower case), the CA vars
-(`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`), the Windows process basics, and
+(`SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`), fly's config dir (`FLY_CONFIG_DIR`,
+`XDG_CONFIG_HOME`), the Windows process basics (names matched in any case there), and
 `FLY_API_TOKEN`: the operator's, or the credential's own value where a probe sends it (never
 `FLY_ACCESS_TOKEN` or another tool's token). An app whose secrets cannot be listed (no token, a failed
 `fly secrets list`) is a `live` item `fly:<app>` (`unknown`, with the fix). `provider_ref`

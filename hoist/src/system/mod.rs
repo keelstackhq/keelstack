@@ -23,7 +23,10 @@ fn temp_beside(path: &Path) -> std::path::PathBuf {
     let name = path
         .file_name()
         .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-    path.with_file_name(format!(".{name}.hoist-tmp-{}", std::process::id()))
+    // Process id plus a per-process counter: two writers, even in one process, never share a temp.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    path.with_file_name(format!(".{name}.hoist-tmp-{}-{n}", std::process::id()))
 }
 
 fn write_temp(tmp: &Path, text: &str) -> std::io::Result<()> {
