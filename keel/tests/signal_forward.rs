@@ -128,10 +128,10 @@ case "$(basename "$0") $*" in
   "git rev-parse --abbrev-ref HEAD") echo keel/bootstrap;;
   "gh auth status"*) ;;
   "gh repo view"*) echo '{{"defaultBranchRef":{{"name":"main"}}}}';;
-  "splice --version") echo "splice 0.24.0";;
-  "bosun --version") echo "bosun 0.24.0";;
-  "hoist --version") echo "hoist 0.24.0";;
-  "berth --version") echo "berth 0.24.0";;
+  "splice --version") echo "splice 0.25.0";;
+  "bosun --version") echo "bosun 0.25.0";;
+  "hoist --version") echo "hoist 0.25.0";;
+  "berth --version") echo "berth 0.25.0";;
   "gh api user --jq .login") echo octo;;
   "gh api user/installations --paginate"*)
     echo '{{"id":1,"app_slug":"claude","repository_selection":"all"}}'

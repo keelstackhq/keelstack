@@ -374,7 +374,7 @@ fn consumer_workflows_keep_bosuns_triggers_permissions_and_env_only_scripts() {
         .lines()
         .find_map(|l| l.strip_prefix("SPLICE_VERSION="))
         .expect("the setup script pins SPLICE_VERSION");
-    assert_eq!(pinned, "0.24.0");
+    assert_eq!(pinned, "0.25.0");
     // Every splice pin (both setup scripts, both splice.yml) is at least the channel's min_splice.
     let ver = |v: &str| -> Vec<u64> { v.split('.').map(|n| n.parse().unwrap()).collect() };
     let m = toml_at(&channel().join("splice.toml"));
@@ -659,7 +659,7 @@ fn the_splice_action_is_pinned_by_commit() {
                 sha.len() == 40 && sha.chars().all(|c| c.is_ascii_hexdigit()),
                 "{r}"
             );
-            assert_eq!(tag, "v0.24.0", "{r}");
+            assert_eq!(tag, "v0.25.0", "{r}");
         }
     }
 }
