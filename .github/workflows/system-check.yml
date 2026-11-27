@@ -21,13 +21,15 @@ concurrency:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   check:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -58,7 +60,7 @@ jobs:
           json="$RUNNER_TEMP/system-check.json"
           title="system-check: system.toml needs attention"
           gh label create system-check --color 5319e7 --description "hoist system check --live" --force >/dev/null
-          number=$(gh issue list --label system-check --state open --json number --jq '.[0].number // empty')
+          number=$(gh issue list --label system-check --state open --json number,title | jq -r --arg t "$title" '[.[]|select(.title==$t)][0].number // empty')
           if [ "$EXIT" = "0" ]; then
             if [ -n "$number" ]; then
               gh issue close "$number" --comment "Clean again: $RUN_URL"
