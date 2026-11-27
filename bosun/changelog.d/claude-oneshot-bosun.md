@@ -1,0 +1,1 @@
+- `[intake] trusted_authors` (`any` default, `members` or a login list): claim, spawn, wave plan (listed in `data.skipped`) and comment records skip issues and comments of untrusted authors.

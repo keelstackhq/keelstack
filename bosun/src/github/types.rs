@@ -33,6 +33,10 @@ pub struct Issue {
         deserialize_with = "app_slug_name"
     )]
     pub via_app: String,
+    /// The author's association with the repo (`OWNER`, `MEMBER`, `COLLABORATOR`, `NONE`, ...);
+    /// `None` when GitHub left it out.
+    #[serde(default)]
+    pub author_association: Option<String>,
 }
 
 impl Issue {

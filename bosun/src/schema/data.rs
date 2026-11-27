@@ -9,7 +9,8 @@ reap = {reaped: [{issue: int, session: str}], left: [str], merged: [int], epics_
     epics_error?: str, archive_error?: str};
 wave plan = {epic: int, shape: str, warnings: [str], run: [{issue: int, plan_id: str, title: str,
     touch: [str], workspace: str, bundle?: [int], closes?: [int]}], held: [{issue: int, task: str,
-    needs: [str]}], waiting: [{issue: int, reason: str}]};
+    needs: [str]}], waiting: [{issue: int, reason: str}],
+    skipped: [{issue: int, reason: str}]};
 msg = {session: str, chars: int};
 keygen = {id: str, role: str, path: str, public_key: str, enrolled: bool, toml: str, steps: [str]};
 test-integrity = {base: str, files_checked: int, integrity: str, integrity_reason?: str,

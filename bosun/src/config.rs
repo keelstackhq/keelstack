@@ -6,6 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use crate::core::approve::Policy;
+use crate::core::intake_trust::TrustedAuthors;
 use crate::core::mode::{Effective, ModeConfig};
 use crate::output::BosunError;
 
@@ -28,7 +29,13 @@ pub struct Config {
     /// release rejects unknown keys, so a repo may set this only after its `.bosun/version`
     /// pins a release that reads it (0.5.0 or later, which is also added to KNOWN in
     /// tests/pinned_config.rs). Bosun's own `.bosun/bosun.toml` therefore does not set it yet.
+    #[serde(deserialize_with = "intake_flag")]
     pub intake: bool,
+    /// `[intake] trusted_authors` (spec §3, BA): `"any"` (default), `"members"` or a login list.
+    /// The `[intake]` table shares its name with the `intake` flag; `parse` reads it from there.
+    /// Release ordering as for `intake`.
+    #[serde(skip)]
+    pub trusted_authors: TrustedAuthors,
     /// `[trailers]`: commit trailers for traceability (spec §4). Release ordering as for `intake`:
     /// set it only once `.bosun/version` pins a release that reads it.
     pub trailers: Trailers,
@@ -55,6 +62,19 @@ pub struct Config {
     /// `[main_health]` (D-028): whether a red main blocks. Release ordering as for `intake`.
     #[serde(skip_serializing_if = "MainHealth::is_default")]
     pub main_health: MainHealth,
+}
+
+/// `intake` is the zero-touch flag (`intake = true`) or the `[intake]` table (its keys are read by
+/// [`Config::parse`]; a table leaves the flag false).
+fn intake_flag<'de, D: serde::Deserializer<'de>>(d: D) -> Result<bool, D::Error> {
+    match toml::Value::deserialize(d)? {
+        toml::Value::Boolean(b) => Ok(b),
+        toml::Value::Table(_) => Ok(false),
+        other => Err(serde::de::Error::custom(format!(
+            "invalid type: {}, expected a boolean or an [intake] table",
+            other.type_str()
+        ))),
+    }
 }
 
 /// One `[[folders]]` table.
@@ -173,6 +193,7 @@ impl Default for Config {
             prices: BTreeMap::new(),
             approvals: Approvals::default(),
             intake: false,
+            trusted_authors: TrustedAuthors::default(),
             trailers: Trailers::default(),
             checks: Checks::default(),
             session: Session::default(),
@@ -641,10 +662,41 @@ fn cron_part(part: &str, lo: u32, hi: u32, names: (&[&str], u32)) -> bool {
         })
 }
 
+/// `[intake] trusted_authors` from the text of `.bosun/bosun.toml`; the table takes no other key.
+pub fn parse_intake_table(text: &str, file: &str) -> Result<TrustedAuthors, BosunError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Table {
+        #[serde(default)]
+        trusted_authors: TrustedAuthors,
+    }
+    #[derive(Deserialize)]
+    struct Top {
+        #[serde(default)]
+        intake: Option<toml::Value>,
+    }
+    let top: Top = parse_toml(text, file)?;
+    match top.intake {
+        Some(v @ toml::Value::Table(_)) => {
+            let t: Table = v.try_into().map_err(|e: toml::de::Error| {
+                BosunError::error(
+                    format!("{file}: [intake]: {}", e.message()),
+                    format!(
+                        "edit {file}: [intake] takes only trusted_authors = \"any\", \"members\" or [\"login\", ...]"
+                    ),
+                )
+            })?;
+            Ok(t.trusted_authors)
+        }
+        _ => Ok(TrustedAuthors::default()),
+    }
+}
+
 impl Config {
     /// Parse the text of `.bosun/bosun.toml`; `file` is the name used in errors.
     pub fn parse(text: &str, file: &str) -> Result<Config, BosunError> {
         let mut c: Config = parse_toml(text, file)?;
+        c.trusted_authors = parse_intake_table(text, file)?;
         for (key, zero) in [
             ("max_tokens", c.review.max_tokens == 0),
             ("max_diff_bytes", c.review.max_diff_bytes == 0),
