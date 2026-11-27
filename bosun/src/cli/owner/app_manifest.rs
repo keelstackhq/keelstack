@@ -462,6 +462,7 @@ fn read_key_file(path: &std::path::Path) -> Result<Secret> {
     let meta = file
         .metadata()
         .map_err(|e| bad(&format!("{:?}", e.kind())))?;
+    #[cfg(unix)]
     {
         use std::os::unix::fs::MetadataExt;
         if !meta.is_file() || meta.dev() != link.dev() || meta.ino() != link.ino() {
@@ -473,6 +474,10 @@ fn read_key_file(path: &std::path::Path) -> Result<Secret> {
                 path.display()
             );
         }
+    }
+    #[cfg(not(unix))]
+    if !meta.is_file() {
+        return Err(bad("the file changed while opening"));
     }
     if meta.len() > MAX_PEM as u64 {
         return Err(bad("it is larger than 16 KiB"));
