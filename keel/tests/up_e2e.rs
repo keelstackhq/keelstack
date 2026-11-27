@@ -77,9 +77,9 @@ case "$name $*" in
   "bosun --json gate-app advance")
     [ "$KEEL_SCENARIO" = old-bosun ] && { echo "unknown command" >&2; exit 2; }
     if [ -f "$KEEL_LOG/owner_done" ]; then
-      env '{"phase":"pr-b","pr":"https://github.com/owner/name/pull/11","owner":"done","next":[]}'
+      env '{"dry_run":false,"app_id":42,"slug":"gate","step":"pr-b","status":"advanced","steps":[],"left":[],"branch":"bosun/gate-app","pr":{"number":11,"head_sha":"abc"}}'
     else
-      env '{"phase":"pr-a","pr":"https://github.com/owner/name/pull/10","owner":"pending","next":[]}'
+      env '{"dry_run":false,"app_id":42,"slug":"gate","step":"pr-a","status":"advanced","steps":[],"left":[],"branch":"bosun/gate-app","pr":{"number":10,"head_sha":"abc"}}'
     fi;;
   "gh repo view"*) echo '{"nameWithOwner":"owner/name","defaultBranchRef":{"name":"main"}}';;
   "gh pr view"*)
@@ -268,7 +268,7 @@ fn uc_k5_1_a_013_base_reaches_025_autonomous_with_one_agent_command_one_owner_co
         step(&v, "gate-app")["detail"]
             .as_str()
             .unwrap()
-            .contains("pull/10"),
+            .contains("#10"),
         "{v}"
     );
     // Exactly one owner command and one owner approval (PR A) are left.
@@ -308,7 +308,7 @@ fn uc_k5_1_a_013_base_reaches_025_autonomous_with_one_agent_command_one_owner_co
         step(&v, "gate-app")["detail"]
             .as_str()
             .unwrap()
-            .contains("pull/11"),
+            .contains("#11"),
         "{v}"
     );
     assert!(!ids(&v).contains(&"owner".to_string()), "{v}");

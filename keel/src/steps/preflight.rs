@@ -600,7 +600,7 @@ pub fn gate(r: &dyn Runner, cli: &crate::cli::Cli) -> Option<PreflightReport> {
         Command::Up(a) => (Gate::Up, a.repo.clone()),
         Command::Plan(a) => (Gate::Plan, a.repo.clone()),
         Command::Migrate(_) => (Gate::Migrate, None),
-        Command::Doctor => return None,
+        Command::Doctor | Command::Owner(_) => return None,
     };
     let manifest = Manifest::load(&cli.dir).ok();
     let ci_none = manifest.as_ref().is_some_and(|m| m.ci_none());

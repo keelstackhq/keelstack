@@ -44,6 +44,12 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     let command = cli.command.name();
+    if matches!(cli.command, keel::Command::Owner(_)) {
+        return match keel::run_owner(&cli) {
+            Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+            Err(err) => fail(command, json, &err),
+        };
+    }
     // Read-only gate: any block stops the command with exit 5 before it writes anything.
     if let Some(report) = keel::preflight_gate(&cli) {
         if json {
@@ -166,7 +172,9 @@ fn command_name(args: &[String]) -> String {
         } else if a == "--" {
             break;
         } else if !a.starts_with('-') {
-            return if ["up", "plan", "doctor", "migrate", "preflight"].contains(&a.as_str()) {
+            return if ["up", "plan", "doctor", "migrate", "preflight", "owner"]
+                .contains(&a.as_str())
+            {
                 a.clone()
             } else {
                 String::new()

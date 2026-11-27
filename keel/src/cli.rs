@@ -33,6 +33,18 @@ pub enum Command {
     Migrate(MigrateArgs),
     /// Check plan, visibility, token, admin, tools, sources and drift; writes nothing. Exit 5 on a block.
     Preflight,
+    /// The owner's one command: runs `bosun owner setup` (gate App, signer, PR A approval).
+    Owner(OwnerArgs),
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct OwnerArgs {
+    /// Pass `--dry-run` to `bosun owner setup`: report, change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Extra arguments, after `--`, passed through to `bosun owner setup`.
+    #[arg(last = true)]
+    pub extra: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -125,6 +137,7 @@ impl Command {
             Command::Doctor => "doctor",
             Command::Migrate(_) => "migrate",
             Command::Preflight => "preflight",
+            Command::Owner(_) => "owner",
         }
     }
 }

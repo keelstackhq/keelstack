@@ -397,8 +397,8 @@ reason}`; on the upgrade path also `target`, `mode`, `dry_run`, `branch`, `pr` a
 Upgrade pipeline, after preflight (section 5, which gates both paths and stops before any write): `migrate::run`
 (`--pr`, `--drift seed`; with `--branch` a plain push and no PR; the PR body ends with the pipeline steps and the owner
 line), step `mode-preset`: `bosun --json migrate --to MODE` (default `autonomous`), step `gate-app` (autonomous
-only): `bosun --json gate-app advance` (exit 2 or not found: `pending`; its `data.phase`, `data.pr` and `data.owner`
-are shown, `owner = "done"` means the owner's run is finished), step `owner` (autonomous only): the checklist entry
+only): `bosun --json gate-app advance` (exit 2 or not found: `pending`; its `data.step` and `data.pr.number`
+are shown, `data.step` of `pr-b` or `done` means the owner's run is finished), step `owner` (autonomous only): the checklist entry
 `owner` with the command `npx -y @keelstackhq/keel@X owner` until the owner is done. Exit 5 while the checklist is
 not empty (`owner` computer first, then `approve-pr` phone). A rerun after the owner finishes makes PR B.
 

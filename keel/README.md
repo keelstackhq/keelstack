@@ -26,6 +26,7 @@ Node 24+ (checked in preflight).
   the JSON `data.path` (`bootstrap` / `upgrade`) and `data.reason` say which ran.
 - `keel plan`: same checks, writes nothing, shows what `up` would do.
 - `keel doctor`: check the toolchain and the repo for drift (no installs).
+- `keel owner [--dry-run] [-- ARGS]`: the owner's one command; runs `bosun owner setup` (inherited stdio, bosun's exit code; exit 3 if bosun is missing).
 - `keel preflight`: read-only checks (token scopes, admin, plan and visibility, legacy sources, tools, drift); exit 5 on a block, with the choices. It also runs first in `up`, `plan` and `migrate`.
 - `keel migrate`: move an existing repo to a keelstack release in one step (below).
 

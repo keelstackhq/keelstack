@@ -26,7 +26,8 @@ The JSON says which ran: `data.path` (`bootstrap` or `upgrade`) and `data.reason
 4. **gate-app**: `bosun gate-app advance` makes the next PR: PR A now. An old bosun without it is `pending`, not a crash.
 5. **owner** (autonomous only): ONE line for the owner, on a computer: `npx -y @keelstackhq/keel@X owner`
    (runs `bosun owner setup`; pastes nothing). It is a checklist entry (`owner`, `human_step`) until
-   `gate-app advance` reports `data.owner = "done"`.
+   `gate-app advance` reports `data.step` `pr-b` or `done`. `keel owner [--dry-run] [-- ARGS]` runs
+   `bosun owner setup` with inherited stdio and returns its exit code (exit 3 if bosun is not installed).
 
 After the owner finishes, run `keel up` again: `bosun gate-app advance` makes PR B (signer). `--dry-run` changes, pushes
 and advances nothing and lists the steps as `would-run`.

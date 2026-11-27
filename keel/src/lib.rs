@@ -180,6 +180,29 @@ pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
     migrate::run(&cli.dir, args, runner)
 }
 
+/// `keel owner`: `bosun owner setup [--dry-run] [extra...]` with inherited stdio; returns bosun's
+/// exit code. bosun is found on PATH, like every other tool step.
+pub fn run_owner(cli: &Cli) -> Result<i32, KeelError> {
+    let Command::Owner(a) = &cli.command else {
+        return Err(KeelError::Usage("not an owner command".into()));
+    };
+    let mut c = std::process::Command::new("bosun");
+    c.args(["owner", "setup"]);
+    if a.dry_run {
+        c.arg("--dry-run");
+    }
+    c.args(&a.extra).current_dir(&cli.dir);
+    match c.status() {
+        Ok(s) => Ok(s.code().unwrap_or(1)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(KeelError::Env(
+            "bosun is not installed: run `npm install -g @keelstackhq/bosun@latest`, then `keel owner` again".into(),
+        )),
+        Err(e) => Err(KeelError::Env(format!(
+            "could not run bosun: {e}; check that `bosun --version` works, then run `keel owner` again"
+        ))),
+    }
+}
+
 /// Which side `keel up` takes (`.splice/lock.toml`, `--new`, `--existing`) and why; `None` for
 /// every other command. An error is a usage error (exit 2).
 pub fn up_path(cli: &Cli) -> Result<Option<(steps::up::UpPath, String)>, KeelError> {
@@ -224,6 +247,11 @@ pub fn run_with(
         Command::Preflight => {
             return Err(KeelError::Usage(
                 "`keel preflight` has its own report: call keel::preflight_gate".into(),
+            ));
+        }
+        Command::Owner(_) => {
+            return Err(KeelError::Usage(
+                "`keel owner` runs bosun directly: call keel::run_owner".into(),
             ));
         }
     };

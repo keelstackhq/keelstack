@@ -180,13 +180,13 @@ fn gate_step(r: &dyn Runner, dir: &Path) -> (StepResult, bool) {
         .as_ref()
         .map(|v| v.get("data").cloned().unwrap_or(v.clone()))
         .unwrap_or(Value::Null);
-    let owner_done = data["owner"] == "done";
+    let phase = data["step"].as_str().unwrap_or("advanced");
+    let owner_done = matches!(phase, "pr-b" | "done");
     if o.code != 0 && o.code != 5 {
         return (step("gate-app", Action::Failed, failure(&c, &o)), false);
     }
-    let phase = data["phase"].as_str().unwrap_or("advanced");
-    let detail = match data["pr"].as_str().filter(|p| !p.is_empty()) {
-        Some(pr) => format!("{phase}: {pr}"),
+    let detail = match data["pr"]["number"].as_u64() {
+        Some(n) => format!("{phase}: PR #{n}"),
         None => phase.to_string(),
     };
     let action = if o.code == 5 {
@@ -416,6 +416,40 @@ mod tests {
         let e = choose(dir(false).path(), &a).unwrap_err();
         assert_eq!(e.exit_code(), 2);
         assert!(e.to_string().contains("--dry-run"), "{e}");
+    }
+
+    fn gate(code: i32, data: &str) -> (StepResult, bool) {
+        use crate::exec::{FakeRunner, Out};
+        let body = format!(r#"{{"ok":true,"data":{data}}}"#);
+        let r = FakeRunner::new().on(
+            &["bosun", "--json", "gate-app", "advance"],
+            Out::with(code, &body, ""),
+        );
+        gate_step(&r, Path::new("."))
+    }
+
+    #[test]
+    fn gate_step_reads_the_real_bosun_shape() {
+        let (s, done) = gate(
+            0,
+            r#"{"dry_run":false,"app_id":1,"slug":"g","step":"pr-a","status":"advanced","steps":[],"left":[],"pr":{"number":10,"head_sha":"abc"}}"#,
+        );
+        assert_eq!(s.action, Action::Done);
+        assert_eq!(s.detail, "pr-a: PR #10");
+        assert!(!done);
+        let (s, done) = gate(
+            5,
+            r#"{"step":"probe","status":"waiting","next":["hoist apply"]}"#,
+        );
+        assert_eq!(
+            (s.action, s.detail.as_str(), done),
+            (Action::Pending, "probe", false)
+        );
+        let (_, done) = gate(0, r#"{"step":"hoist-apply","pr":{"number":10}}"#);
+        assert!(!done);
+        let (s, done) = gate(0, r#"{"step":"pr-b","pr":{"number":11}}"#);
+        assert!(done && s.detail.contains("#11"), "{s:?}");
+        assert!(gate(0, r#"{"step":"done"}"#).1);
     }
 
     #[test]
