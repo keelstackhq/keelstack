@@ -1573,20 +1573,7 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
     } else if custom {
         // Detached at the branch's tip (local, else origin's, else the base): the checkout may
         // have the branch checked out. The push goes to the branch by name.
-        let _ = gitc(&["fetch", "origin", &branch]);
-        let start = [branch.clone(), format!("origin/{branch}")]
-            .into_iter()
-            .find(|c| {
-                gitc(&[
-                    "rev-parse",
-                    "--verify",
-                    "--quiet",
-                    &format!("{c}^{{commit}}"),
-                ])
-                .code
-                    == 0
-            })
-            .unwrap_or_else(|| base.clone());
+        let start = crate::tools::git::branch_start(r, dir, &branch, &base);
         gitc(&["worktree", "add", "--detach", &wts, &start])
     } else if exists {
         let spent = leftover(&gitc, r, dir, &branch, &base).map_err(|e| {
