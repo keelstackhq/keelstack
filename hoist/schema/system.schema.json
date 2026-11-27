@@ -84,7 +84,8 @@
           "properties": {
             "strategy": { "enum": ["auto", "assisted", "manual"] },
             "command": { "type": "string" },
-            "steps": { "$ref": "#/$defs/strings" }
+            "steps": { "$ref": "#/$defs/strings" },
+            "pending_ref": { "type": "string" }
           }
         },
         "storage": { "type": "array", "items": { "$ref": "#/$defs/storage" } },

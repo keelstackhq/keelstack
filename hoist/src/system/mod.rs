@@ -189,6 +189,10 @@ pub struct Rotation {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<String>,
+    /// Ids (space-separated) of tokens an unfinished `auto` rotation minted and stored in some
+    /// storages: the next rotation revokes them once the new value is stored everywhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_ref: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

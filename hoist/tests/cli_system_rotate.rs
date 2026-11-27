@@ -297,7 +297,92 @@ fn partial_write_keeps_both_tokens_and_names_the_holders() {
     assert!(w.contains(&PUT_REPO.to_string()), "{w:?}");
     assert!(!w.iter().any(|x| x.starts_with("DELETE")), "{w:?}");
     assert!(run.all.contains("gh:CLOUDFLARE_API_TOKEN"), "{}", run.all);
-    assert_eq!(read(dir.path()), text);
+    // A human step names the new token and where it is (and is not) stored.
+    let steps = run.json["human_steps"].as_array().unwrap();
+    let step = steps
+        .iter()
+        .find(|s| s["id"] == "partial:site-deploy")
+        .unwrap_or_else(|| panic!("{steps:?}"));
+    let title = step["title"].as_str().unwrap();
+    assert!(title.contains("new-id"), "{title}");
+    assert!(title.contains("gh:CLOUDFLARE_API_TOKEN"), "{title}");
+    assert!(title.contains("CF_TOKEN"), "{title}");
+    assert!(
+        title.contains("hoist secrets rotate site-deploy"),
+        "{title}"
+    );
+    // The new id is recorded so a rerun revokes it; nothing else changes.
+    let after = read(dir.path());
+    assert_eq!(
+        after,
+        text.replace(
+            r#"rotation = { strategy = "auto" }"#,
+            r#"rotation = { strategy = "auto", pending_ref = "new-id" }"#
+        ),
+        "{after}"
+    );
+    assert!(!after.contains(CF_CANARY));
+}
+
+#[test]
+fn rerun_after_a_partial_write_revokes_the_pending_token_too() {
+    let text = system(&[&CF_CRED.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "tok-p" }"#,
+    )]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[("DELETE /user/tokens/tok-p", 200, DELETED)]);
+    let run = rotate(&api, dir.path(), "site-deploy", 0);
+    let w = writes(&api);
+    assert_eq!(
+        w.iter().filter(|x| *x == "POST /user/tokens").count(),
+        1,
+        "{w:?}"
+    );
+    let at = |x: &str| {
+        w.iter()
+            .position(|y| y == x)
+            .unwrap_or_else(|| panic!("{x}: {w:?}"))
+    };
+    let puts = at(PUT_REPO).max(at(PUT_ENV));
+    assert!(puts < at("DELETE /user/tokens/tok-p"), "{w:?}");
+    assert!(puts < at(DEL_OLD), "{w:?}");
+    assert_eq!(
+        w.last().map(String::as_str),
+        Some(DEL_OLD),
+        "old revoked last"
+    );
+    let after = read(dir.path());
+    assert!(!after.contains("pending_ref"), "{after}");
+    assert!(
+        after.contains(r#"rotation = { strategy = "auto" }"#),
+        "{after}"
+    );
+    assert!(
+        after.contains("provider_ref = \"token id new-id\""),
+        "{after}"
+    );
+    let items = run.json["items"].as_array().unwrap();
+    assert!(
+        items.iter().any(|i| i["reason"] == "revoked tok-p"),
+        "{items:?}"
+    );
+}
+
+#[test]
+fn rerun_never_revokes_the_token_it_just_minted() {
+    let text = system(&[&CF_CRED.replace(
+        r#"rotation = { strategy = "auto" }"#,
+        r#"rotation = { strategy = "auto", pending_ref = "new-id" }"#,
+    )]);
+    let dir = repo(&text);
+    let (_, key_json) = keypair();
+    let api = cf_api(&key_json, &[]);
+    rotate(&api, dir.path(), "site-deploy", 0);
+    let w = writes(&api);
+    assert!(!w.contains(&DEL_NEW.to_string()), "{w:?}");
+    assert!(!read(dir.path()).contains("pending_ref"));
 }
 
 #[test]
@@ -842,4 +927,169 @@ fn stamp_rejects_unknown_ids_and_bad_dates_without_writing() {
         3,
     );
     assert_eq!(read(dir.path()), text);
+}
+
+struct FlyRun {
+    log: Vec<String>,
+    after: String,
+    text: String,
+    json: Value,
+    tools: tempfile::TempDir,
+}
+
+/// Rotate `fly-deploy` (provider_ref `old-id`, one fly-secret storage) with a `fly` stub whose
+/// `first` case arms run before the defaults, and `GET /apps/myapp` answering `probe`.
+fn fly_case(first: &str, probe: u16, code: i32) -> FlyRun {
+    let text = system(&[&FLY_CRED.replace("REF", "old-id")]);
+    let dir = repo(&text);
+    let tools = tempfile::tempdir_in(common::tmpdir()).unwrap();
+    let t = tools.path().display();
+    let d = dir.path().display();
+    let first = first
+        .replace("{t}", &t.to_string())
+        .replace("{d}", &d.to_string());
+    let script = format!(
+        r#"case "$1 $2" in
+{first}
+"tokens list") if [ -f '{t}/listed' ]; then echo '[{{"id":"old-id"}},{{"id":"new-fly-id"}}]'; else touch '{t}/listed'; echo '[{{"id":"old-id"}}]'; fi;;
+"tokens create") echo "{FLY_CANARY}";;
+"secrets import") cat > '{t}/import.in';;
+esac"#
+    );
+    let fly = stub(tools.path(), "fly", &script);
+    let api = FakeApi::start(&[("GET /apps/myapp", probe, r#"{"name":"myapp"}"#, &[])]);
+    let out = hoist()
+        .env("HOIST_NOW", NOW)
+        .env("HOIST_FLY", &fly)
+        .env("HOIST_FLY_API", api.url())
+        .env("HOIST_MAX_SLEEP_MS", "0")
+        .env("FLY_API_TOKEN", "fly-test-token")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["secrets", "rotate", "fly-deploy", "--json"])
+        .assert()
+        .code(code)
+        .get_output()
+        .clone();
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!all.contains("canary-fly-new-token"), "{all}");
+    let log = fs::read_to_string(tools.path().join("fly.log")).unwrap_or_default();
+    assert!(!log.contains("canary-fly-new-token"), "argv leaked: {log}");
+    FlyRun {
+        log: log
+            .lines()
+            .map(|l| l.split(" env:").next().unwrap().to_string())
+            .collect(),
+        after: read(dir.path()),
+        text,
+        json: serde_json::from_slice(&out.stdout).unwrap_or(Value::Null),
+        tools,
+    }
+}
+
+#[test]
+fn fly_failed_test_revokes_only_the_new_token() {
+    let run = fly_case("", 401, 1);
+    assert!(
+        run.log.contains(&"tokens revoke new-fly-id".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        !run.log.contains(&"tokens revoke old-id".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        !run.log.iter().any(|l| l.starts_with("secrets import")),
+        "{:?}",
+        run.log
+    );
+    assert_eq!(run.after, run.text);
+}
+
+#[test]
+fn fly_failed_secrets_import_keeps_the_old_token() {
+    let run = fly_case(r#""secrets import") cat > /dev/null; exit 1;;"#, 200, 1);
+    assert!(
+        run.log.iter().any(|l| l.starts_with("secrets import")),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        !run.log.contains(&"tokens revoke old-id".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert!(
+        run.log.contains(&"tokens revoke new-fly-id".to_string()),
+        "{:?}",
+        run.log
+    );
+    assert_eq!(run.after, run.text);
+    assert!(
+        run.json["items"]
+            .to_string()
+            .contains("nothing was written"),
+        "{}",
+        run.json
+    );
+}
+
+#[test]
+fn fly_old_token_is_revoked_last_after_the_stamp() {
+    let run = fly_case(
+        r#""tokens revoke") cp '{d}/system.toml' '{t}/at-revoke.toml';;"#,
+        200,
+        0,
+    );
+    assert_eq!(
+        run.log,
+        [
+            "tokens list -a myapp --json",
+            "tokens create deploy -a myapp --expiry 720h",
+            "tokens list -a myapp --json",
+            "secrets import -a myapp",
+            "tokens revoke old-id",
+        ]
+    );
+    let at_revoke = fs::read_to_string(run.tools.path().join("at-revoke.toml")).unwrap();
+    assert!(
+        at_revoke.contains("created_at = \"2026-11-27\""),
+        "{at_revoke}"
+    );
+    assert!(
+        at_revoke.contains("provider_ref = \"token id new-fly-id\""),
+        "{at_revoke}"
+    );
+}
+
+#[test]
+fn stamp_failure_step_names_the_new_token_ref() {
+    // The file breaks during the rotation, so the stamp cannot be written.
+    let run = fly_case(
+        r#""secrets import") cat > /dev/null; echo '[[credential' >> '{d}/system.toml';;"#,
+        200,
+        1,
+    );
+    let steps = run.json["human_steps"].as_array().unwrap();
+    let step = steps
+        .iter()
+        .find(|s| s["id"] == "stamp:fly-deploy")
+        .unwrap_or_else(|| panic!("{steps:?}"));
+    let title = step["title"].as_str().unwrap();
+    assert!(
+        title.contains("hoist system stamp fly-deploy --created 2026-11-27")
+            && title.contains("--ref new-fly-id"),
+        "{title}"
+    );
+    assert!(
+        run.log.contains(&"tokens revoke old-id".to_string()),
+        "{:?}",
+        run.log
+    );
 }

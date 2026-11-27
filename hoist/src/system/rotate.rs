@@ -266,6 +266,12 @@ fn usage(msg: impl Into<String>) -> HoistError {
     HoistError::Usage(msg.into())
 }
 
+fn valid_id(k: &str) -> bool {
+    !k.starts_with('-')
+        && k.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 fn valid_key(k: &str) -> bool {
     !k.is_empty() && k.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
@@ -342,6 +348,21 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                 c.id, c.id
             ))
         })?;
+    // Tokens an earlier, partial rotation left live: revoked once this one completes.
+    let pending: Vec<String> = c
+        .rotation
+        .as_ref()
+        .and_then(|r| r.pending_ref.as_deref())
+        .unwrap_or_default()
+        .split_whitespace()
+        .map(str::to_string)
+        .collect();
+    if let Some(bad) = pending.iter().find(|p| !valid_id(p)) {
+        return Err(usage(format!(
+            "credential `{}`: rotation.pending_ref `{bad}` is not a token id",
+            c.id
+        )));
+    }
     let gh = if c.storage.iter().any(|s| s.kind != StorageKind::FlySecret) {
         Some(Http::new(Service::Github, github_token()?).verbose(ctx.verbose))
     } else {
@@ -417,9 +438,10 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
                     s.label()
                 )));
             }
+            let note = partial(ctx, &mut out, &new, &pending, &written, &rest);
             return Ok(out.fail(&format!(
                 "writing {}: {why}; the new value is stored in {} but not in {}; both tokens \
-                 are kept (new token {}): fix the storage and rotate again",
+                 are kept (new token {}){note}",
                 s.label(),
                 written.join(", "),
                 rest.join(", "),
@@ -450,21 +472,6 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
             None => "created (id unknown)".into(),
         },
     );
-    // Revoke the old one only now.
-    let old = prov.old_id().to_string();
-    match prov.revoke_old(ctx) {
-        Ok(()) => out.push(
-            tokens,
-            "api_token",
-            &c.id,
-            Action::Ok,
-            format!("revoked {old}"),
-        ),
-        Err(why) => {
-            let url = console(ctx.sys.provider(&c.provider), &c.provider, c.kind);
-            out.manual_revoke(tokens, "token", &old, &why, &url);
-        }
-    }
     // Stamp system.toml.
     let created = day_string(today);
     let expires = day_string(expiry);
@@ -480,6 +487,13 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
     let stamped = std::fs::read_to_string(ctx.path)
         .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
         .and_then(|fresh| set_keys(&fresh, ctx.shown, &c.id, &pairs))
+        .and_then(|t| {
+            if pending.is_empty() {
+                Ok(t)
+            } else {
+                set_pending(&t, ctx.shown, &c.id, None)
+            }
+        })
         .and_then(|t| {
             write_atomic(ctx.path, &t).map_err(|e| HoistError::Io(format!("cannot write: {e}")))
         });
@@ -502,14 +516,45 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
             out.r.human_steps.push(HumanStep {
                 id: format!("stamp:{}", c.id),
                 title: format!(
-                    "record it: hoist system stamp {} --created {created} --expires {expires}",
-                    c.id
+                    "record it: hoist system stamp {} --created {created} --expires {expires} \
+                     --ref {}",
+                    c.id,
+                    new.id.as_deref().unwrap_or("<new id>")
                 ),
                 url: String::new(),
                 status: "pending".into(),
             });
             out.r.exit_code = 1;
         }
+    }
+    // Revoke what the new value replaced only now, after every write and the stamp: tokens
+    // an earlier partial rotation left behind, then the old one last.
+    let url = console(ctx.sys.provider(&c.provider), &c.provider, c.kind);
+    for p in pending
+        .iter()
+        .filter(|p| Some(p.as_str()) != new.id.as_deref())
+    {
+        match prov.revoke(ctx, p) {
+            Ok(()) => out.push(
+                tokens,
+                "api_token",
+                &c.id,
+                Action::Ok,
+                format!("revoked {p}"),
+            ),
+            Err(why) => out.manual_revoke(tokens, "pending token", p, &why, &url),
+        }
+    }
+    let old = prov.old_id().to_string();
+    match prov.revoke(ctx, &old) {
+        Ok(()) => out.push(
+            tokens,
+            "api_token",
+            &c.id,
+            Action::Ok,
+            format!("revoked {old}"),
+        ),
+        Err(why) => out.manual_revoke(tokens, "token", &old, &why, &url),
     }
     if new.id.is_none() {
         out.push(
@@ -525,6 +570,111 @@ fn auto(ctx: &Ctx) -> Result<Report, HoistError> {
         );
     }
     Ok(out.r)
+}
+
+/// A partial set: the new token stays live in `written`. Record its id in
+/// `rotation.pending_ref` (so the next rotation revokes it instead of leaving it behind) and add
+/// a human step naming it and the storages; the returned note says what happened to the record.
+fn partial(
+    ctx: &Ctx,
+    out: &mut Out,
+    new: &New,
+    pending: &[String],
+    written: &[String],
+    rest: &[String],
+) -> String {
+    let c = ctx.cred;
+    let rerun = format!("hoist secrets rotate {}", c.id);
+    let (who, note) = match &new.id {
+        Some(id) => {
+            let mut ids: Vec<&str> = pending.iter().map(String::as_str).collect();
+            if !ids.contains(&id.as_str()) {
+                ids.push(id);
+            }
+            let joined = ids.join(" ");
+            let recorded = std::fs::read_to_string(ctx.path)
+                .map_err(|e| HoistError::Io(format!("cannot read: {e}")))
+                .and_then(|t| set_pending(&t, ctx.shown, &c.id, Some(&joined)))
+                .and_then(|t| {
+                    write_atomic(ctx.path, &t)
+                        .map_err(|e| HoistError::Io(format!("cannot write: {e}")))
+                });
+            let note = match recorded {
+                Ok(()) => format!(
+                    "; recorded in {FILE} rotation.pending_ref, `{rerun}` revokes it once the \
+                     value is stored everywhere"
+                ),
+                Err(e) => format!(
+                    "; recording it in {FILE} failed ({e}): add `pending_ref = \"{joined}\"` to \
+                     its rotation"
+                ),
+            };
+            (format!("new token {id}"), note)
+        }
+        None => (
+            "the new token (id unknown)".to_string(),
+            "; its id is unknown: revoke it by hand after the rerun".to_string(),
+        ),
+    };
+    out.r.human_steps.push(HumanStep {
+        id: format!("partial:{}", c.id),
+        title: format!(
+            "{who} is stored in {} but not in {}: fix those storages, then run `{rerun}`",
+            written.join(", "),
+            rest.join(", ")
+        ),
+        url: String::new(),
+        status: "pending".into(),
+    });
+    note
+}
+
+/// Set (`Some`) or remove (`None`) `rotation.pending_ref` of credential `id`, keeping comments
+/// and layout; the result is validated like `set_keys`.
+fn set_pending(text: &str, file: &str, id: &str, ids: Option<&str>) -> Result<String, HoistError> {
+    let config = |message: String| HoistError::Config {
+        file: file.to_string(),
+        message,
+    };
+    let mut doc: toml_edit::DocumentMut = text.parse().map_err(|e| config(format!("{e}")))?;
+    let rotation = doc
+        .get_mut("credential")
+        .and_then(toml_edit::Item::as_array_of_tables_mut)
+        .and_then(|ts| {
+            ts.iter_mut()
+                .find(|t| t.get("id").and_then(toml_edit::Item::as_str) == Some(id))
+        })
+        .and_then(|t| t.get_mut("rotation"))
+        .ok_or_else(|| config(format!("credential `{id}` has no rotation table")))?;
+    // An inline table is re-spaced (`{ a = 1, b = 2 }`) so an added or removed last key leaves
+    // no stray blank; a `[credential.rotation]` table keeps its layout.
+    if let Some(inline) = rotation.as_inline_table_mut() {
+        match ids {
+            Some(v) => {
+                inline.insert("pending_ref", v.into());
+            }
+            None => {
+                inline.remove("pending_ref");
+            }
+        }
+        inline.fmt();
+    } else if let Some(table) = rotation.as_table_like_mut() {
+        match ids {
+            Some(v) => {
+                table.insert("pending_ref", toml_edit::value(v));
+            }
+            None => {
+                table.remove("pending_ref");
+            }
+        }
+    } else {
+        return Err(config(format!(
+            "credential `{id}`: rotation is not a table"
+        )));
+    }
+    let out = doc.to_string();
+    SystemFile::parse(&out, file)?;
+    Ok(out)
 }
 
 /// Write `value` into one storage. The value goes to GitHub sealed, to Fly over stdin.
@@ -869,12 +1019,13 @@ impl Prov {
         }
     }
 
-    fn revoke_old(&self, ctx: &Ctx) -> Result<(), String> {
+    /// Revoke the token `id` (the old one, or one a partial rotation left).
+    fn revoke(&self, ctx: &Ctx, id: &str) -> Result<(), String> {
         match self {
-            Prov::Cloudflare {
-                http, base, old_id, ..
-            } => cf_revoke(http, base, old_id).map_err(|e| e.to_string()),
-            Prov::Fly { old_id, .. } => fly_revoke(ctx, old_id),
+            Prov::Cloudflare { http, base, .. } => {
+                cf_revoke(http, base, id).map_err(|e| e.to_string())
+            }
+            Prov::Fly { .. } => fly_revoke(ctx, id),
         }
     }
 }
@@ -898,5 +1049,45 @@ fn fly_revoke(ctx: &Ctx, id: &str) -> Result<(), String> {
         Ok(())
     } else {
         Err(format!("`fly tokens revoke` failed ({status})"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_pending;
+
+    const TABLE: &str = r#"version = 1
+
+[system]
+name = "acme/x"
+owner = "alice"
+
+[[provider]]
+id = "cloudflare"
+capability = "dns+cdn"
+
+[[credential]]
+id = "c"
+provider = "cloudflare"
+kind = "api_token"
+role = "deploy"
+purpose = "p"
+owner = "alice"
+expires_at = "2027-01-01"
+
+[credential.rotation]
+strategy = "auto" # kept
+"#;
+
+    #[test]
+    fn set_pending_adds_and_removes_in_a_rotation_table() {
+        let set = set_pending(TABLE, "system.toml", "c", Some("a b")).unwrap();
+        assert!(
+            set.contains("strategy = \"auto\" # kept\npending_ref = \"a b\"\n"),
+            "{set}"
+        );
+        let cleared = set_pending(&set, "system.toml", "c", None).unwrap();
+        assert_eq!(cleared, TABLE);
+        assert!(set_pending(TABLE, "system.toml", "nope", None).is_err());
     }
 }

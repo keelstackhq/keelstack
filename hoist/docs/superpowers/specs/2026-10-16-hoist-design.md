@@ -1976,6 +1976,12 @@ Reads `system.toml`, the workflows, `hoist.toml` and `secrets.toml`; no HTTP. Ti
 credential still read by a workflow is `consumer` drift). Exit policy as `hoist check`: 1 on any
 drift, else 2 on any pending, else 0.
 
+The weekly `system-check.yml` (hull templates and this repo) and this repo's PR CI (`ci-hoist`)
+list every drift, but treat exit 1 whose drift items are all `metadata` (a fresh seed's TODO
+owners and missing dates; `hoist system stamp` clears them) as a warning, not a failure: a new repo
+is not red from week one. Dates are never seeded at render or `init` time (they come from the
+provider's console). Any other drift kind, or exit 3, fails.
+
 ### 17.5 `hoist system check --live`
 
 `--live` runs one probe per provider (`src/system/live/*.rs`, trait `LiveProbe { provider,
@@ -2073,9 +2079,15 @@ breaks the legacy name, any other name then reports the parse error, exit 3) fol
   `provider_ref`, a storage hoist cannot write such as `sops` or `worker-secret`, another
   provider) exit 3 before any write; after the first write failures are items with exit 1 (a
   failed test, or a first write that fails with nothing written, revokes the new credential; a
-  partial set keeps both and names the storages that hold the new value). On success hoist re-reads `system.toml`, edits that credential (toml_edit,
+  partial set keeps both, adds human step `partial:ID` naming the new token id and the storages
+  written and not written, and records the new id in `rotation.pending_ref` (space-separated ids,
+  appended to any already there; never a value)). A rerun cannot reuse a pending token (its value is
+  never kept), so it mints a fresh one and, once it is stored everywhere, clears `pending_ref`
+  and revokes each pending id (never the one it just minted). On success hoist re-reads `system.toml`, edits that credential (toml_edit,
   comments kept) and writes it atomically (temp file, rename): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
-  `provider_ref` when the new id is known.
+  `provider_ref` when the new id is known, `pending_ref` removed. Order: create, test, set, stamp,
+  revoke pending ids, revoke the old one last. A failed stamp is item `system/stamp/ID` (exit 1)
+  with human step `stamp:ID` (`hoist system stamp ID --created … --expires … --ref NEW_ID`).
 
 `hoist system stamp ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF]`
 records a rotation done by hand: it sets those keys of that credential only (other bytes kept),
