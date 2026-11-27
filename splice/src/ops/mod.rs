@@ -5,6 +5,7 @@ pub mod adopt;
 pub mod channel;
 pub mod check;
 pub mod diff;
+pub mod exclude;
 pub mod explain;
 pub mod new;
 pub mod pieces;

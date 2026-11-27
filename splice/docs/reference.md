@@ -38,6 +38,7 @@ pnpm dlx @keelstackhq/splice check         # exit 1 on drift, conflicts or an av
 | `splice pieces <source>` | List a template's pieces, which are `multiple`, their default instance names and their variables; read-only, needs no repo (`--json` adds `pieces` and `template` keys) |
 | `splice channel add <source>` | Apply a second template next to the main one, with its own lock (see Channels) |
 | `splice channel remove <name>` | Remove a channel: delete its unedited files and blocks, then its lock |
+| `splice channel exclude <name> <path>...` | Add paths to a channel's stored `exclude` and drop them from its lock (idempotent; the files on disk are not touched) |
 
 Every command takes `--json` (one JSON object on stdout) and `--yes` (no prompts). Exit codes:
 0 ok, 1 drift/conflict/update available, 2 usage error, 3 template error. `add`, `update`, `adopt`

@@ -336,7 +336,7 @@ One command moves an existing repo to a keelstack release, so nobody runs `splic
 in the repo by a human or an agent: `npx -y @keelstackhq/keel@<version> migrate --pr` (`-y`: no interactive prompt).
 
 ```
-keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--branch NAME] [--mode MODE]
+keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--branch NAME] [--mode MODE] [--drift seed|take|keep]
 ```
 
 `--dry-run` fetches a missing tool into a temp cache (sha512 checked, removed afterwards). `--branch NAME` commits and pushes to NAME with a plain push (never force); a NAME whose PR merged (ancestor of the base, same tree, or gone from the remote) restarts from the base.
@@ -347,6 +347,7 @@ keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF]
   (`splice --json check`, `bosun pin --to X.Y.Z --check`, `hoist init --dry-run`, read-only verification). Exit 1 when work remains
   (status `planned`), as `keel plan`. It adds and removes a temporary detached worktree and fetches the base; the checkout is untouched.
 - `--pr`: push the branch (never forced) and open ONE PR with `gh pr create`; an open PR for the branch is reused. keel never merges.
+- `--drift seed|take|keep` (default `seed`): settles the baseline drift (non-section paths edited or deleted on the base) inside the `splice` step, before the updates, one commit each. `seed`: channel files are added to the channel's `exclude` by `splice channel exclude NAME PATH...` (idempotent; the lock stops tracking them, the disk is untouched; commit `chore: exclude drifted channel files from their channels`); owned main-template files are restored with `splice update --force --to <locked version>` (the text they were rendered from), then every local line they lack (trimmed, blank lines ignored) and the seed file lacks is appended to the seed file `<dir>/CLAUDE.md` under `## Local notes moved from <path>`, so no local line is lost; the normal updates follow on a clean tree and `splice-drift` is not raised. `take`: every update runs with `--force` (template side). `keep`: channel files are excluded (local side kept); owned main-template files stay drifted and keep the `splice-drift` entry (the main template has no `exclude`). The JSON has `drift: [{path, action, moved_lines, seed?}]` (`action`: `moved`, `restored`, `excluded`, `taken`) and the PR body a "Drift settled" list.
 - `--mode MODE`: `bosun migrate --to MODE --dry-run` is run and the real move is listed in the checklist for after the merge
   (it opens its own gated PR from the default branch, so it cannot share this one).
 - Exit codes: 0 done (or nothing to do) · 1 a step failed (rolled back) or, with `--dry-run`, work remains · 2 usage (bad `--to`) ·

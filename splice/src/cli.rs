@@ -67,6 +67,7 @@ impl Command {
             Command::Channel(a) => match a.command {
                 ChannelCommand::Add(_) => "channel add",
                 ChannelCommand::Remove(_) => "channel remove",
+                ChannelCommand::Exclude(_) => "channel exclude",
             },
         }
     }
@@ -250,6 +251,17 @@ pub enum ChannelCommand {
     Add(ChannelAddArgs),
     /// Stop tracking a channel and delete its lock.
     Remove(ChannelRemoveArgs),
+    /// Add paths to a channel's stored `exclude` (idempotent); the files on disk stay as they are.
+    Exclude(ChannelExcludeArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ChannelExcludeArgs {
+    /// Channel name.
+    pub name: String,
+    /// Paths (or globs) to stop managing.
+    #[arg(required = true)]
+    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Clone, Args)]

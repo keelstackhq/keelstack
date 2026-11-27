@@ -203,6 +203,10 @@ impl World {
     }
 
     fn keel(&self) -> (i32, serde_json::Value) {
+        self.keel_with(&[])
+    }
+
+    fn keel_with(&self, extra: &[&str]) -> (i32, serde_json::Value) {
         std::fs::write(self.root.path().join("pins.toml"), "[pins]\n").unwrap();
         let bin_dir = splice_bin().parent().unwrap().to_path_buf();
         let o = Command::cargo_bin("keel")
@@ -220,6 +224,7 @@ impl World {
             .arg("-C")
             .arg(&self.repo)
             .args(["--json", "migrate", "--to", env!("CARGO_PKG_VERSION")])
+            .args(extra)
             .output()
             .unwrap();
         let out = String::from_utf8(o.stdout).unwrap();
@@ -265,36 +270,23 @@ fn drift_title(v: &serde_json::Value) -> String {
 }
 
 #[test]
-fn a_drifted_channel_is_left_not_updated_while_the_clean_sources_update_one_commit_each() {
+fn a_drifted_main_file_is_left_not_updated_with_keep_while_the_clean_sources_update() {
     let w = World::new("v1.0.0");
-    w.edit("docs/agents/decisions.md", |t| format!("{t}mine\n"));
+    w.edit("docs/owned.md", |t| format!("{t}mine\n"));
     let before = git(&w.repo, &["status", "--porcelain=v2", "--ignored"]);
-    let (code, v) = w.keel();
+    let (code, v) = w.keel_with(&["--drift", "keep"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["status"], "human");
     assert_eq!(step(&v, "splice")["action"], "pending", "{v}");
-    // main and rig updated, each in its own commit (splice refuses a dirty tree)
-    assert_eq!(w.branch_file("docs/owned.md"), "two\n");
+    // the channels updated, each in its own commit (splice refuses a dirty tree)
     assert_eq!(w.branch_file("docs/agents/rig.md"), "two\n");
     let log = w.branch_log();
-    assert!(
-        log.contains("chore: splice update (main template)"),
-        "{log}"
-    );
     assert!(log.contains("chore: splice update (channel rig)"), "{log}");
-    // decisions untouched
-    assert_eq!(w.branch_file("docs/agents/decisions.md"), "one\nmine\n");
+    // main untouched
+    assert_eq!(w.branch_file("docs/owned.md"), "one\nmine\n");
     let t = drift_title(&v);
     assert!(
-        t.contains("NOT updated") && t.contains("channel decisions"),
-        "{t}"
-    );
-    assert!(
-        t.contains("splice update --channel decisions --exclude docs/agents/decisions.md"),
-        "{t}"
-    );
-    assert!(
-        t.contains("splice update --channel decisions --force"),
+        t.contains("NOT updated") && t.contains("main template"),
         "{t}"
     );
     assert!(t.contains("rerun `keel migrate`"), "{t}");
@@ -305,20 +297,26 @@ fn a_drifted_channel_is_left_not_updated_while_the_clean_sources_update_one_comm
 }
 
 #[test]
-fn every_source_drifted_means_no_commits_no_branch_and_no_pr() {
+fn every_source_drifted_is_settled_by_the_default_seed_mode() {
     let w = World::new("v1.0.0");
     w.edit("docs/owned.md", |t| format!("{t}mine\n"));
     w.edit("docs/agents/decisions.md", |t| format!("{t}mine\n"));
     w.edit("docs/agents/rig.md", |t| format!("{t}mine\n"));
     let (code, v) = w.keel();
     assert_eq!(code, 5, "{v}");
-    assert_eq!(v["changed"], false);
-    assert_eq!(v["pr"], serde_json::Value::Null);
-    assert_eq!(v["branch"], serde_json::Value::Null);
-    let t = drift_title(&v);
-    for s in ["main template", "channel decisions", "channel rig"] {
-        assert!(t.contains(s), "{s} in {t}");
-    }
+    assert_eq!(v["changed"], true);
+    let ids: Vec<&str> = v["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&"splice-drift"), "{v}");
+    assert_eq!(v["drift"].as_array().unwrap().len(), 3, "{v}");
+    assert_eq!(w.branch_file("docs/owned.md"), "two\n");
+    assert_eq!(w.branch_file("docs/agents/rig.md"), "one\nmine\n");
+    // the local line of the owned file is in the seed file next to it
+    assert!(w.branch_file("docs/CLAUDE.md").contains("mine"));
 }
 
 #[test]
@@ -338,19 +336,19 @@ fn a_section_block_edited_on_an_up_to_date_source_gets_channel_advice() {
 }
 
 #[test]
-fn an_edited_file_on_an_up_to_date_source_is_restored_by_force() {
-    // The advice is only worth giving if real splice does what it says.
+fn an_edited_channel_file_on_an_up_to_date_source_is_excluded_by_default() {
     let w = World::new("v2.0.0");
     w.edit("docs/agents/rig.md", |t| format!("{t}mine\n"));
-    let (code, v) = w.keel();
-    assert_eq!(code, 5, "{v}");
-    let t = drift_title(&v);
-    assert!(t.contains("splice update --channel rig --force"), "{t}");
-    splice(&w.repo, &["update", "--channel", "rig", "--force"]);
-    assert_eq!(
-        std::fs::read_to_string(w.repo.join("docs/agents/rig.md")).unwrap(),
-        "two\n"
-    );
+    let (_, v) = w.keel();
+    let ids: Vec<&str> = v["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|e| e["id"].as_str())
+        .collect();
+    assert!(!ids.contains(&"splice-drift"), "{v}");
+    assert_eq!(v["drift"][0]["action"], "excluded", "{v}");
+    assert_eq!(w.branch_file("docs/agents/rig.md"), "two\nmine\n");
 }
 
 #[test]

@@ -9,6 +9,7 @@ use crate::exec::{Cmd, Out, Runner};
 use crate::pins::{Pins, ToolPin};
 use crate::report::{ChecklistEntry, HumanStep, build_checklist};
 use crate::steps::agent_env;
+use crate::steps::drift::{self, Mode, Moved};
 use crate::tools::{self, failure, gh, hoist, json, npm};
 use serde::Serialize;
 use serde_json::Value;
@@ -130,6 +131,8 @@ pub struct MigrateReport {
     pub recovery: Option<String>,
     /// Warnings that are not steps (for example a baseline `splice check` that could not run).
     pub notes: Vec<String>,
+    /// Every drifted path `--drift` settled: path, action, moved_lines.
+    pub drift: Vec<Moved>,
 }
 
 #[derive(Serialize)]
@@ -180,6 +183,12 @@ pub fn render_migrate_text(r: &MigrateReport) -> String {
     }
     for n in &r.notes {
         out.push_str(&format!("note: {n}\n"));
+    }
+    for d in &r.drift {
+        out.push_str(&format!(
+            "drift: {} {} ({} line(s) moved)\n",
+            d.path, d.action, d.moved_lines
+        ));
     }
     if let Some(rec) = &r.recovery {
         out.push_str(&format!("\nrecovery: {rec}\n"));
@@ -278,6 +287,10 @@ struct Mig<'a> {
     not_updated: Vec<String>,
     /// Warnings for the JSON `notes`.
     notes: Vec<String>,
+    /// Paths `--drift` settled, for the JSON and the PR body.
+    drift: Vec<Moved>,
+    /// Pass `--force` to every `splice update` (the template side wins for the drifted paths).
+    force: bool,
     /// The `repointed <old> to <new> at <commit> (<tag>)` messages `splice update` reported.
     repointed: Vec<String>,
     /// Dry-run: tools that were not installed, fetched into `cache` (name -> binary).
@@ -578,6 +591,9 @@ impl Mig<'_> {
     /// already drifted on the base (that source is not updated, the run goes on).
     fn splice_try(&mut self, extra: &[&str]) -> Result<Option<String>, String> {
         let mut a = vec!["--json", "--yes", "update"];
+        if self.force {
+            a.push("--force");
+        }
         a.extend(extra);
         let c = self.tool("splice", &a);
         let o = self.r.run(&c);
@@ -740,6 +756,145 @@ impl Mig<'_> {
         }
     }
 
+    /// `--drift`, before the update: channel files the owner deleted or edited are excluded (seed,
+    /// keep); main-template owned files are read for `seed` (the update restores them, then the
+    /// lines it drops move to the seed file) or forced for `take`.
+    fn settle_before(&mut self) -> Result<(), String> {
+        let mode = Mode::parse(&self.args.drift);
+        let settle = |d: &Drift| {
+            !d.path.contains('#') && matches!(d.cause.as_str(), "deleted" | "edited locally")
+        };
+        let found: Vec<Drift> = self
+            .base_drift
+            .iter()
+            .filter(|d| settle(d))
+            .cloned()
+            .collect();
+        if found.is_empty() {
+            return Ok(());
+        }
+        if mode == Mode::Take {
+            self.force = true;
+            for d in &found {
+                self.drift.push(Moved {
+                    path: d.path.clone(),
+                    action: "taken".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+            }
+            return Ok(());
+        }
+        let mut by_channel: Vec<(String, Vec<String>)> = Vec::new();
+        for d in found.iter().filter(|d| d.channel.is_some()) {
+            let c = d.channel.clone().unwrap_or_default();
+            match by_channel.iter_mut().find(|(n, _)| *n == c) {
+                Some((_, ps)) => ps.push(d.path.clone()),
+                None => by_channel.push((c, vec![d.path.clone()])),
+            }
+        }
+        for (c, paths) in &by_channel {
+            let mut a = vec!["--json", "--yes", "channel", "exclude", c.as_str()];
+            a.extend(paths.iter().map(String::as_str));
+            let cmd = self.tool("splice", &a);
+            let o = self.r.run(&cmd);
+            if o.code != 0 {
+                return Err(failure(&cmd, &o));
+            }
+            for p in paths {
+                self.drift.push(Moved {
+                    path: p.clone(),
+                    action: "excluded".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+            }
+        }
+        if !by_channel.is_empty() {
+            self.commit_all("chore: exclude drifted channel files from their channels")?;
+        }
+        let main: Vec<&Drift> = found.iter().filter(|d| d.channel.is_none()).collect();
+        if mode == Mode::Seed && !main.is_empty() {
+            self.seed_main(&main)?;
+        }
+        Ok(())
+    }
+
+    /// The version the main lock is at (`[template] version`).
+    fn locked_version(&self) -> Option<String> {
+        let text = std::fs::read_to_string(self.dir.join(".splice/lock.toml")).ok()?;
+        let tail = &text[text.find("[template]")?..];
+        let line = tail
+            .lines()
+            .find(|l| l.trim_start().starts_with("version"))?;
+        Some(line.split('"').nth(1)?.to_string())
+    }
+
+    /// Owned main-template files the owner edited or deleted: `splice update --force --to <locked
+    /// version>` restores them to the template they were rendered from, then the lines the owner
+    /// added (not in that text, not in the seed file yet) move to `<dir>/CLAUDE.md`. The normal
+    /// update then runs on a clean tree, so no local line is lost.
+    fn seed_main(&mut self, main: &[&Drift]) -> Result<(), String> {
+        let version = self
+            .locked_version()
+            .ok_or("cannot read the locked template version from .splice/lock.toml")?;
+        let local: Vec<(String, Option<String>)> = main
+            .iter()
+            .map(|d| {
+                (
+                    d.path.clone(),
+                    std::fs::read_to_string(self.dir.join(&d.path)).ok(),
+                )
+            })
+            .collect();
+        let cmd = self.tool(
+            "splice",
+            &["--json", "--yes", "update", "--force", "--to", &version],
+        );
+        let o = self.r.run(&cmd);
+        if o.code != 0 {
+            return Err(failure(&cmd, &o));
+        }
+        let mut wrote = false;
+        for (path, text) in local {
+            let restored = std::fs::read_to_string(self.dir.join(&path)).unwrap_or_default();
+            let seed_rel = drift::seed_path(&path);
+            let seed_file = self.dir.join(&seed_rel);
+            let seed = std::fs::read_to_string(&seed_file).unwrap_or_default();
+            let lines = text
+                .map(|t| drift::lines_to_move(&t, &restored, &seed))
+                .unwrap_or_default();
+            if lines.is_empty() {
+                self.drift.push(Moved {
+                    path,
+                    action: "restored".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+                continue;
+            }
+            if let Some(dir) = seed_file.parent() {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            }
+            std::fs::write(&seed_file, drift::append_to_seed(&seed, &path, &lines))
+                .map_err(|e| format!("cannot write {}: {e}", seed_file.display()))?;
+            wrote = true;
+            self.drift.push(Moved {
+                path,
+                action: "moved".into(),
+                moved_lines: lines.len(),
+                seed: Some(seed_rel),
+            });
+        }
+        self.commit_all(if wrote {
+            "chore: restore drifted owned files, move local lines to their seed files"
+        } else {
+            "chore: restore drifted owned files"
+        })?;
+        Ok(())
+    }
+
     fn s_splice(&mut self) -> Res {
         if !self.p.splice {
             return Ok((MAction::Skipped, "no .splice/lock.toml or channel".into()));
@@ -758,6 +913,7 @@ impl Mig<'_> {
             };
         }
         let mut notes = Vec::new();
+        self.settle_before()?;
         if self.p.decisions_channel {
             match self.splice_try(&["--channel", "decisions"])? {
                 Some(d) => {
@@ -1345,6 +1501,16 @@ impl Mig<'_> {
                 s.detail
             ));
         }
+        if !self.drift.is_empty() {
+            b.push_str("\n## Drift settled (`--drift`)\n");
+            for d in &self.drift {
+                b.push_str(&format!("- `{}` {}", d.path, d.action));
+                if let Some(s) = &d.seed {
+                    b.push_str(&format!(": {} line(s) moved to `{s}`", d.moved_lines));
+                }
+                b.push('\n');
+            }
+        }
         let list = build_checklist(&self.raw, &[]);
         if !list.is_empty() {
             b.push_str("\n## Left for a human\n");
@@ -1785,6 +1951,8 @@ fn in_worktree(
         base_drift: Vec::new(),
         not_updated: Vec::new(),
         notes: Vec::new(),
+        drift: Vec::new(),
+        force: false,
         repointed: Vec::new(),
         fetched: std::collections::HashMap::new(),
         cache: None,
@@ -1949,6 +2117,7 @@ fn in_worktree(
         human_step,
         recovery,
         notes: m.notes,
+        drift: m.drift,
     })
 }
 
