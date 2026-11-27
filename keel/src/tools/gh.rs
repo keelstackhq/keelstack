@@ -35,6 +35,58 @@ pub fn is_admin(r: &dyn Runner, repo: &str) -> Result<bool, String> {
     Ok(o.stdout.trim() == "true")
 }
 
+/// What `gh api repos/R` says about a repo; a field is `None` when the answer lacks it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct RepoInfo {
+    pub private: Option<bool>,
+    pub admin: Option<bool>,
+    pub owner: Option<String>,
+    pub owner_is_org: bool,
+}
+
+/// `gh api repos/R`, read only. `None` when the call fails or prints no JSON object.
+pub fn repo_info(r: &dyn Runner, repo: &str) -> Option<RepoInfo> {
+    let o = r.run(&Cmd::new("gh", &["api", &format!("repos/{repo}")]));
+    if o.code != 0 {
+        return None;
+    }
+    let v = json(&o).filter(|v| v.is_object())?;
+    Some(RepoInfo {
+        private: v["private"].as_bool(),
+        admin: v["permissions"]["admin"].as_bool(),
+        owner: v["owner"]["login"].as_str().map(str::to_string),
+        owner_is_org: v["owner"]["type"].as_str() == Some("Organization"),
+    })
+}
+
+/// The lowercase plan name (`free`, `team`, `pro`, `enterprise`) of an org (`gh api orgs/O`) or,
+/// without `org`, of the logged-in user (`gh api user`). `None` when GitHub does not say.
+pub fn plan_name(r: &dyn Runner, org: Option<&str>) -> Option<String> {
+    let path = org.map_or("user".to_string(), |o| format!("orgs/{o}"));
+    let o = r.run(&Cmd::new("gh", &["api", &path]));
+    if o.code != 0 {
+        return None;
+    }
+    json(&o)?["plan"]["name"]
+        .as_str()
+        .map(|p| p.trim().to_lowercase())
+}
+
+/// The scopes of the token `gh` uses, from the `Token scopes:` line of `gh auth status`.
+/// `None` when the line is absent (fine-grained or app tokens list none).
+pub fn token_scopes(r: &dyn Runner) -> Option<Vec<String>> {
+    let o = r.run(&Cmd::new("gh", &["auth", "status"]));
+    let text = format!("{}\n{}", o.stdout, o.stderr);
+    let line = text.lines().find_map(|l| l.split_once("Token scopes:"))?;
+    Some(
+        line.1
+            .split(',')
+            .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
+            .filter(|s| !s.is_empty())
+            .collect(),
+    )
+}
+
 /// The repo's default branch; an error detail when the repo does not exist or is not readable.
 pub fn default_branch(r: &dyn Runner, repo: &str) -> Result<String, String> {
     let c = Cmd::new("gh", &["repo", "view", repo, "--json", "defaultBranchRef"]);

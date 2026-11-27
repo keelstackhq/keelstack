@@ -39,6 +39,7 @@ keel [-C DIR] [--json] [-v] up     [--repo OWNER/NAME] [--template rust|ts|SOURC
                                    [--plan FILE] [--wait SECS] [--token-stdin] [--confirm STEP]...
 keel [-C DIR] [--json] [-v] plan   (same flags as up; writes nothing)
 keel [-C DIR] [--json] [-v] doctor
+keel [-C DIR] [--json] [-v] preflight
 ```
 
 - `-C DIR`: the repo checkout (default `.`).
@@ -192,6 +193,22 @@ tags, releases, publishes or force-pushes.
 - hoist: 0 ok, 1 drift/failed, 2 human steps (`human_steps[0]` becomes keel's), 3 error.
   JSON `{version, command, ok, exit_code, items, human_steps}`.
 A non-JSON or missing output is a failed step whose detail names the command (never its stdin).
+
+### 5.5 `keel preflight`
+
+Read-only; nothing is written and no tool is installed. It runs first in `up`, `plan` and `migrate`
+(a gate: silent unless it blocks) and as its own command (always reports). Checks: token scopes
+(`repo` blocks, `workflow` warns), admin rights (`no-admin`: blocks `preflight` and `up`, warns in
+`plan` and `migrate`), plan and visibility (`plan-free-private` blocks: a private repo on a Free plan has no
+rulesets, auto-merge or environment secrets; choices: upgrade the plan, make the repo public, or
+`[ci] provider = "none"`), legacy sources (`gh:keelstackhq/<tool>` in `keel.toml`, `.splice/lock.toml`,
+`.splice/channels/*.toml` instead of `gh:keelstackhq/keelstack//<dir>`: warn), cloud-session limits
+(`CLAUDE_CODE_REMOTE=true`: warn). `keel preflight` also checks gh login, tools against the pins
+(`Preflight::behind`) and drift (`splice --json check`), as warnings. A field GitHub does not
+return is unchecked, never a finding. A finding is `{id, severity: "block"|"warn", message, fix,
+device}`. Any block: exit 5. `--json` prints one object: `{version, command, ok, exit_code, status:
+"ok"|"warn"|"block", findings, choices}`; the gate prints it with the command's own name.
+Tokens never appear in it.
 
 ### 5.3 `keel doctor`
 

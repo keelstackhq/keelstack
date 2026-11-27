@@ -196,7 +196,7 @@ fn no_writes(e: &Env) {
             || l.starts_with("hoist --version")
             || l.starts_with("gh auth status")
             || l.starts_with("gh api user --jq")
-            || l.starts_with("gh api repos/keelstackhq/keelstack --jq")),
+            || l.starts_with("gh api repos/keelstackhq/keelstack")),
         "{calls}"
     );
 }

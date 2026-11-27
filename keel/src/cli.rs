@@ -31,6 +31,8 @@ pub enum Command {
     Doctor,
     /// Move this repo to a keelstack release in one step: tools, splice, bosun pins, hoist, checks.
     Migrate(MigrateArgs),
+    /// Check plan, visibility, token, admin, tools, sources and drift; writes nothing. Exit 5 on a block.
+    Preflight,
 }
 
 #[derive(Debug, Clone, Default, Args)]
@@ -90,6 +92,7 @@ impl Command {
             Command::Plan(_) => "plan",
             Command::Doctor => "doctor",
             Command::Migrate(_) => "migrate",
+            Command::Preflight => "preflight",
         }
     }
 }

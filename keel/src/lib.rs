@@ -17,6 +17,9 @@ pub use cli::{Cli, Command};
 pub use error::KeelError;
 pub use migrate::{render_migrate_json, render_migrate_text};
 pub use report::{render_json, render_json_error, render_json_info, render_text};
+pub use steps::preflight::{
+    PreflightReport, render_json as render_preflight_json, render_text as render_preflight_text,
+};
 
 use cli::UpArgs;
 use ctx::{Ctx, Opts};
@@ -158,6 +161,14 @@ pub fn run(cli: Cli) -> Result<Report, KeelError> {
     run_with(cli, &SystemRunner, &sleep, &read_token)
 }
 
+/// Preflight with the real tools: always for `keel preflight`, and for `up`, `plan` and `migrate`
+/// only when it blocks (the command must then stop with exit 5 before any write).
+pub fn preflight_gate(cli: &Cli) -> Option<PreflightReport> {
+    let verbose = Verbose(&SystemRunner);
+    let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
+    steps::preflight::gate(runner, cli)
+}
+
 /// Run `keel migrate` with the real tools.
 pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
     exec::install_signal_handlers();
@@ -186,6 +197,11 @@ pub fn run_with(
         Command::Migrate(_) => {
             return Err(KeelError::Usage(
                 "`keel migrate` has its own report: call keel::run_migrate".into(),
+            ));
+        }
+        Command::Preflight => {
+            return Err(KeelError::Usage(
+                "`keel preflight` has its own report: call keel::preflight_gate".into(),
             ));
         }
     };

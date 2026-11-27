@@ -23,6 +23,7 @@ Node 24+ (checked in preflight).
 - `keel up`: run the steps, stop at the first human step or failure.
 - `keel plan`: same checks, writes nothing, shows what `up` would do.
 - `keel doctor`: check the toolchain and the repo for drift (no installs).
+- `keel preflight`: read-only checks (token scopes, admin, plan and visibility, legacy sources, tools, drift); exit 5 on a block, with the choices. It also runs first in `up`, `plan` and `migrate`.
 - `keel migrate`: move an existing repo to a keelstack release in one step (below).
 
 Global flags: `-C DIR` (checkout, default `.`), `--json`, `-v`. `up` and `plan` also take
