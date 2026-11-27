@@ -26,6 +26,8 @@ pub enum Service {
     SearchConsole,
     /// The Fly.io Machines API (`hoist org`, spec §16.7).
     Fly,
+    /// Google Cloud IAM (`hoist system check --live`, spec §17.5).
+    Google,
 }
 
 /// crates.io answers 403 to requests without an identifying User-Agent.
@@ -46,6 +48,7 @@ impl Service {
             Service::ActionsOidc => "GitHub Actions OIDC",
             Service::SearchConsole => "Search Console bridge",
             Service::Fly => "Fly.io",
+            Service::Google => "Google IAM",
         }
     }
 
@@ -60,6 +63,7 @@ impl Service {
             Service::Npm => ("HOIST_NPM_REGISTRY", "https://registry.npmjs.org"),
             Service::Crates => ("HOIST_CRATES_API", "https://crates.io"),
             Service::Fly => ("HOIST_FLY_API", "https://api.machines.dev/v1"),
+            Service::Google => ("HOIST_GOOGLE_API", "https://iam.googleapis.com"),
             Service::ActionsOidc => panic!(
                 "Service::ActionsOidc has no base URL from env; build it with Http::with_base"
             ),
@@ -192,8 +196,9 @@ impl fmt::Display for HttpError {
                     Service::Npm | Service::Crates => "the registry credentials",
                     Service::ActionsOidc =>
                         "ACTIONS_ID_TOKEN_REQUEST_TOKEN (the job needs `permissions: id-token: write`)",
-                    Service::SearchConsole => "HOIST_SEARCH_CONSOLE_TOKEN",
                     Service::Fly => "FLY_API_TOKEN",
+                    Service::Google => "GOOGLE_OAUTH_ACCESS_TOKEN",
+                    Service::SearchConsole => "HOIST_SEARCH_CONSOLE_TOKEN",
                 }
             ),
             HttpError::PageLimit { service, path } => write!(
@@ -293,6 +298,8 @@ struct Response {
     link_next: Option<String>,
     retry_after: Option<u64>,
     rate_remaining_zero: bool,
+    /// The one response header a caller asked for (`get_json_header`); never logged.
+    wanted: Option<String>,
 }
 
 pub struct Http {
@@ -307,6 +314,8 @@ pub struct Http {
     max_pages: u32,
     /// Refuse a response reached through a redirect to another host (secrets-repo content).
     same_host_only: bool,
+    /// A response header to keep (`get_json_header`).
+    want: Option<String>,
 }
 
 /// The one agent configuration: status codes are data, TLS is validated against the platform
@@ -368,6 +377,7 @@ impl Http {
             max_sleep_ms: None,
             max_pages: 1000,
             same_host_only: false,
+            want: None,
         }
     }
 
@@ -420,6 +430,22 @@ impl Http {
     pub fn max_pages(mut self, n: u32) -> Http {
         self.max_pages = n;
         self
+    }
+
+    /// `get_json`, also returning response header `name` of the successful response (e.g.
+    /// GitHub's `github-authentication-token-expiration`). The header is never logged.
+    pub fn get_json_header(
+        &self,
+        path: &str,
+        name: &str,
+    ) -> Result<(Fetched, Option<String>), HttpError> {
+        let mut http = Http::with_base_like(self, self.token.clone());
+        http.same_host_only = self.same_host_only;
+        http.want = Some(name.to_ascii_lowercase());
+        match http.fetch(path)? {
+            Err(fetched) => Ok((fetched, None)),
+            Ok(resp) => Ok((Fetched::Ok(http.parse(path, &resp.body)?), resp.wanted)),
+        }
     }
 
     pub fn get_json(&self, path: &str) -> Result<Fetched, HttpError> {
@@ -847,6 +873,7 @@ impl Http {
         let link_next = header("link").and_then(|v| parse_link_next(&v));
         let retry_after = header("retry-after").and_then(|v| v.trim().parse().ok());
         let rate_remaining_zero = header("x-ratelimit-remaining").is_some_and(|v| v.trim() == "0");
+        let wanted = self.want.as_deref().and_then(header);
         let body = response
             .body_mut()
             .read_to_vec()
@@ -868,6 +895,7 @@ impl Http {
             link_next,
             retry_after,
             rate_remaining_zero,
+            wanted,
         })
     }
 }

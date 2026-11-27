@@ -131,7 +131,7 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
         } => system::init::system_init(&dir, print),
         Command::System {
             command: cli::SystemCommand::Check { ref file, live },
-        } => system::check::system_check(&dir, file.as_deref(), live),
+        } => system::check::system_check(&dir, file.as_deref(), live, cli.verbose),
         Command::System {
             command:
                 cli::SystemCommand::Explain {

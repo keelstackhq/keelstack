@@ -121,14 +121,25 @@ fn todo(v: Option<&str>) -> bool {
     v.is_none_or(|s| s.trim().is_empty() || s.trim() == "TODO")
 }
 
-pub fn system_check(dir: &Path, file: Option<&Path>, live_on: bool) -> Result<Report, HoistError> {
+pub fn system_check(
+    dir: &Path,
+    file: Option<&Path>,
+    live_on: bool,
+    verbose: bool,
+) -> Result<Report, HoistError> {
     let path = path_of(dir, file);
     let sys = SystemFile::load(&path)?;
     let text = std::fs::read_to_string(&path).unwrap_or_default();
     let uses = repo_uses(dir)?;
     let today = now_secs().div_euclid(86_400);
     let shown = file.map_or_else(|| FILE.to_string(), |f| f.display().to_string());
-    let probes = live_on.then(live::probes);
+    let ctx = live::Ctx {
+        dir,
+        sys: &sys,
+        today,
+        verbose,
+    };
+    let probes = live_on.then(|| live::probes(&ctx));
     let (items, human_steps) = run_checks(&sys, &text, &shown, &uses, today, probes);
     let exit_code = crate::ops::check::exit_code(&items);
     Ok(Report {
@@ -147,7 +158,7 @@ pub(crate) fn run_checks(
     file: &str,
     uses: &Uses,
     today: i64,
-    probes: Option<Vec<Box<dyn live::LiveProbe>>>,
+    probes: Option<Vec<Box<dyn live::LiveProbe + '_>>>,
 ) -> (Vec<Item>, Vec<HumanStep>) {
     let mut items = Vec::new();
     let mut steps: Vec<HumanStep> = Vec::new();
@@ -324,7 +335,25 @@ pub(crate) fn run_checks(
             items.push(item("live", &c.id, action, reason, src.clone()));
         }
     }
+    for s in probes.iter().flatten().flat_map(|p| p.sweep()) {
+        let dup = s.kind == "undeclared"
+            && items
+                .iter()
+                .any(|i| i.kind == "undeclared" && i.key == s.key);
+        if !dup {
+            items.push(live_item(s));
+        }
+    }
     (items, steps)
+}
+
+fn live_item(s: live::Sweep) -> Item {
+    let (action, reason) = match s.result {
+        LiveResult::Ok(r) => (Action::Ok, r),
+        LiveResult::Drift(r) => (Action::Drift, r),
+        LiveResult::Unknown(r) => (Action::Unknown, r),
+    };
+    item(s.kind, &s.key, action, reason, s.source)
 }
 
 /// Why a long-lived credential should be keyless, or `None`.
