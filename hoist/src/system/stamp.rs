@@ -69,7 +69,6 @@ pub(crate) fn set_keys(
 pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     use ring::rand::{SecureRandom, SystemRandom};
     use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
     let mut random = [0u8; 8];
     SystemRandom::new()
         .fill(&mut random)
@@ -77,15 +76,16 @@ pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     let hex: String = random.iter().map(|b| format!("{b:02x}")).collect();
     let name = path.file_name().unwrap_or_default().to_string_lossy();
     let tmp = path.with_file_name(format!("{name}.tmp-{hex}"));
-    let mode = std::fs::metadata(path).map_or(0o644, |m| {
-        use std::os::unix::fs::PermissionsExt;
-        m.permissions().mode() & 0o7777
-    });
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(mode)
-        .open(&tmp)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    // Keep the file's mode on unix; other targets take the default.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mode = std::fs::metadata(path).map_or(0o644, |m| m.permissions().mode() & 0o7777);
+        options.mode(mode);
+    }
+    let mut file = options.open(&tmp)?;
     let written = file
         .write_all(text.as_bytes())
         .and_then(|()| file.sync_all());
