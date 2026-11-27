@@ -2037,10 +2037,11 @@ legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged) follows `rotation.strategy`:
   `system/rotation/ID` (`pending`) and human steps: each `rotation.steps` entry
   (`rotate:ID:N`, url the provider console), one per storage (where to put the new value), and
   `stamp:ID` ("record it: `hoist system stamp ID --created … --expires …`").
-- `auto` (Cloudflare, Fly): four steps, dual-phase — **create** a new credential, **set** it into
-  every storage (`gh-secret`, `gh-env-secret` sealed; `fly-secret` via `fly secrets import` on
-  stdin), **test** it at the provider, then **revoke** the old one, only after every write and the
-  test passed. Cloudflare: find the old token by `provider_ref`, `POST /user/tokens` (or the
+- `auto` (Cloudflare, Fly): four steps, dual-phase — **create** a new credential, **test** it at
+  the provider (before any storage holds it, so a dead value never replaces a live one), **set**
+  it into every storage (`gh-secret`, `gh-env-secret` sealed; `fly-secret` via
+  `fly secrets import` on stdin), then **revoke** the old one, only after the test and every
+  write passed. Cloudflare: find the old token by `provider_ref`, `POST /user/tokens` (or the
   account endpoint) with its name and policies and `expires_on` = today + `max_ttl` (else
   `rotate_every`, else 90d), verify with `GET /user/tokens/verify` as the new token, `DELETE` the
   old. Roll (`PUT /user/tokens/{id}/value`) is not used: it invalidates the old value at once.
@@ -2048,8 +2049,8 @@ legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged) follows `rotation.strategy`:
   test `GET /apps/APP` with it, `fly tokens revoke OLD_ID`. Preflight errors (no token, no
   `provider_ref`, a storage hoist cannot write such as `sops` or `worker-secret`, another
   provider) exit 3 before any write; after the first write failures are items with exit 1 (a
-  failed test revokes the new credential; a partial set keeps both and names the storages that
-  hold the new value). On success hoist edits that credential in `system.toml` (toml_edit,
+  failed test, or a first write that fails with nothing written, revokes the new credential; a
+  partial set keeps both and names the storages that hold the new value). On success hoist edits that credential in `system.toml` (toml_edit,
   comments kept): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
   `provider_ref` when the new id is known.
 
