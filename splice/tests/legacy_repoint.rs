@@ -73,7 +73,9 @@ fn splice(mono: &TempDir) -> assert_cmd::Command {
             "GIT_CONFIG_KEY_0",
             format!("url.{}/.insteadOf", mono.path().display()),
         )
-        .env("GIT_CONFIG_VALUE_0", "https://github.com/keelstackhq/");
+        .env("GIT_CONFIG_VALUE_0", "https://github.com/keelstackhq/")
+        // Own cache per test: parallel tests share one URL key and race on the mirror clone.
+        .env("SPLICE_CACHE_DIR", mono.path().join("cache"));
     cmd
 }
 
