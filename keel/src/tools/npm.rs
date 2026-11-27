@@ -17,9 +17,13 @@ pub fn npm_platform(key: &str) -> String {
     format!("{os}-{arch}")
 }
 
-struct TmpDir(PathBuf);
+pub struct TmpDir(PathBuf);
 impl TmpDir {
-    fn new(tool: &str) -> std::io::Result<TmpDir> {
+    pub fn path(&self) -> &Path {
+        &self.0
+    }
+
+    pub fn new(tool: &str) -> std::io::Result<TmpDir> {
         static N: AtomicUsize = AtomicUsize::new(0);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -64,9 +68,14 @@ fn pack_verified(r: &dyn Runner, dir: &Path, spec: &str, want: &str) -> Result<P
     Ok(path)
 }
 
-/// Install `tool` at its pin (§6): verify both tarballs, then `npm install -g` them.
-/// Never installs an unverified tarball.
-pub fn install_pinned(r: &dyn Runner, tool: &str, pin: &ToolPin) -> Result<(), String> {
+/// Both tarballs of `tool` at its pin (§6), packed into `tmp` and verified. Never returns an
+/// unverified tarball.
+fn pack_pinned(
+    r: &dyn Runner,
+    tool: &str,
+    pin: &ToolPin,
+    tmp: &Path,
+) -> Result<(PathBuf, PathBuf), String> {
     let v = &pin.version;
     let key = platform_key();
     let unverified = |why: String| {
@@ -83,19 +92,21 @@ pub fn install_pinned(r: &dyn Runner, tool: &str, pin: &ToolPin) -> Result<(), S
             "no sha512 is recorded for platform {key}"
         )));
     };
-    let tmp = TmpDir::new(tool).map_err(|e| format!("cannot make a temp dir: {e}"))?;
-    let launcher = pack_verified(
-        r,
-        &tmp.0,
-        &format!("@keelstackhq/{tool}@{v}"),
-        &sha.launcher,
-    )?;
+    let launcher = pack_verified(r, tmp, &format!("@keelstackhq/{tool}@{v}"), &sha.launcher)?;
     let platform = pack_verified(
         r,
-        &tmp.0,
+        tmp,
         &format!("@keelstackhq/{tool}-{}@{v}", npm_platform(&key)),
         plat_sha,
     )?;
+    Ok((launcher, platform))
+}
+
+/// Install `tool` at its pin (§6): verify both tarballs, then `npm install -g` them.
+/// Never installs an unverified tarball.
+pub fn install_pinned(r: &dyn Runner, tool: &str, pin: &ToolPin) -> Result<(), String> {
+    let tmp = TmpDir::new(tool).map_err(|e| format!("cannot make a temp dir: {e}"))?;
+    let (launcher, platform) = pack_pinned(r, tool, pin, &tmp.0)?;
     let (l, p) = (launcher.to_string_lossy(), platform.to_string_lossy());
     let c = Cmd::new(
         "npm",
@@ -114,6 +125,48 @@ pub fn install_pinned(r: &dyn Runner, tool: &str, pin: &ToolPin) -> Result<(), S
         return Err(super::failure(&c, &o));
     }
     Ok(())
+}
+
+/// Dry-run: fetch `tool` at its pin into `cache` (same verification as `install_pinned`, but
+/// `npm install --prefix`, never global) and return the path of its binary.
+pub fn fetch_pinned(
+    r: &dyn Runner,
+    tool: &str,
+    pin: &ToolPin,
+    cache: &Path,
+) -> Result<PathBuf, String> {
+    let tmp = TmpDir::new(tool).map_err(|e| format!("cannot make a temp dir: {e}"))?;
+    let (launcher, platform) = pack_pinned(r, tool, pin, &tmp.0)?;
+    let (l, p) = (launcher.to_string_lossy(), platform.to_string_lossy());
+    let prefix = cache.to_string_lossy();
+    let c = Cmd::new(
+        "npm",
+        &[
+            "install",
+            "--prefix",
+            &prefix,
+            "--ignore-scripts",
+            "--omit=optional",
+            "--no-audit",
+            "--no-fund",
+            &l,
+            &p,
+        ],
+    )
+    .dir(&tmp.0);
+    let o = r.run(&c);
+    if o.code != 0 {
+        return Err(super::failure(&c, &o));
+    }
+    let bin = cache.join("node_modules/.bin").join(tool);
+    if !bin.exists() {
+        return Err(format!(
+            "npm installed {tool} into {} but {} is missing",
+            cache.display(),
+            bin.display()
+        ));
+    }
+    Ok(bin)
 }
 
 /// The pin of `tool` at `version` for a release that is not in keel's embedded table: the

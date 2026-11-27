@@ -10,6 +10,7 @@ pub mod backup;
 pub mod deploy;
 pub mod dns;
 pub mod doctor;
+pub mod drift;
 pub mod governance;
 pub mod merge;
 pub mod preflight;

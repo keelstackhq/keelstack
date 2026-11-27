@@ -44,6 +44,15 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     let command = cli.command.name();
+    // Read-only gate: any block stops the command with exit 5 before it writes anything.
+    if let Some(report) = keel::preflight_gate(&cli) {
+        if json {
+            println!("{}", keel::render_preflight_json(&report));
+        } else {
+            print!("{}", keel::render_preflight_text(&report));
+        }
+        return ExitCode::from(report.exit_code as u8);
+    }
     if matches!(cli.command, keel::Command::Migrate(_)) {
         return match keel::run_migrate(&cli) {
             Ok(report) => {
@@ -110,7 +119,7 @@ fn command_name(args: &[String]) -> String {
         } else if a == "--" {
             break;
         } else if !a.starts_with('-') {
-            return if ["up", "plan", "doctor", "migrate"].contains(&a.as_str()) {
+            return if ["up", "plan", "doctor", "migrate", "preflight"].contains(&a.as_str()) {
                 a.clone()
             } else {
                 String::new()

@@ -39,6 +39,7 @@ keel [-C DIR] [--json] [-v] up     [--repo OWNER/NAME] [--template rust|ts|SOURC
                                    [--plan FILE] [--wait SECS] [--token-stdin] [--confirm STEP]...
 keel [-C DIR] [--json] [-v] plan   (same flags as up; writes nothing)
 keel [-C DIR] [--json] [-v] doctor
+keel [-C DIR] [--json] [-v] preflight
 ```
 
 - `-C DIR`: the repo checkout (default `.`).
@@ -193,6 +194,22 @@ tags, releases, publishes or force-pushes.
   JSON `{version, command, ok, exit_code, items, human_steps}`.
 A non-JSON or missing output is a failed step whose detail names the command (never its stdin).
 
+### 5.5 `keel preflight`
+
+Read-only; nothing is written and no tool is installed. It runs first in `up`, `plan` and `migrate`
+(a gate: silent unless it blocks) and as its own command (always reports). Checks: token scopes
+(`repo` blocks, `workflow` warns), admin rights (`no-admin`: blocks `preflight` and `up`, warns in
+`plan` and `migrate`), plan and visibility (`plan-free-private` blocks: a private repo on a Free plan has no
+rulesets, auto-merge or environment secrets; choices: upgrade the plan, make the repo public, or
+`[ci] provider = "none"`), legacy sources (`gh:keelstackhq/<tool>` in `keel.toml`, `.splice/lock.toml`,
+`.splice/channels/*.toml` instead of `gh:keelstackhq/keelstack//<dir>`: warn), cloud-session limits
+(`CLAUDE_CODE_REMOTE=true`: warn). `keel preflight` also checks gh login, tools against the pins
+(`Preflight::behind`) and drift (`splice --json check`), as warnings. A field GitHub does not
+return is unchecked, never a finding. A finding is `{id, severity: "block"|"warn", message, fix,
+device}`. Any block: exit 5. `--json` prints one object: `{version, command, ok, exit_code, status:
+"ok"|"warn"|"block", findings, choices}`; the gate prints it with the command's own name.
+Tokens never appear in it.
+
 ### 5.3 `keel doctor`
 
 Runs step 1's checks (no installs) and step 8's checks alone. Exit 0 healthy, 1 drift, 3 error, 5 a human step is pending
@@ -319,8 +336,10 @@ One command moves an existing repo to a keelstack release, so nobody runs `splic
 in the repo by a human or an agent: `npx -y @keelstackhq/keel@<version> migrate --pr` (`-y`: no interactive prompt).
 
 ```
-keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--mode MODE]
+keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--branch NAME] [--mode MODE] [--drift seed|take|keep]
 ```
+
+`--dry-run` fetches a missing tool into a temp cache (sha512 checked, removed afterwards). `--branch NAME` commits and pushes to NAME with a plain push (never force); a NAME whose PR merged (ancestor of the base, same tree, or gone from the remote) restarts from the base.
 
 - `--to X.Y.Z` (default: keel's own version; anything but three numbers is exit 2). The release is
   lockstep (D-023): every tool is installed at that version.
@@ -328,6 +347,7 @@ keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF]
   (`splice --json check`, `bosun pin --to X.Y.Z --check`, `hoist init --dry-run`, read-only verification). Exit 1 when work remains
   (status `planned`), as `keel plan`. It adds and removes a temporary detached worktree and fetches the base; the checkout is untouched.
 - `--pr`: push the branch (never forced) and open ONE PR with `gh pr create`; an open PR for the branch is reused. keel never merges.
+- `--drift seed|take|keep` (default `seed`): settles the baseline drift (non-section paths edited or deleted on the base) inside the `splice` step, before the updates, one commit each. `seed`: channel files are added to the channel's `exclude` by `splice channel exclude NAME PATH...` (idempotent; the lock stops tracking them, the disk is untouched; commit `chore: exclude drifted channel files from their channels`); owned main-template files are restored with `splice update --force --to <locked version>` (the text they were rendered from), then every local line they lack (trimmed, blank lines ignored) and the seed file lacks is appended to the seed file `<dir>/CLAUDE.md` under `## Local notes moved from <path>`, so no local line is lost; the normal updates follow on a clean tree and `splice-drift` is not raised. `take`: every update runs with `--force` (template side). `keep`: channel files are excluded (local side kept); owned main-template files stay drifted and keep the `splice-drift` entry (the main template has no `exclude`). The JSON has `drift: [{path, action, moved_lines, seed?}]` (`action`: `moved`, `restored`, `excluded`, `taken`) and the PR body a "Drift settled" list.
 - `--mode MODE`: `bosun migrate --to MODE --dry-run` is run and the real move is listed in the checklist for after the merge
   (it opens its own gated PR from the default branch, so it cannot share this one).
 - Exit codes: 0 done (or nothing to do) · 1 a step failed (rolled back) or, with `--dry-run`, work remains · 2 usage (bad `--to`) ·
@@ -343,6 +363,7 @@ bosun = `.bosun/`; hoist = `hoist.toml`. None of them is exit 3 ("nothing to mig
 | id | does |
 |----|------|
 | `tools` | for each tool in use, `<tool> --version` must equal the target, else install it: keel's embedded sha512 when it has them for exactly that version, else the `dist.integrity` the registry serves (`npm view`, run in the repo; the registry vouching for itself, so not an independent check); `npm pack` both tarballs, compare, then `npm install -g --ignore-scripts` (an unpublished version fails here) |
+| `repoint` | before `splice`: a lock source (main or channel) still on an archived `gh:keelstackhq/<tool>//<dir>` repo is repointed to the monorepo by `splice update` itself (one commit `chore(splice): repoint <source> to the monorepo` each; splice has no repoint-only call). keel finds the legacy sources on disk, then fills the step from the `repointed <old> to <new> at <commit> (<tag>)` messages of the first `splice update`: `done` with those messages, `skipped` when no source is legacy, `would-run` in `--dry-run` |
 | `splice` | (the **baseline** `splice --json check` runs first, with the target splice, still on the base: its drifted `(path, cause)` pairs are the pre-existing drift; if it errors, `notes[]` in the JSON says so and drift is unknown, so any later drift fails) with a `decisions` channel: `splice update --channel decisions`, committed alone as `chore: sync org decisions` (the org rule); then `splice update --all` (template, every channel; exit 1 = conflicts, a failure with the manual command). Real splice refuses owned drift (exit 1, nothing written, messages `` `P` is owned by X but was edited locally ``) when a source has a newer version: if every path named was drifted on the base, keel marks it not an error: it updates each source separately (`splice update`, `splice update --channel NAME`; one commit after each, because splice refuses a dirty tree and keel never passes `--allow-dirty`), marks the refused sources **not updated**, and the step is `pending`; the run continues and `splice-drift` says "these sources were NOT updated: resolve, then rerun `keel migrate`". Any other refusal fails and rolls back. A drift path `HOST#NAME` (section block) belongs to channel `NAME`: advice is to revert the edit between the markers or change the channel's source (`--force` rewrites a block only with a newer channel version; `--exclude` is refused for it); a refusal with any line other than the drifted-path lines (for example broken markers) fails |
 | `bosun-pin` | `bosun pin --to X.Y.Z` (the exact target, any published release, not only npm latest; refuses an unpublished or deprecated one; verifies every tarball against npm; skipped with the bosun channel, which `splice update` already moved, or without `docs/setup-script.sh`); `.bosun/version` must end equal to the target, else failed. An old bosun without `pin --to` exits 2: in `--dry-run` that is `would-run` (the real run installs the target bosun first) |
 | `hoist` | only when `.github/workflows/release.yml` exists: `hoist init` (rewrites only an unedited hoist file; hoist's own `release-workflow*` human steps are dropped, others go to the checklist; exit 3 with the stable `error.kind` `nothing-to-publish` is `skipped: nothing to publish` and no entry; any other exit 3, e.g. offline, is `skipped` plus a `hoist-init` checklist entry that shows hoist's own `error.message` and `error.fix` and suggests no command, because rerunning `hoist init` would fail the same way) |

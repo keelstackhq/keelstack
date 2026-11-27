@@ -9,6 +9,7 @@ use crate::exec::{Cmd, Out, Runner};
 use crate::pins::{Pins, ToolPin};
 use crate::report::{ChecklistEntry, HumanStep, build_checklist};
 use crate::steps::agent_env;
+use crate::steps::drift::{self, Mode, Moved};
 use crate::tools::{self, failure, gh, hoist, json, npm};
 use serde::Serialize;
 use serde_json::Value;
@@ -130,6 +131,8 @@ pub struct MigrateReport {
     pub recovery: Option<String>,
     /// Warnings that are not steps (for example a baseline `splice check` that could not run).
     pub notes: Vec<String>,
+    /// Every drifted path `--drift` settled: path, action, moved_lines.
+    pub drift: Vec<Moved>,
 }
 
 #[derive(Serialize)]
@@ -180,6 +183,12 @@ pub fn render_migrate_text(r: &MigrateReport) -> String {
     }
     for n in &r.notes {
         out.push_str(&format!("note: {n}\n"));
+    }
+    for d in &r.drift {
+        out.push_str(&format!(
+            "drift: {} {} ({} line(s) moved)\n",
+            d.path, d.action, d.moved_lines
+        ));
     }
     if let Some(rec) = &r.recovery {
         out.push_str(&format!("\nrecovery: {rec}\n"));
@@ -278,6 +287,16 @@ struct Mig<'a> {
     not_updated: Vec<String>,
     /// Warnings for the JSON `notes`.
     notes: Vec<String>,
+    /// Paths `--drift` settled, for the JSON and the PR body.
+    drift: Vec<Moved>,
+    /// Pass `--force` to every `splice update` (the template side wins for the drifted paths).
+    force: bool,
+    /// The `repointed <old> to <new> at <commit> (<tag>)` messages `splice update` reported.
+    repointed: Vec<String>,
+    /// Dry-run: tools that were not installed, fetched into `cache` (name -> binary).
+    fetched: std::collections::HashMap<String, PathBuf>,
+    /// The temp cache of those tools; removed when the run ends.
+    cache: Option<npm::TmpDir>,
 }
 
 /// One path `splice check --json` reports as drifted, with where it comes from.
@@ -383,7 +402,26 @@ fn parse_drift(v: &Value) -> Vec<Drift> {
 
 impl Mig<'_> {
     fn tool(&self, prog: &str, args: &[&str]) -> Cmd {
-        Cmd::new(prog, args).dir(&self.dir).timeout(TOOL_TIMEOUT)
+        let prog = self
+            .fetched
+            .get(prog)
+            .map_or_else(|| prog.to_string(), |p| p.to_string_lossy().into_owned());
+        Cmd::new(&prog, args).dir(&self.dir).timeout(TOOL_TIMEOUT)
+    }
+
+    /// Dry-run: a tool that is not installed is fetched into the temp cache, with the checksum
+    /// verification of the real install, so the plan can still be listed.
+    fn fetch(&mut self, t: &str) -> Result<(), String> {
+        let pin = self.pin_of(t)?;
+        if self.cache.is_none() {
+            self.cache = Some(
+                npm::TmpDir::new("cache").map_err(|e| format!("cannot make a temp dir: {e}"))?,
+            );
+        }
+        let dir = self.cache.as_ref().map(|c| c.path().to_path_buf());
+        let bin = npm::fetch_pinned(self.r, t, &pin, &dir.unwrap_or_default())?;
+        self.fetched.insert(t.to_string(), bin);
+        Ok(())
     }
 
     fn git(&self, args: &[&str]) -> Out {
@@ -500,7 +538,15 @@ impl Mig<'_> {
             let from = have.unwrap_or_else(|| "none".into());
             if self.dry {
                 todo += 1;
-                notes.push(format!("{t} {from} -> {}", self.target));
+                if from == "none" {
+                    self.fetch(t)?;
+                    notes.push(format!(
+                        "{t} not installed: fetched {} into a temp cache for this plan",
+                        self.target
+                    ));
+                } else {
+                    notes.push(format!("{t} {from} -> {}", self.target));
+                }
                 continue;
             }
             let pin = self.pin_of(t)?;
@@ -543,11 +589,18 @@ impl Mig<'_> {
 
     /// One `splice update`; `Ok(None)` when splice refused only because of owned files that were
     /// already drifted on the base (that source is not updated, the run goes on).
-    fn splice_try(&self, extra: &[&str]) -> Result<Option<String>, String> {
+    fn splice_try(&mut self, extra: &[&str]) -> Result<Option<String>, String> {
         let mut a = vec!["--json", "--yes", "update"];
+        if self.force {
+            a.push("--force");
+        }
         a.extend(extra);
         let c = self.tool("splice", &a);
         let o = self.r.run(&c);
+        if let Some(v) = json(&o) {
+            let found = repointed_messages(&v);
+            self.repointed.extend(found);
+        }
         match o.code {
             0 => {
                 let n = json(&o)
@@ -620,6 +673,228 @@ impl Mig<'_> {
         Ok(done.join(", "))
     }
 
+    /// Lock sources still on an archived `gh:keelstackhq/<tool>` repo (main and channels):
+    /// `splice update` repoints them to the monorepo before it updates.
+    fn legacy_sources(&self) -> Vec<String> {
+        let mut files = vec![self.dir.join(".splice/lock.toml")];
+        if let Ok(d) = std::fs::read_dir(self.dir.join(".splice/channels")) {
+            files.extend(
+                d.flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "toml")),
+            );
+        }
+        let mut out: Vec<String> = Vec::new();
+        for f in files {
+            let Ok(text) = std::fs::read_to_string(f) else {
+                continue;
+            };
+            for l in text.lines() {
+                let Some(v) = l.trim().strip_prefix("source") else {
+                    continue;
+                };
+                let src = v
+                    .trim_start()
+                    .trim_start_matches('=')
+                    .trim()
+                    .trim_matches('"');
+                if let Some(rest) = src.strip_prefix("gh:keelstackhq/")
+                    && !rest.starts_with("keelstack/")
+                    && !rest.starts_with("keelstack.git")
+                    && rest != "keelstack"
+                    && !out.iter().any(|o| o == src)
+                {
+                    out.push(src.to_string());
+                }
+            }
+        }
+        out
+    }
+
+    /// The `repoint` step is decided here (before `splice`) and filled in from what the first
+    /// `splice update` reports: splice has no repoint-only call, it repoints inside `update`.
+    fn s_repoint(&mut self) -> Res {
+        if !self.p.splice {
+            return Ok((MAction::Skipped, "no .splice/lock.toml or channel".into()));
+        }
+        let legacy = self.legacy_sources();
+        if legacy.is_empty() {
+            return Ok((
+                MAction::Skipped,
+                "no legacy gh:keelstackhq/<tool> source".into(),
+            ));
+        }
+        if self.dry {
+            return Ok((
+                MAction::WouldRun,
+                format!(
+                    "splice update would repoint to the monorepo: {}",
+                    legacy.join(", ")
+                ),
+            ));
+        }
+        Ok((MAction::Ok, format!("legacy: {}", legacy.join(", "))))
+    }
+
+    /// After `splice`: the repoint step says what splice reported.
+    fn settle_repoint(&mut self) {
+        if self.dry {
+            return;
+        }
+        let msgs = self.repointed.join("; ");
+        let Some(s) = self.steps.iter_mut().find(|s| s.id == "repoint") else {
+            return;
+        };
+        if s.action == MAction::Skipped {
+            return;
+        }
+        if msgs.is_empty() {
+            s.detail = format!("splice update repointed nothing ({})", s.detail);
+        } else {
+            s.action = MAction::Done;
+            s.detail = msgs;
+        }
+    }
+
+    /// `--drift`, before the update: channel files the owner deleted or edited are excluded (seed,
+    /// keep); main-template owned files are read for `seed` (the update restores them, then the
+    /// lines it drops move to the seed file) or forced for `take`.
+    fn settle_before(&mut self) -> Result<(), String> {
+        let mode = Mode::parse(&self.args.drift);
+        let settle = |d: &Drift| {
+            !d.path.contains('#') && matches!(d.cause.as_str(), "deleted" | "edited locally")
+        };
+        let found: Vec<Drift> = self
+            .base_drift
+            .iter()
+            .filter(|d| settle(d))
+            .cloned()
+            .collect();
+        if found.is_empty() {
+            return Ok(());
+        }
+        if mode == Mode::Take {
+            self.force = true;
+            for d in &found {
+                self.drift.push(Moved {
+                    path: d.path.clone(),
+                    action: "taken".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+            }
+            return Ok(());
+        }
+        let mut by_channel: Vec<(String, Vec<String>)> = Vec::new();
+        for d in found.iter().filter(|d| d.channel.is_some()) {
+            let c = d.channel.clone().unwrap_or_default();
+            match by_channel.iter_mut().find(|(n, _)| *n == c) {
+                Some((_, ps)) => ps.push(d.path.clone()),
+                None => by_channel.push((c, vec![d.path.clone()])),
+            }
+        }
+        for (c, paths) in &by_channel {
+            let mut a = vec!["--json", "--yes", "channel", "exclude", c.as_str()];
+            a.extend(paths.iter().map(String::as_str));
+            let cmd = self.tool("splice", &a);
+            let o = self.r.run(&cmd);
+            if o.code != 0 {
+                return Err(failure(&cmd, &o));
+            }
+            for p in paths {
+                self.drift.push(Moved {
+                    path: p.clone(),
+                    action: "excluded".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+            }
+        }
+        if !by_channel.is_empty() {
+            self.commit_all("chore: exclude drifted channel files from their channels")?;
+        }
+        let main: Vec<&Drift> = found.iter().filter(|d| d.channel.is_none()).collect();
+        if mode == Mode::Seed && !main.is_empty() {
+            self.seed_main(&main)?;
+        }
+        Ok(())
+    }
+
+    /// The version the main lock is at (`[template] version`).
+    fn locked_version(&self) -> Option<String> {
+        let text = std::fs::read_to_string(self.dir.join(".splice/lock.toml")).ok()?;
+        let tail = &text[text.find("[template]")?..];
+        let line = tail
+            .lines()
+            .find(|l| l.trim_start().starts_with("version"))?;
+        Some(line.split('"').nth(1)?.to_string())
+    }
+
+    /// Owned main-template files the owner edited or deleted: `splice update --force --to <locked
+    /// version>` restores them to the template they were rendered from, then the lines the owner
+    /// added (not in that text, not in the seed file yet) move to `<dir>/CLAUDE.md`. The normal
+    /// update then runs on a clean tree, so no local line is lost.
+    fn seed_main(&mut self, main: &[&Drift]) -> Result<(), String> {
+        let version = self
+            .locked_version()
+            .ok_or("cannot read the locked template version from .splice/lock.toml")?;
+        let local: Vec<(String, Option<String>)> = main
+            .iter()
+            .map(|d| {
+                (
+                    d.path.clone(),
+                    std::fs::read_to_string(self.dir.join(&d.path)).ok(),
+                )
+            })
+            .collect();
+        let cmd = self.tool(
+            "splice",
+            &["--json", "--yes", "update", "--force", "--to", &version],
+        );
+        let o = self.r.run(&cmd);
+        if o.code != 0 {
+            return Err(failure(&cmd, &o));
+        }
+        let mut wrote = false;
+        for (path, text) in local {
+            let restored = std::fs::read_to_string(self.dir.join(&path)).unwrap_or_default();
+            let seed_rel = drift::seed_path(&path);
+            let seed_file = self.dir.join(&seed_rel);
+            let seed = std::fs::read_to_string(&seed_file).unwrap_or_default();
+            let lines = text
+                .map(|t| drift::lines_to_move(&t, &restored, &seed))
+                .unwrap_or_default();
+            if lines.is_empty() {
+                self.drift.push(Moved {
+                    path,
+                    action: "restored".into(),
+                    moved_lines: 0,
+                    seed: None,
+                });
+                continue;
+            }
+            if let Some(dir) = seed_file.parent() {
+                std::fs::create_dir_all(dir)
+                    .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+            }
+            std::fs::write(&seed_file, drift::append_to_seed(&seed, &path, &lines))
+                .map_err(|e| format!("cannot write {}: {e}", seed_file.display()))?;
+            wrote = true;
+            self.drift.push(Moved {
+                path,
+                action: "moved".into(),
+                moved_lines: lines.len(),
+                seed: Some(seed_rel),
+            });
+        }
+        self.commit_all(if wrote {
+            "chore: restore drifted owned files, move local lines to their seed files"
+        } else {
+            "chore: restore drifted owned files"
+        })?;
+        Ok(())
+    }
+
     fn s_splice(&mut self) -> Res {
         if !self.p.splice {
             return Ok((MAction::Skipped, "no .splice/lock.toml or channel".into()));
@@ -638,6 +913,7 @@ impl Mig<'_> {
             };
         }
         let mut notes = Vec::new();
+        self.settle_before()?;
         if self.p.decisions_channel {
             match self.splice_try(&["--channel", "decisions"])? {
                 Some(d) => {
@@ -1126,6 +1402,10 @@ impl Mig<'_> {
 
     fn s_pr(&mut self) -> Res {
         if !self.args.pr {
+            if self.args.branch.is_some() {
+                self.push()?;
+                return Ok((MAction::Done, format!("pushed to {}", self.branch)));
+            }
             return Ok((MAction::Skipped, "not asked (--pr)".into()));
         }
         let c = Cmd::new("gh", &["repo", "view", "--json", "nameWithOwner"]).dir(&self.dir);
@@ -1172,8 +1452,15 @@ impl Mig<'_> {
         Ok((MAction::Done, format!("opened {url}")))
     }
 
+    /// Plain push, never forced. With `--branch` the worktree is detached: push HEAD to that branch.
     fn push(&self) -> Result<(), String> {
-        let c = Cmd::new("git", &["push", "-u", "origin", &self.branch]).dir(&self.dir);
+        let refspec = format!("HEAD:refs/heads/{}", self.branch);
+        let c = if self.args.branch.is_some() {
+            Cmd::new("git", &["push", "origin", &refspec])
+        } else {
+            Cmd::new("git", &["push", "-u", "origin", &self.branch])
+        }
+        .dir(&self.dir);
         let o = self.r.run(&c);
         if o.code != 0 {
             return Err(failure(&c, &o));
@@ -1213,6 +1500,16 @@ impl Mig<'_> {
                 s.action.as_str(),
                 s.detail
             ));
+        }
+        if !self.drift.is_empty() {
+            b.push_str("\n## Drift settled (`--drift`)\n");
+            for d in &self.drift {
+                b.push_str(&format!("- `{}` {}", d.path, d.action));
+                if let Some(s) = &d.seed {
+                    b.push_str(&format!(": {} line(s) moved to `{s}`", d.moved_lines));
+                }
+                b.push('\n');
+            }
         }
         let list = build_checklist(&self.raw, &[]);
         if !list.is_empty() {
@@ -1269,6 +1566,20 @@ fn behind_list(v: &Value) -> String {
                 })
                 .collect::<Vec<_>>()
                 .join(", ")
+        })
+        .unwrap_or_default()
+}
+
+/// The `repointed <old> to <new> at <commit> (<tag>)` lines of a `splice update` report.
+fn repointed_messages(v: &Value) -> Vec<String> {
+    v["messages"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(Value::as_str)
+                .filter(|m| m.starts_with("repointed "))
+                .map(String::from)
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -1474,8 +1785,17 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
     } else {
         orig
     };
-    let branch = format!("keel/migrate-v{target}");
-    if orig == branch {
+    let custom = args.branch.is_some();
+    let branch = args
+        .branch
+        .clone()
+        .unwrap_or_else(|| format!("keel/migrate-v{target}"));
+    if branch.starts_with('-') || branch.contains(char::is_whitespace) {
+        return Err(crate::error::KeelError::Usage(format!(
+            "--branch {branch:?} is not a branch name"
+        )));
+    }
+    if !custom && orig == branch {
         return Err(env_err(
             format!("you are on {branch}, the branch keel works on in its own worktree"),
             "switch to another branch (`git switch main`) and rerun; the work on it is picked up",
@@ -1524,6 +1844,11 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
     let wts = wt.display().to_string();
     let add = if args.dry_run {
         gitc(&["worktree", "add", "--detach", &wts, &base])
+    } else if custom {
+        // Detached at the branch's tip (local, else origin's, else the base): the checkout may
+        // have the branch checked out. The push goes to the branch by name.
+        let start = crate::tools::git::branch_start(r, dir, &branch, &base);
+        gitc(&["worktree", "add", "--detach", &wts, &start])
     } else if exists {
         let spent = leftover(&gitc, r, dir, &branch, &base).map_err(|e| {
             env_err(
@@ -1626,6 +1951,11 @@ fn in_worktree(
         base_drift: Vec::new(),
         not_updated: Vec::new(),
         notes: Vec::new(),
+        drift: Vec::new(),
+        force: false,
+        repointed: Vec::new(),
+        fetched: std::collections::HashMap::new(),
+        cache: None,
     };
     if !dry && p.bosun {
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
@@ -1641,6 +1971,7 @@ fn in_worktree(
 
     let order = [
         "tools",
+        "repoint",
         "splice",
         "bosun-pin",
         "hoist",
@@ -1676,6 +2007,7 @@ fn in_worktree(
         }
         let res = match *id {
             "tools" => m.s_tools(),
+            "repoint" => m.s_repoint(),
             "splice" => m.s_splice(),
             "bosun-pin" => m.s_bosun_pin(),
             "hoist" => m.s_hoist(),
@@ -1684,7 +2016,11 @@ fn in_worktree(
             "mode" => m.s_mode(),
             _ => m.s_pr(),
         };
-        if !m.push_step(id, res) {
+        let ok = m.push_step(id, res);
+        if *id == "splice" {
+            m.settle_repoint();
+        }
+        if !ok {
             failed = Some(i);
         }
     }
@@ -1781,6 +2117,7 @@ fn in_worktree(
         human_step,
         recovery,
         notes: m.notes,
+        drift: m.drift,
     })
 }
 

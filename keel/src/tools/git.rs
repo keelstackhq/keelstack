@@ -100,6 +100,57 @@ pub fn ensure_branch(
     Ok(target)
 }
 
+/// Where a detached `--branch B` worktree starts (K4): the local B, else `origin/B`, else `base`.
+/// A candidate already merged into `base` (an ancestor, or the same tree after a squash), or a
+/// local B whose remote branch is gone after it was pushed once, is spent: start from `base`.
+/// The push is then plain: a fast-forward of a merged remote B, or a creation when it is gone.
+/// History is never rewritten, so nothing here forces.
+pub fn branch_start(r: &dyn Runner, dir: &Path, branch: &str, base: &str) -> String {
+    let _ = git(r, dir, &["fetch", "origin", "--", branch]);
+    let commit = |c: &str| {
+        ok(
+            r,
+            dir,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{c}^{{commit}}"),
+            ],
+        )
+    };
+    let tree = |c: &str| {
+        let o = git(r, dir, &["rev-parse", &format!("{c}^{{tree}}")]);
+        (o.code == 0).then(|| o.stdout.trim().to_string())
+    };
+    let remote = format!("origin/{branch}");
+    let on_remote = git(
+        r,
+        dir,
+        &["ls-remote", "--exit-code", "--heads", "origin", branch],
+    )
+    .code
+        == 0;
+    let pushed_before = !git(
+        r,
+        dir,
+        &["config", "--get", &format!("branch.{branch}.remote")],
+    )
+    .stdout
+    .trim()
+    .is_empty();
+    for c in [branch.to_string(), remote.clone()] {
+        if !commit(&c) {
+            continue;
+        }
+        let merged = ok(r, dir, &["merge-base", "--is-ancestor", &c, base])
+            || tree(&c).is_some() && tree(&c) == tree(base);
+        let gone = c == branch && !on_remote && pushed_before;
+        return if merged || gone { base.to_string() } else { c };
+    }
+    base.to_string()
+}
+
 /// Make sure `.gitignore` lists `entry` (e.g. `.keel/`); true when the file changed.
 pub fn ensure_ignored(dir: &Path, entry: &str) -> std::io::Result<bool> {
     let p = dir.join(".gitignore");
