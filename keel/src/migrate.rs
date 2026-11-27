@@ -1522,6 +1522,11 @@ impl Mig<'_> {
                 b.push('\n');
             }
         }
+        if let Some(n) = &self.args.body_note {
+            b.push('\n');
+            b.push_str(n.trim_end());
+            b.push('\n');
+        }
         b.push_str(BODY_TAIL);
         b
     }
