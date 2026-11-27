@@ -21,9 +21,9 @@ owns the format and the commands; agents never hold a key and hoist never prints
    system as a `[[provider]]` with its `capability`, `console` and `docs`.
 3. **check.** `hoist system check` (offline, no HTTP) exits 1 when a secret a workflow reads has
    no credential (`undeclared`), a credential nothing reads (`unused`), a job and its listed
-   consumers disagree, a credential is expired or expires within 30 days, `purpose`, `owner` or
-   dates are missing, `max_ttl` is exceeded, or a long-lived credential exists where a keyless
-   option does. It exits 2 when a rotation is due and 3 on a broken file. `hoist system check
+   consumers disagree, a credential is expired, `purpose`, `owner` or dates are missing,
+   `max_ttl` is exceeded, or a long-lived credential exists where a keyless option does. It
+   exits 2 when a rotation is due (a credential expires within 30 days) and 3 on a broken file. `hoist system check
    --live` also asks each provider, GET only, with tokens taken from the environment; a missing
    token is `unknown` with the fix, never a failure.
 4. **rotate.** `hoist secrets rotate <credential-id>` follows the credential's
@@ -33,14 +33,18 @@ owns the format and the commands; agents never hold a key and hoist never prints
    records the new dates.
 
 Add a secret to a workflow and its `[[credential]]` to `system.toml` in the same pull request,
-or `hoist system check` fails.
+or `hoist system check` fails. The weekly `system-check` workflow keeps one issue current; drift
+that is only missing metadata (a `"TODO"` or a missing date, as in a fresh draft) is listed there
+but only warns, so a new repo is not red from its first week.
 
 ## SYSTEM.md
 
-`hoist system explain --write` renders `SYSTEM.md` from `system.toml` alone: a mermaid diagram
+`hoist system explain --write` renders `SYSTEM.md` from `system.toml` (plus the org catalog with
+`--catalog`): a mermaid diagram
 (repo, provider, credential, consumer), a table per provider and one for its credentials, the
-keyless trusts and the rotation steps of each credential. Never edit it by hand: CI runs
-`hoist system explain --check`, which exits 1 when it is stale.
+keyless trusts and the rotation steps of each credential. Never edit it by hand: run
+`hoist system check` and `hoist system explain --check` (exit 1 when it is stale) in pull request
+CI; the keelstack monorepo does so in its hoist job.
 
 ## Alternatives
 

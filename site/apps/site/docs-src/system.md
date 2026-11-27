@@ -31,14 +31,18 @@ owns the format and the commands; agents never hold a key and hoist never prints
    records the new dates.
 
 Add a secret to a workflow and its `[[credential]]` to `system.toml` in the same pull request,
-or `hoist system check` fails.
+or `hoist system check` fails. The weekly `system-check` workflow keeps one issue current; drift
+that is only missing metadata (a `"TODO"` or a missing date, as in a fresh draft) is listed there
+but only warns, so a new repo is not red from its first week.
 
 ## SYSTEM.md
 
-`hoist system explain --write` renders `SYSTEM.md` from `system.toml` alone: a mermaid diagram
+`hoist system explain --write` renders `SYSTEM.md` from `system.toml` (plus the org catalog with
+`--catalog`): a mermaid diagram
 (repo, provider, credential, consumer), a table per provider and one for its credentials, the
-keyless trusts and the rotation steps of each credential. Never edit it by hand: CI runs
-`hoist system explain --check`, which exits 1 when it is stale.
+keyless trusts and the rotation steps of each credential. Never edit it by hand: run
+`hoist system check` and `hoist system explain --check` (exit 1 when it is stale) in pull request
+CI; the keelstack monorepo does so in its hoist job.
 
 ## Alternatives
 
