@@ -165,6 +165,17 @@ if [ -f hull/template/pieces/base/files/scripts/ready.mjs ]; then
   fi
 fi
 
+# hull templates' system-check.yml installs hoist at the lockstep version
+for t in template template-rust; do
+  f=hull/$t/pieces/base/files/.github/workflows/system-check.yml
+  [ -f "$f" ] || continue
+  if [ "$(grep -c '^ *HOIST_VERSION: ' "$f")" = 1 ] && grep -q "^ *HOIST_VERSION: \"$new\"\$" "$f"; then
+    ok "$f: HOIST_VERSION $new"
+  else
+    fail "$f: HOIST_VERSION is not \"$new\""
+  fi
+done
+
 # CHANGELOG headings, each in the file's own style
 chk_heading() { # <file> <exact heading line>
   if grep -qxF -- "$2" "$1"; then ok "$1: $2"; else fail "$1 lacks heading '$2'"; fi

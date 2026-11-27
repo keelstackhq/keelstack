@@ -553,6 +553,28 @@ jobs:
         run: node --test npm/hoist/test/*.test.js
         env:
           HOIST_E2E_BIN: ${{ github.workspace }}/target/debug/hoist
+      # This repo's system.toml and SYSTEM.md, offline (D-031; no new job, D-007). Same rule as
+      # system-check.yml: exit 2 (rotation due) and drift that is only `metadata` (TODO or
+      # missing dates) warn; any other drift or exit 3 fails.
+      - name: hoist system check and explain --check
+        run: |
+          set +e
+          ./target/debug/hoist system check --json > "$RUNNER_TEMP/system-offline.json"
+          code=$?
+          set -e
+          case "$code" in
+            0 | 2) ;;
+            1)
+              if jq -e '[.items[] | select(.action == "drift")] | length > 0 and all(.kind == "metadata")' "$RUNNER_TEMP/system-offline.json" > /dev/null; then
+                echo "::warning::hoist system check: only metadata drift (TODO or missing dates); run hoist system stamp"
+              else
+                ./target/debug/hoist system check || true
+                echo "::error::hoist system check: drift in system.toml"; exit 1
+              fi
+              ;;
+            *) ./target/debug/hoist system check || true; echo "::error::hoist system check exited $code"; exit 1 ;;
+          esac
+          ./target/debug/hoist system explain --check --catalog decisions/channel/pieces/catalog/files/catalog.toml
 
   ci-hoard:
     needs: detect

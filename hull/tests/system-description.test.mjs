@@ -245,6 +245,20 @@ test("system-check.yml: weekly, default branch, one job, least privilege, no sec
   assert.deepEqual(ciMinutes(wfText), []);
 });
 
+test("system-check.yml: metadata-only offline drift (fresh seed) warns, real drift or exit 3 fails", () => {
+  const job = YAML.parse(wfText).jobs.check;
+  const fail = job.steps.find((s) => /Fail on offline drift/.test(s.name ?? ""));
+  assert.ok(fail, "fail step");
+  assert.match(wfText, /hoist system check --json > "\$RUNNER_TEMP\/system-offline\.json"/);
+  assert.equal(fail.env.OFFLINE_REPORT, "${{ runner.temp }}/system-offline.json");
+  assert.match(
+    fail.run,
+    /select\(\.action == "drift"\)\] \| length > 0 and all\(\.kind == "metadata"\)/,
+  );
+  assert.match(fail.run, /\*\) echo .*exit 1 ;;/);
+  assert.match(wfText, /bump-version\.sh keeps\n\s*# HOIST_VERSION in lockstep/);
+});
+
 test("system-check.yml: every action pinned to a SHA another template workflow already uses", () => {
   const known = new Set();
   const walk = (d) =>

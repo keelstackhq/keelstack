@@ -14,6 +14,9 @@
 #                               hull/ or node_modules/
 #   - */pnpm-lock.yaml          the `specifier:` of those sibling platform pins
 #   - splice/action/action.yml  the `version` input default (the Action installs this splice)
+#   - hull/template*/pieces/base/files/.github/workflows/system-check.yml
+#                               `HOIST_VERSION: "..."` (the hoist a generated repo's weekly
+#                               system check installs)
 #   - CHANGELOG.md of a folder  a `## X.Y.Z` heading in the file's own style: `## Unreleased`
 #                               stays on top, empty, and its entries fall under the new heading;
 #                               a `## vA.B.C - unreleased` top heading (hull) is renamed;
@@ -182,6 +185,15 @@ set_action_pin() {
   '
 }
 [ ! -f splice/action/action.yml ] || apply splice/action/action.yml set_action_pin
+
+# --- 5b. the hoist the hull templates' weekly system-check.yml installs ----------------------
+set_hoist_pin() {
+  sed -E "s/^([[:space:]]*HOIST_VERSION:[[:space:]]*)\"[0-9]+\.[0-9]+\.[0-9]+\"[[:space:]]*\$/\1\"$ver\"/"
+}
+for t in template template-rust; do
+  f=hull/$t/pieces/base/files/.github/workflows/system-check.yml
+  [ ! -f "$f" ] || apply "$f" set_hoist_pin
+done
 
 # --- 6. CHANGELOG.md of each folder ------------------------------------------------------------
 set_changelog() {
