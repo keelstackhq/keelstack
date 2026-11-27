@@ -1,0 +1,164 @@
+# System description (D-031, hoist spec §17): every external system and every credential of this
+# repo, by name and metadata only, NEVER values. Seeded once by the template; it is yours now.
+# - A new secret adds its [[credential]] in the same PR, or `hoist system check` fails (undeclared).
+# - Replace every TODO (`TODO/TODO` is this repo as owner/name, `owner` who answers for it). Dates
+#   are left out on purpose: record them from the provider's console with
+#   `hoist system stamp <id> --created YYYY-MM-DD --expires YYYY-MM-DD|never`; until then the
+#   weekly system-check.yml reports `metadata` drift.
+# - Set `provider_ref` (the provider's token id, or `hoist:<name>` for a token hoist minted) so
+#   `hoist system check --live` finds the token; without it the live item is `unknown`.
+# - SYSTEM.md is generated, never hand-edited: `hoist system explain --write`.
+# - Keyless first: crates.io trusted publishing, GitHub App tokens over PATs, and Google workload
+#   identity federation instead of service-account keys ([[trust]] entries below).
+version = 1
+
+[system]
+name = "TODO/TODO"
+owner = "TODO"
+description = "TODO: what this repo runs and where"
+
+[[provider]]
+id = "github"
+capability = "vcs+ci"
+account = "TODO"
+console = "https://github.com/TODO/TODO/settings/environments"
+docs = "https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions"
+clis = [{ tool = "gh", mise = "gh" }, { tool = "hoist", mise = "npm:@keelstackhq/hoist" }]
+alternatives = ["gitlab", "forgejo"]
+{% if "rust-cli" in pieces %}
+[[provider]]
+id = "crates"
+capability = "registry.crates"
+account = "TODO"
+console = "https://crates.io/settings/tokens"
+docs = "https://crates.io/docs/trusted-publishing"
+clis = [{ tool = "cargo", mise = "rust" }]
+{% endif %}{% if "fly" in pieces %}
+[[provider]]
+id = "fly"
+capability = "paas.container"
+account = "TODO"
+console = "https://fly.io/dashboard"
+docs = "https://fly.io/docs/security/tokens/"
+clis = [{ tool = "flyctl", mise = "flyctl" }]
+alternatives = ["railway", "render"]
+{% endif %}{% if "circleci" in pieces %}
+# CircleCI keeps its secrets in contexts (no storage kind here); name them in `notes`.
+[[provider]]
+id = "circleci"
+capability = "ci"
+account = "TODO"
+console = "https://app.circleci.com/"
+docs = "https://circleci.com/docs/contexts/"
+clis = [{ tool = "circleci", mise = "circleci" }]
+alternatives = ["github"]
+{% endif %}
+[[credential]]
+id = "splice-app-key"
+provider = "github"
+kind = "app_key"
+role = "update-pr"
+purpose = "Private key of the GitHub App whose token opens the weekly `splice update` PR (splice.yml), so the PR runs CI"
+owner = "TODO"
+principal = "GitHub App (client id: variable SPLICE_APP_CLIENT_ID)"
+expires_at = "never"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate splice-app-key", steps = ["Generate a new private key on the App's settings page", "gh secret set SPLICE_APP_KEY --env splice-bot < key.pem, then delete the PEM", "Run splice.yml by hand (workflow_dispatch)", "Delete the old key on the App's settings page"] }
+storage = [{ kind = "gh-env-secret", repo = "TODO/TODO", env = "splice-bot", key = "SPLICE_APP_KEY" }]
+consumers = [{ workflow = "splice.yml", job = "update", environment = "splice-bot" }]
+
+[[credential]]
+id = "splice-bot-token"
+provider = "github"
+kind = "api_token"
+role = "update-pr-fallback"
+purpose = "Fallback for repos without the splice App: fine-grained PAT (Contents, Pull requests, Workflows: write) for the splice update PR"
+owner = "TODO"
+max_ttl = "90d"
+rotate_every = "90d"
+keyless_exempt = "Optional fallback; prefer the App (splice-app-key) and leave SPLICE_BOT_TOKEN unset"
+rotation = { strategy = "manual", command = "hoist secrets rotate splice-bot-token", steps = ["Create a fine-grained PAT for this repo only (Contents, Pull requests, Workflows: write; 90 days)", "gh secret set SPLICE_BOT_TOKEN --env splice-bot", "Revoke the old PAT"] }
+storage = [{ kind = "gh-env-secret", repo = "TODO/TODO", env = "splice-bot", key = "SPLICE_BOT_TOKEN" }]
+consumers = [{ workflow = "splice.yml", job = "update", environment = "splice-bot" }]
+
+[[credential]]
+id = "hoist-release-app-key"
+provider = "github"
+kind = "app_key"
+role = "release"
+purpose = "Private key of the release GitHub App: pushes release tags past the tag ruleset (publish) and opens the release PR so it runs CI (prepare)"
+owner = "TODO"
+principal = "GitHub App (client id: variable HOIST_RELEASE_APP_CLIENT_ID)"
+expires_at = "never"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate hoist-release-app-key", steps = ["Generate a new private key on the App's settings page", "gh secret set HOIST_RELEASE_APP_KEY --env release < key.pem and again with --env release-pr, then delete the PEM", "Delete the old key on the App's settings page"] }
+storage = [
+  { kind = "gh-env-secret", repo = "TODO/TODO", env = "release", key = "HOIST_RELEASE_APP_KEY" },
+  { kind = "gh-env-secret", repo = "TODO/TODO", env = "release-pr", key = "HOIST_RELEASE_APP_KEY" },
+]
+consumers = [
+  { workflow = "release.yml", job = "publish", environment = "release" },
+  { workflow = "release.yml", job = "prepare", environment = "release-pr" },
+]
+
+[[credential]]
+id = "hoist-release-token"
+provider = "github"
+kind = "api_token"
+role = "release-pr-fallback"
+purpose = "Fallback for repos without the release App: fine-grained PAT (Contents, Pull requests: write) so the release PR runs CI"
+owner = "TODO"
+max_ttl = "90d"
+rotate_every = "90d"
+keyless_exempt = "Optional fallback; prefer the App (hoist-release-app-key) and leave HOIST_RELEASE_TOKEN unset"
+rotation = { strategy = "manual", command = "hoist secrets rotate hoist-release-token", steps = ["Create a fine-grained PAT for this repo only (Contents, Pull requests: write; 90 days)", "gh secret set HOIST_RELEASE_TOKEN --env release-pr", "Revoke the old PAT"] }
+storage = [{ kind = "gh-env-secret", repo = "TODO/TODO", env = "release-pr", key = "HOIST_RELEASE_TOKEN" }]
+consumers = [{ workflow = "release.yml", job = "prepare", environment = "release-pr" }]
+{% if "fly" in pieces %}
+[[credential]]
+id = "fly-deploy"
+provider = "fly"
+kind = "deploy_token"
+role = "deploy"
+purpose = "Fly deploy token for the service app (deploy.yml, environment production); created by scripts/fly-setup.sh --set-gh-secret production"
+owner = "TODO"
+resources = ["app:TODO"]
+# provider_ref = "<Fly token id from `fly tokens list -a <app>`>"
+max_ttl = "1y"
+rotate_every = "1y"
+rotation = { strategy = "auto", command = "hoist secrets rotate fly-deploy", steps = ["Set provider_ref and resources app:<name> first; hoist creates a deploy token, tests it, stores it in environment production, then revokes the old one", "Then record it: hoist system stamp fly-deploy --created <day> --expires <day>"] }
+storage = [{ kind = "gh-env-secret", repo = "TODO/TODO", env = "production", key = "FLY_API_TOKEN" }]
+consumers = [{ workflow = "deploy.yml", job = "deploy", environment = "production" }]
+{% endif %}{% if "rust-cli" in pieces %}
+# crates.io trusted publishing cannot create a crate: the first publish of each new crate runs
+# `hoist release bootstrap` on the owner's computer with a short-lived token, revoked right after.
+# Set status = "revoked" once every crate exists and its trusted publisher is registered.
+[[credential]]
+id = "crates-first-publish"
+provider = "crates"
+kind = "api_token"
+role = "first-publish"
+purpose = "Short-lived crates.io token for the first publish of a new crate (hoist release bootstrap), never stored in CI"
+owner = "TODO"
+scopes = ["publish-new"]
+max_ttl = "7d"
+rotate_every = "7d"
+keyless_exempt = "crates.io trusted publishing cannot create a crate; later releases publish by OIDC from release.yml"
+rotation = { strategy = "assisted", command = "hoist secrets rotate crates-first-publish", steps = ["Create a crates.io token with scope publish-new (7 days)", "CARGO_REGISTRY_TOKEN in your shell only: hoist release bootstrap (--dry-run first)", "Register the trusted publisher (release.yml, environment release) on the crate's settings page", "Revoke the token on crates.io"] }
+consumers = [{ runtime = "owner shell: hoist release bootstrap" }]
+{% endif %}
+[[trust]]
+provider = "github"
+kind = "github-app"
+subject = "splice App (SPLICE_APP_CLIENT_ID) and release App (HOIST_RELEASE_APP_CLIENT_ID)"
+replaces = "pat"
+{% if "rust-cli" in pieces %}
+# Trusted publishing (OIDC): release.yml's publish job (id-token: write) publishes crates, no token.
+[[trust]]
+provider = "crates"
+kind = "oidc-trusted-publishing"
+subject = "TODO/TODO release.yml, environment release"
+replaces = "publish"
+{% endif %}
+# Google APIs (Search Console, GCP): use workload identity federation, never a service-account key:
+# [[trust]] provider = "google", kind = "wif", subject = "<pool>/<provider> for TODO/TODO".

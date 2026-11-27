@@ -1,0 +1,243 @@
+# System description (D-031, hoist spec §17): every external system and every credential of this
+# repo, by name and metadata only, NEVER values. Seeded once by the template; it is yours now.
+# - A new secret adds its [[credential]] in the same PR, or `hoist system check` fails (undeclared).
+# - Replace every TODO (`{{ scope }}/TODO` is this repo, `owner` who answers for it). Dates are left
+#   out on purpose: record them from the provider's console with
+#   `hoist system stamp <id> --created YYYY-MM-DD --expires YYYY-MM-DD|never`; until then the
+#   weekly system-check.yml reports `metadata` drift.
+# - Set `provider_ref` (the provider's token id, or `hoist:<name>` for a token hoist minted) so
+#   `hoist system check --live` finds the token; without it the live item is `unknown`.
+# - SYSTEM.md is generated, never hand-edited: `hoist system explain --write`.
+# - Keyless first: npm (and crates.io) trusted publishing, GitHub App tokens over PATs, and Google
+#   workload identity federation instead of service-account keys ([[trust]] entries below).
+version = 1
+
+[system]
+name = "{{ scope }}/TODO"
+owner = "TODO"
+description = "TODO: what this repo runs and where"
+
+[[provider]]
+id = "github"
+capability = "vcs+ci"
+account = "{{ scope }}"
+console = "https://github.com/{{ scope }}/TODO/settings/environments"
+docs = "https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions"
+clis = [{ tool = "gh", mise = "gh" }, { tool = "hoist", mise = "npm:@keelstackhq/hoist" }]
+alternatives = ["gitlab", "forgejo"]
+
+[[provider]]
+id = "cloudflare"
+capability = "dns+cdn"
+account = "TODO"
+console = "https://dash.cloudflare.com/profile/api-tokens"
+docs = "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+clis = [{ tool = "wrangler", mise = "npm:wrangler" }]
+alternatives = ["bunny", "netlify"]
+{% if "secrets" in pieces %}
+[[provider]]
+id = "sops"
+capability = "secrets.sops"
+account = "{{ scope }}/secrets-shared"
+console = "https://github.com/{{ scope }}/secrets-shared"
+docs = "https://github.com/getsops/sops"
+clis = [{ tool = "hoist", mise = "npm:@keelstackhq/hoist" }, { tool = "sops", mise = "sops" }, { tool = "age", mise = "age" }]
+{% endif %}{% if "circleci" in pieces %}
+# CircleCI keeps its secrets in contexts (no storage kind here); name them in `notes`.
+[[provider]]
+id = "circleci"
+capability = "ci"
+account = "{{ scope }}"
+console = "https://app.circleci.com/"
+docs = "https://circleci.com/docs/contexts/"
+clis = [{ tool = "circleci", mise = "circleci" }]
+alternatives = ["github"]
+{% endif %}{# same-branches #}{% if "npm-cli" in pieces %}
+[[provider]]
+id = "npm"
+capability = "registry.npm"
+account = "{{ scope }}"
+console = "https://www.npmjs.com/settings/{{ scope }}/packages"
+docs = "https://docs.npmjs.com/trusted-publishers"
+clis = [{ tool = "npm", mise = "node" }]
+alternatives = ["jsr"]
+{% elif "ts-lib" in pieces %}
+[[provider]]
+id = "npm"
+capability = "registry.npm"
+account = "{{ scope }}"
+console = "https://www.npmjs.com/settings/{{ scope }}/packages"
+docs = "https://docs.npmjs.com/trusted-publishers"
+clis = [{ tool = "npm", mise = "node" }]
+alternatives = ["jsr"]
+{% endif %}
+[[credential]]
+id = "splice-app-key"
+provider = "github"
+kind = "app_key"
+role = "update-pr"
+purpose = "Private key of the GitHub App whose token opens the weekly `splice update` PR (splice.yml), so the PR runs CI"
+owner = "TODO"
+principal = "GitHub App (client id: variable SPLICE_APP_CLIENT_ID)"
+expires_at = "never"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate splice-app-key", steps = ["Generate a new private key on the App's settings page", "gh secret set SPLICE_APP_KEY --env splice-bot < key.pem, then delete the PEM", "Run splice.yml by hand (workflow_dispatch)", "Delete the old key on the App's settings page"] }
+storage = [{ kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "splice-bot", key = "SPLICE_APP_KEY" }]
+consumers = [{ workflow = "splice.yml", job = "update", environment = "splice-bot" }]
+
+[[credential]]
+id = "splice-bot-token"
+provider = "github"
+kind = "api_token"
+role = "update-pr-fallback"
+purpose = "Fallback for repos without the splice App: fine-grained PAT (Contents, Pull requests, Workflows: write) for the splice update PR"
+owner = "TODO"
+max_ttl = "90d"
+rotate_every = "90d"
+keyless_exempt = "Optional fallback; prefer the App (splice-app-key) and leave SPLICE_BOT_TOKEN unset"
+rotation = { strategy = "manual", command = "hoist secrets rotate splice-bot-token", steps = ["Create a fine-grained PAT for this repo only (Contents, Pull requests, Workflows: write; 90 days)", "gh secret set SPLICE_BOT_TOKEN --env splice-bot", "Revoke the old PAT"] }
+storage = [{ kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "splice-bot", key = "SPLICE_BOT_TOKEN" }]
+consumers = [{ workflow = "splice.yml", job = "update", environment = "splice-bot" }]
+{% if "secrets" in pieces %}
+# With the secrets piece the Cloudflare values live encrypted in {{ scope }}/secrets-shared
+# (secrets.toml); the hoist action decrypts them inside the deploy jobs only.
+[[credential]]
+id = "cloudflare-preview"
+provider = "cloudflare"
+kind = "api_token"
+role = "deploy-preview"
+purpose = "Upload PR preview versions of apps/*/wrangler.jsonc Workers (preview-deploy.yml, environment preview)"
+owner = "TODO"
+scopes = ["Workers Scripts Write"]
+# provider_ref = "<Cloudflare token id>"
+max_ttl = "1y"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate cloudflare-preview", steps = ["Create a new token in the Cloudflare dashboard (Workers Scripts Edit, this account, 1 year)", "Owner: store it in secrets-shared preview/cloudflare.sops.yaml (`hoist secrets edit`)", "Re-run a PR's preview-deploy", "Revoke the old token"] }
+storage = [{ kind = "sops", path = "preview/cloudflare.sops.yaml", key = "CLOUDFLARE_API_TOKEN" }]
+consumers = [{ runtime = "hoist secrets exec: preview-deploy.yml deploy (environment preview)" }]
+
+[[credential]]
+id = "cloudflare-prod"
+provider = "cloudflare"
+kind = "api_token"
+role = "deploy"
+purpose = "Deploy apps/* to production on push to main (deploy.yml, environment prod)"
+owner = "TODO"
+scopes = ["Workers Scripts Write"]
+# provider_ref = "<Cloudflare token id>"
+max_ttl = "1y"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate cloudflare-prod", steps = ["Create a new token in the Cloudflare dashboard (Workers Scripts Edit, this account, 1 year)", "Owner: store it in secrets-shared prod/cloudflare.sops.yaml (`hoist secrets edit`)", "Run deploy.yml by hand", "Revoke the old token"] }
+storage = [{ kind = "sops", path = "prod/cloudflare.sops.yaml", key = "CLOUDFLARE_API_TOKEN" }]
+consumers = [{ runtime = "hoist secrets exec: the prod deploy job" }]
+
+[[credential]]
+id = "cloudflare-account"
+provider = "cloudflare"
+kind = "other"
+role = "config"
+purpose = "Cloudflare account id for wrangler (not a credential, kept beside the tokens)"
+owner = "TODO"
+expires_at = "never"
+rotation = { strategy = "manual", command = "hoist secrets rotate cloudflare-account", steps = ["Only when the account changes: update CLOUDFLARE_ACCOUNT_ID in both secrets-shared bundles"] }
+storage = [
+  { kind = "sops", path = "preview/cloudflare.sops.yaml", key = "CLOUDFLARE_ACCOUNT_ID" },
+  { kind = "sops", path = "prod/cloudflare.sops.yaml", key = "CLOUDFLARE_ACCOUNT_ID" },
+]
+consumers = [{ runtime = "hoist secrets exec: preview-deploy.yml and deploy.yml deploy" }]
+
+[[credential]]
+id = "sops-age-key"
+provider = "sops"
+kind = "age_key"
+role = "decrypt"
+purpose = "CI age key per environment: decrypts this repo's secrets-shared bundles inside the deploy jobs"
+owner = "TODO"
+principal = "age recipient of {{ scope }}/TODO in secrets-shared access.toml"
+expires_at = "never"
+rotate_every = "1y"
+rotation = { strategy = "assisted", command = "hoist secrets rotate sops-age-key", steps = ["Owner: mint a new CI age key and store it as SOPS_AGE_KEY per environment (`hoist secrets grant`)", "Re-encrypt the bundles for the new recipient and drop the old one in secrets-shared", "Re-run preview-deploy and deploy"] }
+{% if "circleci-only" in pieces %}notes = "The prod age key lives in the CircleCI prod context (no GitHub storage)"
+storage = [{ kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "preview", key = "SOPS_AGE_KEY" }]
+consumers = [{ workflow = "preview-deploy.yml", job = "deploy", environment = "preview" }]
+{% else %}storage = [
+  { kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "preview", key = "SOPS_AGE_KEY" },
+  { kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "prod", key = "SOPS_AGE_KEY" },
+]
+consumers = [
+  { workflow = "preview-deploy.yml", job = "deploy", environment = "preview" },
+  { workflow = "deploy.yml", job = "deploy", environment = "prod" },
+]
+{% endif %}
+[[credential]]
+id = "secrets-read-app-key"
+provider = "github"
+kind = "app_key"
+role = "read-secrets-repo"
+purpose = "Private key of the GitHub App that reads secrets-shared (Contents: read) for the hoist secrets action"
+owner = "TODO"
+principal = "GitHub App (id: org variable SECRETS_READ_APP_ID)"
+expires_at = "never"
+rotate_every = "1y"
+notes = "An org secret restricted to the consumer repos (recorded as gh-secret of this repo){% if "circleci" in pieces %}; also in CircleCI context secrets-read{% endif %}"
+rotation = { strategy = "assisted", command = "hoist secrets rotate secrets-read-app-key", steps = ["Generate a new private key on the App's settings page", "gh secret set SECRETS_READ_APP_KEY --org {{ scope }} --visibility selected --repos <consumers> < key.pem, then delete the PEM", "Re-run a deploy", "Delete the old key on the App's settings page"] }
+storage = [{ kind = "gh-secret", repo = "{{ scope }}/TODO", key = "SECRETS_READ_APP_KEY" }]
+{% if "circleci-only" in pieces %}consumers = [{ workflow = "preview-deploy.yml", job = "deploy", environment = "preview" }]
+{% else %}consumers = [
+  { workflow = "preview-deploy.yml", job = "deploy", environment = "preview" },
+  { workflow = "deploy.yml", job = "deploy", environment = "prod" },
+]
+{% endif %}{% else %}
+[[credential]]
+id = "cloudflare-preview"
+provider = "cloudflare"
+kind = "api_token"
+role = "deploy-preview"
+purpose = "Upload PR preview versions of apps/*/wrangler.jsonc Workers (preview-deploy.yml, environment preview)"
+owner = "TODO"
+scopes = ["Workers Scripts Write"]
+# provider_ref = "<Cloudflare token id>"   (or "hoist:<name>" for a token hoist minted)
+max_ttl = "1y"
+rotate_every = "1y"
+rotation = { strategy = "auto", command = "hoist secrets rotate cloudflare-preview", steps = ["Set provider_ref first; hoist creates the new token, tests it, stores it in environment preview, then revokes the old one", "Then record it: hoist system stamp cloudflare-preview --created <day> --expires <day>"] }
+storage = [{ kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "preview", key = "CLOUDFLARE_API_TOKEN" }]
+consumers = [{ workflow = "preview-deploy.yml", job = "deploy", environment = "preview" }]
+
+[[credential]]
+id = "cloudflare-account"
+provider = "cloudflare"
+kind = "other"
+role = "config"
+purpose = "Cloudflare account id for wrangler (not a credential, kept beside the token)"
+owner = "TODO"
+expires_at = "never"
+rotation = { strategy = "manual", command = "hoist secrets rotate cloudflare-account", steps = ["Only when the account changes: gh secret set CLOUDFLARE_ACCOUNT_ID --env preview"] }
+storage = [{ kind = "gh-env-secret", repo = "{{ scope }}/TODO", env = "preview", key = "CLOUDFLARE_ACCOUNT_ID" }]
+consumers = [{ workflow = "preview-deploy.yml", job = "deploy", environment = "preview" }]
+{% endif %}
+[[trust]]
+provider = "github"
+kind = "github-app"
+subject = "splice App (variable SPLICE_APP_CLIENT_ID){% if "secrets" in pieces %} and the secrets-read App (SECRETS_READ_APP_ID){% endif %}"
+replaces = "pat"
+{# same-branches #}{% if "npm-cli" in pieces %}
+# Trusted publishing (OIDC): release.yml's npm job publishes with id-token: write, no npm token.
+# A never-published package needs its first publish and trusted publisher set up by the owner
+# (`hoist release bootstrap`, npm login + 2FA, no stored token).
+[[trust]]
+provider = "npm"
+kind = "oidc-trusted-publishing"
+subject = "{{ scope }}/TODO release.yml, environment release"
+replaces = "publish"
+{% elif "ts-lib" in pieces %}
+# Trusted publishing (OIDC): release.yml's npm job publishes with id-token: write, no npm token.
+# A never-published package needs its first publish and trusted publisher set up by the owner
+# (`hoist release bootstrap`, npm login + 2FA, no stored token).
+[[trust]]
+provider = "npm"
+kind = "oidc-trusted-publishing"
+subject = "{{ scope }}/TODO release.yml, environment release"
+replaces = "publish"
+{% endif %}
+# Google APIs (Search Console, GCP): use workload identity federation, never a service-account key:
+# [[trust]] provider = "google", kind = "wif", subject = "<pool>/<provider> for {{ scope }}/TODO".

@@ -1,0 +1,65 @@
+name: system-check
+
+# Weekly `hoist system check --live` against system.toml (D-031, hoist spec §17.4-17.5; D-007:
+# crons at most weekly). It keeps ONE issue labelled `system-check` current: opened or updated on
+# drift or a due rotation, closed when clean. Live reads use github.token only; a provider whose
+# token is missing reports `unknown`, never a failure. The job fails only on offline drift
+# (`hoist system check` exit 1: undeclared or unused secrets, missing dates, expiry) or an invalid
+# system.toml (exit 3). It reads no secret; a read-only provider token would be one more
+# credential and needs its own [[credential]] entry first. Run it by hand: Actions > system-check.
+on:
+  schedule:
+    - cron: "41 5 * * 3"
+  workflow_dispatch:
+
+concurrency:
+  group: system-check
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: "24"
+          package-manager-cache: false
+      # hoist 0.26.0 is the first release with `hoist system` (lockstep with this template).
+      - run: npm install -g --ignore-scripts "@keelstackhq/hoist@$HOIST_VERSION"
+        env:
+          HOIST_VERSION: "0.26.0"
+      - id: check
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          hoist system check --live --json > "$RUNNER_TEMP/system-check.json"
+          echo "live=$?" >> "$GITHUB_OUTPUT"
+          hoist system check --json > /dev/null
+          echo "offline=$?" >> "$GITHUB_OUTPUT"
+      - name: Open, update or close the system-check issue
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SYSTEM_EXIT: ${{ steps.check.outputs.live }}
+          SYSTEM_REPORT: ${{ runner.temp }}/system-check.json
+        run: node .github/scripts/system-issue.mjs
+      - name: Fail on offline drift or an invalid system.toml
+        env:
+          OFFLINE: ${{ steps.check.outputs.offline }}
+        run: |
+          case "$OFFLINE" in
+            0 | 2) echo "hoist system check: exit $OFFLINE (0 clean, 2 rotation due)" ;;
+            *) echo "hoist system check: exit $OFFLINE (1 drift, 3 invalid system.toml); see the system-check issue" >&2; exit 1 ;;
+          esac

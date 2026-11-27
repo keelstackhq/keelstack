@@ -250,6 +250,30 @@ Root files (class in brackets):
   marked `npm-cli`/`ts-lib` chain) it adds a `## Blocked` section with the human release steps of
   §8.7. A seed renders only on `new`, so the owned npm-cli and ts-lib `AGENTS.md` files carry the
   same steps for a later `splice add`.
+- `system.toml.jinja` [seed] (D-031, hoist spec §17, 2026-11-27; both templates, template-rust
+  has its own): `[system]` with `{{ scope }}/TODO` as name and `owner = "TODO"`, a github
+  `[[provider]]`, and per piece (`"id" in pieces`, marked chains for npm-cli/ts-lib) the providers
+  (cloudflare always in `template/`: preview-deploy.yml reads `CLOUDFLARE_*`; sops with secrets;
+  circleci; npm; crates and fly in template-rust) and one `[[credential]]` per secret the rendered
+  workflows read or `secrets.toml` lists: purpose, owner, role, kind, storage, consumers (the
+  `{workflow, job, environment}` that read it; `runtime` for values the hoist action decrypts and
+  the local first crates.io publish), `max_ttl`/`rotate_every`, `rotation` with
+  `command = "hoist secrets rotate <id>"` and steps. `created_at`/`expires_at` (except `"never"`
+  for keys that cannot expire) are left for `hoist system stamp`, so `hoist system check` reports
+  `metadata` drift until the owner records them; `provider_ref` is a commented hint. Keyless:
+  `[[trust]]` github-app always, npm trusted publishing with npm-cli/ts-lib, crates.io trusted
+  publishing with template-rust rust-cli (its first publish: credential `crates-first-publish`,
+  assisted, `keyless_exempt`); PAT fallbacks carry `keyless_exempt` and prefer the App; Google WIF is
+  a comment. `tests/system-description.test.mjs` validates every combo against
+  `hoist/schema/system.schema.json` and mirrors the offline check. SYSTEM.md is not shipped
+  (`hoist system explain --write` makes it on demand; PR CI has no hoist).
+- `.github/workflows/system-check.yml` + `.github/scripts/system-issue.mjs` [owned, shared with
+  template-rust by `scripts/sync-shared.mjs`]: weekly cron + `workflow_dispatch`, one job gated
+  to those events on the default branch, `contents: read` + `issues: write`, no secrets (live
+  probes get `github.token`; a missing provider token is `unknown`). It installs the pinned
+  `@keelstackhq/hoist` from npm, runs `hoist system check --live --json` (the issue body) and
+  `hoist system check --json` (the gate), keeps one issue labelled `system-check` (create or
+  update on exit 1/2/3, close on 0) and fails only on offline exit 1 or 3.
 - AI layer, §6.9.
 
 ### 6.2 `preact-app`

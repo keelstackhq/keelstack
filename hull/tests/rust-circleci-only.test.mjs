@@ -65,6 +65,7 @@ test("circleci-only render has no ci.yml but release, splice, the mirror and .ci
     "circleci-status.yml",
     "release.yml",
     "splice.yml",
+    "system-check.yml",
   ]);
   assert.ok(!existsSync(join(only.out, ".github/workflows/ci.yml")));
   for (const f of [".circleci/config.yml", ".circleci/src/jobs/ci-ok.yml"])

@@ -15,6 +15,8 @@ export const SHARED = [
   ".claude/hooks/guard.mjs",
   ".claude/hooks/guard-legacy.mjs",
   ".github/scripts/workflows.mjs",
+  ".github/scripts/system-issue.mjs",
+  ".github/workflows/system-check.yml",
   ".claude/skills/ready/SKILL.md",
   ".claude/agents/explore.md",
   ".claude/agents/implementer.md",

@@ -77,6 +77,8 @@ change under `template/` or `scripts/`, run dogfood for the combos `affected-com
 - **Generated `AGENTS.md` + `CLAUDE.md` ≤ 80 lines** (`AGENTS.md` ≤ 60, `CLAUDE.md` ≤ 20). Per-instance notes:
   `<target>/AGENTS.md` owned, `<target>/CLAUDE.md` seed.
 - **No secrets in logs** (hono-worker logs never include query strings, headers or bodies).
+- **A secret a template workflow reads has its `[[credential]]`** in the base `system.toml.jinja`
+  of that template (D-031); `tests/system-description.test.mjs` mirrors `hoist system check`.
 
 ## How to work here
 

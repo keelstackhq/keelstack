@@ -125,6 +125,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 - 2026-11-23 · WG/T1+T3 (#64, #46): guard allows PR creation via `gh api`, data words in PR bodies, quoted redirects as data, `find -delete` on guarded dirs refused; proxy-ca test-only update gated by the test store.
 - 2026-11-23 · Guard feedback from a consumer repo: scripts a command runs are read, `$(...)` parse fixed, workflow dispatch/re-run via `gh api` (claude/guard-feedback).
 - 2026-11-27 · D-030 · `feat(hull): cascivo is the default UI` · astro-site on React islands + `@cascivo/astro`, `## UI` section in AGENTS.md, UI rules in preact-app/ui-storybook, cascivo docspack 0.3.5, combo `site-web`; spec §6.2-6.4, §6.9, §7, §8.6, §10.1
+- 2026-11-27 · system description (D-031) · `feat(hull): seed system.toml and the weekly system-check workflow`
 
 ## Measurements
 
@@ -183,6 +184,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 
 - circleci-only repos with tauri-app (consumer step, also in the generated `AGENTS.md`): CircleCI Project Settings → Triggers → add a weekly scheduled trigger on branch `main` for the desktop builds.
 
+- system-check.yml hoist pin (both templates): `HOIST_VERSION: "0.26.0"` assumes the next lockstep release is the first npm `@keelstackhq/hoist` with `hoist system`. Action: after the release, `npm view @keelstackhq/hoist@0.26.0 version`; if the version differs, repin it in `template/pieces/base/files/.github/workflows/system-check.yml`, run `node scripts/sync-shared.mjs` and refresh `tests/fixtures/github-workflows.sha256.json`. Consumer step: replace every `TODO` in `system.toml` and record dates with `hoist system stamp`.
 - splice release that stops passing token variables to post hooks (cross-repo). Action: after it is out, repin `keelstackhq/splice/action` in `splice.yml` of hull, `template/` and `template-rust/` to that release's SHA.
 
 

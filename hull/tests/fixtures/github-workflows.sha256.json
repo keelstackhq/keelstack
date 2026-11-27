@@ -4,7 +4,8 @@
     "preview-deploy.yml": "7049e2e38d8c2b9f100c050da5515c986622e3f75da784ba304434ca2f8e9491",
     "preview.yml": "2effa921e46d8c405c9866d61a42f03b3d53e4913c94f8ff0f05f5ba6d632874",
     "release.yml": "0fac95240d67675e1c789b2980eada1869816ec24e489554fa774d60c450a3ca",
-    "splice.yml": "530710b16bf69fcbd4cf7bae6e103acae34a27107dff32497d037f90298d0cc3"
+    "splice.yml": "530710b16bf69fcbd4cf7bae6e103acae34a27107dff32497d037f90298d0cc3",
+    "system-check.yml": "1e38876b63a3386982d55b456d0fe81632d2edaddc0c073e6e36b8c74cc74b2c"
   },
   "desktop": {
     "ci.yml": "4c20a0d221344d2780fed9356571728fe38bca185959cffacd7ffa57d5dc2d83",
@@ -12,18 +13,21 @@
     "preview-deploy.yml": "7049e2e38d8c2b9f100c050da5515c986622e3f75da784ba304434ca2f8e9491",
     "preview.yml": "2effa921e46d8c405c9866d61a42f03b3d53e4913c94f8ff0f05f5ba6d632874",
     "release.yml": "0fac95240d67675e1c789b2980eada1869816ec24e489554fa774d60c450a3ca",
-    "splice.yml": "530710b16bf69fcbd4cf7bae6e103acae34a27107dff32497d037f90298d0cc3"
+    "splice.yml": "530710b16bf69fcbd4cf7bae6e103acae34a27107dff32497d037f90298d0cc3",
+    "system-check.yml": "1e38876b63a3386982d55b456d0fe81632d2edaddc0c073e6e36b8c74cc74b2c"
   },
   "rust": {
     "advisories.yml": "540ff43beab9c70b69f9eff791432abc8fc7896e511d6d7524b59a28fafa7be8",
     "ci.yml": "3ef1e9e7e1bf3567be5c7f32de03e3f0997c89979493248490ecefb7b49f8df6",
     "release.yml": "b2ca8634f305b44b1749c44c8427d739b15338e54108852a53d796a6e043bdbb",
-    "splice.yml": "193d75e2380ae5e62d1e0a52c7bddac077f5945a399a06e4759df72719fc65bf"
+    "splice.yml": "193d75e2380ae5e62d1e0a52c7bddac077f5945a399a06e4759df72719fc65bf",
+    "system-check.yml": "1e38876b63a3386982d55b456d0fe81632d2edaddc0c073e6e36b8c74cc74b2c"
   },
   "rust-circleci": {
     "advisories.yml": "540ff43beab9c70b69f9eff791432abc8fc7896e511d6d7524b59a28fafa7be8",
     "ci.yml": "3ef1e9e7e1bf3567be5c7f32de03e3f0997c89979493248490ecefb7b49f8df6",
     "release.yml": "b2ca8634f305b44b1749c44c8427d739b15338e54108852a53d796a6e043bdbb",
-    "splice.yml": "193d75e2380ae5e62d1e0a52c7bddac077f5945a399a06e4759df72719fc65bf"
+    "splice.yml": "193d75e2380ae5e62d1e0a52c7bddac077f5945a399a06e4759df72719fc65bf",
+    "system-check.yml": "1e38876b63a3386982d55b456d0fe81632d2edaddc0c073e6e36b8c74cc74b2c"
   }
 }
