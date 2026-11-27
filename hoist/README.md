@@ -288,8 +288,11 @@ description of the repo's external systems, credentials (purpose, owner, scopes,
 consumers, expiry, rotation) and keyless trusts, never values. `init [--print]` drafts it from
 workflows, `hoist.toml`, `secrets.toml`, `access.toml`, `org.toml` and `keel.toml` and writes only
 if absent; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and
-long-lived credentials where keyless exists; `explain [--write|--check]` renders `SYSTEM.md`.
-These send no HTTP and read no secret value.
+long-lived credentials where keyless exists; `explain [--catalog PATH] [--write|--check]` renders `SYSTEM.md`.
+With the org catalog of alternatives (`--catalog`, env `HOIST_CATALOG`, or `catalog.toml` next to
+`system.toml`; the decisions channel piece `catalog` ships it) each provider's `alternatives` are
+listed with name, docs, keyless options and migration notes; without a catalog the output is
+unchanged. These send no HTTP and read no secret value.
 
 `check --live` also asks each provider, GET only (Fly: read-only `fly tokens list` and
 `fly secrets list`): Cloudflare tokens (status, expiry, permission groups), GitHub repo and

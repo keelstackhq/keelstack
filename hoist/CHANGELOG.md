@@ -3,6 +3,7 @@
 ## Unreleased
 
 - `hoist system init|check|explain` and `system.toml` (D-031, spec §17): a cleartext description of a repo's external systems, credentials and keyless trusts; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and long-lived credentials where keyless exists; `explain --write` renders `SYSTEM.md`.
+- `hoist system explain --catalog PATH` (env `HOIST_CATALOG`, else `catalog.toml` next to `system.toml`) lists each provider's alternatives from the org catalog (spec §17.6) with name, docs, keyless options and migration; without a catalog the output is unchanged.
 
 ## 0.25.0 (2026-11-27)
 

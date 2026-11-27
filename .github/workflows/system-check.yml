@@ -1,0 +1,90 @@
+name: system-check
+
+# Weekly check of system.toml against the live providers (D-031, hoist spec §17.5). It keeps ONE
+# issue labelled `system-check` current (opened or edited while something is off, closed when
+# clean) and fails only on drift (exit 1) or a broken system.toml (exit 3); `unknown` (no token,
+# no probe) and a pending rotation (exit 2) never fail the job. Weekly, not nightly, and no
+# comment, label or edit trigger (D-007); the job-level `if:` skips every other event. hoist is
+# built from this workspace at the default branch head, never downloaded.
+#
+# Live tokens: only the job's own GITHUB_TOKEN. A provider token (Cloudflare, npm, crates, Fly)
+# would be one more credential and needs its own entry in system.toml first; until then those
+# providers report `unknown`.
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: system-check
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: "1.97"
+      - name: Build hoist
+        run: cargo build --release --locked -p keel-hoist --bin hoist
+      - name: hoist system check --live
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set +e
+          ./target/release/hoist system check --live --json > "$RUNNER_TEMP/system-check.json"
+          code=$?
+          echo "exit=$code" >> "$GITHUB_OUTPUT"
+          echo "hoist system check --live exited $code"
+          exit 0
+      - name: Update the system-check issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXIT: ${{ steps.check.outputs.exit }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          json="$RUNNER_TEMP/system-check.json"
+          title="system-check: system.toml needs attention"
+          gh label create system-check --color 5319e7 --description "hoist system check --live" --force >/dev/null
+          number=$(gh issue list --label system-check --state open --json number --jq '.[0].number // empty')
+          if [ "$EXIT" = "0" ]; then
+            if [ -n "$number" ]; then
+              gh issue close "$number" --comment "Clean again: $RUN_URL"
+            fi
+            exit 0
+          fi
+          if ! jq -e '.items' "$json" >/dev/null 2>&1; then
+            printf 'hoist exited %s without a report; see %s\n' "$EXIT" "$RUN_URL" > "$RUNNER_TEMP/body.md"
+          else
+            {
+              printf 'hoist system check --live exited %s (1 drift, 2 rotation due, 3 config). Run: %s\n\n' "$EXIT" "$RUN_URL"
+              printf '| kind | key | action | reason |\n| --- | --- | --- | --- |\n'
+              jq -r '.items[] | select(.action != "ok") | "| \(.kind) | \(.key) | \(.action) | \(.reason | gsub("[|\n]"; " ")) |"' "$json"
+              printf '\nFix: edit system.toml, then `hoist system explain --write`. Only metadata is listed, never values.\n'
+            } > "$RUNNER_TEMP/body.md"
+          fi
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --title "$title" --label system-check --body-file "$RUNNER_TEMP/body.md"
+          fi
+      - name: Fail on drift or a broken file
+        env:
+          EXIT: ${{ steps.check.outputs.exit }}
+        run: |
+          case "$EXIT" in
+            0|2) ;;
+            *) echo "::error::hoist system check --live exited $EXIT"; exit 1 ;;
+          esac

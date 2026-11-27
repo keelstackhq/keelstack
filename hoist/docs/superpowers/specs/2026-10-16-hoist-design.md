@@ -1860,7 +1860,7 @@ everywhere). This section was asked for as "§16"; §16 was already `hoist org`,
 ```
 hoist system init    [--print]                 # draft system.toml from the repo; writes only if absent
 hoist system check   [--file PATH] [--live]    # offline checks (17.4); --live adds per-provider reads (17.5)
-hoist system explain [--file PATH] [--write | --check]  # SYSTEM.md on stdout; --write writes it, --check diffs it
+hoist system explain [--file PATH] [--catalog PATH] [--write | --check]  # SYSTEM.md on stdout; --write writes it, --check diffs it
 hoist system stamp   ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF] [--file PATH]
 hoist secrets rotate ID                        # rotate a system.toml credential (17.8)
 ```
@@ -1912,7 +1912,7 @@ created_via = "Cloudflare dashboard > API Tokens > Create (template Edit Cloudfl
 expires_at = "2027-02-19"        # YYYY-MM-DD or "never"; required
 max_ttl = "90d"                  # <n>d|w|m|y: expires_at - created_at must not exceed it
 rotate_every = "90d"             # due once created_at + rotate_every <= now
-rotation = { strategy = "assisted", command = "hoist secrets rotate CLOUDFLARE_API_TOKEN", steps = ["…"] }
+rotation = { strategy = "assisted", command = "hoist secrets rotate site-deploy", steps = ["…"] }
 storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_API_TOKEN" }]
 consumers = [{ workflow = "deploy-site.yml", job = "deploy", environment = "site" }]
 provider_ref = "token id 0123…"  # the provider's id for it (no value)
@@ -2008,8 +2008,11 @@ an npm masked-prefix match needs a `provider_ref` word of at least 8 characters.
 
 ### 17.6 Org catalog of alternatives
 
-Data only (phase 3 ships it in the decisions channel as `catalog.toml`); `system.toml`
-`alternatives` and `capability` name its ids.
+Data only. It ships in the decisions channel as the piece `catalog`
+(`decisions/channel/pieces/catalog/files/catalog.toml`, owned file `catalog.toml` at the repo
+root; add it with `--piece catalog`). `system.toml` `alternatives` and `capability` name its ids.
+Unknown keys, `version` other than 1, a duplicate capability or alternative id and an
+alternative whose `capability` no `[[capability]]` declares are exit 3.
 
 ```toml
 version = 1
@@ -2020,10 +2023,13 @@ description = "Run a container behind HTTPS"
 id = "fly"                       # provider id, unique
 capability = "paas.container"    # must name a [[capability]]
 name = "Fly.io"
-docs = "https://fly.io/docs/"
+docs = "https://fly.io/docs/"    # optional
 keyless = ["oidc"]               # keyless auth the provider offers (may be empty)
 migration = "flyctl deploy from the same Dockerfile; move secrets with `fly secrets import`"
 ```
+
+The shipped capabilities are `vcs+ci`, `dns+cdn`, `paas.container`, `registry.npm`,
+`registry.crates`, `search-console`, `llm.api`, `secrets.kv` and `signing`.
 
 ### 17.7 `hoist system explain`
 
@@ -2034,6 +2040,13 @@ docs, CLIs, alternatives) and one table of its credentials (id, kind, role, purp
 consumers, created, expires, rotate); a "Rotation" section per credential with `strategy`,
 `command` and numbered `steps`; keyless trusts. `--write` writes `SYSTEM.md` next to the file
 (item `create`/`update`/`ok`); `--check` is exit 1 when `SYSTEM.md` differs (item `drift`).
+
+With a catalog (17.6) each provider that lists `alternatives` gets, after its table, a table
+`id | name | docs | keyless | migration` with one row per listed id, in the order listed; an id the
+catalog does not know shows `not in the catalog`. The catalog is `--catalog PATH`, else the env var
+`HOIST_CATALOG`, else `catalog.toml` next to the system file; a path from the flag or the env var
+that cannot be read is exit 3, no catalog found leaves the output exactly as without this feature.
+`--write` and `--check` use the same lookup, so run them the same way.
 
 ### 17.8 Rotation from `system.toml` and `hoist system stamp`
 

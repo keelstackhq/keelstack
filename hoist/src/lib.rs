@@ -159,10 +159,13 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
             command:
                 cli::SystemCommand::Explain {
                     ref file,
+                    ref catalog,
                     write,
                     check,
                 },
-        } => system::explain::system_explain(&dir, file.as_deref(), write, check),
+        } => {
+            system::explain::system_explain(&dir, file.as_deref(), catalog.as_deref(), write, check)
+        }
         Command::Secrets {
             command:
                 cli::SecretsCommand::Set {

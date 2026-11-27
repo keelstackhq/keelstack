@@ -49,6 +49,13 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | vcs+ci | keelstackhq | https://github.com/keelstackhq/keelstack/settings/environments | https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions | gh (mise `gh`), hoist (mise `npm:@keelstackhq/hoist`) | gitlab, forgejo |
 
+**Alternatives** for vcs+ci (catalog):
+
+| id | name | docs | keyless | migration |
+| --- | --- | --- | --- | --- |
+| gitlab | GitLab | https://docs.gitlab.com/ | oidc | Import the repo, port .github/workflows to .gitlab-ci.yml, replace GitHub environments with GitLab protected environments and CI/CD variables |
+| forgejo | Forgejo | https://forgejo.org/docs/latest/ | — | Mirror the repo, port workflows to Forgejo Actions (mostly GitHub Actions syntax), recreate secrets as Actions secrets |
+
 | credential | kind | role | purpose | storage | consumers | created | expires | rotate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | bosun-app-key | app_key | checks | Private key of the GitHub App keelstackhq-bosun-gate: mints installation tokens that post risk-check, review-verdict, main-open and bosun-ci-ok | `gh-env:bosun-app/BOSUN_APP_KEY` | main-health.yml:report, main-open.yml:judge, risk.yml:risk, signer.yml:mirror, signer.yml:judge, verdict.yml:verdict | — | never | — | active |
@@ -58,7 +65,15 @@ flowchart LR
 
 | capability | account | console | docs | CLIs | alternatives |
 | --- | --- | --- | --- | --- | --- |
-| dns+cdn | keelstackhq | https://dash.cloudflare.com/profile/api-tokens | https://developers.cloudflare.com/fundamentals/api/get-started/create-token/ | wrangler (mise `npm:wrangler`) | bunny, netlify |
+| dns+cdn | keelstackhq | https://dash.cloudflare.com/profile/api-tokens | https://developers.cloudflare.com/fundamentals/api/get-started/create-token/ | wrangler (mise `npm:wrangler`) | bunny, netlify, fastly |
+
+**Alternatives** for dns+cdn (catalog):
+
+| id | name | docs | keyless | migration |
+| --- | --- | --- | --- | --- |
+| bunny | Bunny.net | https://docs.bunny.net/ | — | Create a DNS zone and a pull zone or storage zone, copy the records, switch the nameservers; upload static files with the Storage API |
+| netlify | Netlify | https://docs.netlify.com/ | — | Connect the repo or run `netlify deploy --prod --dir dist`; move the domain to Netlify DNS or point a CNAME at the site |
+| fastly | Fastly | https://www.fastly.com/documentation/ | — | Create a service with the origin as backend, then point the domain's CNAME at Fastly; DNS stays at the current provider |
 
 | credential | kind | role | purpose | storage | consumers | created | expires | rotate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -73,6 +88,12 @@ flowchart LR
 | --- | --- | --- | --- | --- | --- |
 | registry.npm | keelstackhq | https://www.npmjs.com/settings/keelstackhq/packages | https://docs.npmjs.com/trusted-publishers | npm (mise `node`) | jsr |
 
+**Alternatives** for registry.npm (catalog):
+
+| id | name | docs | keyless | migration |
+| --- | --- | --- | --- | --- |
+| jsr | JSR | https://jsr.io/docs | oidc | Add jsr.json (name, version, exports) and publish with `npx jsr publish`; link the GitHub repo for tokenless publishing |
+
 ## crates
 
 | capability | account | console | docs | CLIs | alternatives |
@@ -83,7 +104,14 @@ flowchart LR
 
 | capability | account | console | docs | CLIs | alternatives |
 | --- | --- | --- | --- | --- | --- |
-| llm.api | keelstackhq | https://console.anthropic.com/settings/keys | https://docs.anthropic.com/en/api/getting-started | — | — |
+| llm.api | keelstackhq | https://console.anthropic.com/settings/keys | https://docs.anthropic.com/en/api/getting-started | — | openai, gemini |
+
+**Alternatives** for llm.api (catalog):
+
+| id | name | docs | keyless | migration |
+| --- | --- | --- | --- | --- |
+| openai | OpenAI API | https://platform.openai.com/docs | — | Swap the SDK and model name, adapt tool and message shapes, create a project key and store it as the same secret name |
+| gemini | Google Gemini API | https://ai.google.dev/gemini-api/docs | wif | Use the Gemini API or Vertex AI (workload identity federation instead of a key), adapt message and tool shapes |
 
 | credential | kind | role | purpose | storage | consumers | created | expires | rotate | status |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -150,7 +178,7 @@ flowchart LR
 - Created via: `hoist apply (mints the token for one year and seals it)`
 - Max TTL: 1y
 - Strategy: auto
-- Command: `hoist secrets rotate CLOUDFLARE_API_TOKEN`
+- Command: `hoist secrets rotate site-deploy`
 
 ### cloudflare-account
 

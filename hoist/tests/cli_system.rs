@@ -441,7 +441,13 @@ fn keelstack_system_toml_checks_offline_and_system_md_is_current() {
     common::hoist()
         .arg("-C")
         .arg(root)
-        .args(["system", "explain", "--check"])
+        .args([
+            "system",
+            "explain",
+            "--check",
+            "--catalog",
+            "decisions/channel/pieces/catalog/files/catalog.toml",
+        ])
         .assert()
         .code(0);
     let text = fs::read_to_string(root.join("system.toml")).unwrap();

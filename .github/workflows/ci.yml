@@ -344,7 +344,7 @@ jobs:
       - run: cargo nextest run -p keel-splice --locked
       # Windows runs only at release (D-007): check the target compiles here instead.
       - name: Check the Windows target compiles
-        run: cargo check -p keel-splice --locked --all-targets --target x86_64-pc-windows-msvc
+        run: cargo check -p keel-splice -p keel-hoist --locked --all-targets --target x86_64-pc-windows-msvc
       - name: Node tests
         working-directory: splice
         run: node --test "npm/**/*.test.mjs" "action/**/*.test.mjs" "scripts/**/*.test.mjs"

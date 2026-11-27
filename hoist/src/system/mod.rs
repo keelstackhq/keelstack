@@ -1,6 +1,7 @@
 //! `system.toml` (spec §17, D-031): the external systems a repo uses and every credential it
 //! holds, by name and metadata only (never values). `hoist system init|check|explain`.
 
+pub mod catalog;
 pub mod check;
 pub mod explain;
 pub mod init;

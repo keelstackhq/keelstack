@@ -3,6 +3,8 @@
 # with .github/workflows and hoist.toml; `hoist system explain --write` regenerates SYSTEM.md.
 # Dates nobody recorded yet are left out on purpose: `hoist system check` lists them (metadata)
 # until the owner adds created_at and expires_at from the provider's console.
+# SYSTEM.md lists alternatives from the org catalog, so regenerate it with:
+#   hoist system explain --write --catalog decisions/channel/pieces/catalog/files/catalog.toml
 version = 1
 
 [system]
@@ -26,7 +28,7 @@ account = "keelstackhq"
 console = "https://dash.cloudflare.com/profile/api-tokens"
 docs = "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
 clis = [{ tool = "wrangler", mise = "npm:wrangler" }]
-alternatives = ["bunny", "netlify"]
+alternatives = ["bunny", "netlify", "fastly"]
 
 [[provider]]
 id = "npm"
@@ -51,6 +53,7 @@ capability = "llm.api"
 account = "keelstackhq"
 console = "https://console.anthropic.com/settings/keys"
 docs = "https://docs.anthropic.com/en/api/getting-started"
+alternatives = ["openai", "gemini"]
 
 [[provider]]
 id = "bosun"
@@ -123,7 +126,7 @@ scopes = ["Pages Write"]
 resources = ["pages:keelstack-landing"]
 created_via = "hoist apply (mints the token for one year and seals it)"
 max_ttl = "1y"
-rotation = { strategy = "auto", command = "hoist secrets rotate CLOUDFLARE_API_TOKEN" }
+rotation = { strategy = "auto", command = "hoist secrets rotate site-deploy" }
 storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_API_TOKEN" }]
 consumers = [{ workflow = "deploy-site.yml", job = "deploy", environment = "site" }]
 

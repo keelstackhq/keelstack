@@ -97,6 +97,9 @@ pub enum SystemCommand {
         /// The system file (default: system.toml in -C DIR)
         #[arg(long, value_name = "PATH")]
         file: Option<PathBuf>,
+        /// The catalog of alternatives (default: HOIST_CATALOG, else catalog.toml next to system.toml)
+        #[arg(long, value_name = "PATH")]
+        catalog: Option<PathBuf>,
         /// Write SYSTEM.md next to system.toml
         #[arg(long)]
         write: bool,

@@ -1,0 +1,62 @@
+---
+layout: ../../layouts/Docs.astro
+---
+
+Every repo describes the external systems it uses and every credential it holds in one file,
+`system.toml` at the repo root (D-031). It holds names and metadata, never values: who owns a
+secret, what it can do, where it is stored and used, when it expires and how to rotate it. hoist
+owns the format and the commands; agents never hold a key and hoist never prints one.
+
+## The path: init, fill, check, rotate
+
+1. **init.** `hoist system init` drafts `system.toml` from what the repo already says: the
+   secret names read through the `secrets` context in `.github/workflows/*.yml` (job and environment), `hoist.toml`,
+   `secrets.toml`, `access.toml`, `org.toml` and `keel.toml`. It writes only when the file is
+   absent; `--print` shows the draft without writing.
+2. **fill.** Replace every `"TODO"` the draft leaves: `purpose`, `owner`, `created_at`,
+   `expires_at` (a day, or `"never"`), `scopes`, and a `rotation` with a `strategy`
+   (`auto`, `assisted` or `manual`), a `command` and numbered `steps`. Describe each external
+   system as a `[[provider]]` with its `capability`, `console` and `docs`.
+3. **check.** `hoist system check` (offline, no HTTP) exits 1 when a secret a workflow reads has
+   no credential (`undeclared`), a credential nothing reads (`unused`), a job and its listed
+   consumers disagree, a credential is expired or expires within 30 days, `purpose`, `owner` or
+   dates are missing, `max_ttl` is exceeded, or a long-lived credential exists where a keyless
+   option does. It exits 2 when a rotation is due and 3 on a broken file. `hoist system check
+   --live` also asks each provider, GET only, with tokens taken from the environment; a missing
+   token is `unknown` with the fix, never a failure.
+4. **rotate.** `hoist secrets rotate <credential-id>` follows the credential's
+   `rotation.strategy`. `auto` (Cloudflare, Fly) creates the new credential, tests it, writes it
+   into every storage and only then revokes the old one. `assisted` and `manual` print the
+   steps (exit 2); afterwards `hoist system stamp <credential-id> --created DAY --expires DAY`
+   records the new dates.
+
+Add a secret to a workflow and its `[[credential]]` to `system.toml` in the same pull request,
+or `hoist system check` fails.
+
+## SYSTEM.md
+
+`hoist system explain --write` renders `SYSTEM.md` from `system.toml` alone: a mermaid diagram
+(repo, provider, credential, consumer), a table per provider and one for its credentials, the
+keyless trusts and the rotation steps of each credential. Never edit it by hand: CI runs
+`hoist system explain --check`, which exits 1 when it is stale.
+
+## Alternatives
+
+A `[[provider]]` names its `capability` (for example `dns+cdn` or `registry.npm`) and may list
+`alternatives`. The org catalog of alternatives (`catalog.toml`) gives each one a name, its docs,
+the keyless sign-in it offers and migration notes. `hoist system explain --catalog PATH` (or the
+env var `HOIST_CATALOG`, or a `catalog.toml` next to `system.toml`) lists them in `SYSTEM.md`;
+without a catalog the output is unchanged. The decisions channel ships the catalog:
+`splice channel add {{ks.src.decisions}} --track main --piece catalog`.
+
+## Keyless first
+
+Prefer no stored credential at all. `[[trust]]` records a keyless trust that replaces a
+long-lived credential: OIDC trusted publishing for npm and crates.io, a GitHub App instead of a
+personal access token, workload identity federation instead of a Google service account key.
+`hoist system check` reports a long-lived credential where one of these exists; an exemption
+needs a written reason (`keyless_exempt`), and a credential whose role a `[[trust]]` replaces
+has to be revoked.
+
+Sources: [hoist spec, section 17]({{ks.link.tree}}/hoist/docs/superpowers/specs),
+[hoist skill]({{ks.link.tree}}/hoist/skills/hoist), [D-031]({{ks.link.tree}}/decisions/decisions).

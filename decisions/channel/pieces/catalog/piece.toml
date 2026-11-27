@@ -1,0 +1,6 @@
+id = "catalog"
+description = "Org catalog of alternatives per capability (catalog.toml, hoist spec 17.6); `hoist system explain` lists a provider's alternatives from it"
+multiple = false
+
+[files]
+owned = ["catalog.toml"]

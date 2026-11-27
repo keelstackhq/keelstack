@@ -62,6 +62,8 @@ pub fn hoist() -> Command {
     for name in SCRUBBED_ENV {
         cmd.env_remove(name);
     }
+    // A catalog from the dev machine must not change `system explain`.
+    cmd.env_remove("HOIST_CATALOG");
     // `gh auth token` must not find a real login on the dev machine.
     cmd.env("GH_CONFIG_DIR", "/nonexistent-hoist-gh");
     cmd.env("TMPDIR", tmpdir());
