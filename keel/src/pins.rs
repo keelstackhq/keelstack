@@ -202,10 +202,10 @@ mod tests {
     fn embedded_has_all_four_tools_with_sha512() {
         let p = Pins::from_texts("e", EMBEDDED, None).unwrap();
         for (tool, v) in [
-            ("splice", "0.23.0"),
-            ("hoist", "0.23.0"),
-            ("berth", "0.23.0"),
-            ("bosun", "0.23.0"),
+            ("splice", "0.24.0"),
+            ("hoist", "0.24.0"),
+            ("berth", "0.24.0"),
+            ("bosun", "0.24.0"),
         ] {
             let t = p.tool(tool).unwrap();
             assert_eq!(t.version, v);
@@ -219,14 +219,14 @@ mod tests {
 
     #[test]
     fn repo_pins_override_version_and_drop_sha_on_mismatch() {
-        let repo = "[pins]\nsplice = \"0.7.0\"\nbosun = \"0.23.0\"\nrust = \"1.97\"\nnextest = \"0.9\"\n\n[other]\nx = 1\n";
+        let repo = "[pins]\nsplice = \"0.7.0\"\nbosun = \"0.24.0\"\nrust = \"1.97\"\nnextest = \"0.9\"\n\n[other]\nx = 1\n";
         let p = Pins::from_texts("e", EMBEDDED, Some(repo)).unwrap();
         let s = p.tool("splice").unwrap();
         assert_eq!(s.version, "0.7.0");
         assert!(s.sha512.is_none());
         assert!(p.tool("bosun").unwrap().sha512.is_some());
         assert!(p.tool("rust").unwrap().sha512.is_none());
-        assert_eq!(p.tool("hoist").unwrap().version, "0.23.0");
+        assert_eq!(p.tool("hoist").unwrap().version, "0.24.0");
     }
 
     #[test]
