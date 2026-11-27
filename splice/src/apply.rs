@@ -12,7 +12,7 @@ use crate::manifest::{PostCmd, When};
 use crate::migrate::Step;
 use crate::output::{Action, Class, Report};
 use crate::planner::Plan;
-use crate::post::{run_post, run_steps};
+use crate::post::{run_post_in, run_steps};
 use crate::sections::SectionChange;
 
 /// The lock an operation writes last: the main lock or one channel's.
@@ -27,6 +27,14 @@ impl LockOut {
         match self {
             LockOut::Main(l) => l.write_atomic(repo),
             LockOut::Channel(c) => c.write_atomic(repo),
+        }
+    }
+
+    /// The channel's `only` globs; empty for main.
+    pub fn only(&self) -> &[String] {
+        match self {
+            LockOut::Main(_) => &[],
+            LockOut::Channel(c) => &c.meta.only,
         }
     }
 
@@ -101,7 +109,7 @@ pub fn apply(ctx: ApplyCtx) -> Result<Report, SpliceError> {
     let plan = ctx.plan;
     let still = ctx.lock.still_records(&ctx.from);
     if plan.conflicts.is_empty() && !ctx.no_post {
-        if let Err(e) = run_post(ctx.repo, &ctx.post, ctx.when) {
+        if let Err(e) = run_post_in(ctx.repo, ctx.lock.only(), &ctx.post, ctx.when) {
             let e = match e {
                 SpliceError::Env(m) => SpliceError::Env(format!(
                     "{m}; {still}; `git checkout -- . && git clean -fd` restores the previous state"

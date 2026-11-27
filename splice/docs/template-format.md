@@ -51,7 +51,7 @@ seed   = ["src/**", "index.html"]
 [merge]                          # strategy for shared files (default: "text")
 "package.json" = "json"          # json | yaml | toml | text
 
-[[post]]                         # commands run after `new`/`add`/`update`, in the repo root
+[[post]]                         # commands run after `new`/`add`/`update`, in the repo root (a channel: in its `only` root)
 run = "pnpm install --no-frozen-lockfile"
 when = ["new", "add", "update"]
 ```

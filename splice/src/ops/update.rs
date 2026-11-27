@@ -17,7 +17,7 @@ use crate::manifest::{PostCmd, Template, When};
 use crate::migrate::{Migration, Step, select};
 use crate::output::{Action, Class, NewQuestion, Report};
 use crate::planner::{Disk, Plan, PlanInput, plan, render_removes};
-use crate::post::run_post;
+use crate::post::run_post_groups;
 use crate::render::{
     PieceInstance, RenderInput, RenderedSections, RenderedTree, render_sections, render_tree,
 };
@@ -1530,8 +1530,13 @@ fn run_all(g: &GlobalArgs, a: &UpdateArgs) -> Result<Report> {
     // 5. The post commands of every changed source once (first occurrence wins), before any
     // lock: post sees the old locks.
     if conflicts.is_empty() && !a.no_post {
-        let post: Vec<PostCmd> = changed.iter().flat_map(|s| post_of(&s.prep)).collect();
-        if let Err(e) = run_post(repo, &post, When::Update) {
+        let post: Vec<(LockOut, Vec<PostCmd>)> = changed
+            .iter()
+            .map(|s| (s.lock_out(), post_of(&s.prep)))
+            .collect();
+        let groups: Vec<(&[String], &[PostCmd])> =
+            post.iter().map(|(l, c)| (l.only(), c.as_slice())).collect();
+        if let Err(e) = run_post_groups(repo, &groups, When::Update) {
             return Err(all_failed(report, "", e));
         }
     }
