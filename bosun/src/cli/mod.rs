@@ -76,6 +76,7 @@ use std::path::PathBuf;
 
 pub mod ci_minutes;
 pub mod gate;
+pub mod gate_app;
 pub mod gate_missed;
 pub mod main_health;
 pub mod review_ci;
@@ -207,6 +208,9 @@ pub enum Command {
     /// Steps the owner runs on a computer (the gate App).
     #[command(subcommand)]
     Owner(OwnerCmd),
+    /// The gate-App transition (spec §15), one step per run.
+    #[command(subcommand)]
+    GateApp(GateAppCmd),
     /// Budget commands.
     #[command(subcommand)]
     Budget(BudgetCmd),
@@ -293,6 +297,7 @@ pub const COMMANDS: &[&str] = &[
     "hook",
     "doctor",
     "owner",
+    "gate-app",
     "budget",
     "plan",
     "fail",
@@ -370,6 +375,7 @@ impl Command {
             Command::Doctor(_) => "doctor",
             Command::Owner(OwnerCmd::Manifest(_)) => "owner manifest",
             Command::Owner(OwnerCmd::Setup(_)) => "owner setup",
+            Command::GateApp(GateAppCmd::Advance(_)) => "gate-app advance",
             Command::Budget(BudgetCmd::Record(_)) => "budget record",
             Command::Plan(PlanCmd::Check(_)) => "plan check",
             Command::Plan(PlanCmd::Import(_)) => "plan import",
@@ -686,6 +692,28 @@ pub enum OwnerCmd {
     /// and a plain push of the branch `bosun/gate-app`. Every step is skipped when done; no
     /// private key is kept on disk or printed. No PR, no merge.
     Setup(SetupArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GateAppCmd {
+    /// Do the next step of the transition and print it: PR A (the App on, `[checks] mode =
+    /// "dual"`, hoist.toml pinned), then, once the App's runs are seen on a probe PR, the owner's
+    /// `hoist apply --area github` (in `next`), then PR B (`mode = "checks"`, `signer = true`).
+    /// Reads the state from the repo and GitHub; opens draft PRs, never merges.
+    Advance(AdvanceArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct AdvanceArgs {
+    /// Read and report only: no branch, commit, push, splice run or PR.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// The branch to make the PR on (default `bosun/gate-app` for PR A, `bosun/gate-app-checks` for PR B).
+    #[arg(long)]
+    pub branch: Option<String>,
+    /// The git remote that receives the branch.
+    #[arg(long, default_value = "origin")]
+    pub remote: String,
 }
 
 #[derive(Debug, Args)]

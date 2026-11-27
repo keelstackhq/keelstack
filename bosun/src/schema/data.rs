@@ -16,6 +16,9 @@ owner manifest = {app_id: int, client_id: str, slug: str, source: str};
 owner setup = {dry_run: bool, app_id: int | null, slug: str | null, client_id?: str, branch: str,
     pushed: bool, signer_id?: str, signer_public_key?: str, steps: [{step: str, device: str, status: str,
     detail: str}]};
+gate-app advance = {dry_run: bool, app_id: int, slug: str, step: str, status: str, branch?: str,
+    pr?: {number: int, head_sha?: str}, steps: [{step: str, device: str, status: str, detail: str}],
+    left: [str]};
 keygen = {id: str, role: str, path: str, public_key: str, enrolled: bool, toml: str, steps: [str]};
 test-integrity = {base: str, files_checked: int, integrity: str, integrity_reason?: str,
     findings: [{file: str, kind: str, base: int, head: int | null, allowed: bool, reason?: str}],

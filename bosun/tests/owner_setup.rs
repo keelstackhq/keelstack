@@ -98,7 +98,9 @@ impl Env {
             .env("HOME", self.home.path())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_TERMINAL_PROMPT", "0");
+            .env("GIT_TERMINAL_PROMPT", "0")
+            // B3 T2: no PR A in these tests, so do not wait for its merge (`owner_apply.rs` does).
+            .env("BOSUN_OWNER_WAIT_SECS", "0");
         c
     }
 
@@ -234,7 +236,11 @@ fn uc_b2_1_one_run_creates_everything_and_the_rerun_changes_nothing() {
             .as_array()
             .unwrap()
             .iter()
-            .filter(|s| s["device"] == "owner-computer" && s["step"] != "approve-enrollment")
+            .filter(|s| {
+                s["device"] == "owner-computer"
+                    && !["approve-enrollment", "wait-pr-a", "hoist-apply"]
+                        .contains(&s["step"].as_str().unwrap())
+            })
             .all(|s| s["status"] == "skipped"),
         "{v}"
     );

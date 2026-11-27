@@ -306,3 +306,28 @@ bosun cannot read a key back and never replaces one it cannot prove it should. A
 with no enrolled key is replaced by a new enrolled key. `--dry-run` writes, pushes and mutates
 nothing; its `steps` list each step with `device` (`owner-computer` or `agent`). stdout holds
 public ids only.
+
+### The waiting `hoist apply` and `bosun gate-app advance` (B3)
+
+`owner setup` ends with two more steps on the owner's computer: `wait-pr-a` polls GitHub for the
+merge of PR A (head `bosun/gate-app`, or `.bosun/gate-app.toml` already on main) every 15 s
+(`BOSUN_OWNER_POLL_MS`) for at most 30 minutes (`BOSUN_OWNER_WAIT_SECS`; `0` checks once), then
+`hoist-apply` runs `hoist apply --area github --yes` (`BOSUN_HOIST` names the binary; the checkout
+of main is fast-forwarded first when clean). On timeout both stay `pending`, the exit is 0, and a
+rerun only waits and applies. A failing hoist is exit 1 with the command to run by hand.
+`--dry-run` lists both as `would-do` and runs nothing.
+
+`bosun gate-app advance [--dry-run] [--branch B] [--remote origin]` (agent) does the next step of
+the Transition only and prints it (`data.step`: `pr-a`, `probe`, `hoist-apply`, `pr-b`, `done`;
+`data.status`; `steps`; `left`). No `.bosun/gate-app.toml` on main or on `bosun/gate-app` is
+exit 1 (fix: `bosun owner setup`). PR A (branch `bosun/gate-app`, built on the owner-setup
+commit when the branch exists, else on main): `splice set --channel bosun bosun_app=1`
+(`BOSUN_SPLICE`), `[checks] mode = "dual"` with the App's id and slug, and `hoist.toml`'s
+`required_checks` pinned (`ci-ok` to 15368, the three gates to the App's slug). After PR A is on
+main it waits until a check run of the App is on a recent PR or the default branch (`probe`), then
+names the owner's `hoist apply --area github --yes` in `next` until `GET /rules/branches/<default>`
+pins risk-check, review-verdict and main-open to the App, then opens PR B (branch
+`bosun/gate-app-checks`: `mode = "checks"`, `[approvals] signer = true`); under
+`owner_delegation = "all"` the CI signer signs it, no owner touch. Both PRs are drafts: `bosun pr
+--pr N --ready` turns on auto-merge. It needs a clean tree, never merges and never forces a push;
+`--dry-run` makes no branch, commit, push, splice run or PR.

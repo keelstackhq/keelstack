@@ -1,0 +1,1 @@
+- bosun: `bosun gate-app advance` (PR A, probe, owner hoist apply, PR B) and `owner setup` waits for PR A then runs `hoist apply --area github` (B3).

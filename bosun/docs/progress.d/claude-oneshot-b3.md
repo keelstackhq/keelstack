@@ -1,0 +1,1 @@
+- B3/T1-T2: gate-app advance (cli/gate_app.rs) and the waiting hoist apply in owner setup.

@@ -6,7 +6,9 @@
 //! reaches GitHub only as a sealed box made with the environment's public key; it is never
 //! printed, never in argv or the environment of a child, never in the repo. The one file bosun
 //! may delete is the owner's `--key-file`, and only with `--delete-key-file`. The branch is
-//! pushed with a plain push (never forced); there is no PR and no merge.
+//! pushed with a plain push (never forced); there is no PR and no merge. The run then waits
+//! (30 minutes at most) for the owner to merge PR A, which an agent opens with `bosun gate-app
+//! advance`, and runs `hoist apply --area github` (B3 T2), so the one run covers that step too.
 //!
 //! Every step reads what exists first and skips it. Nothing already set is overwritten, except
 //! that a new App replaces the key of an App this run created, and a signer secret with no
@@ -487,6 +489,7 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
             detail: format!("plain push of {BRANCH} to {}", a.remote),
         });
         steps.extend(follow_ups());
+        steps.extend(apply_steps("would-do"));
         return Ok(Outcome::data(json!({
             "dry_run": true,
             "app_id": st.gate_app.as_ref().map(|g| g.0),
@@ -660,6 +663,7 @@ pub fn run(dir: Option<&Path>, a: &SetupArgs) -> CmdResult {
         detail: format!("plain push of {BRANCH} to {}", a.remote),
     });
     steps.extend(follow_ups());
+    steps.extend(wait_and_apply(&app, &git)?);
 
     let mut data = json!({
         "dry_run": false,
@@ -695,4 +699,115 @@ fn follow_ups() -> Vec<Step> {
             detail: "approve the PR yourself on GitHub: a PR cannot enroll its own key".into(),
         },
     ]
+}
+
+const WAIT_DEFAULT_SECS: u64 = 1800;
+const POLL_DEFAULT_MS: u64 = 15_000;
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(default)
+}
+
+fn apply_steps(status: &'static str) -> Vec<Step> {
+    vec![
+        Step {
+            step: "wait-pr-a",
+            device: OWNER_PC,
+            status,
+            detail: format!(
+                "wait for PR A (branch {BRANCH}) to merge, at most {} minutes",
+                WAIT_DEFAULT_SECS / 60
+            ),
+        },
+        Step {
+            step: "hoist-apply",
+            device: OWNER_PC,
+            status,
+            detail: "run `hoist apply --area github --yes` to pin the ruleset to the App".into(),
+        },
+    ]
+}
+
+/// Has PR A (head `bosun/gate-app` of this repo) merged, or is the App already on main?
+fn pr_a_merged(app: &App) -> Result<bool> {
+    let gh: &dyn Github = &*app.gh;
+    let repo = app.ctx.repo.to_string();
+    let merged = gh
+        .list_pulls(None, crate::github::IssueState::All)?
+        .iter()
+        .any(|p| {
+            p.head_ref == BRANCH
+                && (p.merged || p.merged_at.is_some())
+                && p.head_repo.eq_ignore_ascii_case(&repo)
+        });
+    if merged {
+        return Ok(true);
+    }
+    let base = crate::app::default_branch(gh)?;
+    Ok(gh.file_at(GATE_APP, &base)?.is_some())
+}
+
+/// Poll for the merge of PR A (`BOSUN_OWNER_WAIT_SECS`, default 30 minutes; every
+/// `BOSUN_OWNER_POLL_MS`, default 15 s), then run `hoist apply --area github --yes`.
+fn wait_and_apply(app: &App, git: &Git) -> Result<Vec<Step>> {
+    let wait = env_u64("BOSUN_OWNER_WAIT_SECS", WAIT_DEFAULT_SECS);
+    let poll = std::time::Duration::from_millis(env_u64("BOSUN_OWNER_POLL_MS", POLL_DEFAULT_MS));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(wait);
+    let mut merged = pr_a_merged(app)?;
+    while !merged && std::time::Instant::now() < deadline {
+        std::thread::sleep(poll.min(deadline.saturating_duration_since(std::time::Instant::now())));
+        merged = pr_a_merged(app)?;
+    }
+    if !merged {
+        let mut v = apply_steps("pending");
+        v[0].detail = "PR A is not merged yet: ask an agent to run `bosun gate-app advance`, approve PR A on GitHub, then rerun `bosun owner setup` (it only waits and applies)".to_string();
+        return Ok(v);
+    }
+    // The pinned hoist.toml is on main now: bring a clean checkout of main up to date.
+    let on_main = git.opt(&["rev-parse", "--abbrev-ref", "HEAD"]).as_deref() == Some("main");
+    if on_main && git.opt(&["status", "--porcelain"]).is_none() {
+        let _ = git.raw(
+            &["pull", "-q", "--ff-only", "--", &git.remote, "main"],
+            None,
+            &[],
+        );
+    }
+    let bin = std::env::var("BOSUN_HOIST")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .unwrap_or_else(|| "hoist".into());
+    // The token reaches hoist through the inherited environment, never argv; its stdout is
+    // not ours (one JSON object on stdout).
+    let out = Command::new(&bin)
+        .arg("-C")
+        .arg(&git.root)
+        .args(["apply", "--area", "github", "--yes"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .output()
+        .map_err(|e| {
+            BosunError::needs_human(
+                format!("cannot start {bin}: {}", e.kind()),
+                "install hoist (`npm install -g @keelstackhq/hoist`) or set BOSUN_HOIST, then run `hoist apply --area github --yes` from the checkout of main",
+            )
+        })?;
+    if !out.status.success() {
+        let last = String::from_utf8_lossy(&out.stdout);
+        let last = scrub(last.lines().last().unwrap_or("").trim());
+        return Err(BosunError::error(
+            format!(
+                "hoist apply --area github failed (exit {:?}) {last}",
+                out.status.code()
+            ),
+            "fix the hoist error above, then run `hoist apply --area github --yes` from the checkout of main (everything else is set up)",
+        ));
+    }
+    let mut v = apply_steps("done");
+    v[0].detail = "PR A is merged".into();
+    v[1].detail = "hoist apply --area github --yes ran".into();
+    Ok(v)
 }
