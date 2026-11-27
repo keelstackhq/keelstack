@@ -334,16 +334,45 @@ pub fn run_all(
     }
 }
 
-/// `hoist --json system check` (D-031, spec §17.4): `Ok(None)` when hoist is not installed;
-/// exit 0, 1 and 2 are parsed, anything else is an `Err`.
-pub fn system_check(r: &dyn Runner, dir: &Path, t: Duration) -> Result<Option<Parsed>, String> {
+/// Outcome of `hoist --json system check`.
+pub enum SystemCheck {
+    NotInstalled,
+    /// This hoist has no `system` subcommand.
+    TooOld,
+    Ran(Parsed),
+}
+
+/// Whether `o` is an old hoist rejecting `system`: clap's unknown-subcommand error (exit 3, or
+/// exit 2 on very old clap), a JSON error envelope naming the subcommand, or exit 2 without JSON.
+fn lacks_system(o: &Out) -> bool {
+    let named = |s: &str| {
+        let s = s.to_lowercase();
+        s.contains("system") && (s.contains("subcommand") || s.contains("unrecognized"))
+    };
+    match json(o) {
+        Some(v) => {
+            o.code == 3
+                && v["error"]["message"]
+                    .as_str()
+                    .is_some_and(|m| named(m) || m.to_lowercase().contains("unknown command"))
+        }
+        None => o.code == 2 || (o.code == 3 && named(&o.stderr)),
+    }
+}
+
+/// `hoist --json system check` (D-031, spec §17.4): `NotInstalled` when hoist is not installed,
+/// `TooOld` when it lacks `system`; exit 0, 1 and 2 are parsed, anything else is an `Err`.
+pub fn system_check(r: &dyn Runner, dir: &Path, t: Duration) -> Result<SystemCheck, String> {
     let c = cmd(&["--json", "system", "check"], Vec::new(), dir, t);
     let o = r.run(&c);
     if super::not_found(&o) {
-        return Ok(None);
+        return Ok(SystemCheck::NotInstalled);
+    }
+    if lacks_system(&o) {
+        return Ok(SystemCheck::TooOld);
     }
     match o.code {
-        0..=2 => Ok(Some(parse(&o, &envelope(&c, &o)?))),
+        0..=2 => Ok(SystemCheck::Ran(parse(&o, &envelope(&c, &o)?))),
         _ => Err(failure(&c, &o)),
     }
 }

@@ -37,11 +37,16 @@ impl Step for System {
             ));
         }
         let p = match hoist::system_check(cx.runner, &cx.dir, cx.opts.tool_timeout()) {
-            Ok(Some(p)) => p,
-            Ok(None) => {
+            Ok(hoist::SystemCheck::Ran(p)) => p,
+            Ok(hoist::SystemCheck::NotInstalled) => {
                 return Ok(Check::Done(
                     "hoist not found: system.toml not checked".into(),
                 ));
+            }
+            Ok(hoist::SystemCheck::TooOld) => {
+                let m = "hoist too old; upgrade to a release that has `hoist system`";
+                cx.items.push(item("hoist", "warning", m.into()));
+                return Ok(Check::Done(format!("{m}: system.toml not checked")));
             }
             Err(e) => return Ok(Check::Failed(e)),
         };
@@ -138,6 +143,34 @@ mod tests {
             ("undeclared", "NPM_TOKEN", "warning")
         );
         assert_eq!(pending, 1);
+    }
+
+    #[test]
+    fn hoist_without_the_system_subcommand_warns_and_is_done() {
+        let json_err =
+            r#"{"ok":false,"error":{"message":"unknown subcommand `system`","fix":"x"}}"#;
+        for out in [
+            Out::with(
+                3,
+                "",
+                "error: unrecognized subcommand 'system'\n\nUsage: hoist [OPTIONS] <COMMAND>",
+            ),
+            Out::with(3, json_err, ""),
+            Out::with(2, "", "error: unrecognized subcommand 'system'"),
+            Out::with(2, "Usage: hoist [OPTIONS]", ""),
+        ] {
+            let r = FakeRunner::new().on(&["hoist", "--json", "system", "check"], out);
+            let (c, items, pending) = run(&r, true);
+            assert!(
+                matches!(&c, Check::Done(m) if m.contains("hoist too old")),
+                "{c:?}"
+            );
+            assert_eq!(items.len(), 1);
+            assert_eq!(items[0].action, "warning");
+            assert!(items[0].reason.contains("hoist too old"));
+            assert!(items[0].reason.contains("hoist system"));
+            assert_eq!(pending, 0);
+        }
     }
 
     #[test]

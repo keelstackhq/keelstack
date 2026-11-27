@@ -53,6 +53,11 @@ case "$name $*" in
   "gh run list"*) echo '[{"status":"completed","conclusion":"success","url":"https://github.com/owner/name/actions/runs/1","headSha":"c0ffee1"}]';;
   curl*) printf 200;;
   "hoist --version") echo "hoist 0.5.1";;
+  "hoist --json system check"*)
+    if [ "$KEEL_SCENARIO" = oldhoist ]; then
+      echo "error: unrecognized subcommand 'system'" >&2; exit 3
+    fi
+    echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "hoist --json check --area cloudflare"*) echo '{"ok":true,"exit_code":0,"items":[{"kind":"dns_record","key":"k","action":"ok"},{"kind":"r2_bucket","key":"b","action":"ok"},{"kind":"r2_lifecycle","key":"l","action":"ok"},{"kind":"r2_token","key":"t","action":"ok"}],"human_steps":[]}';;
   "hoist --json "*) echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "berth --version") echo "berth 0.2.1";;
@@ -353,6 +358,30 @@ fn doctor_offline_is_a_human_step_with_exit_5() {
         v["human_step"]["command"],
         "export GH_TOKEN=$(gh auth token)"
     );
+}
+
+#[test]
+fn doctor_warns_but_does_not_fail_when_hoist_lacks_system() {
+    let env = Env::new();
+    env.rendered();
+    std::fs::write(
+        env.repo.join("keel.toml"),
+        "repo = \"owner/name\"\ntemplate = \"rust\"\npieces = [\"rust-cli:my-cli\"]\n",
+    )
+    .unwrap();
+    std::fs::write(env.repo.join("system.toml"), "version = 1\n").unwrap();
+    let (code, out, err) = run(&env, "oldhoist", &["--json".into(), "doctor".into()], "");
+    let v = one_json(&out);
+    assert_ne!(v["status"], "failed", "{out} {err}");
+    let sys = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "system")
+        .unwrap_or_else(|| panic!("no system step: {out}"));
+    assert_eq!(sys["action"], "ok", "{out}");
+    assert!(sys["detail"].as_str().unwrap().contains("hoist too old"));
+    assert_ne!(code, 1, "{out} {err}");
 }
 
 const FLY_MANIFEST: &str = "repo = \"owner/name\"\ntemplate = \"rust\"\npieces = [\"rust-cli:my-cli\", \"fly\"]\n[confirmed]\nagent_env = true\n[deploy.fly]\napp = \"my-app\"\nregion = \"fra\"\nhost = \"app.example.com\"\n";
