@@ -40,7 +40,8 @@ pub struct MigrateArgs {
     /// The release to move to, X.Y.Z (default: keel's own version).
     #[arg(long, value_name = "X.Y.Z")]
     pub to: Option<String>,
-    /// Report what would change; write nothing, install nothing, run no git command that writes.
+    /// Report what would change; write nothing, install nothing globally, run no git command that
+    /// writes. Tools that are not installed are fetched (checksums verified) into a temp cache.
     #[arg(long)]
     pub dry_run: bool,
     /// Push the branch and open ONE pull request with `gh` (keel never merges it).
@@ -53,6 +54,10 @@ pub struct MigrateArgs {
     /// lists it as a step for after this PR merges.
     #[arg(long, value_name = "MODE", value_parser = ["gatekeeper", "steady", "booster", "autonomous"])]
     pub mode: Option<String>,
+    /// Commit and push to this branch (cloud sessions) instead of keel's own `keel/migrate-vX`
+    /// branch. Plain push, never forced; a rejected push fails.
+    #[arg(long, value_name = "NAME")]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Args)]

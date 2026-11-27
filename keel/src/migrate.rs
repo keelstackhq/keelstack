@@ -278,6 +278,10 @@ struct Mig<'a> {
     not_updated: Vec<String>,
     /// Warnings for the JSON `notes`.
     notes: Vec<String>,
+    /// Dry-run: tools that were not installed, fetched into `cache` (name -> binary).
+    fetched: std::collections::HashMap<String, PathBuf>,
+    /// The temp cache of those tools; removed when the run ends.
+    cache: Option<npm::TmpDir>,
 }
 
 /// One path `splice check --json` reports as drifted, with where it comes from.
@@ -383,7 +387,26 @@ fn parse_drift(v: &Value) -> Vec<Drift> {
 
 impl Mig<'_> {
     fn tool(&self, prog: &str, args: &[&str]) -> Cmd {
-        Cmd::new(prog, args).dir(&self.dir).timeout(TOOL_TIMEOUT)
+        let prog = self
+            .fetched
+            .get(prog)
+            .map_or_else(|| prog.to_string(), |p| p.to_string_lossy().into_owned());
+        Cmd::new(&prog, args).dir(&self.dir).timeout(TOOL_TIMEOUT)
+    }
+
+    /// Dry-run: a tool that is not installed is fetched into the temp cache, with the checksum
+    /// verification of the real install, so the plan can still be listed.
+    fn fetch(&mut self, t: &str) -> Result<(), String> {
+        let pin = self.pin_of(t)?;
+        if self.cache.is_none() {
+            self.cache = Some(
+                npm::TmpDir::new("cache").map_err(|e| format!("cannot make a temp dir: {e}"))?,
+            );
+        }
+        let dir = self.cache.as_ref().map(|c| c.path().to_path_buf());
+        let bin = npm::fetch_pinned(self.r, t, &pin, &dir.unwrap_or_default())?;
+        self.fetched.insert(t.to_string(), bin);
+        Ok(())
     }
 
     fn git(&self, args: &[&str]) -> Out {
@@ -500,7 +523,15 @@ impl Mig<'_> {
             let from = have.unwrap_or_else(|| "none".into());
             if self.dry {
                 todo += 1;
-                notes.push(format!("{t} {from} -> {}", self.target));
+                if from == "none" {
+                    self.fetch(t)?;
+                    notes.push(format!(
+                        "{t} not installed: fetched {} into a temp cache for this plan",
+                        self.target
+                    ));
+                } else {
+                    notes.push(format!("{t} {from} -> {}", self.target));
+                }
                 continue;
             }
             let pin = self.pin_of(t)?;
@@ -1126,6 +1157,10 @@ impl Mig<'_> {
 
     fn s_pr(&mut self) -> Res {
         if !self.args.pr {
+            if self.args.branch.is_some() {
+                self.push()?;
+                return Ok((MAction::Done, format!("pushed to {}", self.branch)));
+            }
             return Ok((MAction::Skipped, "not asked (--pr)".into()));
         }
         let c = Cmd::new("gh", &["repo", "view", "--json", "nameWithOwner"]).dir(&self.dir);
@@ -1172,8 +1207,15 @@ impl Mig<'_> {
         Ok((MAction::Done, format!("opened {url}")))
     }
 
+    /// Plain push, never forced. With `--branch` the worktree is detached: push HEAD to that branch.
     fn push(&self) -> Result<(), String> {
-        let c = Cmd::new("git", &["push", "-u", "origin", &self.branch]).dir(&self.dir);
+        let refspec = format!("HEAD:refs/heads/{}", self.branch);
+        let c = if self.args.branch.is_some() {
+            Cmd::new("git", &["push", "origin", &refspec])
+        } else {
+            Cmd::new("git", &["push", "-u", "origin", &self.branch])
+        }
+        .dir(&self.dir);
         let o = self.r.run(&c);
         if o.code != 0 {
             return Err(failure(&c, &o));
@@ -1474,8 +1516,12 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
     } else {
         orig
     };
-    let branch = format!("keel/migrate-v{target}");
-    if orig == branch {
+    let custom = args.branch.is_some();
+    let branch = args
+        .branch
+        .clone()
+        .unwrap_or_else(|| format!("keel/migrate-v{target}"));
+    if !custom && orig == branch {
         return Err(env_err(
             format!("you are on {branch}, the branch keel works on in its own worktree"),
             "switch to another branch (`git switch main`) and rerun; the work on it is picked up",
@@ -1524,6 +1570,24 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
     let wts = wt.display().to_string();
     let add = if args.dry_run {
         gitc(&["worktree", "add", "--detach", &wts, &base])
+    } else if custom {
+        // Detached at the branch's tip (local, else origin's, else the base): the checkout may
+        // have the branch checked out. The push goes to the branch by name.
+        let _ = gitc(&["fetch", "origin", &branch]);
+        let start = [branch.clone(), format!("origin/{branch}")]
+            .into_iter()
+            .find(|c| {
+                gitc(&[
+                    "rev-parse",
+                    "--verify",
+                    "--quiet",
+                    &format!("{c}^{{commit}}"),
+                ])
+                .code
+                    == 0
+            })
+            .unwrap_or_else(|| base.clone());
+        gitc(&["worktree", "add", "--detach", &wts, &start])
     } else if exists {
         let spent = leftover(&gitc, r, dir, &branch, &base).map_err(|e| {
             env_err(
@@ -1626,6 +1690,8 @@ fn in_worktree(
         base_drift: Vec::new(),
         not_updated: Vec::new(),
         notes: Vec::new(),
+        fetched: std::collections::HashMap::new(),
+        cache: None,
     };
     if !dry && p.bosun {
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
