@@ -3,9 +3,6 @@
 //! env and are never printed. A missing token, a 401/403 or an API error is `unknown` with a
 //! fix, never a failure of the whole check.
 
-// TEMP (phase 2 seam): removed once every probe uses the helpers.
-#![allow(dead_code)]
-
 mod cloudflare;
 mod crates;
 mod fly;
