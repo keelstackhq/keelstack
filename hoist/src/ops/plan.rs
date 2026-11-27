@@ -129,8 +129,13 @@ pub(crate) fn run_with_state(
     }
     if let Some(http) = &github {
         if wants(Area::Github) {
-            crate::github::resolve_check_pins(http, &mut desired)?;
-            crate::diff::ensure_pins_resolved(&desired)?;
+            // `check` never fails on a slug it cannot read: that pin is `unknown`.
+            let lenient = command == "check";
+            let gate = crate::github::read_gate_app(dir);
+            crate::github::resolve_check_pins_with(http, &mut desired, gate.as_ref(), lenient)?;
+            if !lenient {
+                crate::diff::ensure_pins_resolved(&desired)?;
+            }
         }
         let live = read_github(http, &desired)?;
         // --adopt: live settings stricter than the desired ones are kept (spec §7.6).

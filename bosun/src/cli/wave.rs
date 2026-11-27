@@ -175,6 +175,9 @@ fn plan_on(app: &App, epic: u64) -> CmdResult {
     let active = |t: &&(TaskInfo, String, String)| t.0.state.is_some_and(State::is_active);
     let mut merged: Vec<String> = Vec::new();
     let mut tasks: Vec<(TaskInfo, String, String)> = Vec::new();
+    // Tasks of untrusted authors are left out of the plan and listed (BA).
+    let trust = crate::app::intake_trust(gh)?;
+    let mut skipped: Vec<serde_json::Value> = Vec::new();
     for issue in gh.list_issues(&[], IssueState::All)? {
         let Some(meta) = task_meta(&issue) else {
             continue;
@@ -190,6 +193,11 @@ fn plan_on(app: &App, epic: u64) -> CmdResult {
         if issue.state == "closed" || state == Some(State::Merged) {
             merged.push(plan_id);
         } else if meta.epic == Some(epic) {
+            let t = trust.issue(&issue);
+            if !t.trusted {
+                skipped.push(json!({"issue": issue.number, "reason": t.reason}));
+                continue;
+            }
             if meta.kind == "process-fix" && state == Some(State::Ready) {
                 fix_tasks.push(issue.number);
             }
@@ -324,6 +332,6 @@ fn plan_on(app: &App, epic: u64) -> CmdResult {
         }
     }
     Ok(Outcome::data(
-        json!({"epic": epic, "shape": if single { "single" } else { "split" }, "run": run, "waiting": waiting, "held": held, "warnings": warnings}),
+        json!({"epic": epic, "shape": if single { "single" } else { "split" }, "run": run, "waiting": waiting, "held": held, "skipped": skipped, "warnings": warnings}),
     ))
 }

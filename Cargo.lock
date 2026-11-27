@@ -1893,6 +1893,7 @@ version = "0.25.0"
 dependencies = [
  "assert_cmd",
  "clap",
+ "crypto_box",
  "predicates",
  "regex",
  "ring",
@@ -1903,6 +1904,7 @@ dependencies = [
  "tiny_http",
  "toml",
  "ureq",
+ "zeroize",
 ]
 
 [[package]]

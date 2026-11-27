@@ -37,6 +37,7 @@ pub mod migrate;
 pub mod mode;
 pub mod msg;
 pub mod notify;
+pub mod owner;
 pub mod owners;
 pub mod pin;
 pub mod pin_pr;
@@ -203,6 +204,9 @@ pub enum Command {
     Hook(HookCmd),
     /// Report each checklist step as ok or missing.
     Doctor(DoctorArgs),
+    /// Steps the owner runs on a computer (the gate App).
+    #[command(subcommand)]
+    Owner(OwnerCmd),
     /// Budget commands.
     #[command(subcommand)]
     Budget(BudgetCmd),
@@ -288,6 +292,7 @@ pub const COMMANDS: &[&str] = &[
     "lesson",
     "hook",
     "doctor",
+    "owner",
     "budget",
     "plan",
     "fail",
@@ -363,6 +368,8 @@ impl Command {
             Command::Hook(HookCmd::Stop) => "hook stop",
             Command::Hook(HookCmd::PreCompact) => "hook pre-compact",
             Command::Doctor(_) => "doctor",
+            Command::Owner(OwnerCmd::Manifest(_)) => "owner manifest",
+            Command::Owner(OwnerCmd::Setup(_)) => "owner setup",
             Command::Budget(BudgetCmd::Record(_)) => "budget record",
             Command::Plan(PlanCmd::Check(_)) => "plan check",
             Command::Plan(PlanCmd::Import(_)) => "plan import",
@@ -666,6 +673,65 @@ pub struct MergeArgs {
     /// GitHub merge method.
     #[arg(long, value_parser = ["squash", "merge", "rebase"], default_value = "squash")]
     pub method: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OwnerCmd {
+    /// Create the gate GitHub App with the manifest flow (a loopback callback), or take one made
+    /// by hand with `--manual`. Prints only the App's public ids; the key is never printed.
+    Manifest(ManifestArgs),
+    /// One run sets up the gate App and the CI signer: the App (reused when `.bosun/gate-app.toml`
+    /// names it), the environments `bosun-app` and `bosun-signer` (main only, no reviewers), the
+    /// variable and both secrets (sealed), the signer key enrolled in `.bosun/approvers.toml`,
+    /// and a plain push of the branch `bosun/gate-app`. Every step is skipped when done; no
+    /// private key is kept on disk or printed. No PR, no merge.
+    Setup(SetupArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    #[command(flatten)]
+    pub app: ManifestArgs,
+    /// Read and report only: no write, push or mutating call; list the steps and their device.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Delete the `--key-file` after the App key is stored (never deleted otherwise).
+    #[arg(long, requires = "key_file")]
+    pub delete_key_file: bool,
+    /// The git remote that receives the branch `bosun/gate-app`.
+    #[arg(long, default_value = "origin")]
+    pub remote: String,
+}
+
+#[derive(Debug, Args)]
+pub struct ManifestArgs {
+    /// Create the App in this organization instead of your user account.
+    #[arg(long, value_name = "ORG")]
+    pub org: Option<String>,
+    /// The App's name (default `<owner>-bosun-gate`; its slug is global).
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Seconds to wait for you to confirm the App on GitHub.
+    #[arg(long, default_value_t = 600, value_name = "SECS", value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout_secs: u64,
+    /// Skip the browser flow: you made the App by hand.
+    #[arg(long)]
+    pub manual: bool,
+    /// With --manual: the App's numeric id.
+    #[arg(long, requires = "manual")]
+    pub app_id: Option<u64>,
+    /// With --manual: the App's client id.
+    #[arg(long, requires = "manual")]
+    pub client_id: Option<String>,
+    /// With --manual: the App's slug.
+    #[arg(long, requires = "manual")]
+    pub slug: Option<String>,
+    /// With --manual: the private key PEM file GitHub downloaded.
+    #[arg(long, requires = "manual", value_name = "PEM")]
+    pub key_file: Option<std::path::PathBuf>,
+    /// With --manual: read the key from stdin (echo off on a terminal), never from argv.
+    #[arg(long, requires = "manual", conflicts_with = "key_file")]
+    pub key_stdin: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1494,4 +1560,11 @@ pub struct MigrateArgs {
     /// A plan file to amend with --finish (repeatable; the plans of open epics are added).
     #[arg(long = "plan", value_name = "FILE")]
     pub plan: Vec<String>,
+    /// The flow written with the mode: `autonomous` (default for --to autonomous: the D-028 set
+    /// in bosun.toml) or `gatekeeper` (only `[mode]`, no preset).
+    #[arg(long, value_name = "FLOW", value_parser = ["autonomous", "gatekeeper"], conflicts_with = "finish")]
+    pub flow: Option<String>,
+    /// `[cloud] environment_id` to write with the autonomous preset (omitted: the key is not written).
+    #[arg(long, value_name = "VALUE", conflicts_with = "finish")]
+    pub cloud_env: Option<String>,
 }

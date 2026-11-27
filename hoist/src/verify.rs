@@ -45,8 +45,28 @@ pub fn verify_required_checks(d: &Desired, w: &Workflows, pins: &[(String, u64)]
                 .iter()
                 .find(|(c, id)| *c == check.value && *id != GITHUB_ACTIONS_APP)
                 .map(|(_, id)| *id);
+            // Pinned in hoist.toml to an App other than GitHub Actions: no workflow job posts it.
+            // Without a live pin to compare (ruleset unreadable or unpinned) it is `unknown`, and
+            // the ruleset item reports any real mismatch.
+            let wanted_app = d
+                .github
+                .ruleset
+                .check_pins
+                .iter()
+                .find(|p| p.context == check.value && p.id != Some(GITHUB_ACTIONS_APP));
+            let mut action = Action::Ok;
             let (reason, ok) = if let Some(id) = app {
                 (format!("posted by app {id}"), true)
+            } else if let Some(pin) = wanted_app {
+                action = Action::Unknown;
+                let who = match &pin.app {
+                    crate::config::CheckApp::Slug(s) => format!("app `{s}`"),
+                    crate::config::CheckApp::Id(i) => format!("app id {i}"),
+                };
+                (
+                    format!("pinned to {who}, posted by it, not a workflow job; not verified live"),
+                    true,
+                )
             } else if kept {
                 (
                     "kept from the live ruleset (--adopt); not a check hoist names".to_string(),
@@ -86,7 +106,7 @@ pub fn verify_required_checks(d: &Desired, w: &Workflows, pins: &[(String, u64)]
                 area: "github".to_string(),
                 kind: "required_check".to_string(),
                 key: check.value.clone(),
-                action: Action::Ok,
+                action,
                 reason: reason.clone(),
                 source: check.source.clone(),
                 verify: Some(Verify { ok, detail: reason }),

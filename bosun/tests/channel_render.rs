@@ -2288,6 +2288,15 @@ fn setup_scripts() -> Vec<(&'static str, String)> {
     ]
 }
 
+/// Only bosun's own script: it still builds cargo tools with `cargo install` (BT moved the channel
+/// to checksummed release binaries only; see tests/setup_script_tools.rs).
+fn own_setup_script() -> Vec<(&'static str, String)> {
+    setup_scripts()
+        .into_iter()
+        .filter(|(n, _)| *n == "bosun")
+        .collect()
+}
+
 /// The tool calls of a sandbox run: lines that start with `<tool> `.
 fn tool_calls(calls: &str, tool: &str) -> Vec<String> {
     let p = format!("{tool} ");
@@ -2315,6 +2324,12 @@ fn setup_scripts_install_cargo_deny_without_a_toolchain_file() {
             "{name}: {calls}"
         );
         assert!(calls.contains("rustup default stable"), "{name}: {calls}");
+        if name == "channel" {
+            // Never `cargo install`: the fake curl serves no tarball, so both tools warn and skip.
+            assert!(tool_calls(&calls, "cargo").is_empty(), "{name}: {calls}");
+            assert!(err.contains("no rust-toolchain.toml"), "{name}: {err}");
+            continue;
+        }
         assert_eq!(
             tool_calls(&calls, "cargo"),
             ["cargo install --locked cargo-deny"],
@@ -2353,7 +2368,7 @@ fn with_bosun_pin(script: &str, pin: &str) -> String {
 /// §7) or a repo profile names nextest; a 0.12.0 or later pin skips it.
 #[test]
 fn setup_scripts_install_cargo_nextest_only_for_old_pins_or_an_override() {
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         for (pin, profile, want) in [
             ("0.11.0", None, true),
             ("0.12.0", None, false),
@@ -2402,7 +2417,7 @@ fn nextest_skip_threshold_waits_for_the_cargo_test_default_gate() {
         .unwrap();
     let cmd = profile["gates"]["test"]["cmd"].as_array().unwrap();
     let runs_nextest = cmd.iter().any(|a| a.as_str() == Some("nextest"));
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         let line = script
             .lines()
             .find(|l| l.contains("sort -V") && l.contains("BOSUN_VERSION"))
@@ -2470,7 +2485,7 @@ fn with_tool_sums(script: &str, deny: &str, nextest: &str) -> String {
 /// pinned version downloads nothing, and no cargo tool step runs without a Cargo.toml.
 #[test]
 fn setup_scripts_download_prebuilt_cargo_tools_verified_and_fall_back_to_cargo() {
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         let script = with_bosun_pin(&script, "0.11.0"); // an old pin: nextest installs too
         let version = |k: &str| {
             script
@@ -2670,7 +2685,7 @@ fn setup_scripts_install_pnpm_only_where_the_checkout_uses_it() {
 /// pins ship empty: the npm packages are not published yet.
 #[test]
 fn setup_scripts_install_cargo_deny_from_its_pin_when_set() {
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         for v in [
             "CARGO_DENY_VERSION=\"\"",
             "CARGO_DENY_SHA512=\"\"",
@@ -2711,7 +2726,7 @@ fn setup_scripts_install_cargo_deny_from_its_pin_when_set() {
 /// `cargo-deny/` prefix does not match its `cargo-deny-linux-*` package.
 #[test]
 fn setup_scripts_skip_cargo_deny_at_its_recorded_fingerprint() {
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         let start = script.find("tool_pack() {").unwrap();
         let end = script[start..].find("\n}\ninstall_tool ").unwrap();
         let funcs = format!("{}\n", &script[start..start + end + 3]);
@@ -2762,7 +2777,7 @@ fn setup_scripts_skip_cargo_deny_at_its_recorded_fingerprint() {
 /// warning and never reaches rustup, yet the cargo tools still install.
 #[test]
 fn setup_scripts_keep_the_channel_check_when_they_install_the_tools() {
-    for (name, script) in setup_scripts() {
+    for (name, script) in own_setup_script() {
         for (channel, valid) in [("1.99.1", true), ("1.0; rm -rf /", false)] {
             let sb = SetupSandbox::new();
             fs::write(

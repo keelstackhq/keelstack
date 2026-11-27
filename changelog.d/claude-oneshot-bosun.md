@@ -1,0 +1,1 @@
+- bosun/hoist one-shot: `bosun migrate --to autonomous` writes the D-028 preset (B1); `[intake] trusted_authors` (BA); setup script installs pinned cargo-deny and nextest without `cargo install` (BT); `hoist check` pins by app id (H1); `bosun owner manifest|setup` (B2).

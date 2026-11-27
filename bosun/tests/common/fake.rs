@@ -10,6 +10,13 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 pub const PAGE_SIZE: usize = 2;
+/// The id of the environment public key the fake serves.
+pub const ENV_KEY_ID: &str = "fake-env-key-1";
+
+/// The secret half of the fake's environment public key: a test unseals what was sent.
+pub fn env_secret_key() -> crypto_box::SecretKey {
+    crypto_box::SecretKey::from([9u8; 32])
+}
 const TS: &str = "2026-10-22T10:00:00Z";
 
 #[derive(Debug, Clone)]
@@ -28,6 +35,8 @@ pub struct FakeIssue {
     pub updated_at: String,
     /// Slug of the app the issue was written via (`performed_via_github_app`).
     pub via_app: Option<String>,
+    /// The issue's `author_association`; `None` leaves the field out.
+    pub association: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -60,12 +69,28 @@ pub enum LogMode {
 /// Everything the fake knows.
 #[derive(Default)]
 pub struct State {
+    /// GitHub App manifest codes that `POST /app-manifests/<code>/conversions` accepts once.
+    pub manifest_codes: Vec<String>,
+    /// Every conversion attempt, valid or not (the codes of the requests).
+    pub manifest_attempts: Vec<String>,
+    /// The PEM the conversion returns (a test key, never real).
+    pub manifest_pem: String,
+    /// The slug the manifest conversion answers with (default `acme-bosun-gate`).
+    pub manifest_slug: Option<String>,
+    /// Environments whose `GET` shows a required-reviewers protection rule (a `PUT` clears it).
+    pub env_with_reviewers: Vec<String>,
     /// Issue numbers that GET answers with 410 (deleted).
     pub gone: Vec<u64>,
     pub issues: Vec<FakeIssue>,
     pub comments: Vec<FakeComment>,
     pub labels: Vec<(String, String)>,
     pub variables: HashMap<String, String>,
+    /// Environment variables set through the API: `env/NAME` -> value.
+    pub env_vars: HashMap<String, String>,
+    /// Environment secrets set through the API: `env/NAME` -> (`key_id`, sealed value as sent).
+    pub env_secrets: HashMap<String, (String, String)>,
+    /// The `reviewers` of every `PUT /environments/<name>` body, newest last.
+    pub env_reviewers: HashMap<String, Value>,
     /// Repo paths that answer 200: `actions/secrets/N`, `environments/E[/secrets/N|/variables/N]`.
     pub present: Vec<String>,
     /// Environment name -> (`deployment_branch_policy`, its `branch_policies` [{name, type}]).
@@ -362,6 +387,7 @@ impl FakeGithub {
             state_reason: None,
             updated_at: TS.into(),
             via_app: None,
+            association: None,
         });
     }
 
@@ -982,6 +1008,16 @@ impl FakeGithub {
             .user = user.into();
     }
 
+    /// The `author_association` of an issue (default: left out, as an old API would).
+    pub fn issue_association(&self, number: u64, association: &str) {
+        let mut s = self.state.lock().unwrap();
+        s.issues
+            .iter_mut()
+            .find(|i| i.number == number)
+            .unwrap()
+            .association = Some(association.into());
+    }
+
     /// An issue or pull entry written through the GitHub App `slug`.
     pub fn issue_via_app(&self, number: u64, slug: &str) {
         let mut s = self.state.lock().unwrap();
@@ -1247,6 +1283,9 @@ fn issue_json(i: &FakeIssue) -> Value {
     let mut v = json!({"number": i.number, "title": i.title, "body": i.body, "state": i.state,
         "labels": labels, "user": {"login": i.user}, "closed_at": i.closed_at,
         "state_reason": i.state_reason, "updated_at": i.updated_at});
+    if let Some(a) = &i.association {
+        v["author_association"] = json!(a);
+    }
     if let Some(slug) = &i.via_app {
         v["performed_via_github_app"] = json!({"slug": slug});
     }
@@ -1427,6 +1466,22 @@ fn route(
         }
         return graphql(s, body);
     }
+    if method == "POST"
+        && let ["app-manifests", code, "conversions"] = seg.as_slice()
+    {
+        s.manifest_attempts.push(code.to_string());
+        let Some(at) = s.manifest_codes.iter().position(|c| c == code) else {
+            return msg(404, "Not Found");
+        };
+        s.manifest_codes.remove(at);
+        return (
+            201,
+            json!({"id": 777, "slug": s.manifest_slug.clone().unwrap_or("acme-bosun-gate".into()), "client_id": "Iv1.fakeclient",
+                "client_secret": "FAKE-CLIENT-SECRET", "webhook_secret": "FAKE-WEBHOOK-SECRET",
+                "pem": s.manifest_pem, "name": "acme-bosun-gate"}),
+            vec![],
+        );
+    }
     if method == "GET" && seg == ["user"] {
         return match &s.viewer {
             Some(l) => ok(json!({"login": l})),
@@ -1556,6 +1611,7 @@ fn route(
                 state_reason: None,
                 updated_at: TS.into(),
                 via_app: None,
+                association: None,
             };
             let v = issue_json(&issue);
             s.issues.push(issue);
@@ -2124,13 +2180,105 @@ fn route(
                 ok(json!({"contexts": s.classic_checks, "checks": []}))
             }
         }
+        ("PUT", ["environments", name]) => {
+            if body["reviewers"].as_array().is_some_and(Vec::is_empty) {
+                s.env_with_reviewers.retain(|n| n != name);
+            }
+            s.environments.insert(
+                name.to_string(),
+                (
+                    json!({"protected_branches": false, "custom_branch_policies": true}),
+                    json!([]),
+                ),
+            );
+            s.env_reviewers
+                .insert(name.to_string(), body["reviewers"].clone());
+            ok(json!({"name": name}))
+        }
+        ("POST", ["environments", name, "deployment-branch-policies"])
+            if s.environments.contains_key(*name) =>
+        {
+            let policy = json!({"name": body["name"], "type": body["type"]});
+            let list = s
+                .environments
+                .get_mut(*name)
+                .unwrap()
+                .1
+                .as_array_mut()
+                .unwrap();
+            if list.iter().any(|p| p["name"] == body["name"]) {
+                return msg(422, "Validation Failed: already exists");
+            }
+            list.push(policy.clone());
+            ok(policy)
+        }
+        ("GET", ["environments", name, "secrets", "public-key"])
+            if s.environments.contains_key(*name) =>
+        {
+            let pk = env_secret_key().public_key();
+            ok(json!({"key_id": ENV_KEY_ID,
+                "key": bosun::github::b64::encode(pk.as_bytes())}))
+        }
+        ("PUT", ["environments", name, "secrets", secret])
+            if s.environments.contains_key(*name) =>
+        {
+            let sealed = body["encrypted_value"].as_str().unwrap_or("");
+            let well_formed = bosun::github::b64::decode(sealed).is_some_and(|b| b.len() > 48);
+            if body["key_id"] != ENV_KEY_ID || !well_formed {
+                return msg(422, "Validation Failed: bad key_id or encrypted_value");
+            }
+            let key = format!("{name}/{secret}");
+            let status = if s.env_secrets.contains_key(&key) {
+                204
+            } else {
+                201
+            };
+            s.env_secrets
+                .insert(key, (ENV_KEY_ID.to_string(), sealed.to_string()));
+            (status, Value::Null, vec![])
+        }
+        ("GET", ["environments", name, "secrets", secret])
+            if s.env_secrets.contains_key(&format!("{name}/{secret}")) =>
+        {
+            ok(json!({"name": secret}))
+        }
+        ("POST", ["environments", name, "variables"]) if s.environments.contains_key(*name) => {
+            let var = body["name"].as_str().unwrap_or("");
+            let key = format!("{name}/{var}");
+            if var.is_empty() || s.env_vars.contains_key(&key) {
+                return msg(409, "Already exists");
+            }
+            s.env_vars
+                .insert(key, body["value"].as_str().unwrap_or("").to_string());
+            (201, Value::Null, vec![])
+        }
+        ("PATCH", ["environments", name, "variables", var])
+            if s.env_vars.contains_key(&format!("{name}/{var}")) =>
+        {
+            s.env_vars.insert(
+                format!("{name}/{var}"),
+                body["value"].as_str().unwrap_or("").to_string(),
+            );
+            (204, Value::Null, vec![])
+        }
+        ("GET", ["environments", name, "variables", var])
+            if s.env_vars.contains_key(&format!("{name}/{var}")) =>
+        {
+            ok(json!({"name": var, "value": s.env_vars[&format!("{name}/{var}")]}))
+        }
         ("GET", ["actions", "variables", name]) => match s.variables.get(*name) {
             Some(v) => ok(json!({"name": name, "value": v})),
             None => msg(404, "Not Found"),
         },
         ("GET", ["environments", name]) if s.environments.contains_key(*name) => {
             let policy = &s.environments[*name].0;
-            ok(json!({"name": name, "deployment_branch_policy": policy}))
+            let rules = if s.env_with_reviewers.iter().any(|n| n == name) {
+                json!([{"type": "required_reviewers", "reviewers": [{"type": "User"}]}])
+            } else {
+                json!([])
+            };
+            ok(json!({"name": name, "deployment_branch_policy": policy,
+                "protection_rules": rules}))
         }
         ("GET", ["environments", name, "deployment-branch-policies"])
             if s.environments.contains_key(*name) =>

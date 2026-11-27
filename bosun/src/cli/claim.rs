@@ -37,6 +37,7 @@ pub fn run(dir: Option<&Path>, args: &ClaimArgs) -> CmdResult {
             "check the number; `bosun status` lists the tasks",
         )
     })?;
+    crate::app::intake_trust(gh)?.require_issue(&issue)?;
     let meta = task_meta(&issue);
     let mainfix = meta.as_ref().is_some_and(|m| m.kind == "mainfix")
         || issue.labels.iter().any(|l| l == "bosun:kind/mainfix");

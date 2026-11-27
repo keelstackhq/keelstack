@@ -52,6 +52,7 @@ fn read_text(from: &str) -> Result<String, BosunError> {
 /// `answer`, `escalate` or `failure` record follows it. A forged ask by anyone else never counts.
 fn open_ask(gh: &dyn Github, n: u64) -> Result<Option<u64>, BosunError> {
     let comments = gh.list_comments(n)?;
+    let trust = crate::app::intake_trust(gh)?;
     let mut cache: HashMap<String, bool> = HashMap::new();
     let mut newest_ask = None;
     let mut closed_at = None;
@@ -67,7 +68,11 @@ fn open_ask(gh: &dyn Github, n: u64) -> Result<Option<u64>, BosunError> {
         if !is_ask && !closes {
             continue;
         }
-        // Asks and closers count only from a collaborator with write access.
+        // Asks and closers count only from a collaborator with write access, and (BA) from a
+        // trusted author.
+        if !trust.comment(c).trusted {
+            continue;
+        }
         let trusted = match cache.get(&c.user) {
             Some(t) => *t,
             None => {
