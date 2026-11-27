@@ -26,7 +26,7 @@ name = "hull"
 min_splice = "0.1.0"             # oldest splice that can render this template
 base = "base"                    # piece applied by every `splice new`, exactly once
 
-[vars]                           # template-wide variables, asked once per repo
+[vars]                           # template-wide variables, asked once per repo (`splice set K=V` changes one later)
 scope = { prompt = "npm scope without @", default = "acme", pattern = "^[a-z0-9-]+$" }
 ```
 

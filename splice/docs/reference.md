@@ -32,6 +32,7 @@ pnpm dlx @keelstackhq/splice check         # exit 1 on drift, conflicts or an av
 | `splice adopt <source>` | Apply the template to an existing repo that has no lock (see Adopt an existing repo) |
 | `splice add <piece>` | Add a piece (or another instance of a `multiple` piece); other files merge as on `update`, and a conflict writes nothing |
 | `splice update [--to V \| --ref R]` | Move to a newer template version, or to a branch or sha with `--ref`; your edits are merged, never lost; a legacy `gh:keelstackhq/<tool>//<dir>` lock source is first repointed to the monorepo in its own commit (`<tool>/legacy-tags.txt` maps the version, exit 1 if unknown) |
+| `splice set [--channel NAME] K=V…` | Change a locked template var and re-render only the owned files it touches; edited owned files are refused (exit 1) unless `--force`, a dirty tree (exit 2) unless `--allow-dirty` |
 | `splice check` | Fail on edited owned files, leftover conflict markers, or a newer version |
 | `splice diff [--to V \| --ref R]` | Show what `update` would change, as a unified diff; writes nothing |
 | `splice explain <path>` | Which piece owns a file and how splice treats it |
@@ -147,6 +148,11 @@ splice diff --channel rig              # what update --channel would change
 splice channel remove rig              # delete unedited files, strip its blocks, delete its lock
 ```
 
+- **Post commands.** A channel's `post` commands run in its `only` root (`apps/site/**` runs in
+  `apps/site`). They are skipped with a stderr message when that directory is missing or, for
+  `pnpm`, `npm`, `npx` and `yarn` commands, has no `package.json`. Main and channels without
+  `only` run from the repo root and fail (exit 3) as before. `update --all` runs a command once
+  per (root, `run`).
 - **Filters.** `--only` and `--exclude` (globs) are stored in the channel lock. Dropped paths are
   never written or locked.
 - **Tracking.** `--track BRANCH` follows a branch head instead of version tags; `update` then

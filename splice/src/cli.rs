@@ -44,14 +44,16 @@ pub enum Command {
     Explain(ExplainArgs),
     /// List the pieces (and variables) of a template.
     Pieces(PiecesArgs),
+    /// Set template variables and re-render the owned files they touch.
+    Set(SetArgs),
     /// Add or remove a channel: an extra template source kept current beside the main one.
     Channel(ChannelArgs),
 }
 
 impl Command {
     /// Subcommand names, as typed on the command line.
-    pub const NAMES: [&'static str; 9] = [
-        "new", "adopt", "add", "update", "check", "diff", "explain", "pieces", "channel",
+    pub const NAMES: [&'static str; 10] = [
+        "new", "adopt", "add", "update", "set", "check", "diff", "explain", "pieces", "channel",
     ];
 
     pub fn name(&self) -> &'static str {
@@ -60,6 +62,7 @@ impl Command {
             Command::Adopt(_) => "adopt",
             Command::Add(_) => "add",
             Command::Update(_) => "update",
+            Command::Set(_) => "set",
             Command::Check(_) => "check",
             Command::Diff(_) => "diff",
             Command::Explain(_) => "explain",
@@ -195,6 +198,22 @@ pub struct UpdateArgs {
     /// Skip paths matching this glob (channel updates).
     #[arg(long, value_name = "GLOB", requires = "channel")]
     pub exclude: Vec<String>,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SetArgs {
+    /// Variable assignments, `K=V`.
+    #[arg(required = true, value_name = "K=V")]
+    pub vars: Vec<String>,
+    /// Set the variables of this channel instead of the main template.
+    #[arg(long, value_name = "NAME")]
+    pub channel: Option<String>,
+    /// Set even when the working tree is dirty.
+    #[arg(long)]
+    pub allow_dirty: bool,
+    /// Overwrite owned files that drifted.
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, Clone, Args)]

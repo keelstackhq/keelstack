@@ -37,6 +37,30 @@ fn checked(name: &str, value: String, spec: &VarSpec) -> Result<String> {
     }
 }
 
+/// `splice set` assignments: each `K=V` must name a var in `specs` and match its `pattern`
+/// (usage error, exit 2). Returns the pairs in command-line order; a repeated key keeps the last.
+pub fn validate_assignments(
+    specs: &IndexMap<String, VarSpec>,
+    assignments: &IndexMap<String, String>,
+) -> Result<IndexMap<String, String>> {
+    let mut out = IndexMap::new();
+    for (name, value) in assignments {
+        let Some(spec) = specs.get(name) else {
+            let known: Vec<&str> = specs.keys().map(String::as_str).collect();
+            return Err(SpliceError::Usage(format!(
+                "no variable `{name}` in this template (variables: {})",
+                if known.is_empty() {
+                    "none".to_string()
+                } else {
+                    known.join(", ")
+                }
+            )));
+        };
+        out.insert(name.clone(), checked(name, value.clone(), spec)?);
+    }
+    Ok(out)
+}
+
 fn prompt(name: &str, spec: &VarSpec) -> Result<String> {
     let mut input = dialoguer::Input::<String>::new().with_prompt(spec.prompt.as_str());
     if let Some(d) = &spec.default {

@@ -50,6 +50,7 @@ Global flags on every command: `--json` (contract §8), `--yes` (no prompts, use
 | `splice adopt <source> [--ref R] [--pre] [--piece ID[:NAME]]… [--data K=V]… [--dry-run] [--force] [--allow-dirty] [--no-post]` | Apply the main template to an existing repo that has no lock (§8.1a). |
 | `splice add <piece-id> [--name N] [--data K=V]… [--allow-dirty] [--no-post] [--force]` | Add a piece instance at the lock's template commit. |
 | `splice update [--to VERSION \| --ref R] [--data K=V]… [--allow-dirty] [--force] [--no-post] [--channel NAME [--only GLOB]… [--exclude GLOB]…] [--all]` | Move to a newer template version (default: latest stable tag), or with `--ref` to a descendant git ref (§4). `--channel` updates one channel, `--all` the main template and every channel. |
+| `splice set [--channel NAME] [--allow-dirty] [--force] K=V…` | Change locked template vars and re-render the owned files they touch (§8.3a). |
 | `splice check [--offline] [--channel NAME]` | Exit 1 on owned drift, leftover conflict markers, or an available update. |
 | `splice diff [--to VERSION \| --ref R] [--channel NAME]` | Show what `update` would change, without writing. |
 | `splice explain <path>` | Print class, owning piece instance and matching glob of a path. |
@@ -234,7 +235,7 @@ Per-file record: `RenderedFile { path, bytes, class, strategy, piece_id, piece_n
    final set, `multiple`, unique names.
 4. Resolve vars (flags → prompt → default), validate `pattern`.
 5. Render, write every file (seeds only when absent), `git init` if `dest` is not inside a git
-   work tree, run `[[post]]` with `when` ∋ `new` (all instantiated pieces, identical commands once),
+   work tree, run `[[post]]` with `when` ∋ `new` (all instantiated pieces, identical commands once; a channel's in its `only` root, skipped when missing, §10 item 33),
    then write the lock (§8.6) as the very last step. A failed post command (exit 3) therefore
    leaves the files but no lock; `new --force` redoes it. Any failure after the first write
    (post, lock write, `--commit`) is exit 3 and `--json` still lists the files written in `changes`.
@@ -332,7 +333,7 @@ the same `add` is safe because a file that already equals the new render is skip
    nothing, exit 1, list the drifted files.
 7. **Apply:** write files, delete removals, run migration `[[step]]`s for versions A < v ≤ B in
    semver order (an untagged side selects by ancestry, §10 item 21; env `SPLICE_FROM_VERSION`, `SPLICE_TO_VERSION`), run `[[post]]` with
-   `when` ∋ `update`, then write the lock atomically (§8.6) as the last step (as in §8.1 and §8.6).
+   `when` ∋ `update` (a channel's in its `only` root, skipped when the dir or package.json is missing, §10 item 33), then write the lock atomically (§8.6) as the last step (as in §8.1 and §8.6).
    Steps and post commands run without secret-like environment variables (§8.1).
    A failing step or post command exits 3 **before** the lock is written: the files are updated
    but the lock still records the old state, and re-running `update` is safe (after restoring,
@@ -362,7 +363,7 @@ against that seed (`created = false`) and two channels' blocks in one host both 
 in order: the claim check on all planned results (exit 2); drift or broken markers in any source
 → nothing written, exit 1, each line prefixed `main: ` / `channel NAME: `; every changed source's
 files, sections, removals and steps (main first); the `[[post]]` commands (`when` ∋ `update`) of
-all changed sources once, deduplicated by exact `run` (first occurrence), skipped on conflicts
+all changed sources once, deduplicated by (root, exact `run`) (first occurrence), skipped on conflicts
 or `--no-post`; every changed lock last, each atomically (§8.6). A failure before the locks
 writes none: the message names the source (`main: `, `channel NAME: `) or the post command,
 says "no lock was written, every lock still records its old version" and gives the
@@ -371,6 +372,18 @@ the locks written, the one not confirmed and those not written; a re-run converg
 up-to-date main lock is not rewritten. The report has a `source=…` message per changed source,
 `NAME: up to date …` per unchanged one. The conservative claim check and the steps-after-planning
 rule: channels spec §8 (`update --all` rulings).
+
+### 8.3a `set`
+
+`splice set [--channel NAME] K=V…` changes template variables of the main lock (or the named
+channel's) without moving the template. Each `K` must be a `[vars]` key of the template at the
+locked commit and `V` must match its `pattern` (else exit 2, nothing written). The tree is
+rendered at the locked commit with the old and the new vars; only owned files whose render
+differs are rewritten (a new path is created, a vanished one deleted when unedited). Shared and
+seed files are never touched. Dirty tree: exit 2 unless `--allow-dirty`. An edited owned file
+among them: exit 1, nothing written, unless `--force`. Files first, then the lock (vars and the
+hashes of the written files) atomically last; no post commands run. Setting the values already
+locked is a no-op (exit 0). Channel `[sections]` are not re-rendered.
 
 ### 8.4 Planner rules
 
@@ -781,6 +794,13 @@ Items 11–14 and 18 stay splice's own decisions.
     stand for `rust-cli:cli`) are not added: they would need a new manifest key, which is a
     contract change; a better "unknown piece" message and
     `splice pieces` cover the discovery problem without one.
+33. Channel post commands run in the `only` root (UC-S2-1). The root is the common literal
+    directory prefix of the channel's `only` globs (`apps/site/**` -> `apps/site`); a glob with a
+    `..` segment, or no common directory, gives no root. With a root, a command runs there, and
+    is skipped with a stderr message (never an error) when the directory is missing or, for a
+    command naming `pnpm`, `npm`, `npx` or `yarn`, when `package.json` is missing there. Main and
+    channels without a root run from the repo root and fail as before (exit 3). Dedupe in
+    `update --all` is keyed by (root, `run`).
 
 ## 11. Testing
 
