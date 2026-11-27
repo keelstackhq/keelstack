@@ -308,6 +308,7 @@ the same `add` is safe because a file that already equals the new render is skip
 
 ### 8.3 `update`
 
+0. Before step 1's lock is used: a legacy lock source `gh:keelstackhq/<tool>//<dir>` (main or channel) is rewritten to `gh:keelstackhq/keelstack//<tool>/<dir>` with the commit mapped through `<tool>/legacy-tags.txt` of the latest monorepo release; one commit `chore(splice): repoint <source> to the monorepo` per lock; an unlisted version is exit 1, nothing written. Steps 1-8 then run as usual.
 1. Read the lock. Refuse a dirty tree (`git status --porcelain` not empty) with exit 2 unless
    `--allow-dirty`; refuse outside a git work tree unless `--allow-dirty`. The clean tree is the
    recovery story: every failure can be undone with `git checkout -- . && git clean -fd`, and

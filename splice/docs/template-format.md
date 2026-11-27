@@ -112,6 +112,14 @@ vars = { name = "web" }
 
 Only `splice` writes this file. Seed files are not listed.
 
+**Legacy sources.** A lock source `gh:keelstackhq/<tool>//<dir>` (tool: hull, bosun, hoist, hoard,
+berth, splice, keel; the archived repos, D-023) is repointed by `splice update` (main and channel
+locks) to `gh:keelstackhq/keelstack//<tool>/<dir>`. The locked version is mapped to its monorepo
+commit through `<tool>/legacy-tags.txt` (lines `<version> <commit>`, `#` comments) read from the
+latest monorepo release. One commit `chore(splice): repoint <source> to the monorepo` per lock,
+then the update continues in the same run. A version missing from that file exits 1 naming it,
+and nothing is written.
+
 ## 7. Migrations `migrations/<semver>.toml`
 
 ```toml
