@@ -96,13 +96,13 @@ depends: S3
 
 ### Tasks
 
-- T1: The template version line of AGENTS.md and the tool pins of pins.toml become section blocks (owned) so `splice update` keeps them current; the rest stays seed
-  touch: hull/template-rust/pieces/base/files/AGENTS.md.jinja, hull/template-rust/pieces/base/files/pins.toml.jinja, hull/template/pieces/base/files/AGENTS.md.jinja, hull/tests/seed_sections.test.mjs
+- T1: The AGENTS.md seed line names no template version (the lock `.splice/lock.toml` is the only source; the always-loaded byte ceiling leaves no room for a pointer); pins.toml is already fully owned and stays current by `splice update`
+  touch: hull/template-rust/pieces/base/files/AGENTS.md.jinja, hull/template/pieces/base/files/AGENTS.md.jinja, hull/tests/seed_sections.test.mjs
   size: 150
 
 ### Done when
 
-- UC-S4-1: after an update from 0.13.0, AGENTS.md names the new version and pins.toml the new splice and bosun.
+- UC-S4-1: AGENTS.md names no template version; the lock is the only source. pins.toml (owned) carries the new splice and bosun pins after an update.
 
 ## K1: Preflight first, and dry-run without installs
 
