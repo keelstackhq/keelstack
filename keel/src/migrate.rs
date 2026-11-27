@@ -854,6 +854,18 @@ impl Mig<'_> {
         if o.code != 0 {
             // Like `hoist init`: not a reason to stop the migration, and not silent either.
             let why = failure(&c, &o);
+            if hoist::lacks_system(&o) {
+                self.human(
+                    "system-init",
+                    "Upgrade hoist to a version with `hoist system` (this one is too old), then describe the repo's systems and credentials".into(),
+                    "",
+                    "hoist system init",
+                );
+                return Ok((
+                    MAction::Skipped,
+                    "hoist is too old for `hoist system`".into(),
+                ));
+            }
             self.human(
                 "system-init",
                 format!("Describe the repo's systems and credentials: hoist system init failed here: {why}"),

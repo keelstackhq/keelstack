@@ -579,18 +579,8 @@ pub fn system_init(dir: &Path, print: bool) -> Result<Report, HoistError> {
 
 /// Create `path` with `text`; `false` when it already exists (never overwritten, no race).
 fn write_new(path: &Path, text: &str) -> Result<bool, HoistError> {
-    use std::io::Write;
-    let fail = |e: std::io::Error| HoistError::Config {
+    super::create_atomic(path, text).map_err(|e| HoistError::Config {
         file: FILE.into(),
         message: format!("cannot write: {e}"),
-    };
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut f) => f.write_all(text.as_bytes()).map(|()| true).map_err(fail),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
-        Err(e) => Err(fail(e)),
-    }
+    })
 }

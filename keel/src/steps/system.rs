@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn hoist_without_the_system_subcommand_warns_and_is_done() {
         let json_err =
-            r#"{"ok":false,"error":{"message":"unknown subcommand `system`","fix":"x"}}"#;
+            r#"{"ok":false,"error":{"message":"unrecognized subcommand 'system'","fix":"x"}}"#;
         for out in [
             Out::with(
                 3,
@@ -157,7 +157,12 @@ mod tests {
             ),
             Out::with(3, json_err, ""),
             Out::with(2, "", "error: unrecognized subcommand 'system'"),
-            Out::with(2, "Usage: hoist [OPTIONS]", ""),
+            Out::with(
+                2,
+                "",
+                "error: unrecognized subcommand 'system'\n\nUsage: hoist [OPTIONS] <COMMAND>",
+            ),
+            Out::with(2, "error: unrecognized subcommand 'system'", ""),
         ] {
             let r = FakeRunner::new().on(&["hoist", "--json", "system", "check"], out);
             let (c, items, pending) = run(&r, true);

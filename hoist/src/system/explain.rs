@@ -248,7 +248,7 @@ pub fn system_explain(
             None => Action::Create,
         };
         if action != Action::Ok {
-            std::fs::write(&out, &md).map_err(|e| HoistError::Config {
+            super::write_atomic(&out, &md).map_err(|e| HoistError::Config {
                 file: OUT.into(),
                 message: format!("cannot write: {e}"),
             })?;

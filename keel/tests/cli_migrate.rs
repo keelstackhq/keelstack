@@ -66,6 +66,7 @@ case "$name $*" in
     echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "hoist --json system init"*)
     [ "$KEEL_SCENARIO" = sysinitfail ] && { echo '{"version":1,"command":"system init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"cannot read workflows","fix":"run it in the repo root"}}'; exit 3; }
+    [ "$KEEL_SCENARIO" = sysinitold ] && { echo "error: unrecognized subcommand 'system'" >&2; exit 2; }
     [ "$KEEL_SCENARIO" = sysinit ] && printf 'version = 1\n' > system.toml
     echo '{"ok":true,"exit_code":0,"items":[{"area":"system","kind":"system","key":"system.toml","action":"create","reason":""}],"human_steps":[]}';;
   "hoist --json check")
@@ -1222,4 +1223,14 @@ fn a_failing_system_init_is_a_checklist_entry_with_the_command_not_a_rollback() 
     let (_, v) = env.run_untouched("sysinitfail", &["--to", "0.23.0"]);
     assert_eq!(action(&v, "system"), "skipped", "{v}");
     assert_eq!(entry(&v, "system-init")["command"], "hoist system init");
+}
+
+#[test]
+fn an_old_hoist_without_system_gets_an_upgrade_step() {
+    let env = Env::new(&ALL);
+    let (_, v) = env.run_untouched("sysinitold", &["--to", "0.23.0"]);
+    assert_eq!(action(&v, "system"), "skipped", "{v}");
+    let e = entry(&v, "system-init");
+    assert!(e["title"].to_string().contains("Upgrade hoist"), "{e}");
+    assert_eq!(e["command"], "hoist system init");
 }

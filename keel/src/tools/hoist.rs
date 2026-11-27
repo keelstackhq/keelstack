@@ -342,26 +342,21 @@ pub enum SystemCheck {
     Ran(Parsed),
 }
 
-/// Whether `o` is an old hoist rejecting `system`: clap's unknown-subcommand error (exit 3, or
-/// exit 2 on very old clap), a JSON error envelope naming the subcommand, or exit 2 without JSON.
-fn lacks_system(o: &Out) -> bool {
-    let named = |s: &str| {
-        let s = s.to_lowercase();
-        s.contains("system") && (s.contains("subcommand") || s.contains("unrecognized"))
-    };
+/// Whether `o` is an old hoist rejecting `system`: clap's exact `unrecognized subcommand 'system'`
+/// error in a JSON error envelope (exit 3) or on stderr/stdout (exit 2 on very old clap, 3 once
+/// main mapped it). Any other failure, even one mentioning `system`, is a real failure.
+pub(crate) fn lacks_system(o: &Out) -> bool {
+    const CLAP: &str = "unrecognized subcommand 'system'";
     match json(o) {
         Some(v) => {
             o.code == 3
                 && v["error"]["message"]
                     .as_str()
-                    .is_some_and(|m| named(m) || m.to_lowercase().contains("unknown command"))
+                    .is_some_and(|m| m.contains(CLAP))
         }
-        // Old hoist: a clap usage error (exit 2, or 3 once main mapped it) naming `system` or
-        // printing usage; an exit 2 with no usage text is a real failure, not "too old".
         None => {
-            let usage = |s: &str| named(s) || s.contains("Usage:");
-            (o.code == 2 && (usage(&o.stderr) || usage(&o.stdout)))
-                || (o.code == 3 && named(&o.stderr))
+            (o.code == 2 && (o.stderr.contains(CLAP) || o.stdout.contains(CLAP)))
+                || (o.code == 3 && o.stderr.contains(CLAP))
         }
     }
 }
@@ -492,6 +487,37 @@ mod tests {
     }
 
     const AREAS: &str = "--area github --area npm --area crates --area release";
+
+    #[test]
+    fn lacks_system_matches_only_clap_unrecognized_system() {
+        let clap = "error: unrecognized subcommand 'system'\n\nUsage: hoist <COMMAND>";
+        assert!(lacks_system(&Out::with(2, "", clap)));
+        assert!(lacks_system(&Out::with(3, "", clap)));
+        let env = |m: &str| {
+            Out::with(
+                3,
+                &format!(r#"{{"ok":false,"error":{{"message":"{m}"}}}}"#),
+                "",
+            )
+        };
+        assert!(lacks_system(&env("unrecognized subcommand 'system'")));
+        for near in [
+            "unrecognized subcommand 'systems'",
+            "unrecognized subcommand 'pr'",
+            "system.toml: unrecognized key, bad subcommand",
+            "unknown command system",
+        ] {
+            assert!(!lacks_system(&env(near)), "{near}");
+            assert!(!lacks_system(&Out::with(2, "", near)), "{near}");
+            assert!(!lacks_system(&Out::with(3, "", near)), "{near}");
+        }
+        assert!(!lacks_system(&Out::with(
+            2,
+            "",
+            "Usage: hoist system check"
+        )));
+        assert!(!lacks_system(&Out::with(1, "", clap)));
+    }
 
     #[test]
     fn settings_names_every_area_but_cloudflare_and_falls_back_on_old_hoist() {

@@ -306,8 +306,13 @@ key); a missing token or a 401/403 is `unknown` with a fix, never a failure.
 Fly) creates the new credential, tests it, writes it into every storage (GitHub storages sealed,
 `fly-secret` on stdin of `fly secrets import`), and only then revokes the
 old one, then stamps `created_at`/`expires_at` in `system.toml`; `assisted`/`manual` print the
-steps (exit 2). `hoist system stamp ID --created DAY [--expires DAY] [--by WHO]` records a
-rotation done by hand. Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`, failed rotation), 2
+steps (exit 2). Rotation order: new credential created and tested, stored everywhere, `system.toml`
+stamped, and the old credential revoked last, so a failure before the revoke leaves the old one
+working. `hoist system stamp ID --created YYYY-MM-DD [--expires YYYY-MM-DD|never] [--by WHO]
+[--via TEXT] [--ref PROVIDER_REF] [--file PATH]` records a rotation done by hand (`--via` is
+`created_via`, `--ref` the provider's id for the credential, never a value). `SYSTEM.md` and
+`system.toml` are written atomically (temp file, rename; mode kept; a symlinked `SYSTEM.md` is
+written through). Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`, failed rotation), 2
 rotation due or human steps, 3 usage or config error. Format: spec section 17; schema:
 `schema/system.schema.json`.
 

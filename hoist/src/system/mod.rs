@@ -19,6 +19,59 @@ use std::sync::LazyLock;
 
 pub const FILE: &str = "system.toml";
 
+fn temp_beside(path: &Path) -> std::path::PathBuf {
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    path.with_file_name(format!(".{name}.hoist-tmp-{}", std::process::id()))
+}
+
+fn write_temp(tmp: &Path, text: &str) -> std::io::Result<()> {
+    use std::io::Write;
+    let _ = std::fs::remove_file(tmp);
+    let mut f = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)?;
+    f.write_all(text.as_bytes())?;
+    f.sync_all()
+}
+
+/// Replace `path` with `text` atomically: a temp file in the same directory, then a rename. The
+/// existing file's mode is kept. A symlink is written through (the temp file sits next to the
+/// resolved target and the link stays a link); a dangling link is an error.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    let target = if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        std::fs::canonicalize(path)?
+    } else {
+        path.to_path_buf()
+    };
+    let tmp = temp_beside(&target);
+    let done = write_temp(&tmp, text).and_then(|()| {
+        if let Ok(m) = std::fs::metadata(&target) {
+            std::fs::set_permissions(&tmp, m.permissions())?;
+        }
+        std::fs::rename(&tmp, &target)
+    });
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
+}
+
+/// Create `path` with `text` atomically (temp file, then a hard link that fails when `path`
+/// exists, even as a symlink); `false` when it already exists. Never overwrites.
+pub(crate) fn create_atomic(path: &Path, text: &str) -> std::io::Result<bool> {
+    let tmp = temp_beside(path);
+    let done = write_temp(&tmp, text).and_then(|()| std::fs::hard_link(&tmp, path));
+    let _ = std::fs::remove_file(&tmp);
+    match done {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 static ID: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-z0-9][a-z0-9._-]*$").unwrap());
 static DURATION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([1-9][0-9]{0,4})([dwmy])$").unwrap());
@@ -501,5 +554,80 @@ mod tests {
     fn expiry_is_a_day_or_never() {
         assert_eq!(parse_expiry("never"), Some(Expiry::Never));
         assert!(parse_expiry("2027-02-30").is_none());
+    }
+}
+
+#[cfg(test)]
+mod atomic_tests {
+    use super::*;
+
+    #[test]
+    fn write_atomic_replaces_keeps_mode_and_leaves_no_temp() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("SYSTEM.md");
+        std::fs::write(&p, "old").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o640)).unwrap();
+        }
+        write_atomic(&p, "new").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "new");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&p).unwrap().permissions().mode() & 0o777,
+                0o640
+            );
+        }
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_writes_through_a_symlink_and_keeps_the_link() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join("real")).unwrap();
+        let t = d.path().join("real/doc.md");
+        std::fs::write(&t, "old").unwrap();
+        let l = d.path().join("SYSTEM.md");
+        std::os::unix::fs::symlink(&t, &l).unwrap();
+        write_atomic(&l, "new").unwrap();
+        assert!(
+            std::fs::symlink_metadata(&l)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read_to_string(&t).unwrap(), "new");
+        let dangling = d.path().join("gone.md");
+        std::os::unix::fs::symlink(d.path().join("nowhere"), &dangling).unwrap();
+        assert!(write_atomic(&dangling, "x").is_err());
+        assert!(
+            std::fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[test]
+    fn create_atomic_never_overwrites() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("system.toml");
+        assert!(create_atomic(&p, "one").unwrap());
+        assert!(!create_atomic(&p, "two").unwrap());
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "one");
+        #[cfg(unix)]
+        {
+            let l = d.path().join("link.toml");
+            std::os::unix::fs::symlink(d.path().join("nowhere"), &l).unwrap();
+            assert!(!create_atomic(&l, "x").unwrap());
+            assert!(!d.path().join("nowhere").exists());
+        }
+        // system.toml, plus the symlink on unix; no temp files.
+        let n = if cfg!(unix) { 2 } else { 1 };
+        assert_eq!(std::fs::read_dir(d.path()).unwrap().count(), n);
     }
 }
