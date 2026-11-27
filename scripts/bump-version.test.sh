@@ -156,6 +156,14 @@ if grep -q "keelstack.dev/assess/v$new.mjs" hull/docs/adopt.md && grep -q "hull 
 else
   fail "hull/docs/adopt.md does not pin v$new"
 fi
+if [ -f hull/template/pieces/base/files/scripts/ready.mjs ]; then
+  want=$(sha256sum hull/template/pieces/base/files/scripts/ready.mjs | cut -d' ' -f1)
+  if grep -q "^echo \"$want  /tmp/assess.mjs\"" hull/docs/adopt.md; then
+    ok "hull adopt.md sha256 is ready.mjs's"
+  else
+    fail "hull/docs/adopt.md sha256 is not ready.mjs's ($want)"
+  fi
+fi
 
 # CHANGELOG headings, each in the file's own style
 chk_heading() { # <file> <exact heading line>
