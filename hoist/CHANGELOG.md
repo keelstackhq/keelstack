@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.25.0 (2026-11-27)
+
 - `hoist --json init` with no publishable package: the exit-3 error object carries the stable `error.kind` `nothing-to-publish` (keel migrate reads it).
 
 ## 0.24.0 (2026-11-26)

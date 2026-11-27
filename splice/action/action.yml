@@ -3,7 +3,7 @@ description: Run `splice update` and open or refresh one pull request with the r
 inputs:
   version:
     description: "splice npm version: a semver, latest, next, or none (use the splice on PATH). The default is the last splice published on npm, moved by the version-bump PR of each release"
-    default: 0.24.0
+    default: 0.25.0
   to:
     description: Template version to update to (default latest)
     default: ""

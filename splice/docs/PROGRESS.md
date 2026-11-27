@@ -20,6 +20,6 @@ Status and human-only blockers. Finished tasks go to `docs/history.md`, one line
 
 ## Status
 
-splice 0.24.0 is the workspace lockstep version since the monorepo move (D-023), not released yet; the last release is 0.6.0 (tag `v0.6.0`; a merged version bump tags and releases itself); main carries the
+splice 0.25.0 is the workspace lockstep version since the monorepo move (D-023), not released yet; the last release is 0.6.0 (tag `v0.6.0`; a merged version bump tags and releases itself); main carries the
 contract rules 9.15-29 (kept-key lock records), channels, `adopt`, the update-bot Action and the npm launcher; each release moves the Action tag `v1` itself (`v1` is at feea849, the v0.6.0 commit).
 Everything that needs a human is under Blocked; round R6 (existing-repo migration rehearsal) is in its pull request.
