@@ -400,7 +400,7 @@ pub fn init(
     let mut d = build_desired(dir)?;
     d.read_release(dir)?;
     let Some(r) = &d.release else {
-        return Err(HoistError::Usage(
+        return Err(HoistError::NothingToPublish(
             "no publishable package found; nothing to write (see `hoist explain`)".into(),
         ));
     };

@@ -581,3 +581,19 @@ fn a_registry_package_workflow_is_no_race() {
         .collect();
     assert!(races.is_empty(), "{races:?}");
 }
+
+#[test]
+fn nothing_to_publish_is_a_stable_error_kind_with_exit_3() {
+    let repo = fixture_repo("bare", "https://github.com/acme/x.git");
+    let a = init(repo.path(), &[]).code(3);
+    let v: Value = serde_json::from_slice(&a.get_output().stdout).unwrap();
+    assert_eq!(v["error"]["kind"], "nothing-to-publish", "{v}");
+    assert!(
+        v["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("no publishable package"),
+        "{v}"
+    );
+    assert!(!file(repo.path()).exists());
+}

@@ -3,8 +3,10 @@
 Run this in the repo, as a human or as an agent. The repo does not need to be part of an orchestrator session.
 
 ```bash
-npx @keelstackhq/keel migrate --pr
+npx -y @keelstackhq/keel@<version> migrate --pr
 ```
+
+`-y` skips npx's interactive "Ok to proceed?" prompt (needed for agents and scripts). An npm warning about an unknown user config comes from your `~/.npmrc`, not from keel, and is harmless.
 
 `keel migrate [--to X.Y.Z] [--json] [--dry-run] [--pr] [--base REF] [--mode MODE]` (default target: the release of the keel you run).
 It skips every piece the repo does not use and does, in order, one commit each, on the branch `keel/migrate-vX.Y.Z`:
@@ -12,9 +14,9 @@ It skips every piece the repo does not use and does, in order, one commit each, 
 1. **tools**: installs splice, bosun and hoist at the target version (checksum verified, never an unverified tarball).
 2. **splice**: `splice update --channel decisions` alone (`chore: sync org decisions`), then `splice update --all` (hull template, rigging and every other channel).
 3. **bosun-pin**: `bosun pin --to <target>` (exactly that published release; `.bosun/version` and the cloud setup script `docs/setup-script.sh`). Skipped (not an error) when the repo has no `.bosun/`, has the bosun channel (`splice update` already moved it), or has no `docs/setup-script.sh`.
-4. **hoist**: `hoist init` refreshes an unedited `release.yml`.
+4. **hoist**: `hoist init` refreshes an unedited `release.yml`. A repo with nothing to publish (hoist's error kind `nothing-to-publish`) is `skipped: nothing to publish`, with no checklist entry.
 5. **setup-snippet**: compares the cloud-environment bootstrap of the old and the new bosun.
-6. **verify** (read-only): `splice check`, `bosun doctor`, `hoist check`.
+6. **verify** (read-only): `splice check`, `bosun doctor`, `hoist check`. keel runs `splice check` on the base before any step: drift already there (edited or deleted owned files, conflict markers) does not fail the migration; only drift a step introduced does (rolled back). Existing drift is `pending` plus the checklist entry `splice-drift`.
 7. **pr** (`--pr`): pushes the branch and opens ONE PR. keel never merges.
 
 ## For an agent
@@ -25,7 +27,7 @@ first) and, on `failed`, `recovery`. Exit codes: 0 done or nothing to do, 1 a st
 `--dry-run`, work remains, 2 usage, 3 environment (see Safety), 5 a human step is pending.
 
 Typical answer after a real run: exit 5 with the checklist `approve-pr` (phone). Hand that to the owner and stop;
-approvals and merges follow the org's rules, keel does neither.
+approvals and merges follow the org's rules, keel does neither. When nothing is left to merge (no commits) but a human step remains (`splice-drift`, `setup-snippet`), the answer is `status: "human"`, exit 5, `changed: false`, `pr: null` and no `approve-pr`/`open-pr`: do the checklist, no PR exists.
 
 ## What a human may still have to do
 
@@ -35,7 +37,9 @@ approvals and merges follow the org's rules, keel does neither.
 | `open-pr` | run without `--pr` | `keel migrate --pr` pushes the branch and opens the PR |
 | `setup-snippet` | only when the bootstrap text changed (or could not be compared) | paste the file named in the entry (`<git-dir>/keel/cloud-setup.sh`) into claude.ai/code > Environments > Setup script. The entry lists the line counts and the previous file to `diff` against. It holds no secret. When it did not change, never paste again: each checkout's own `docs/setup-script.sh` carries the new pins |
 | `hoist-apply` | hoist reports drift (for example the `release-tags` environment or `[release] reviewers`) | `hoist apply --area github` with an admin token, on a computer |
-| `bosun-doctor`, `hoist-check`, `hoist-init` | a check could not run or found work | the command in the entry |
+| `splice-drift` | `splice check` already reported drift on the base (not caused by the migration) | per path (the entry names its class, source and cause): keep the local version: channel file `splice update --channel NAME --exclude PATH` (replaces the channel's stored filters), main-template file: move the local notes into the seed file the template provides (e.g. `<target>/CLAUDE.md`), then `splice update --force`; take the template's version: `splice update --channel NAME --force` or `splice update --force`. `keel migrate` again afterwards, or `splice check` |
+| `bosun-doctor`, `hoist-check` | a check could not run or found work | the command in the entry |
+| `hoist-init` | `hoist init` failed for a reason other than "nothing to publish" (for example no GitHub token) | hoist's own message and fix are in the title; no command is suggested because rerunning `hoist init` fails the same way until that is fixed |
 | `bosun-mode` | `--mode MODE` | after the PR merges: `bosun migrate --to MODE` (its own gated PR) |
 
 ## How it works: your checkout is never touched

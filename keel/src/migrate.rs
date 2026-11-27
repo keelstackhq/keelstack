@@ -267,6 +267,76 @@ struct Mig<'a> {
     snippet: Snippet,
     before: Option<String>,
     pr: Option<PrInfo>,
+    /// `splice check` drift that exists on the base, before any step ran: not the migration's doing.
+    base_drift: Vec<Drift>,
+}
+
+/// One path `splice check --json` reports as drifted, with where it comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Drift {
+    path: String,
+    class: String,
+    /// `None` for the main template, else the channel name.
+    channel: Option<String>,
+    cause: String,
+}
+
+impl Drift {
+    fn source(&self) -> String {
+        match &self.channel {
+            Some(c) => format!("channel {c}"),
+            None => "main template".into(),
+        }
+    }
+
+    /// What the owner can do about it, in splice's own words (reference.md, Channels).
+    fn choices(&self) -> String {
+        match &self.channel {
+            Some(c) => format!(
+                "keep local: `splice update --channel {c} --exclude {p}` (replaces that channel's stored filters; keep the ones in .splice/channels/{c}.toml); take the template's: `splice update --channel {c} --force`",
+                p = self.path
+            ),
+            None => "keep local: move the local notes into the seed file the template provides (e.g. `<target>/CLAUDE.md`), then `splice update --force`; take the template's: `splice update --force`".into(),
+        }
+    }
+}
+
+/// The drifted paths of a `splice --json check` report (`changes` + the message that names each).
+fn parse_drift(v: &Value) -> Vec<Drift> {
+    let msgs: Vec<&str> = v["messages"]
+        .as_array()
+        .map(|a| a.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    v["changes"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|c| {
+                    let path = c["path"].as_str()?.to_string();
+                    let needle = format!("`{path}`");
+                    let msg = msgs.iter().find(|m| m.contains(&needle)).copied();
+                    let channel = msg.and_then(|m| {
+                        let rest = m.strip_prefix("channel ")?;
+                        let (name, _) = rest.split_once(": ")?;
+                        Some(name.to_string())
+                    });
+                    let cause = if c["action"] == "conflict" {
+                        "unresolved conflict markers"
+                    } else if msg.is_some_and(|m| m.contains("was deleted")) {
+                        "deleted"
+                    } else {
+                        "edited locally"
+                    };
+                    Some(Drift {
+                        path,
+                        class: c["class"].as_str().unwrap_or("owned").to_string(),
+                        channel,
+                        cause: cause.into(),
+                    })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 impl Mig<'_> {
@@ -606,15 +676,24 @@ impl Mig<'_> {
                 ))
             }
             _ => {
+                // The repo has nothing to release: not a task for anyone.
+                if json(&o).is_some_and(|v| v["error"]["kind"] == "nothing-to-publish") {
+                    return Ok((MAction::Skipped, "nothing to publish".into()));
+                }
                 // hoist init looks up its release tag on GitHub: offline or without a token it
                 // cannot run. That must not block the migration, but it must not vanish either.
+                // No command is suggested: rerunning `hoist init` would fail the same way; hoist's
+                // own fix text is what the owner needs.
+                let why = failure(&c, &o);
                 self.human(
                     "hoist-init",
-                    "Refresh the hoist release workflow (hoist init could not run here)".into(),
+                    format!(
+                        "Refresh the hoist release workflow: hoist init could not run here: {why}"
+                    ),
                     "",
-                    "hoist init",
+                    "",
                 );
-                Ok((MAction::Skipped, failure(&c, &o)))
+                Ok((MAction::Skipped, why))
             }
         }
     }
@@ -707,18 +786,68 @@ impl Mig<'_> {
         if self.p.splice {
             let c = self.tool("splice", &["--json", "check"]);
             let o = self.r.run(&c);
+            let now = json(&o).map(|v| parse_drift(&v)).unwrap_or_default();
+            // Drift that was already on the base is the owner's to settle, not a failure of this
+            // migration; only drift a step introduced (or anything that is not drift) fails it.
+            let new: Vec<&Drift> = now
+                .iter()
+                .filter(|d| !self.base_drift.iter().any(|b| b.path == d.path))
+                .collect();
+            let only_old_drift = o.code == 1 && !now.is_empty() && new.is_empty();
             // Dry-run reports the work `check` finds; the real run must end clean.
-            if o.code != 0 && !self.dry {
+            if o.code != 0 && !self.dry && !only_old_drift {
+                let named = if new.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        " (drift the migration introduced: {})",
+                        new.iter()
+                            .map(|d| d.path.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                };
                 return Err(format!(
-                    "splice check still fails after the update: {}",
+                    "splice check still fails after the update{named}: {}",
                     failure(&c, &o)
                 ));
             }
-            notes.push(if o.code == 0 {
-                "splice check ok".to_string()
+            if only_old_drift || (self.dry && !now.is_empty()) {
+                let list = now
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "`{}` ({}, {}, {}): {}",
+                            d.path,
+                            d.source(),
+                            d.class,
+                            d.cause,
+                            d.choices()
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                self.human(
+                    "splice-drift",
+                    format!(
+                        "Settle {} splice drift path(s) that were already on the base (not caused by this migration); per path: {list}",
+                        now.len()
+                    ),
+                    "",
+                    "splice check",
+                );
+                notes.push(format!(
+                    "splice check: {} drifted path(s) already on the base, not caused by the migration",
+                    now.len()
+                ));
+                pending = true;
             } else {
-                "splice check: work left (dry-run)".to_string()
-            });
+                notes.push(if o.code == 0 {
+                    "splice check ok".to_string()
+                } else {
+                    "splice check: work left (dry-run)".to_string()
+                });
+            }
         }
         if self.p.bosun {
             let c = self.tool("bosun", &["--json", "doctor"]);
@@ -1341,7 +1470,15 @@ fn in_worktree(
         },
         before: None,
         pr: None,
+        base_drift: Vec::new(),
     };
+    if p.splice {
+        // Drift the base already has, before any step: `verify` fails only on what a step adds.
+        let o = r.run(&m.tool("splice", &["--json", "check"]));
+        if o.code == 1 {
+            m.base_drift = json(&o).map(|v| parse_drift(&v)).unwrap_or_default();
+        }
+    }
     if !dry && p.bosun {
         // The old snippet: the one kept from an earlier failed run, else what the installed bosun prints.
         let kept = keel_dir.join(SNIPPET_BEFORE);

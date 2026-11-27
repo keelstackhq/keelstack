@@ -18,10 +18,22 @@ pub enum HoistError {
     /// drift and goes on with the other writes.
     #[error("{0}")]
     PlanLimited(String),
+    /// The repo has no publishable package, so there is nothing to release or to write
+    /// (`init`). Stable JSON `error.kind` `nothing-to-publish`.
+    #[error("{0}")]
+    NothingToPublish(String),
 }
 
 impl HoistError {
     pub fn exit_code(&self) -> i32 {
         3
+    }
+
+    /// A stable machine-readable kind for the `--json` error object, when one is promised.
+    pub fn kind(&self) -> Option<&'static str> {
+        match self {
+            HoistError::NothingToPublish(_) => Some("nothing-to-publish"),
+            _ => None,
+        }
     }
 }

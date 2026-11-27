@@ -2,7 +2,7 @@
 
 use clap::Parser;
 use clap::error::ErrorKind;
-use hoist::{Cli, render_json, render_json_error, render_table};
+use hoist::{Cli, render_json, render_json_error, render_json_error_kind, render_table};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
@@ -114,7 +114,10 @@ fn main() -> ExitCode {
                     }
                     _ => "the message says what to change; see `hoist --help`",
                 };
-                println!("{}", render_json_error(&command, &err.to_string(), fix));
+                println!(
+                    "{}",
+                    render_json_error_kind(&command, &err.to_string(), fix, err.kind())
+                );
             }
             ExitCode::from(err.exit_code() as u8)
         }

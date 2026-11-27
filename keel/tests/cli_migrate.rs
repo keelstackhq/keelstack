@@ -36,6 +36,10 @@ case "$name $*" in
     echo "template v2" > .splice/template.txt
     echo '{"ok":true,"changes":[{"path":".splice/template.txt"}]}';;
   "splice --json check")
+    DRIFT='{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"},{"path":"apps/site/astro.config.mjs","action":"update","class":"owned"}],"messages":["`crates/x/AGENTS.md` is owned by the template but was edited locally; `splice update --force` restores it, or revert the change","channel hull: `apps/site/astro.config.mjs` is owned by this channel but was deleted; revert the change","channel hull: 1 managed path(s) differ from .splice/channels/hull.toml"]}'
+    NEWDRIFT='{"ok":false,"command":"check","changes":[{"path":"crates/x/AGENTS.md","action":"update","class":"owned"},{"path":".splice/template.txt","action":"update","class":"owned"}],"messages":["`.splice/template.txt` is owned by the template but was edited locally"]}'
+    [ "$KEEL_SCENARIO" = predrift ] && { echo "$DRIFT"; exit 1; }
+    [ "$KEEL_SCENARIO" = predrift-new ] && { if grep -q "template v2" .splice/template.txt 2>/dev/null; then echo "$NEWDRIFT"; else echo "$DRIFT"; fi; exit 1; }
     [ "$KEEL_SCENARIO" = checkfail ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
     [ "$KEEL_SCENARIO" = dry ] && { echo '{"ok":false,"exit_code":1}'; exit 1; }
     echo '{"ok":true,"exit_code":0}';;
@@ -54,7 +58,10 @@ case "$name $*" in
   "bosun --json migrate --to"*)
     [ "$KEEL_SCENARIO" = modefail ] && { echo "bosun: boom" >&2; exit 3; }
     env '{"planned":[]}';;
-  "hoist --json init"*) echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
+  "hoist --json init"*)
+    [ "$KEEL_SCENARIO" = nopublish ] && { echo '{"version":1,"command":"init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"no publishable package found; nothing to write (see `hoist explain`)","fix":"the message says what to change","kind":"nothing-to-publish"}}'; exit 3; }
+    [ "$KEEL_SCENARIO" = hoistfail ] && { echo '{"version":1,"command":"init","ok":false,"exit_code":3,"items":[],"human_steps":[],"error":{"message":"GitHub API unreachable","fix":"set GH_TOKEN and retry"}}'; exit 3; }
+    echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
   "hoist --json check")
     [ "$KEEL_SCENARIO" = hoistdrift ] && { echo '{"ok":false,"exit_code":1,"items":[{"area":"github","kind":"environment","key":"release-tags","action":"create","reason":"missing"}],"human_steps":[]}'; exit 1; }
     echo '{"ok":true,"exit_code":0,"items":[],"human_steps":[]}';;
@@ -364,7 +371,13 @@ fn full_repo_moves_every_piece_on_one_branch_and_never_touches_the_users_checkou
             < at("splice --json --yes update --all")
     );
     assert!(at("splice --json --yes update --all") < at("bosun --json pin --to 0.23.0"));
-    assert!(at("bosun --json pin --to 0.23.0") < at("splice --json check"));
+    // The first `splice --json check` is the baseline before any step; verify is the last one.
+    let last_check = calls
+        .iter()
+        .rposition(|c| c.starts_with("splice --json check"))
+        .unwrap();
+    assert!(at("bosun --json pin --to 0.23.0") < last_check);
+    assert!(at("splice --json check") < at("splice --json --yes update --channel decisions"));
     let log = git(&env.repo, &["log", "--format=%s", &format!("main..{BR}")]);
     assert!(log.contains("chore: sync org decisions"), "{log}");
     assert!(
@@ -979,4 +992,165 @@ fn a_leftover_branch_is_replaced_when_its_pr_merged_and_never_when_it_has_extra_
     let (code, v) = env.run_untouched("ok", &["--to", "0.23.0"]);
     assert_ne!(code, 3, "{v}");
     assert_ne!(v["status"], "failed", "{v}");
+}
+
+fn entry<'a>(v: &'a serde_json::Value, id: &str) -> &'a serde_json::Value {
+    v["checklist"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == id)
+        .unwrap_or_else(|| panic!("no checklist entry {id}: {v}"))
+}
+
+/// Commit `files` to main and push, so the base already has them.
+fn commit_base(env: &Env, files: &[(&str, &str)]) {
+    for (p, t) in files {
+        write(&env.repo, p, t);
+    }
+    git(&env.repo, &["add", "-A"]);
+    git(&env.repo, &["commit", "-m", "base"]);
+    git(&env.repo, &["push", "origin", "main"]);
+}
+
+#[test]
+fn pre_existing_splice_drift_does_not_fail_the_migration_and_is_listed_with_choices() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("predrift", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["status"], "human");
+    assert_eq!(action(&v, "verify"), "pending");
+    assert!(
+        v["steps"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["id"] == "verify")
+            .unwrap()["detail"]
+            .as_str()
+            .unwrap()
+            .contains("already on the base")
+    );
+    // The migration itself went on: commits, a PR.
+    assert_eq!(v["changed"], true);
+    assert_eq!(v["pr"]["action"], "opened");
+    let e = entry(&v, "splice-drift");
+    assert_eq!(e["device"], "computer");
+    let t = e["title"].as_str().unwrap();
+    for needle in [
+        "crates/x/AGENTS.md",
+        "apps/site/astro.config.mjs",
+        "owned",
+        "edited locally",
+        "deleted",
+        "splice update --channel hull --exclude apps/site/astro.config.mjs",
+        "splice update --channel hull --force",
+        "splice update --force",
+        "seed file",
+    ] {
+        assert!(t.contains(needle), "missing {needle:?} in {t}");
+    }
+    assert_eq!(e["command"], "splice check");
+    assert_eq!(v["checklist"][0]["id"], "splice-drift");
+}
+
+#[test]
+fn drift_a_step_introduced_still_fails_and_rolls_back() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("predrift-new", &["--to", "0.23.0"]);
+    assert_eq!(code, 1, "{v}");
+    assert_eq!(action(&v, "verify"), "failed");
+    let d = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "verify")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(d.contains(".splice/template.txt"), "{d}");
+    assert!(d.contains("introduced: .splice/template.txt)"), "{d}");
+    assert!(no_keel_branch(&env));
+}
+
+#[test]
+fn hoist_with_nothing_to_publish_is_skipped_without_a_checklist_entry() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("nopublish", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(action(&v, "hoist"), "skipped");
+    let d = v["steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == "hoist")
+        .unwrap()["detail"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(d.contains("nothing to publish"), "{d}");
+    assert!(!ids(&v).contains(&"hoist-init".to_string()), "{v}");
+}
+
+#[test]
+fn another_hoist_init_failure_shows_hoists_fix_and_never_suggests_the_failing_command() {
+    let env = Env::new(&ALL);
+    let (code, v) = env.run_untouched("hoistfail", &["--to", "0.23.0"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(action(&v, "hoist"), "skipped");
+    let e = entry(&v, "hoist-init");
+    assert!(
+        e["title"]
+            .as_str()
+            .unwrap()
+            .contains("set GH_TOKEN and retry")
+    );
+    assert_eq!(e["command"], "");
+}
+
+#[test]
+fn no_commits_but_drift_exits_5_with_the_checklist_and_no_pr() {
+    let env = Env::new(&["splice"]);
+    commit_base(
+        &env,
+        &[
+            (".splice/template.txt", "template v2\n"),
+            ("docs/agents/org-decisions.md", "decisions v2\n"),
+        ],
+    );
+    let (code, v) = env.run_untouched("predrift", &["--to", "0.23.0", "--pr"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(v["status"], "human");
+    assert_eq!(v["changed"], false);
+    assert_eq!(v["pr"], serde_json::Value::Null);
+    assert_eq!(v["branch"], serde_json::Value::Null);
+    assert_eq!(action(&v, "pr"), "skipped");
+    assert_eq!(ids(&v), vec!["splice-drift"]);
+    assert!(no_keel_branch(&env));
+    assert!(!env.calls().iter().any(|c| c.starts_with("gh pr create")));
+}
+
+#[test]
+fn no_commits_but_a_changed_setup_snippet_exits_5_with_no_pr() {
+    let env = Env::new(&["bosun"]);
+    commit_base(
+        &env,
+        &[
+            (".bosun/version", "0.23.0\n"),
+            ("docs/setup-script.sh", "BOSUN_VERSION=0.23.0\n"),
+        ],
+    );
+    let o = env
+        .keel("ok", &["--to", "0.23.0", "--pr"])
+        .env("KEEL_SNIPPET", "changes")
+        .output()
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+    assert_eq!(o.status.code(), Some(5), "{v}");
+    assert_eq!(v["status"], "human");
+    assert_eq!(v["changed"], false);
+    assert_eq!(v["pr"], serde_json::Value::Null);
+    assert_eq!(ids(&v), vec!["setup-snippet"]);
+    assert!(!env.calls().iter().any(|c| c.starts_with("gh pr create")));
 }
