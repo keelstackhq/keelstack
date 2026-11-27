@@ -1201,7 +1201,7 @@ pub fn autonomous_excluded(
 /// version stays under quorum. A change of it is trust root only when
 /// [`pin_change_trust_root`] says so (downgrade, unreleased or unreadable version on either
 /// side, deletion, rename). `bosun halt` and two independent reviewers still apply to every bump.
-pub const TRUST_ROOT: [&str; 57] = [
+pub const TRUST_ROOT: [&str; 58] = [
     // Every file of `.bosun/` (limits, registry, pins, rules, ...): CI restores all of it from the
     // base (`^\.bosun(/|$)`), so a PR's change to one is judged by the base's copy. Only the root
     // `.bosun/version` is left to [`pin_change_trust_root`].
@@ -1233,6 +1233,8 @@ pub const TRUST_ROOT: [&str; 57] = [
     "hull/pnpm-workspace.yaml",
     "hull/.pnpmfile.*",
     "pins.toml",
+    // The system description (D-031): system-check.yml (issues: write) reads it.
+    "system.toml",
     // What `release.yml` runs in the jobs that hold the tag key or an OIDC token (`release`,
     // `npm`, `crates`): listed by hand, because this list is compiled in and cannot read the
     // workflow. Add a script here when a release job starts to run it.
