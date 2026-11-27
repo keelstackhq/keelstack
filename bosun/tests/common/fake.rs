@@ -62,6 +62,12 @@ pub enum LogMode {
 /// Everything the fake knows.
 #[derive(Default)]
 pub struct State {
+    /// GitHub App manifest codes that `POST /app-manifests/<code>/conversions` accepts once.
+    pub manifest_codes: Vec<String>,
+    /// Every conversion attempt, valid or not (the codes of the requests).
+    pub manifest_attempts: Vec<String>,
+    /// The PEM the conversion returns (a test key, never real).
+    pub manifest_pem: String,
     /// Issue numbers that GET answers with 410 (deleted).
     pub gone: Vec<u64>,
     pub issues: Vec<FakeIssue>,
@@ -1442,6 +1448,22 @@ fn route(
             return msg(code, &m);
         }
         return graphql(s, body);
+    }
+    if method == "POST"
+        && let ["app-manifests", code, "conversions"] = seg.as_slice()
+    {
+        s.manifest_attempts.push(code.to_string());
+        let Some(at) = s.manifest_codes.iter().position(|c| c == code) else {
+            return msg(404, "Not Found");
+        };
+        s.manifest_codes.remove(at);
+        return (
+            201,
+            json!({"id": 777, "slug": "acme-bosun-gate", "client_id": "Iv1.fakeclient",
+                "client_secret": "FAKE-CLIENT-SECRET", "webhook_secret": "FAKE-WEBHOOK-SECRET",
+                "pem": s.manifest_pem, "name": "acme-bosun-gate"}),
+            vec![],
+        );
     }
     if method == "GET" && seg == ["user"] {
         return match &s.viewer {

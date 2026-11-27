@@ -637,3 +637,40 @@ pub struct RunStep {
     #[serde(default, deserialize_with = "text_or_empty")]
     pub completed_at: String,
 }
+
+/// A secret string (a PEM key) kept in memory only: `Debug` redacts, there is no `Display`, and
+/// the bytes are wiped when it drops. Read it only with [`Secret::expose`].
+pub struct Secret(pub(crate) String);
+
+impl Secret {
+    pub fn new(value: String) -> Self {
+        Secret(value)
+    }
+
+    /// The secret itself. Never print, log or put it in JSON.
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Secret(<redacted>)")
+    }
+}
+
+impl Drop for Secret {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.0);
+    }
+}
+
+/// What the GitHub App manifest conversion gives: the App's ids and its private key. The
+/// client secret and the webhook secret are wiped on arrival and never kept.
+#[derive(Debug)]
+pub struct AppCredentials {
+    pub id: u64,
+    pub client_id: String,
+    pub slug: String,
+    pub key: Secret,
+}

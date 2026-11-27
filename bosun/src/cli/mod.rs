@@ -37,6 +37,7 @@ pub mod migrate;
 pub mod mode;
 pub mod msg;
 pub mod notify;
+pub mod owner;
 pub mod owners;
 pub mod pin;
 pub mod pin_pr;
@@ -203,6 +204,9 @@ pub enum Command {
     Hook(HookCmd),
     /// Report each checklist step as ok or missing.
     Doctor(DoctorArgs),
+    /// Steps the owner runs on a computer (the gate App).
+    #[command(subcommand)]
+    Owner(OwnerCmd),
     /// Budget commands.
     #[command(subcommand)]
     Budget(BudgetCmd),
@@ -288,6 +292,7 @@ pub const COMMANDS: &[&str] = &[
     "lesson",
     "hook",
     "doctor",
+    "owner",
     "budget",
     "plan",
     "fail",
@@ -363,6 +368,7 @@ impl Command {
             Command::Hook(HookCmd::Stop) => "hook stop",
             Command::Hook(HookCmd::PreCompact) => "hook pre-compact",
             Command::Doctor(_) => "doctor",
+            Command::Owner(OwnerCmd::Manifest(_)) => "owner manifest",
             Command::Budget(BudgetCmd::Record(_)) => "budget record",
             Command::Plan(PlanCmd::Check(_)) => "plan check",
             Command::Plan(PlanCmd::Import(_)) => "plan import",
@@ -666,6 +672,44 @@ pub struct MergeArgs {
     /// GitHub merge method.
     #[arg(long, value_parser = ["squash", "merge", "rebase"], default_value = "squash")]
     pub method: String,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum OwnerCmd {
+    /// Create the gate GitHub App with the manifest flow (a loopback callback), or take one made
+    /// by hand with `--manual`. Prints only the App's public ids; the key is never printed.
+    Manifest(ManifestArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ManifestArgs {
+    /// Create the App in this organization instead of your user account.
+    #[arg(long, value_name = "ORG")]
+    pub org: Option<String>,
+    /// The App's name (default `<owner>-bosun-gate`; its slug is global).
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Seconds to wait for you to confirm the App on GitHub.
+    #[arg(long, default_value_t = 600, value_name = "SECS")]
+    pub timeout_secs: u64,
+    /// Skip the browser flow: you made the App by hand.
+    #[arg(long)]
+    pub manual: bool,
+    /// With --manual: the App's numeric id.
+    #[arg(long, requires = "manual")]
+    pub app_id: Option<u64>,
+    /// With --manual: the App's client id.
+    #[arg(long, requires = "manual")]
+    pub client_id: Option<String>,
+    /// With --manual: the App's slug.
+    #[arg(long, requires = "manual")]
+    pub slug: Option<String>,
+    /// With --manual: the private key PEM file GitHub downloaded.
+    #[arg(long, requires = "manual", value_name = "PEM")]
+    pub key_file: Option<std::path::PathBuf>,
+    /// With --manual: read the key from stdin (echo off on a terminal), never from argv.
+    #[arg(long, requires = "manual", conflicts_with = "key_file")]
+    pub key_stdin: bool,
 }
 
 #[derive(Debug, Args)]

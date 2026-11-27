@@ -269,3 +269,18 @@ account.
   an empty `environment:` name is not documented as "none"); others stay in `statuses` mode.
 - O6: 15368 as the GitHub Actions integration id comes from ruleset exports, not a GitHub doc:
   read it from the live ruleset before step 6.
+
+### `bosun owner manifest`: creating the App without copy and paste (B2 T1)
+
+`bosun owner manifest [--org ORG] [--name N] [--timeout-secs 600]` creates the gate App with GitHub's
+manifest flow; `owner setup` (B2 T2) calls the same library. It listens on 127.0.0.1 only, on a
+random port, and prints the start URL (no secret in it) to stderr. A page there posts the manifest
+(no webhook) to github.com with a one-time state of 256 bits from the system CSPRNG. Only `GET`,
+`Host: 127.0.0.1:<port>` and the paths `/start` and `/callback` are served (421, 405, 404
+otherwise, no redirects); the state is compared in constant time and works once; a wrong state or
+a replay never reaches GitHub. After the timeout (default 10 minutes) it exits 1. The `code` is
+exchanged once through the github client (`convert_manifest`); the code never appears in errors
+or `-v` logs. The private key is a `Secret` (redacting `Debug`, no `Display`, wiped on drop);
+the client and webhook secrets are wiped on arrival. stdout holds only `app_id`, `client_id`,
+`slug`, `source`. `--manual --app-id N --client-id C --slug S (--key-file PEM | --key-stdin)` is
+the fallback: the key comes from a file or stdin (echo off on a terminal via `stty`), never argv.
