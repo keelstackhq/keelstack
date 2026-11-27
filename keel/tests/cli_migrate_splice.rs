@@ -282,6 +282,10 @@ fn a_drifted_main_file_is_left_not_updated_with_keep_while_the_clean_sources_upd
     assert_eq!(w.branch_file("docs/agents/rig.md"), "two\n");
     let log = w.branch_log();
     assert!(log.contains("chore: splice update (channel rig)"), "{log}");
+    assert!(
+        !log.contains("chore: splice update (main template)"),
+        "{log}"
+    );
     // main untouched
     assert_eq!(w.branch_file("docs/owned.md"), "one\nmine\n");
     let t = drift_title(&v);
@@ -290,6 +294,7 @@ fn a_drifted_main_file_is_left_not_updated_with_keep_while_the_clean_sources_upd
         "{t}"
     );
     assert!(t.contains("rerun `keel migrate`"), "{t}");
+    assert_eq!(w.branch_file("docs/agents/decisions.md"), "two\n");
     assert_eq!(
         before,
         git(&w.repo, &["status", "--porcelain=v2", "--ignored"])

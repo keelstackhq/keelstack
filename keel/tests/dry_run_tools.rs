@@ -7,7 +7,7 @@ use sha2::{Digest, Sha512};
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
-/// One script, linked as npm, splice, bosun, hoist. `npm install --prefix D` links the tools into
+/// One script, linked as npm, gh, splice, bosun, hoist. `npm install --prefix D` links the tools into
 /// `D/node_modules/.bin`; they live in `$KEEL_PKGS`, never on PATH.
 const STUB: &str = r#"#!/bin/sh
 name=$(basename "$0")
@@ -31,6 +31,7 @@ case "$name $*" in
     mkdir -p .splice; echo "template v2" > .splice/template.txt
     echo '{"ok":true,"changes":[{"path":".splice/template.txt"}]}';;
   "bosun --json setup-snippet") echo '{"ok":true,"exit_code":0,"data":{"script":"echo SNIPPET"}}';;
+  "gh "*) echo "gh: not logged in" >&2; exit 1;;
   "bosun --json doctor"|"hoist --json check") echo '{"ok":true,"exit_code":0,"data":{},"items":[],"human_steps":[]}';;
 esac
 exit 0
@@ -90,6 +91,8 @@ impl Env {
         let main = root.path().join("stub.sh");
         script(&main);
         symlink(&main, stubs.join("npm")).unwrap();
+        // A real gh would write its state under $HOME; the stub says "not logged in".
+        symlink(&main, stubs.join("gh")).unwrap();
         for t in ["splice", "bosun", "hoist"] {
             symlink(&main, pkgs.join(t)).unwrap();
             if tools_on_path {
