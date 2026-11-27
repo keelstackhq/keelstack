@@ -20,7 +20,7 @@ https://keelstack.dev/llms-full.txt.
 
 ## The path
 
-1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.24.0 new
+1. **Render the template** (agent). `pnpm dlx @keelstackhq/splice@0.25.0 new
    gh:keelstackhq/keelstack//hull/template my-repo --piece …` (or `//template-rust`), then commit.
    [Getting started, step 1](/docs/getting-started/#1-render-the-template-new-repo).
 2. **Add the decisions channel** (agent).
