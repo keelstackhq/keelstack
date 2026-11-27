@@ -2261,11 +2261,10 @@ fn route(
             );
             (204, Value::Null, vec![])
         }
-        ("GET", ["environments", name, "variables", var]) => {
-            match s.env_vars.get(&format!("{name}/{var}")) {
-                Some(v) => ok(json!({"name": var, "value": v})),
-                None => msg(404, "Not Found"),
-            }
+        ("GET", ["environments", name, "variables", var])
+            if s.env_vars.contains_key(&format!("{name}/{var}")) =>
+        {
+            ok(json!({"name": var, "value": s.env_vars[&format!("{name}/{var}")]}))
         }
         ("GET", ["actions", "variables", name]) => match s.variables.get(*name) {
             Some(v) => ok(json!({"name": name, "value": v})),
