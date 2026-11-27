@@ -1,0 +1,1 @@
+- splice: legacy sources repoint to the monorepo on update; bosun/legacy-tags.txt (S1)
