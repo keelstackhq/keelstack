@@ -264,17 +264,23 @@ present, so turbo sees the ui → app edge; dev: `@preact/preset-vite`, `vite-pl
 `not_found_handling: "single-page-application"`, `observability.enabled: true`;
 `index.html`, `src/main.tsx`, `src/app.tsx`, `src/app.test.tsx` [seed]; `AGENTS.md` [owned] and `CLAUDE.md` [seed] (`@AGENTS.md`).
 
-cascivo (decided 2026-10-14): the app uses the prebuilt components `@cascivo/react` 1.9.0 and
-`@cascivo/themes` 1.0.3 through `preact/compat`, following cascivo's "Using cascivo with Preact"
+cascivo (decided 2026-10-14; the default UI layer since D-030, 2026-11-27): the app uses the
+prebuilt components `@cascivo/react` 1.11.0 and `@cascivo/themes` 1.0.3 through `preact/compat`, following cascivo's "Using cascivo with Preact"
 guide (`docs/USING-WITH-PREACT.md`, linked from the `@cascivo/react` README; Vite CSR with
 `@preact/preset-vite` is marked verified there). The `cascivo` CLI (copy-in components) is not the
 default. `@cascivo/react` peers on `react`, `react-dom`, `@types/react` (all `>=18`) and
 `@preact/signals-react >=3`: the piece depends on `@preact/signals-react` and has `react`/`react-dom`
 as dev-only peers (aliased to `preact/compat` by the preset and by `tsconfig` `paths`; not bundled);
-`@types/react` is listed in `peerDependencyRules.ignoreMissing`. `vite.config.ts` inlines
-`@cascivo/*` for tests so the alias applies; the seed test renders with `happy-dom`. SSR/prerender
-is unverified, and cascivo under `@astrojs/preact` compat is documented as broken, so astro-site
-does not use cascivo. These four packages were added to the stack with the user's approval.
+`@types/react` is listed in `peerDependencyRules.ignoreMissing` (Preact packages do not install
+it; astro-site does). `vite.config.ts` inlines `@cascivo/*` for tests so the alias applies; the
+seed test renders with `happy-dom`. Preact renders cascivo client-side only: no SSR, no prerender.
+These four packages were added to the stack with the user's approval.
+
+`AGENTS.md` (D-030) carries the "UI: cascivo first" rule: `@cascivo/react` components and
+`--cascivo-*` tokens before own markup or CSS, shared components wrap cascivo in `packages/ui`, no
+Tailwind, CSS-in-JS or other component library; Preact is CSR only; components are looked up in
+https://cascivo.com/llms.txt (`llms-full.txt`) or the cascivo MCP server; happy-dom lacks the
+Popover API, so tests stub `showPopover`/`hidePopover` (cascivo `docs/TESTING.md`).
 
 ### 6.3 `ui-storybook`
 
@@ -285,10 +291,23 @@ does not use cascivo. These four packages were added to the stack with the user'
 by `vp pack`, so consumers keep one preact. `vite.config.ts` uses `@preact/preset-vite` for the
 `react` → `preact/compat` alias. `.storybook/main.ts` [owned], `.storybook/preview.ts` [seed],
 `src/index.ts`, `src/button.tsx`, `src/button.stories.tsx`, `src/button.test.tsx` [seed].
+`AGENTS.md` [owned] carries the same "UI: cascivo first" rule, CSR-only note, AI links and
+happy-dom polyfill note as §6.2 (D-030).
 
 ### 6.4 `astro-site`
 
-Astro 7 static site with `@astrojs/preact`. Scripts: `dev` `astro dev`, `build` `astro build`,
+Astro 7 static site with cascivo on React islands (D-030, 2026-11-27): `astro.config.mjs` has
+`integrations: [react(), cascivo()]` (`@astrojs/react` 7.1.9, `@cascivo/astro` 1.11.0, which
+injects the CSS layer order, the theme stylesheet and the no-flash theme script). Dependencies:
+`@astrojs/react`, `@cascivo/astro`, `@cascivo/react`, `@cascivo/themes`, `@preact/signals-react`
+(a peer of `@cascivo/react`), `astro`, `react`, `react-dom`; dev: `@types/react`,
+`@types/react-dom`, `happy-dom`, `typescript`, `vite-plus`, `wrangler`. `tsconfig.json` sets
+`jsx: "react-jsx"`, `jsxImportSource: "react"`. cascivo is composed in a `.tsx` component
+(`src/components/hello.tsx`, a cascivo `Button`; its test renders with `react-dom/server` and
+`react-dom/client` under happy-dom) hydrated from `index.astro` (`<Hello client:visible />`); a
+`@cascivo/react` export is never hydrated directly from `.astro`. Not Preact islands: cascivo's
+`docs/USING-WITH-ASTRO.md` shows server-rendered Preact islands fail under Astro (`useRef` of
+null, two Preact instances); only `client:only="preact"` works. Scripts: `dev` `astro dev`, `build` `astro build`,
 `lint` `vp lint` (TS/TSX only — oxlint does not lint `.astro` templates), `format:check`
 `vp fmt --check` (`.astro` excluded; oxfmt's `.astro` support is experimental and needs
 `@astrojs/compiler-rs`, so it stays off in v1), `typecheck` `tsc --noEmit` (`astro check` needs the
@@ -296,6 +315,10 @@ TypeScript JS API, which TypeScript 7 does not ship; verify and document), `test
 (the same in every piece), `deploy`. `astro.config.mjs` [owned], `tsconfig.json` [owned],
 `wrangler.jsonc` [shared, text] (assets `./dist`), `src/pages/index.astro` [seed], `AGENTS.md` [owned] and `CLAUDE.md` [seed] (`@AGENTS.md`).
 Astro runs through package scripts (`vp run` would add a second cache; not used).
+
+Out of scope for cascivo (D-030): Preact SSR or prerender; server-rendered Preact islands in
+Astro; Workers SSR (`hono-worker` has no UI); `@cascivo/elements` and `@cascivo/solid` (0.0.0
+placeholders on npm); a terminal UI for `rust-cli` (cascivo-tui) is a follow-up.
 
 ### 6.5 `hono-worker`
 
@@ -389,7 +412,7 @@ blocks in base files (`docspack` devDependency, SessionStart sync, `docs-lookup`
   "version": 1,
   "packs": {
     "keelstack": { "package": "@keelstackhq/docspack", "source": "vendor", "version": "0.1.1" },
-    "cascivo": { "package": "@cascivo/docspack", "source": "vendor" },
+    "cascivo": { "package": "@cascivo/docspack", "source": "vendor", "version": "0.3.5" },
     "hono": { "package": "@docspack-community/hono", "source": "community", "build": "hono" },
     "cloudflare": {
       "package": "@docspack-community/cloudflare",
@@ -415,7 +438,9 @@ latest 0.1.1, published 2026-10-28T06:32Z, no dependencies). It is younger than 
 `pnpm-workspace.yaml` excludes `@keelstackhq/docspack@0.1.1` until 2026-10-31 (a consumer with
 its own `minimumReleaseAgeExclude` gets a whole-array merge conflict on `splice update`). On
 2026-10-14 no `@docspack-community/*` package is published; hull keeps the recipes, and
-publishing them is a blocked task (needs the npm scope). `pnpm docs:packs` (script in the docs
+publishing them is a blocked task (needs the npm scope). `cascivo` is pinned to 0.3.5 (`npm view`
+on 2026-11-27: published 2026-11-23); `docs/agents/docs.md` sends UI questions to `docspack ask`
+(the cascivo pack) or the cascivo MCP server (D-030). `pnpm docs:packs` (script in the docs
 piece) prints which listed packs are installed, missing, or unpublished; it never edits files.
 
 ### 6.9 AI layer (owned, in `base`)
@@ -429,7 +454,11 @@ The root `AGENTS.md` is seed since 2026-10-18 (§14); everything else listed her
   never read `.env*`/`.dev.vars`, releases differ per template (`template`: a human pushes a `*-v*` tag; `template-rust`: `release.yml` runs hoist on push to `main` after the release PR merges), at most 2-3 parallel
   agents, a hook `ask` becomes a denial in `-p`/unattended runs), a `## Pieces` section
   (rendered only when a piece is present, via a `same-branches` chain) with one bullet per present
-  piece kind pointing to `<dir>/AGENTS.md`, and `## Where to look` (plain pointers to
+  piece kind pointing to `<dir>/AGENTS.md`, a `## UI` section (D-030; rendered only when
+  `preact-app`, `ui-storybook` or `astro-site` is present, via a `same-branches` chain: cascivo is
+  the default UI, components via https://cascivo.com/llms.txt or the cascivo MCP server
+  (`npx cascivo mcp init`), skills via `npx skills add cascivo/cascivo --skill '*' -y`, never
+  vendored; no other UI library or Tailwind without a decision), and `## Where to look` (plain pointers to
   `docs/agents/project.md`, `docs/agents/index.md`, `docs/agents/docs.md` with docs). It has no
   `@` import lines. `CLAUDE.md`: lines 1-3 are `@AGENTS.md`, `@docs/agents/project.md`,
   `@docs/agents/index.md`, line 4 `@docs/agents/docs.md` only with docs, then `## Claude Code`
@@ -645,19 +674,21 @@ Checked with `npm view` on 2026-10-14.
 | `turbo`                                                        | 2.11.10                                                                                                                         |                                                                                                                                                                                                        |
 | `typescript`                                                   | 7.0.2                                                                                                                           | native compiler, binary `tsc`                                                                                                                                                                          |
 | `@types/node`                                                  | 24.19.2                                                                                                                         | published 2026-10-09 (checked 2026-10-22); npm-cli `typecheck` (§6.11); Node 24 line                                                                                                                   |
-| `preact`                                                       | 11.2.0                                                                                                                          | 11.2.0 published 2026-11-06; `@astrojs/preact` 6.1.2 peers `^10.6.5                                                                                                                                    |     | ^11.0.0` |
+| `preact`                                                       | 11.2.0                                                                                                                          | 11.2.0 published 2026-11-06; preact-app and ui-storybook (CSR); before D-030 `@astrojs/preact` 6.1.2 peered `^10.6.5                                                                                                                                    |     | ^11.0.0` |
 | `@preact/preset-vite`                                          | 2.10.6                                                                                                                          |                                                                                                                                                                                                        |
 | `astro`                                                        | 7.4.7                                                                                                                           | depends on `vite ^8.3.1`                                                                                                                                                                               |
-| `@astrojs/preact`                                              | 6.1.2                                                                                                                           |                                                                                                                                                                                                        |
+| `@astrojs/react`                                               | 7.1.9                                                                                                                           | published 2026-11-13 (checked 2026-11-27); astro-site React islands (§6.4); replaces `@astrojs/preact` (D-030)                                                                                         |
 | `storybook`, `@storybook/preact-vite`, `@storybook/addon-docs` | 10.6.6                                                                                                                          |                                                                                                                                                                                                        |
 | `hono`                                                         | 4.13.16                                                                                                                         |                                                                                                                                                                                                        |
 | `wrangler`                                                     | 4.158.0                                                                                                                         |                                                                                                                                                                                                        |
 | `@cloudflare/workers-types`                                    | 5.20261106.1                                                                                                                    |                                                                                                                                                                                                        |
 | `@sentry/cloudflare`                                           | 11.11.0                                                                                                                         |                                                                                                                                                                                                        |
 | `@tauri-apps/cli`                                              | 2.12.4                                                                                                                          | `@tauri-apps/api` 2.12.4; crates `tauri` 2.12.4, `tauri-build` 2.7.3 (§6.7)                                                                                                                            |
-| `@cascivo/react` / `@cascivo/themes`                           | 1.9.0 / 1.0.3                                                                                                                   | published 2026-10-09; Preact path via `preact/compat` (§6.2)                                                                                                                                           |
+| `@cascivo/react` / `@cascivo/themes`                           | 1.11.0 / 1.0.3                                                                                                                  | 1.11.0 published 2026-11-22 (checked 2026-11-27); Preact path via `preact/compat` (§6.2), React islands in astro-site (§6.4)                                                                           |
+| `@cascivo/astro`                                               | 1.11.0                                                                                                                          | published 2026-11-22; peers `astro >=7.0.0`, `@cascivo/themes >=1.0.0` (§6.4)                                                                                                                          |
 | `@preact/signals-react`                                        | 3.12.0                                                                                                                          | cascivo peer                                                                                                                                                                                           |
-| `react`, `react-dom`                                           | 19.3.1                                                                                                                          | dev-only cascivo peers, aliased to `preact/compat`; 19.3.1 published 2026-10-14                                                                                                                        |
+| `react`, `react-dom`                                           | 19.3.1                                                                                                                          | cascivo peers: dev-only and aliased to `preact/compat` in Preact pieces, real deps in astro-site; 19.3.1 published 2026-10-14                                                                                                                        |
+| `@types/react`, `@types/react-dom`                             | 19.3.0                                                                                                                          | astro-site only; 19.3.1-19.3.3 were younger than 3 days on 2026-11-27 (`minimumReleaseAge`)                                                                                                            |
 | `happy-dom`                                                    | 21.0.4                                                                                                                          | DOM environment for component tests; published 2026-10-20                                                                                                                                              |
 | `docspack`                                                     | 1.5.0                                                                                                                           |                                                                                                                                                                                                        |
 | `publint`                                                      | 0.3.25                                                                                                                          | ts-lib `build`; checked with `npm view` 2026-10-17                                                                                                                                                     |
@@ -800,8 +831,8 @@ pnpm store cache. No template option in v1.
 `renovate/default.json` in hull (preset `github>keelstackhq/hull//renovate/default`, syntax to
 verify): `config:recommended`, `helpers:pinGitHubActionDigests`, `rangeStrategy: pin`,
 `minimumReleaseAge: "3 days"`, groups `vite-plus` (`vite-plus` + `@voidzero-dev/vite-plus-core`,
-which must move together), `storybook`, `astro`, `tauri`, `cloudflare` (wrangler + workers-types),
-`turbo`, `react` (react + react-dom), `cascivo` (`@cascivo/*`), `sentry` (`@sentry/*`), `preact`
+which must move together), `storybook`, `astro` (`astro` + `@astrojs/*`, so `@astrojs/react` moves with astro), `tauri`, `cloudflare` (wrangler + workers-types),
+`turbo`, `react` (react, react-dom, `@types/react`, `@types/react-dom`), `cascivo` (`@cascivo/*`), `sentry` (`@sentry/*`), `preact`
 (preact + `@preact/*`), `clap` (`clap`, `clap_*`), `tracing` (`tracing`, `tracing-*`); a regex custom manager
 tracks `cargo-deny@x.y.z` in `.github/workflows/*.yml` (datasource `crate`); the native `rust-toolchain`
 manager bumps `rust-toolchain.toml`, so the toolchain needs no regex; automerge for minor/patch and digests with `platformAutomerge`; weekly
@@ -905,6 +936,7 @@ node scripts/render.mjs new --template <dir> --out <dir> --piece <id>[:<name>]..
 | `base`    | base                                                            |
 | `web`     | base, preact-app:web, ui-storybook, hono-worker:api             |
 | `site`    | base, astro-site:site, rust-tool:tool (rust-tool from plan 03)  |
+| `site-web` | base, astro-site:site, preact-app:web, ui-storybook (D-030: React and Preact cascivo in one lockfile) |
 | `docs`    | base, docs (from plan 03)                                       |
 | `cli`     | base, rust-cli:cli, npm-cli:cli                                 |
 | `lib`     | base, ts-lib:lib                                                |

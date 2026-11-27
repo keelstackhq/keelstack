@@ -32,6 +32,7 @@ test("rust-cli, npm-cli and ts-lib changes select the cli and lib combos", () =>
       "docs",
       "lib",
       "site",
+      "site-web",
       "web",
       "web-circleci",
       "web-circleci-only",
@@ -111,7 +112,7 @@ test("CLI run from the monorepo root diffs hull-relative paths", () => {
   );
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stderr, "");
-  assert.deepEqual(JSON.parse(r.stdout), ["site"]);
+  assert.deepEqual(JSON.parse(r.stdout), ["site", "site-web"]);
 });
 
 test("CLI: a file moved between two pieces selects the combos of both (--no-renames)", () => {
@@ -150,7 +151,7 @@ test("CLI: a file moved between two pieces selects the combos of both (--no-rena
     },
   );
   assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout), ["site", "web-secrets"]);
+  assert.deepEqual(JSON.parse(r.stdout), ["site", "site-web", "web-secrets"]);
 });
 
 test("scheduled combos are never selected, even for base or all-changing files", () => {
@@ -166,7 +167,7 @@ test("scheduled combos are never selected, even for base or all-changing files",
   assert.deepEqual(affectedCombos(["scripts/render.mjs"], withScheduled), ["base", "web"]);
 });
 
-test("real combos: hono-worker selects web, astro-site selects site", () => {
+test("real combos: hono-worker selects web, astro-site selects site and site-web", () => {
   const real = loadCombos().combos;
   assert.deepEqual(affectedCombos(["template/pieces/hono-worker/files/x"], real), [
     "web",
@@ -174,15 +175,22 @@ test("real combos: hono-worker selects web, astro-site selects site", () => {
     "web-circleci-only",
     "web-secrets",
   ]);
-  assert.deepEqual(affectedCombos(["template/pieces/astro-site/files/x"], real), ["site"]);
+  assert.deepEqual(affectedCombos(["template/pieces/astro-site/files/x"], real), [
+    "site",
+    "site-web",
+  ]);
   assert.deepEqual(affectedCombos(["template/pieces/secrets/files/x"], real), ["web-secrets"]);
   assert.deepEqual(affectedCombos(["template/pieces/preact-app/files/x"], real), [
+    "site-web",
     "web",
     "web-circleci",
     "web-circleci-only",
     "web-secrets",
   ]);
-  assert.deepEqual(affectedCombos(["template/pieces/ui-storybook/files/x"], real), ["web"]);
+  assert.deepEqual(affectedCombos(["template/pieces/ui-storybook/files/x"], real), [
+    "site-web",
+    "web",
+  ]);
   assert.deepEqual(
     affectedCombos(["template/pieces/base/files/x"], real),
     real.filter((c) => !c.scheduled && !c.template).map((c) => c.name),

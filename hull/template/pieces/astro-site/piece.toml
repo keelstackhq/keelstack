@@ -1,5 +1,5 @@
 id = "astro-site"
-description = "Astro 7 static site with Preact islands, sharing the Vite+ core, deployed to Cloudflare static assets"
+description = "Astro 7 static site with cascivo on React islands (@astrojs/react, @cascivo/astro), sharing the Vite+ core, deployed to Cloudflare static assets"
 multiple = true
 requires = ["base"]
 target = "apps/{{ name }}"

@@ -35,8 +35,9 @@ freely, template updates never touch it.
     Fontsource (woff2 for latin, latin-ext and vietnamese ship in `dist`, but browsers fetch only the latin
     file via `unicode-range`; no third-party requests). Light only, no dark variant. Budget: HTML +
     CSS + fonts for `/` under 150 KiB (153,600 B) transferred; the island JS is counted separately.
-  - cascivo comes in through `@astrojs/react`, so `apps/site/astro.config.mjs` (template-owned)
-    diverges from the template on purpose; keep that change when `splice update` ships.
+  - cascivo comes in through `@astrojs/react` and `@cascivo/astro` (D-030: layer order, light theme,
+    theme script), so `apps/site/astro.config.mjs` (template-owned) diverges from the template on
+    purpose; keep that change when `splice update` ships.
   - `apps/site/tsconfig.json` (`allowImportingTsExtensions`, for the Node-run docs generator) and
     `apps/site/turbo.json` (`build`/`test` inputs add `$TURBO_ROOT$/agents/**` and `docs-src/**`)
     diverge from the template on purpose; keep both when `splice update` ships.

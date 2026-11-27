@@ -1,8 +1,8 @@
 # hull
 
 An opinionated, AI-native monorepo template (pnpm, Turborepo, TypeScript 7, Vite+, Preact, Astro,
-cascivo, Storybook, docspack, Rust, Tauri, Hono on Cloudflare). It owns structure, stack, tool
-versions and config, never app logic. Consumers render it with `splice` from
+cascivo as the default UI (D-030), Storybook, docspack, Rust, Tauri, Hono on Cloudflare). It owns
+structure, stack, tool versions and config, never app logic. Consumers render it with `splice` from
 `gh:keelstackhq/keelstack//hull/template`. Until splice v0.1 exists, `scripts/render.mjs` renders it.
 
 - Design: `docs/superpowers/specs/2026-10-14-hull-design.md` — the source of truth. Read only the
@@ -99,6 +99,8 @@ change under `template/` or `scripts/`, run dogfood for the combos `affected-com
   `if/elif` chain marked `{# same-branches #}` when "any of several pieces" is needed.
 - Storybook 10.6 declares `vite-plus` ^0.1/^0.2 as an optional peer; `peerDependencyRules` accepts 1.x.
 - `astro check` may not work with TypeScript 7 (no JS API); astro-site uses `tsc --noEmit`.
+- astro-site renders cascivo on React islands (`integrations: [react(), cascivo()]`), never Preact
+  islands; compose cascivo in a `.tsx` component, never hydrate a `@cascivo/react` export from `.astro`.
 - oxlint does not lint `.astro` templates; oxfmt `.astro` support is experimental (off).
 - Tauri needs webkit2gtk to compile; its Rust builds only in `desktop.yml`. Rust scripts use `-p`.
 - docspack: `sync` (deps), `index --repo` (own docs), `ask "<q>" --json` (agents).

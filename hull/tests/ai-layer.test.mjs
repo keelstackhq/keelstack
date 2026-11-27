@@ -26,7 +26,7 @@ const varsFor = (pieces) => ({
   ...comboVars,
   ...(pieces.includes("secrets") ? { context_prefix: "hullci" } : {}),
 });
-/** Always-loaded bytes ceiling (max measured 4,393: base + rust-cli + npm-cli; +64 for the guard.md line and its index entry, 2026-11-20). */
+/** Always-loaded bytes ceiling (max measured 4,396: site-web, with the D-030 ## UI section, 2026-11-27; 4,393: base + rust-cli + npm-cli; +64 for the guard.md line and its index entry, 2026-11-20). */
 const CEILING = 4400;
 
 /** Parse flat `key: value` frontmatter. */

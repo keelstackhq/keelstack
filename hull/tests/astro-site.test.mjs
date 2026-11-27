@@ -59,11 +59,76 @@ test("root vite.config.ts makes fmt skip .astro files", async () => {
   assert.match(await read(dir, "vite.config.ts"), /"\*\*\/\*\.astro"/);
 });
 
-test("astro.config.mjs uses the Preact integration and static output", async () => {
+test("astro.config.mjs uses React islands with the cascivo integration and static output", async () => {
   const { dir } = await renderCombo(["base", "astro-site:site"]);
   const text = await read(dir, "apps/site/astro.config.mjs");
-  assert.match(text, /@astrojs\/preact/);
+  assert.match(text, /^import react from "@astrojs\/react";$/m);
+  assert.match(text, /^import cascivo from "@cascivo\/astro";$/m);
+  assert.match(text, /integrations: \[react\(\), cascivo\(\)\]/);
+  assert.ok(!/preact/i.test(text));
   assert.match(text, /output: "static"/);
+});
+
+test("package.json: React + cascivo deps, React types dev-only, no Preact", async () => {
+  const { dir } = await renderCombo(["base", "astro-site:site"]);
+  const pkg = JSON.parse(await read(dir, "apps/site/package.json"));
+  assert.deepEqual(Object.keys(pkg.dependencies).sort(), [
+    "@astrojs/react",
+    "@cascivo/astro",
+    "@cascivo/react",
+    "@cascivo/themes",
+    "@preact/signals-react",
+    "astro",
+    "react",
+    "react-dom",
+  ]);
+  for (const k of ["@types/react", "@types/react-dom"])
+    assert.equal(pkg.devDependencies[k], "catalog:", k);
+  for (const k of ["preact", "@astrojs/preact"]) {
+    assert.ok(!(k in pkg.dependencies), k);
+    assert.ok(!(k in pkg.devDependencies), k);
+  }
+});
+
+test("tsconfig.json compiles JSX for React", async () => {
+  const { dir } = await renderCombo(["base", "astro-site:site"]);
+  const ts = JSON.parse(await read(dir, "apps/site/tsconfig.json"));
+  assert.equal(ts.compilerOptions.jsx, "react-jsx");
+  assert.equal(ts.compilerOptions.jsxImportSource, "react");
+  assert.equal(ts.compilerOptions.paths, undefined, "no preact/compat mapping");
+});
+
+test("seed island composes cascivo in a .tsx component, hydrated from index.astro", async () => {
+  const { dir } = await renderCombo(["base", "astro-site:site"]);
+  const hello = await read(dir, "apps/site/src/components/hello.tsx");
+  assert.match(hello, /from "@cascivo\/react"/);
+  assert.match(hello, /from "react"/);
+  assert.ok(!/preact/.test(hello));
+  const page = await read(dir, "apps/site/src/pages/index.astro");
+  assert.match(page, /<Hello client:visible \/>/);
+  assert.ok(!/@cascivo\/react/.test(page), "never hydrate a cascivo export from .astro");
+  const t = await read(dir, "apps/site/src/components/hello.test.tsx");
+  assert.ok(!/preact/.test(t));
+});
+
+test("piece AGENTS.md explains cascivo via React islands and why not Preact islands", async () => {
+  const { dir } = await renderCombo(["base", "astro-site:site"]);
+  const text = await read(dir, "apps/site/AGENTS.md");
+  assert.match(text, /@astrojs\/react/);
+  assert.match(text, /@cascivo\/astro/);
+  assert.match(text, /\.tsx/);
+  assert.match(text, /never hydrate/i);
+  assert.match(text, /Preact islands/);
+  assert.match(text, /UI: cascivo first/);
+  assert.match(text, /https:\/\/cascivo\.com\/llms\.txt/);
+  assert.ok(!/cascivo is not used/.test(text));
+});
+
+test("piece description names React islands and cascivo", async () => {
+  const piece = (await loadTemplate(REAL_TEMPLATE)).pieces.get("astro-site");
+  assert.match(piece.description, /React islands/);
+  assert.match(piece.description, /cascivo/);
+  assert.ok(!/Preact/.test(piece.description));
 });
 
 test("piece AGENTS.md documents the .astro tooling limits", async () => {

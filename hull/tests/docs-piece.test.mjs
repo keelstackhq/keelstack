@@ -113,7 +113,8 @@ test("docs-packs CLI reports missing with the pnpm add -D command, exits 0, modi
   });
   assert.equal(r.status, 0, r.stderr);
   assert.match(r.stdout, /missing/);
-  assert.match(r.stdout, /pnpm add -D @cascivo\/docspack/);
+  assert.match(r.stdout, /pnpm add -D @docspack-community\/hono(\s|$)/);
+  assert.match(r.stdout, /pnpm add -D -E @cascivo\/docspack@0\.3\.5/);
   assert.equal(await treeHash(dir), before);
 });
 
@@ -190,6 +191,21 @@ test("keelstack pack is pinned to an exact version", async () => {
   });
 });
 
+test("cascivo pack is pinned to an exact version; docs.md routes UI questions to cascivo", async () => {
+  const { dir } = await renderCombo(["base", "docs"]);
+  const doc = await packsOf(dir);
+  assert.deepEqual(doc.packs.cascivo, {
+    package: "@cascivo/docspack",
+    source: "vendor",
+    version: "0.3.5",
+  });
+  const md = await read(dir, "docs/agents/docs.md");
+  assert.match(md, /UI/);
+  assert.match(md, /docspack ask "<question>" --json/);
+  assert.match(md, /cascivo MCP/);
+  assert.match(md, /npx cascivo mcp init/);
+});
+
 test("docs-packs hints an exact pinned add when a version is set, rejects ranges", async () => {
   const { dir } = await renderCombo(["base", "docs"]);
   const r = spawnSync("node", [join(dir, "scripts/docs-packs.mjs")], {
@@ -197,7 +213,7 @@ test("docs-packs hints an exact pinned add when a version is set, rejects ranges
     encoding: "utf8",
   });
   assert.match(r.stdout, /pnpm add -D -E @keelstackhq\/docspack@0\.1\.1/);
-  assert.match(r.stdout, /pnpm add -D @cascivo\/docspack(\s|$)/);
+  assert.match(r.stdout, /pnpm add -D -E @cascivo\/docspack@0\.3\.5/);
   const { docsPacksReport } = await import(pathToFileURL(join(dir, "scripts/docs-packs.mjs")));
   const states = docsPacksReport(
     {

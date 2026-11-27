@@ -54,8 +54,8 @@ node scripts/dogfood.mjs --combo rust   # hull: render it and run its cargo CI s
 |---|---|
 | `base` | pnpm workspace with a version catalog, Turborepo, TypeScript 7, Vite+ lint/format, Renovate, one-job CI, Claude Code layer |
 | `preact-app` | Preact app on Vite+ with cascivo, deployable to Cloudflare Workers static assets |
-| `ui-storybook` | Preact component package with Storybook 10.6 |
-| `astro-site` | Astro 7 static site sharing the Vite+ core |
+| `ui-storybook` | Preact component package on cascivo with Storybook 10.6 |
+| `astro-site` | Astro 7 static site with cascivo on React islands, sharing the Vite+ core |
 | `hono-worker` | Hono on Cloudflare Workers with JSON request logs, Workers Logs, optional Sentry; OTel export unverified (see Logging) |
 | `rust-tool` | Rust crate in a root Cargo workspace, orchestrated and cached by Turbo |
 | `rust-cli` | Rust CLI skeleton with a JSON/exit-code contract, pinned toolchain and cargo-deny; distributable |
@@ -63,6 +63,11 @@ node scripts/dogfood.mjs --combo rust   # hull: render it and run its cargo CI s
 | `ts-lib` | ESM TypeScript library checked by publint and attw |
 | `tauri-app` | Tauri v2 desktop shell around a preact-app, built on a schedule |
 | `docs` | docspack: versioned docs for every tool, searchable by agents offline |
+
+UI is cascivo by default (D-030): `@cascivo/react` in every UI piece, through `preact/compat` in
+the Preact pieces (client-side only) and through React islands plus `@cascivo/astro` in
+`astro-site`. The generated `AGENTS.md` gets a `## UI` section that points agents at
+https://cascivo.com/llms.txt and the cascivo MCP server (`npx cascivo mcp init`).
 
 ## CI in seconds
 
@@ -124,6 +129,8 @@ changelog section plus notes generated since the previous `v<semver>` tag. Nobod
 
 - oxlint does not lint `.astro` templates; oxfmt `.astro` support is experimental and off.
   `astro check` does not support TypeScript 7, so astro-site typechecks with `tsc --noEmit`.
+- cascivo is not used for Preact SSR/prerender, Preact islands in Astro, Workers SSR (`hono-worker`
+  has no UI) or a `rust-cli` terminal UI (cascivo-tui is a follow-up).
 - Storybook 10.6 lists Vite+ 0.x as its peer; hull accepts 1.x (`peerDependencyRules`), not tested upstream.
 - Cloudflare preview URLs are public unless Access protects them, and do not work with Durable Objects.
 - PR previews are versions of `<app>-preview` (alias `pr-<n>`), built by `preview.yml` (no secrets)

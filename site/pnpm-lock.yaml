@@ -170,9 +170,12 @@ catalogs:
     '@astrojs/react':
       specifier: 7.0.1
       version: 7.0.1
+    '@cascivo/astro':
+      specifier: 1.11.0
+      version: 1.11.0
     '@cascivo/react':
-      specifier: 1.9.0
-      version: 1.9.0
+      specifier: 1.11.0
+      version: 1.11.0
     '@cascivo/themes':
       specifier: 1.0.3
       version: 1.0.3
@@ -248,9 +251,12 @@ importers:
       '@astrojs/react':
         specifier: 'catalog:'
         version: 7.0.1(@types/node@26.6.5)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(esbuild@0.28.2)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(typescript@7.0.2)(yaml@2.9.1)
+      '@cascivo/astro':
+        specifier: 'catalog:'
+        version: 1.11.0(@cascivo/themes@1.0.3)(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(astro@7.3.8(@types/node@26.6.5)(esbuild@0.28.2)(typescript@7.0.2)(yaml@2.9.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@cascivo/react':
         specifier: 'catalog:'
-        version: 1.9.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.11.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@cascivo/themes':
         specifier: 'catalog:'
         version: 1.0.3
@@ -515,8 +521,14 @@ packages:
     resolution: {integrity: sha512-CuNiSqg7+e1cO/GjffyMOm5Tt2jUF9CWHHnvQ/UkqvtkGfHdgwEC0wpmq7fkN3gxwpRnrAN0WzO3vREKmNolMQ==}
     engines: {node: '>=18'}
 
-  '@cascivo/core@1.9.0':
-    resolution: {integrity: sha512-v+v2dPPcwvSLk+Q4+BZhoMjaAXrJyHYRsRKGGV2wn67xXxBWpngXYLrsFi5EAlpLhU8RXh+kzQthChx5MCcYOA==}
+  '@cascivo/astro@1.11.0':
+    resolution: {integrity: sha512-xoXfdZXYvCQtnYrBGhHn7rR57SHZdFDP+b27Dkz918hOX2tXXhBb9VLzr+6SM3HiGIf/9skeGYanbaKKhUMEow==}
+    peerDependencies:
+      '@cascivo/themes': '>=1.0.0'
+      astro: '>=7.0.0'
+
+  '@cascivo/core@1.11.0':
+    resolution: {integrity: sha512-7Wh2Kzb2g6Vq31ms+Fxu4y5QykV95rVZYWEdLCpFmH8GpuPAgzJCRaM56JPv/ysEmwOOZBSzmnpUUSNAeJUJZA==}
     peerDependencies:
       '@preact/signals-react': '>=3.0.0'
       '@types/react': '>=18.0.0'
@@ -526,13 +538,13 @@ packages:
       '@types/react':
         optional: true
 
-  '@cascivo/i18n@1.9.0':
-    resolution: {integrity: sha512-mekCH4ZRZ1wqiH582xAv+H1oE4FCWQAwx9N4KNdH6XLsTX9XpWe1T4iPEDT2yQ+8WXpvDP31PTJzGyGi7kdtMg==}
+  '@cascivo/i18n@1.11.0':
+    resolution: {integrity: sha512-8KZg1Ohy2vgLR3gng/TIzj25uwCMXyYzaiuKl+78M/12MIqAmn0ODUpZqEUiYznV+H07Snlo72ReJRMuwtSmeg==}
     peerDependencies:
       '@preact/signals-react': '>=3.0.0'
 
-  '@cascivo/react@1.9.0':
-    resolution: {integrity: sha512-tozLha7ZPIqMj8ptHQZHen9wFAFMOMQvzEHnoPSMHQ29sV5qNi2CZD9U+UM4n5DtUkK0oK5CugJimTDXJxPx5g==}
+  '@cascivo/react@1.11.0':
+    resolution: {integrity: sha512-DEVxauXsl2N4TRDoOD05YNdscZsLscZA1f7m/bCBhttHOO16yVIj0jqZ/tLrnDGdtirCpqpFd0wpGgnj2DbdRQ==}
     peerDependencies:
       '@preact/signals-react': '>=3.0.0'
       '@types/react': '>=18.0.0'
@@ -3282,12 +3294,15 @@ packages:
 
   yuku-ast@0.9.5:
     resolution: {integrity: sha512-Q8qW8WwQnN5Cm0ZZivdRIfv0sRLTjUq0YumXJkw8CYN1aCdICH9rk4C47/4n6kA5EqDtlj+F608twoTSV2MwdQ==}
+    deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
 
   yuku-codegen@0.9.5:
     resolution: {integrity: sha512-zGUVyDpSK4b6c9B0yyxi2P0wujn1XZTbG9dCb7d6gyAoP63EMgyLzUwPUvwxPG5jgYqhlI7w+S3oCyapqGr4PA==}
+    deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
 
   yuku-parser@0.9.5:
     resolution: {integrity: sha512-IBnAdNVMswWbJcM7woPluOudectJzFjJ1N8jVRxP9Uq4CIv5hZdBIcdmtRbFDYF/Ph2j2gVup4YJ4N9mh0jYFA==}
+    deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
 
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
@@ -3481,7 +3496,18 @@ snapshots:
     dependencies:
       fontkitten: 1.0.3
 
-  '@cascivo/core@1.9.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@cascivo/astro@1.11.0(@cascivo/themes@1.0.3)(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(astro@7.3.8(@types/node@26.6.5)(esbuild@0.28.2)(typescript@7.0.2)(yaml@2.9.1))(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+    dependencies:
+      '@cascivo/core': 1.11.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@cascivo/themes': 1.0.3
+      astro: 7.3.8(@types/node@26.6.5)(esbuild@0.28.2)(typescript@7.0.2)(yaml@2.9.1)
+    transitivePeerDependencies:
+      - '@preact/signals-react'
+      - '@types/react'
+      - react
+      - react-dom
+
+  '@cascivo/core@1.11.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@preact/signals-react': 3.12.0(react@19.3.0)
       react: 19.3.0
@@ -3489,14 +3515,14 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.3.0
 
-  '@cascivo/i18n@1.9.0(@preact/signals-react@3.12.0(react@19.3.0))':
+  '@cascivo/i18n@1.11.0(@preact/signals-react@3.12.0(react@19.3.0))':
     dependencies:
       '@preact/signals-react': 3.12.0(react@19.3.0)
 
-  '@cascivo/react@1.9.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@cascivo/react@1.11.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
-      '@cascivo/core': 1.9.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
-      '@cascivo/i18n': 1.9.0(@preact/signals-react@3.12.0(react@19.3.0))
+      '@cascivo/core': 1.11.0(@preact/signals-react@3.12.0(react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@cascivo/i18n': 1.11.0(@preact/signals-react@3.12.0(react@19.3.0))
       '@cascivo/themes': 1.0.3
       '@preact/signals-react': 3.12.0(react@19.3.0)
       react: 19.3.0

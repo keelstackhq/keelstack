@@ -124,6 +124,7 @@ One short line per finished task: `YYYY-MM-DD · plan/task · commit`. Test coun
 - 2026-11-23 · review round 2 · template-rust detect: pinned hoist < 0.22.0 falls back to `release-pending.mjs detect` (version compare; pin moves by PR once released, not bump-version), exit 1 fails, release-pre.sh `--ignore-scripts`
 - 2026-11-23 · WG/T1+T3 (#64, #46): guard allows PR creation via `gh api`, data words in PR bodies, quoted redirects as data, `find -delete` on guarded dirs refused; proxy-ca test-only update gated by the test store.
 - 2026-11-23 · Guard feedback from a consumer repo: scripts a command runs are read, `$(...)` parse fixed, workflow dispatch/re-run via `gh api` (claude/guard-feedback).
+- 2026-11-27 · D-030 · `feat(hull): cascivo is the default UI` · astro-site on React islands + `@cascivo/astro`, `## UI` section in AGENTS.md, UI rules in preact-app/ui-storybook, cascivo docspack 0.3.5, combo `site-web`; spec §6.2-6.4, §6.9, §7, §8.6, §10.1
 
 ## Measurements
 

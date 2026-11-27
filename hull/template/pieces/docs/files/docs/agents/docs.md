@@ -11,3 +11,5 @@ Library and tool docs are indexed locally by docspack, version-locked to what is
   (`pnpm add -D -E <package>@<version>` for a pinned pack; installed is checked by name). It
   never edits `package.json`; add packages yourself. `pnpm docs:packs --online` also checks
   whether a missing package is published.
+- UI questions (components, props, tokens): `pnpm exec docspack ask "<question>" --json` answers
+  from the cascivo pack (`@cascivo/docspack`); or the cascivo MCP server (`npx cascivo mcp init`).
