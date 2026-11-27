@@ -153,10 +153,19 @@ test("renovate preset groups react, cascivo, sentry and preact", async () => {
     await readFile(new URL("../renovate/default.json", import.meta.url), "utf8"),
   );
   const names = (g) => p.packageRules.find((r) => r.groupName === g)?.matchPackageNames;
-  assert.deepEqual(names("react"), ["react", "react-dom"]);
+  assert.deepEqual(names("react"), ["react", "react-dom", "@types/react", "@types/react-dom"]);
   assert.deepEqual(names("cascivo"), ["@cascivo/**"]);
   assert.deepEqual(names("sentry"), ["@sentry/**"]);
   assert.deepEqual(names("preact"), ["preact", "@preact/**"]);
+});
+
+test("renovate preset groups @astrojs/react with astro, not react", async () => {
+  const p = JSON.parse(
+    await readFile(new URL("../renovate/default.json", import.meta.url), "utf8"),
+  );
+  const names = (g) => p.packageRules.find((r) => r.groupName === g)?.matchPackageNames;
+  assert.deepEqual(names("astro"), ["astro", "@astrojs/**"]);
+  assert.ok(!names("react").some((n) => n.startsWith("@astrojs/")));
 });
 
 test("preset does not bump the workflow turbo pin alone: its sha256 pin would go stale", async () => {

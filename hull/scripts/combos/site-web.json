@@ -1,0 +1,1 @@
+{ "name": "site-web", "pieces": ["base", "astro-site:site", "preact-app:web", "ui-storybook"] }

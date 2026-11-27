@@ -1,13 +1,18 @@
 # Astro site
 
-Astro 7 static site (`output: "static"`) with Preact islands via `@astrojs/preact`, deployed as
-Cloudflare static assets (`wrangler.jsonc`, `./dist`). Plain Preact components: cascivo is not used
-here (it breaks under the `@astrojs/preact` compat setup).
+Astro 7 static site (`output: "static"`) with cascivo on React islands, deployed as Cloudflare
+static assets (`wrangler.jsonc`, `./dist`). `integrations: [react(), cascivo()]`: `@astrojs/react`
+renders islands, `@cascivo/astro` injects the CSS layer order, the theme and the no-flash script.
 
+- UI: cascivo first. `@cascivo/react` and `--cascivo-*` tokens before own markup or CSS; no
+  Tailwind, CSS-in-JS or other component library. Look components up in https://cascivo.com/llms.txt.
+- Compose cascivo in a `.tsx` component and hydrate that (`<Hello client:visible />`); never hydrate
+  a `@cascivo/react` export directly from `.astro`. No Preact islands: server-rendered Preact
+  islands fail under Astro (cascivo `docs/USING-WITH-ASTRO.md`).
 - Astro runs through package scripts (`astro dev`, `astro build`); never `vp run`.
 - Astro's own `vite` resolves to the Vite+ core through the root override: one vite in the lockfile.
 - oxlint does not lint `.astro` templates; only TS/TSX is linted. Review `.astro` files by hand.
-- oxfmt `.astro` support is experimental and off, so `format:check` excludes `.astro` files.
+  oxfmt `.astro` support is experimental and off, so `format:check` excludes `.astro` files.
 - `typecheck` is `tsc --noEmit` (TS/TSX only); `astro check` needs the TypeScript JS API.
 - Tests: `vp test run`; component tests opt in to happy-dom with `// @vitest-environment happy-dom`.
 - Previews deploy to `<app>-preview` as alias `pr-<n>`. Never create `<app>-preview` by hand.

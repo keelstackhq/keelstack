@@ -5,8 +5,9 @@ packages:
 
 catalog:
   "@arethetypeswrong/cli": 0.18.5
-  "@astrojs/preact": 6.1.2
-  "@cascivo/react": 1.9.0
+  "@astrojs/react": 7.1.9
+  "@cascivo/astro": 1.11.0
+  "@cascivo/react": 1.11.0
   "@cascivo/themes": 1.0.3
   "@cloudflare/workers-types": 5.20261106.1
   "@preact/preset-vite": 2.10.6
@@ -17,6 +18,8 @@ catalog:
   "@tauri-apps/api": 2.12.4
   "@tauri-apps/cli": 2.12.4
   "@types/node": 24.19.2
+  "@types/react": 19.3.0
+  "@types/react-dom": 19.3.0
   astro: 7.4.7
   docspack: 1.5.0
   happy-dom: 21.0.4
@@ -38,8 +41,8 @@ peerDependencyRules:
   allowedVersions:
     storybook>vite-plus: "1"
     vite: "1"
-  # @cascivo/react peers on @types/react >=18; it is not installed, typecheck maps react to
-  # preact/compat through tsconfig paths.
+  # @cascivo/react peers on @types/react >=18; Preact packages do not install it (typecheck maps
+  # react to preact/compat through tsconfig paths), astro-site does.
   ignoreMissing:
     - "@types/react"
 

@@ -63,7 +63,7 @@ export const QUESTIONS = [
     question: "What will this repo hold?",
     options: [
       opt("web", "Web app", "preact-app with a hono-worker API, on Cloudflare", ["template"]),
-      opt("site", "Static site", "astro-site with Preact islands", ["template"]),
+      opt("site", "Static site", "astro-site with cascivo on React islands", ["template"]),
       opt("cli", "CLI", "rust-cli (with an npm-cli launcher in template/)"),
       opt("lib", "Library", "ts-lib in template/; library crates only in template-rust"),
     ],

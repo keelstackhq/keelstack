@@ -33,7 +33,7 @@
     { "groupName": "astro", "matchPackageNames": ["astro", "@astrojs/**"] },
     { "groupName": "tauri", "matchManagers": ["npm", "cargo"], "matchPackageNames": ["@tauri-apps/**", "tauri", "tauri-build"] },
     { "groupName": "cloudflare", "matchPackageNames": ["wrangler", "@cloudflare/workers-types"] },
-    { "groupName": "react", "matchPackageNames": ["react", "react-dom"] },
+    { "groupName": "react", "matchPackageNames": ["react", "react-dom", "@types/react", "@types/react-dom"] },
     { "groupName": "cascivo", "matchPackageNames": ["@cascivo/**"] },
     { "groupName": "sentry", "matchPackageNames": ["@sentry/**"] },
     { "groupName": "preact", "matchPackageNames": ["preact", "@preact/**"] },
