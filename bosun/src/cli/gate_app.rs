@@ -306,7 +306,7 @@ fn advance(dir: Option<&Path>, a: &AdvanceArgs) -> CmdResult {
 fn signer_left(n: u64, delegated: bool) -> String {
     if delegated {
         format!(
-            "PR #{n}: the CI signer signs it (owner_delegation = all) when the checks and verdicts are clean; no owner touch."
+            "PR #{n}: the CI signer signs it (owner_delegation = all) when the checks and verdicts are clean. It edits `.bosun/**`, so the owner approves it on GitHub (follow-up: let the signer sign it)."
         )
     } else {
         format!("PR #{n}: owner_delegation is not `all`, so the owner approves it.")
