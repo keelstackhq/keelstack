@@ -1521,6 +1521,11 @@ pub fn run(dir: &Path, args: &MigrateArgs, r: &dyn Runner) -> Result<MigrateRepo
         .branch
         .clone()
         .unwrap_or_else(|| format!("keel/migrate-v{target}"));
+    if branch.starts_with('-') || branch.contains(char::is_whitespace) {
+        return Err(crate::error::KeelError::Usage(format!(
+            "--branch {branch:?} is not a branch name"
+        )));
+    }
     if !custom && orig == branch {
         return Err(env_err(
             format!("you are on {branch}, the branch keel works on in its own worktree"),

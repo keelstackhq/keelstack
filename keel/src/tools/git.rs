@@ -106,7 +106,7 @@ pub fn ensure_branch(
 /// The push is then plain: a fast-forward of a merged remote B, or a creation when it is gone.
 /// History is never rewritten, so nothing here forces.
 pub fn branch_start(r: &dyn Runner, dir: &Path, branch: &str, base: &str) -> String {
-    let _ = git(r, dir, &["fetch", "origin", branch]);
+    let _ = git(r, dir, &["fetch", "origin", "--", branch]);
     let commit = |c: &str| {
         ok(
             r,

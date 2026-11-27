@@ -336,8 +336,10 @@ One command moves an existing repo to a keelstack release, so nobody runs `splic
 in the repo by a human or an agent: `npx -y @keelstackhq/keel@<version> migrate --pr` (`-y`: no interactive prompt).
 
 ```
-keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--mode MODE]
+keel [-C DIR] [--json] [-v] migrate [--to X.Y.Z] [--dry-run] [--pr] [--base REF] [--branch NAME] [--mode MODE]
 ```
+
+`--dry-run` fetches a missing tool into a temp cache (sha512 checked, removed afterwards). `--branch NAME` commits and pushes to NAME with a plain push (never force); a NAME whose PR merged (ancestor of the base, same tree, or gone from the remote) restarts from the base.
 
 - `--to X.Y.Z` (default: keel's own version; anything but three numbers is exit 2). The release is
   lockstep (D-023): every tool is installed at that version.

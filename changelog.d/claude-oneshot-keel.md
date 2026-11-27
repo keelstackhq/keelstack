@@ -1,0 +1,1 @@
+- keel: `keel preflight` and a preflight gate before every write (exit 5 with the choices); `keel migrate --dry-run` fetches missing tools into a temp cache; `--branch NAME` pushes to an assigned branch; a merged `--branch` is restarted from the base with a plain push; `--branch` is validated.
