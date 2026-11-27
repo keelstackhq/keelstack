@@ -1861,16 +1861,19 @@ everywhere). This section was asked for as "§16"; §16 was already `hoist org`,
 hoist system init    [--print]                 # draft system.toml from the repo; writes only if absent
 hoist system check   [--file PATH] [--live]    # offline checks (17.4); --live adds per-provider reads (17.5)
 hoist system explain [--file PATH] [--write | --check]  # SYSTEM.md on stdout; --write writes it, --check diffs it
+hoist system stamp   ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF] [--file PATH]
+hoist secrets rotate ID                        # rotate a system.toml credential (17.8)
 ```
 
 `--file` defaults to `system.toml` in `-C DIR`. `command` in `--json` is `system init`,
-`system check`, `system explain`; the envelope is the usual one object
+`system check`, `system explain`, `system stamp`; the envelope is the usual one object
 `{version:1, command, ok, exit_code, items, human_steps}`. Exit codes (D-020 with hoist's
 overrides): 0 ok · 1 drift (a check failed; `explain --check`: SYSTEM.md is stale) · 2 a human
 step is pending (rotation due) · 3 usage, config or API error (missing file, invalid TOML,
 unknown key, bad enum/date/duration, duplicate id, reference to an undeclared provider).
-Items have `area = "system"`. No command prints a secret value: hoist never reads one for
-these commands (agents never hold keys).
+Items have `area = "system"`. No command prints a secret value: offline commands never read
+one; `--live` and `secrets rotate` read token values from env only (never argv) and never print
+them (canary tests).
 
 ### 17.2 `system.toml`
 
@@ -1972,14 +1975,29 @@ Reads `system.toml`, the workflows, `hoist.toml` and `secrets.toml`; no HTTP. Ti
 credential still read by a workflow is `consumer` drift). Exit policy as `hoist check`: 1 on any
 drift, else 2 on any pending, else 0.
 
-### 17.5 `--live` seam (phase 2)
+### 17.5 `hoist system check --live`
 
-`src/system/live.rs` defines `trait LiveProbe { fn provider(&self) -> &str; fn probe(&self,
-cred: &Credential) -> LiveResult }` with `LiveResult::{Ok(String), Drift(String),
-Unknown(String)}` and `probes() -> Vec<Box<dyn LiveProbe>>`. `--live` adds one item
-`kind = "live"` per active credential: the probe for its provider, or `unknown` ("no live probe
-for <provider>") when none is registered. Phase 1 registers none. Live probes are GET-only and
-read token values only from env (never print them).
+`--live` runs one probe per provider (`src/system/live/*.rs`, trait `LiveProbe { provider,
+answers, probe, sweep }`, `LiveResult::{Ok, Drift, Unknown}`) and adds one item `kind = "live"`
+per active credential, plus sweep items. Probes send **GET requests only** (tests assert it) to
+bases from `HOIST_GITHUB_API`, `HOIST_CLOUDFLARE_API`, `HOIST_NPM_REGISTRY`, `HOIST_CRATES_API`,
+`HOIST_GOOGLE_API`; Fly runs the read-only `fly tokens list -a APP --json` and
+`fly secrets list -a APP --json` (`HOIST_FLY`, token only in the child's env). A credential's own
+value is used when an env var named by one of its `storage[].key` is set (a job that reads it);
+else the provider token below. A missing token, a 401/403 or an API error is `unknown` with a fix,
+never a failure of the check; exit codes stay 17.1 (`unknown` alone is exit 0).
+
+| provider | token (env) | reads | drift when |
+| --- | --- | --- | --- |
+| `cloudflare` | `CLOUDFLARE_API_TOKEN` (+ `CLOUDFLARE_ACCOUNT_ID`) | `GET /user/tokens`, `/accounts/{id}/tokens`; `/user/tokens/verify` with the credential's own value | token (matched by `provider_ref`: id or `hoist:` name) missing, not `active`, expiry differs from `expires_at`, a declared `scopes` entry is not a permission group name |
+| `github` | `GITHUB_TOKEN`/`GH_TOKEN`/`gh` | repo and environment secret lists of every `gh-secret`/`gh-env-secret` storage; `GET /user` header `github-authentication-token-expiration` with a PAT's own value | declared storage missing or older than `rotate_every` (`live_storage`); a secret in a listed scope no credential declares (`undeclared`); PAT expiry differs |
+| `fly` | `FLY_API_TOKEN` | `fly tokens list`, `fly secrets list` (app from `fly-secret` storage or `resources = ["app:NAME"]`) | token missing, revoked or other expiry; `fly-secret` missing; undeclared app secret |
+| `npm` | `NPM_TOKEN` | `GET /-/npm/v1/tokens` | token (by key or masked prefix) missing; `readonly` against `role` (publish/read); expiry when listed |
+| `crates` | `CARGO_REGISTRY_TOKEN` | `GET /api/v1/me/tokens` (crates.io may refuse API tokens here: `unknown`) | token missing or expired; declared scopes not granted |
+| `google` (`gcp`, `gsc`) | `GOOGLE_OAUTH_ACCESS_TOKEN` | `GET /v1/projects/{p}/serviceAccounts/{principal}/keys?keyTypes=USER_MANAGED` | key (`provider_ref` = key id) missing, disabled, other `validBeforeTime`; other user-managed keys still active |
+
+`provider_ref` is how a probe finds the credential: without it the item is `unknown` ("set
+provider_ref …"). Providers without a probe stay `unknown` ("no live probe for <provider>").
 
 ### 17.6 Org catalog of alternatives
 
@@ -2009,3 +2027,34 @@ docs, CLIs, alternatives) and one table of its credentials (id, kind, role, purp
 consumers, created, expires, rotate); a "Rotation" section per credential with `strategy`,
 `command` and numbered `steps`; keyless trusts. `--write` writes `SYSTEM.md` next to the file
 (item `create`/`update`/`ok`); `--check` is exit 1 when `SYSTEM.md` differs (item `drift`).
+
+### 17.8 Rotation from `system.toml` and `hoist system stamp`
+
+`hoist secrets rotate ID` where `ID` is a `[[credential]] id` of `system.toml` (else the §8.3
+legacy `CLOUDFLARE_API_TOKEN` rotation, unchanged) follows `rotation.strategy`:
+
+- `assisted` / `manual` (or no `rotation`): no request, no write; exit 2 with one item
+  `system/rotation/ID` (`pending`) and human steps: each `rotation.steps` entry
+  (`rotate:ID:N`, url the provider console), one per storage (where to put the new value), and
+  `stamp:ID` ("record it: `hoist system stamp ID --created … --expires …`").
+- `auto` (Cloudflare, Fly): four steps, dual-phase — **create** a new credential, **set** it into
+  every storage (`gh-secret`, `gh-env-secret` sealed; `fly-secret` via `fly secrets import` on
+  stdin), **test** it at the provider, then **revoke** the old one, only after every write and the
+  test passed. Cloudflare: find the old token by `provider_ref`, `POST /user/tokens` (or the
+  account endpoint) with its name and policies and `expires_on` = today + `max_ttl` (else
+  `rotate_every`, else 90d), verify with `GET /user/tokens/verify` as the new token, `DELETE` the
+  old. Roll (`PUT /user/tokens/{id}/value`) is not used: it invalidates the old value at once.
+  Fly: `fly tokens create deploy -a APP --expiry <hours>h` (value read from stdout, never argv),
+  test `GET /apps/APP` with it, `fly tokens revoke OLD_ID`. Preflight errors (no token, no
+  `provider_ref`, a storage hoist cannot write such as `sops` or `worker-secret`, another
+  provider) exit 3 before any write; after the first write failures are items with exit 1 (a
+  failed test revokes the new credential; a partial set keeps both and names the storages that
+  hold the new value). On success hoist edits that credential in `system.toml` (toml_edit,
+  comments kept): `created_at` today, `expires_at`, `created_via = "hoist secrets rotate ID"`,
+  `provider_ref` when the new id is known.
+
+`hoist system stamp ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF]`
+records a rotation done by hand: it sets those keys of that credential only (other bytes kept),
+re-validates the file and writes `system.toml` (no HTTP, never commits). Item
+`system/stamp/ID` (`update`, or `ok` when nothing changed); exit 0; unknown id or bad date exit 3
+with nothing written.

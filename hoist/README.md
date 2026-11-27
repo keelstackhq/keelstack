@@ -29,7 +29,7 @@ hoist check [--adopt] [--area ...]  # plan plus verification (required checks, P
 hoist apply [--yes] [--prune | --adopt] [--area ...] [--secrets-to SINK | --emit-secrets]  # write the plan, then verify like check
 hoist auth check              # what each token can read vs what hoist needs
 hoist secrets set NAME        # seal --from-file PATH, else env NAME, else a hidden prompt (one line) into an Actions secret; PEMs: --from-file
-hoist secrets rotate [NAME]   # mint, verify and seal a new CLOUDFLARE_API_TOKEN, revoke the old
+hoist secrets rotate [NAME|ID] # mint, verify and seal a new CLOUDFLARE_API_TOKEN, revoke the old; ID: a system.toml credential (spec §17.8)
 hoist secrets check [--remote] # secrets repo or secrets.toml; never decrypts (spec §15.9)
 hoist secrets exec --env E --keys A,B -- cmd  # CI only: run cmd with those secrets (spec §15.7)
 hoist secrets edit FILE         # secrets repo: sops edit with your own age key, then the git commands
@@ -283,14 +283,29 @@ token to `proxy-injected`.
 
 ## System description (`hoist system`)
 
-`hoist system init|check|explain [--file PATH]` works on `system.toml` (D-031), a cleartext
+`hoist system init|check|explain|stamp [--file PATH]` works on `system.toml` (D-031), a cleartext
 description of the repo's external systems, credentials (purpose, owner, scopes, storage,
 consumers, expiry, rotation) and keyless trusts, never values. `init [--print]` drafts it from
 workflows, `hoist.toml`, `secrets.toml`, `access.toml`, `org.toml` and `keel.toml` and writes only
-if absent; `check [--live]` fails on undeclared or unused secrets, expiry, missing metadata,
-`max_ttl` and long-lived credentials where keyless exists; `explain [--write|--check]` renders
-`SYSTEM.md`. No HTTP, no secret value. Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`), 2 rotation
-due, 3 usage or config error. Format: spec section 17; schema: `schema/system.schema.json`.
+if absent; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and
+long-lived credentials where keyless exists; `explain [--write|--check]` renders `SYSTEM.md`.
+These send no HTTP and read no secret value.
+
+`check --live` also asks each provider, GET only (Fly: read-only `fly tokens list` and
+`fly secrets list`): Cloudflare tokens (status, expiry, permission groups), GitHub repo and
+environment secrets (declared storage present, undeclared secrets, age against `rotate_every`,
+a PAT's expiry header), Fly tokens and app secrets, npm and crates.io tokens, Google service
+account keys. Tokens come from env (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `FLY_API_TOKEN`,
+`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or the credential's own storage
+key); a missing token or a 401/403 is `unknown` with a fix, never a failure.
+
+`hoist secrets rotate ID` rotates a credential of `system.toml`: `strategy = "auto"` (Cloudflare,
+Fly) creates the new credential, seals it into every storage, tests it, and only then revokes the
+old one, then stamps `created_at`/`expires_at` in `system.toml`; `assisted`/`manual` print the
+steps (exit 2). `hoist system stamp ID --created DAY [--expires DAY] [--by WHO]` records a
+rotation done by hand. Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`, failed rotation), 2
+rotation due or human steps, 3 usage or config error. Format: spec section 17; schema:
+`schema/system.schema.json`.
 
 ## Apply
 
