@@ -17,6 +17,10 @@ at session start. This folder lives in the `keelstackhq/keelstack` monorepo.
   (the rest name keelstackhq's own repos and process):
   `splice channel add gh:keelstackhq/keelstack//decisions/channel --track main --piece portable --piece import-claude`.
 
+- **The catalog of alternatives (D-031):** `--piece catalog` adds `catalog.toml` at the repo root
+  (capabilities and alternatives with docs, keyless options and migration notes); `hoist system
+  explain` reads it next to `system.toml` and lists each provider's alternatives in `SYSTEM.md`.
+
 ## Your org's own decisions repo
 
 Use the same shape, so your repos get your decisions the same way:

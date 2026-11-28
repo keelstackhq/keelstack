@@ -587,13 +587,14 @@ export const CLASH = {
       ".github/scripts/workflows.mjs " +
       ".github/workflows/ci.yml .github/workflows/desktop.yml .github/workflows/preview-deploy.yml " +
       ".github/workflows/preview.yml .github/workflows/release.yml .github/workflows/splice.yml " +
+      ".github/workflows/system-check.yml " +
       ".gitattributes .gitignore .node-version CLAUDE.md Cargo.toml renovate.json rust-toolchain.toml " +
       "docs/agents/guard.md scripts/agents-index.mjs scripts/deny.mjs scripts/licenses.mjs scripts/ready.mjs tsconfig.base.json vite.config.ts " +
       "packages/shared/tsconfig.json packages/shared/vite.config.ts",
     shared: "package.json pnpm-workspace.yaml turbo.json packages/shared/package.json",
     seed:
       "AGENTS.md CHANGELOG.md README.md docs/agents/index.md docs/agents/onboarding.toml docs/agents/project.md " +
-      "scripts/ci-pre.sh scripts/ci-extra.sh packages/shared/src/**",
+      "scripts/ci-pre.sh scripts/ci-extra.sh system.toml packages/shared/src/**",
   },
   "template-rust": {
     owned:
@@ -604,12 +605,13 @@ export const CLASH = {
       ".config/nextest.toml .github/scripts/advisory-issue.mjs .github/scripts/docs-only.mjs " +
       ".github/scripts/release-pending.mjs .github/scripts/workflows.mjs " +
       ".github/workflows/advisories.yml .github/workflows/ci.yml .github/workflows/release.yml .github/workflows/splice.yml " +
+      ".github/workflows/system-check.yml " +
       ".gitattributes .gitignore CLAUDE.md deny.toml docs/agents/guard.md pins.toml renovate.json rust-toolchain.toml rustfmt.toml " +
       "scripts/agents-index.mjs scripts/deny.mjs scripts/licenses.mjs scripts/pins.mjs scripts/proxy-ca.sh scripts/ready.mjs",
     shared: "Cargo.toml crates/common/Cargo.toml",
     seed:
       "AGENTS.md CHANGELOG.md Cargo.lock README.md deny.local.toml docs/agents/index.md docs/agents/onboarding.toml docs/agents/project.md hoist.toml " +
-      "scripts/ci-pre.sh scripts/ci-extra.sh scripts/release-pre.sh crates/common/src/**",
+      "scripts/ci-pre.sh scripts/ci-extra.sh scripts/release-pre.sh system.toml crates/common/src/**",
   },
 };
 const globMatch = (p, path) => (p.endsWith("/**") ? path.startsWith(p.slice(0, -2)) : p === path);

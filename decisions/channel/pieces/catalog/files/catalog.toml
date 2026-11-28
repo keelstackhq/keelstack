@@ -1,0 +1,241 @@
+# Org catalog of alternatives per capability (hoist spec §17.6, D-031). Data only: names, public
+# docs and migration notes, never accounts or keys. A system.toml `[[provider]]` names catalog ids in
+# `alternatives`; `hoist system explain` lists their name and migration (flag --catalog, env
+# HOIST_CATALOG, or this file next to system.toml). Change it with a PR to decisions/channel.
+version = 1
+
+[[capability]]
+id = "vcs+ci"
+description = "Git hosting with pull requests and CI"
+
+[[capability]]
+id = "dns+cdn"
+description = "DNS, a CDN and static hosting in front of the origin"
+
+[[capability]]
+id = "paas.container"
+description = "Run a container behind HTTPS"
+
+[[capability]]
+id = "registry.npm"
+description = "Publish and install JavaScript packages"
+
+[[capability]]
+id = "registry.crates"
+description = "Publish and install Rust crates"
+
+[[capability]]
+id = "search-console"
+description = "Search engine ownership, sitemaps and indexing reports"
+
+[[capability]]
+id = "llm.api"
+description = "Hosted large language model API"
+
+[[capability]]
+id = "secrets.kv"
+description = "Hold secrets and small key-value data outside the repo"
+
+[[capability]]
+id = "signing"
+description = "Sign approvals or artifacts with a key the org controls"
+
+[[alternative]]
+id = "github"
+capability = "vcs+ci"
+name = "GitHub"
+docs = "https://docs.github.com/"
+keyless = ["oidc", "github-app"]
+migration = "Push every branch and tag to the new remote; recreate rulesets, environments and secrets by hand (hoist apply does it for GitHub only)"
+
+[[alternative]]
+id = "gitlab"
+capability = "vcs+ci"
+name = "GitLab"
+docs = "https://docs.gitlab.com/"
+keyless = ["oidc"]
+migration = "Import the repo, port .github/workflows to .gitlab-ci.yml, replace GitHub environments with GitLab protected environments and CI/CD variables"
+
+[[alternative]]
+id = "forgejo"
+capability = "vcs+ci"
+name = "Forgejo"
+docs = "https://forgejo.org/docs/latest/"
+keyless = []
+migration = "Mirror the repo, port workflows to Forgejo Actions (mostly GitHub Actions syntax), recreate secrets as Actions secrets"
+
+[[alternative]]
+id = "cloudflare"
+capability = "dns+cdn"
+name = "Cloudflare"
+docs = "https://developers.cloudflare.com/"
+keyless = []
+migration = "Add the zone, copy the DNS records, switch the nameservers; deploy Pages with `wrangler pages deploy`"
+
+[[alternative]]
+id = "bunny"
+capability = "dns+cdn"
+name = "Bunny.net"
+docs = "https://docs.bunny.net/"
+keyless = []
+migration = "Create a DNS zone and a pull zone or storage zone, copy the records, switch the nameservers; upload static files with the Storage API"
+
+[[alternative]]
+id = "netlify"
+capability = "dns+cdn"
+name = "Netlify"
+docs = "https://docs.netlify.com/"
+keyless = []
+migration = "Connect the repo or run `netlify deploy --prod --dir dist`; move the domain to Netlify DNS or point a CNAME at the site"
+
+[[alternative]]
+id = "fastly"
+capability = "dns+cdn"
+name = "Fastly"
+docs = "https://www.fastly.com/documentation/"
+keyless = []
+migration = "Create a service with the origin as backend, then point the domain's CNAME at Fastly; DNS stays at the current provider"
+
+[[alternative]]
+id = "fly"
+capability = "paas.container"
+name = "Fly.io"
+docs = "https://fly.io/docs/"
+keyless = []
+migration = "`fly launch` and `fly deploy` from the same Dockerfile; move secrets with `fly secrets import`. CI deploys need a Fly token (`fly tokens create deploy`): Fly accepts no GitHub OIDC"
+
+[[alternative]]
+id = "cloud-run"
+capability = "paas.container"
+name = "Google Cloud Run"
+docs = "https://cloud.google.com/run/docs"
+keyless = ["wif", "oidc"]
+migration = "Push the image to Artifact Registry and `gcloud run deploy`; move secrets to Secret Manager and authenticate CI by workload identity federation"
+
+[[alternative]]
+id = "render"
+capability = "paas.container"
+name = "Render"
+docs = "https://render.com/docs"
+keyless = []
+migration = "Create a web service from the Dockerfile or image; copy environment variables and secrets in the dashboard"
+
+[[alternative]]
+id = "npm"
+capability = "registry.npm"
+name = "npm"
+docs = "https://docs.npmjs.com/"
+keyless = ["oidc"]
+migration = "The first publish of a new package needs a token (`npm publish` locally or `hoist release bootstrap`); then configure a trusted publisher per package and publish from CI with `npm publish` in a job with `permissions: id-token: write`, no token"
+
+[[alternative]]
+id = "jsr"
+capability = "registry.npm"
+name = "JSR"
+docs = "https://jsr.io/docs"
+keyless = ["oidc"]
+migration = "Add jsr.json (name, version, exports) and publish with `npx jsr publish`; link the GitHub repo for tokenless publishing"
+
+[[alternative]]
+id = "github-packages"
+capability = "registry.npm"
+name = "GitHub Packages"
+docs = "https://docs.github.com/en/packages"
+keyless = ["github-app"]
+migration = "Scope the package to the org, set publishConfig.registry, publish with the workflow's GITHUB_TOKEN; consumers need a token to install"
+
+[[alternative]]
+id = "crates"
+capability = "registry.crates"
+name = "crates.io"
+docs = "https://crates.io/docs/trusted-publishing"
+keyless = ["oidc"]
+migration = "The first publish of a new crate needs a token (`cargo publish` locally or `hoist release bootstrap`); then add a trusted publisher per crate and publish from CI with `cargo publish` in a job with `permissions: id-token: write` (rust-lang/crates-io-auth-action), no long-lived token"
+
+[[alternative]]
+id = "kellnr"
+capability = "registry.crates"
+name = "Kellnr (self-hosted)"
+docs = "https://kellnr.io/documentation"
+keyless = []
+migration = "Run Kellnr, add it under [registries] in .cargo/config.toml and publish with `cargo publish --registry`"
+
+[[alternative]]
+id = "google-search-console"
+capability = "search-console"
+name = "Google Search Console"
+docs = "https://developers.google.com/search/docs"
+keyless = ["wif"]
+migration = "Verify the property by DNS TXT record, submit the sitemap; automate with a service account or workload identity federation"
+
+[[alternative]]
+id = "bing-webmaster"
+capability = "search-console"
+name = "Bing Webmaster Tools"
+docs = "https://www.bing.com/webmasters/"
+keyless = []
+migration = "Import the site from Google Search Console or verify by DNS, then submit the sitemap"
+
+[[alternative]]
+id = "anthropic"
+capability = "llm.api"
+name = "Anthropic API"
+docs = "https://docs.anthropic.com/en/api/getting-started"
+keyless = []
+migration = "Use the Messages API with a workspace key per environment"
+
+[[alternative]]
+id = "openai"
+capability = "llm.api"
+name = "OpenAI API"
+docs = "https://platform.openai.com/docs"
+keyless = []
+migration = "Swap the SDK and model name, adapt tool and message shapes, create a project key and store it as the same secret name"
+
+[[alternative]]
+id = "gemini"
+capability = "llm.api"
+name = "Google Gemini API"
+docs = "https://ai.google.dev/gemini-api/docs"
+keyless = ["wif"]
+migration = "Use the Gemini API or Vertex AI (workload identity federation instead of a key), adapt message and tool shapes"
+
+[[alternative]]
+id = "sops"
+capability = "secrets.kv"
+name = "SOPS with age"
+docs = "https://getsops.io/docs/"
+keyless = []
+migration = "Encrypt secrets files to age recipients and commit them; CI decrypts with one age key"
+
+[[alternative]]
+id = "cloudflare-kv"
+capability = "secrets.kv"
+name = "Cloudflare Workers KV"
+docs = "https://developers.cloudflare.com/kv/"
+keyless = []
+migration = "Create a namespace, bind it to the Worker, copy keys with `wrangler kv bulk put`; keep real secrets in Worker secrets, not KV"
+
+[[alternative]]
+id = "gcp-secret-manager"
+capability = "secrets.kv"
+name = "Google Secret Manager"
+docs = "https://cloud.google.com/secret-manager/docs"
+keyless = ["wif"]
+migration = "Create the secrets, grant the CI identity accessor rights through workload identity federation, read them at deploy time"
+
+[[alternative]]
+id = "bosun"
+capability = "signing"
+name = "bosun approvals"
+docs = "https://github.com/keelstackhq/keelstack/tree/main/bosun"
+keyless = []
+migration = "Enroll a signer key with `bosun keygen --enroll` and list it in .bosun/approvers.toml"
+
+[[alternative]]
+id = "sigstore"
+capability = "signing"
+name = "Sigstore (cosign)"
+docs = "https://docs.sigstore.dev/"
+keyless = ["oidc"]
+migration = "Sign artifacts with `cosign sign` using the workflow's OIDC identity; verify with `cosign verify` and the expected identity"

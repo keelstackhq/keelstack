@@ -1,0 +1,210 @@
+# System description of keelstackhq/keelstack (hoist spec §17, D-031): every external system
+# and every credential, by name and metadata only, never values. `hoist system check` compares it
+# with .github/workflows and hoist.toml; `hoist system explain --write` regenerates SYSTEM.md.
+# Dates nobody recorded yet are left out on purpose: `hoist system check` lists them (metadata)
+# until the owner adds created_at and expires_at from the provider's console.
+# SYSTEM.md lists alternatives from the org catalog, so regenerate it with:
+#   hoist system explain --write --catalog decisions/channel/pieces/catalog/files/catalog.toml
+version = 1
+
+[system]
+name = "keelstackhq/keelstack"
+owner = "urbanisierung"
+description = "The keelstack monorepo: CI on GitHub Actions, gates by the bosun gate App, the site on Cloudflare Pages, the hoard cache self-test on R2, releases to crates.io and npm by trusted publishing."
+
+[[provider]]
+id = "github"
+capability = "vcs+ci"
+account = "keelstackhq"
+console = "https://github.com/keelstackhq/keelstack/settings/environments"
+docs = "https://docs.github.com/en/actions/security-for-github-actions/security-guides/using-secrets-in-github-actions"
+clis = [{ tool = "gh", mise = "gh" }, { tool = "hoist", mise = "npm:@keelstackhq/hoist" }]
+alternatives = ["gitlab", "forgejo"]
+
+[[provider]]
+id = "cloudflare"
+capability = "dns+cdn"
+account = "keelstackhq"
+console = "https://dash.cloudflare.com/profile/api-tokens"
+docs = "https://developers.cloudflare.com/fundamentals/api/get-started/create-token/"
+clis = [{ tool = "wrangler", mise = "npm:wrangler" }]
+alternatives = ["bunny", "netlify", "fastly"]
+
+[[provider]]
+id = "npm"
+capability = "registry.npm"
+account = "keelstackhq"
+console = "https://www.npmjs.com/settings/keelstackhq/packages"
+docs = "https://docs.npmjs.com/trusted-publishers"
+clis = [{ tool = "npm", mise = "node" }]
+alternatives = ["jsr"]
+
+[[provider]]
+id = "crates"
+capability = "registry.crates"
+account = "urbanisierung"
+console = "https://crates.io/settings/tokens"
+docs = "https://crates.io/docs/trusted-publishing"
+clis = [{ tool = "cargo", mise = "rust" }]
+
+[[provider]]
+id = "anthropic"
+capability = "llm.api"
+account = "keelstackhq"
+console = "https://console.anthropic.com/settings/keys"
+docs = "https://docs.anthropic.com/en/api/getting-started"
+alternatives = ["openai", "gemini"]
+
+[[provider]]
+id = "bosun"
+capability = "signing"
+account = "keelstackhq/keelstack .bosun/approvers.toml"
+docs = "bosun/docs/spec/08-risk.md"
+clis = [{ tool = "bosun", mise = "npm:@keelstackhq/bosun" }]
+
+[[credential]]
+id = "bosun-app-key"
+provider = "github"
+kind = "app_key"
+role = "checks"
+purpose = "Private key of the GitHub App keelstackhq-bosun-gate: mints installation tokens that post risk-check, review-verdict, main-open and bosun-ci-ok"
+owner = "urbanisierung"
+principal = "GitHub App keelstackhq-bosun-gate (client id: variable BOSUN_APP_CLIENT_ID)"
+resources = ["repo:keelstackhq/keelstack"]
+created_via = "GitHub > Settings > Developer settings > GitHub Apps > keelstackhq-bosun-gate > Generate a private key; then `hoist secrets set BOSUN_APP_KEY --from-file key.pem`"
+expires_at = "never"
+rotation = { strategy = "assisted", command = "hoist secrets set BOSUN_APP_KEY --from-file key.pem", steps = ["Generate a new private key on the App settings page", "Run the command with the new PEM, then delete the PEM", "Re-run a gated PR's checks", "Delete the old key on the App settings page"] }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "bosun-app", key = "BOSUN_APP_KEY" }]
+consumers = [
+  { workflow = "main-health.yml", job = "report", environment = "bosun-app" },
+  { workflow = "main-open.yml", job = "judge", environment = "bosun-app" },
+  { workflow = "risk.yml", job = "risk", environment = "bosun-app" },
+  { workflow = "signer.yml", job = "mirror", environment = "bosun-app" },
+  { workflow = "signer.yml", job = "judge", environment = "bosun-app" },
+  { workflow = "verdict.yml", job = "verdict", environment = "bosun-app" },
+]
+
+[[credential]]
+id = "bosun-signer-key"
+provider = "bosun"
+kind = "other"
+role = "sign"
+purpose = "The CI signer's bosun key (role signer, id signer-ci): signs the autonomous approval of a PR when the quorum allows it"
+owner = "urbanisierung"
+principal = "approver signer-ci in .bosun/approvers.toml"
+created_via = "bosun keygen --role signer --id signer-ci --out <pem outside the repo> --enroll; then `hoist secrets set BOSUN_SIGNER_KEY --from-file <pem>`"
+expires_at = "never"
+rotation = { strategy = "manual", steps = ["bosun keygen --role signer --id signer-ci --out <pem outside the repo> --enroll", "Merge the .bosun/approvers.toml PR (owner-approved, R-gov)", "hoist secrets set BOSUN_SIGNER_KEY --from-file <pem>, then delete the PEM", "Remove the old public key from .bosun/approvers.toml"] }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "bosun-signer", key = "BOSUN_SIGNER_KEY" }]
+consumers = [{ workflow = "signer.yml", job = "sign", environment = "bosun-signer" }]
+
+[[credential]]
+id = "release-tag-key"
+provider = "github"
+kind = "ssh_key"
+role = "push-tags"
+purpose = "Write deploy key, the only bypass actor of ruleset `hoist: tags`: release.yml pushes vX.Y.Z and v0 over SSH with it"
+owner = "urbanisierung"
+principal = "deploy key `hoist: release tags`"
+scopes = ["deploy key: write"]
+resources = ["tags v*"]
+created_via = "hoist apply"
+expires_at = "never"
+rotation = { strategy = "assisted", command = "hoist apply", steps = ["Delete deploy key `hoist: release tags` and secret RELEASE_TAG_KEY of environment release-tags", "Run `hoist apply` (or `keel up`): it mints a new ed25519 key, adds it and seals the private half"] }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "release-tags", key = "RELEASE_TAG_KEY" }]
+consumers = [{ workflow = "release.yml", job = "release", environment = "release-tags" }]
+
+[[credential]]
+id = "site-deploy"
+provider = "cloudflare"
+kind = "api_token"
+role = "deploy"
+purpose = "Deploy site/apps/site/dist to Cloudflare Pages project keelstack-landing (deploy-site.yml)"
+owner = "urbanisierung"
+principal = "hoist-minted token (name prefix `hoist:`)"
+scopes = ["Pages Write"]
+resources = ["pages:keelstack-landing"]
+created_via = "hoist apply (mints the token for one year and seals it)"
+provider_ref = "hoist:keelstackhq/keelstack:deploy"
+max_ttl = "1y"
+rotation = { strategy = "auto", command = "hoist secrets rotate site-deploy" }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_API_TOKEN" }]
+consumers = [{ workflow = "deploy-site.yml", job = "deploy", environment = "site" }]
+
+[[credential]]
+id = "cloudflare-account"
+provider = "cloudflare"
+kind = "other"
+role = "config"
+purpose = "Cloudflare account id for wrangler pages deploy (not a credential, kept beside the token)"
+owner = "urbanisierung"
+expires_at = "never"
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "site", key = "CLOUDFLARE_ACCOUNT_ID" }]
+consumers = [{ workflow = "deploy-site.yml", job = "deploy", environment = "site" }]
+
+[[credential]]
+id = "hoard-r2"
+provider = "cloudflare"
+kind = "api_token"
+role = "cache-rw"
+purpose = "S3 key pair for the hoard self-test's R2 bucket (warm writes, hit reads)"
+owner = "urbanisierung"
+principal = "R2 API token"
+scopes = ["Workers R2 Storage Bucket Item Read", "Workers R2 Storage Bucket Item Write"]
+created_via = "Cloudflare dashboard > R2 > Manage API tokens; then `hoist secrets set R2_ACCESS_KEY_ID` and `hoist secrets set R2_SECRET_ACCESS_KEY`"
+rotation = { strategy = "manual", steps = ["Mint a new R2 API token (bucket item read and write) in the dashboard", "hoist secrets set R2_ACCESS_KEY_ID and hoist secrets set R2_SECRET_ACCESS_KEY", "Re-run hoard-self-test.yml", "Revoke the old token in the dashboard"] }
+storage = [
+  { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_ACCESS_KEY_ID" },
+  { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_SECRET_ACCESS_KEY" },
+]
+consumers = [
+  { workflow = "hoard-self-test.yml", job = "warm", environment = "hoard-r2" },
+  { workflow = "hoard-self-test.yml", job = "hit", environment = "hoard-r2" },
+]
+
+[[credential]]
+id = "hoard-r2-config"
+provider = "cloudflare"
+kind = "other"
+role = "config"
+purpose = "R2 account id and bucket name of the hoard self-test (not credentials, kept beside the key pair)"
+owner = "urbanisierung"
+expires_at = "never"
+storage = [
+  { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_ACCOUNT_ID" },
+  { kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "hoard-r2", key = "R2_BUCKET" },
+]
+consumers = [
+  { workflow = "hoard-self-test.yml", job = "warm", environment = "hoard-r2" },
+  { workflow = "hoard-self-test.yml", job = "hit", environment = "hoard-r2" },
+]
+
+[[credential]]
+id = "anthropic-api-key"
+provider = "anthropic"
+kind = "api_token"
+role = "review"
+purpose = "CI review (review.yml) when variable BOSUN_REVIEW_CI is true; optional ([github] optional_secrets)"
+owner = "urbanisierung"
+created_via = "Anthropic console > API keys > Create key; then `hoist secrets set ANTHROPIC_API_KEY`"
+rotation = { strategy = "manual", steps = ["Create a new key in the console", "hoist secrets set ANTHROPIC_API_KEY", "Delete the old key in the console"] }
+storage = [{ kind = "gh-env-secret", repo = "keelstackhq/keelstack", env = "review", key = "ANTHROPIC_API_KEY" }]
+consumers = [{ workflow = "review.yml", job = "review", environment = "review" }]
+
+[[trust]]
+provider = "npm"
+kind = "oidc-trusted-publishing"
+subject = "keelstackhq/keelstack release.yml and cargo-deny-npm.yml, environment release"
+replaces = "publish"
+
+[[trust]]
+provider = "crates"
+kind = "oidc-trusted-publishing"
+subject = "keelstackhq/keelstack release.yml, environment release"
+replaces = "publish"
+
+[[trust]]
+provider = "github"
+kind = "github-app"
+subject = "keelstackhq-bosun-gate"
+replaces = "pat"

@@ -7,6 +7,10 @@ Releases are automatic: merging a change to `main` whose top heading is a new da
 `v<version>` and publishes the GitHub release after the owner approves the `release` environment.
 Keep `unreleased` while changes accumulate.
 
+## v0.26.0 — unreleased
+
+- system.toml (D-031): both templates seed `system.toml` (systems and credentials of the rendered workflows, names and metadata only; dates left for `hoist system stamp`; npm/crates.io trusted publishing and GitHub App `[[trust]]`) and ship the weekly `system-check.yml` (`hoist system check --live`, one `system-check` issue; fails only on offline drift). The generated `AGENTS.md` points at `system.toml`; its wording is shorter to stay under the always-loaded ceiling. Existing repos: `splice update` adds the workflow; the seed `system.toml` is written only if absent, or run `hoist system init`.
+
 ## v0.25.0 — 2026-11-27
 
 - cascivo is the default UI layer (D-030): `astro-site` moves from Preact islands to cascivo on React islands (`integrations: [react(), cascivo()]`, `@astrojs/react` 7.1.9, `@cascivo/astro` 1.11.0; seed `hello.tsx` composes a cascivo `Button`); the catalog pins `@cascivo/react` 1.11.0, `@types/react`/`@types/react-dom` 19.3.0 and drops `@astrojs/preact`; the generated `AGENTS.md` gets a `## UI` section with any UI piece; preact-app/ui-storybook notes add "UI: cascivo first"; the docs piece pins `@cascivo/docspack` 0.3.5; Renovate groups React types with react; new hull combo `site-web`. Existing astro-site repos: `splice update` replaces the owned config; port seed islands from `preact/hooks` to React.

@@ -17,7 +17,8 @@ To put bosun on a repo you already have, the shortest path is
 [Update](/docs/update/) brings a repo up to the newest hull, and
 [Start a project](/docs/start-project/) lists every owner step
 before agents can work on a new hull repo, with how hull's `ready` check (since hull v0.5.0) verifies each one. How to run it day to day with an orchestrator session and
-child sessions is in the [Playbook](/docs/playbook/).
+child sessions is in the [Playbook](/docs/playbook/). Which external systems and credentials a repo
+holds, and how to check and rotate them, is in [System description](/docs/system/).
 
 > **For AI agents:** point your agent at https://keelstack.dev/llms-full.txt (every docs page in
 > one Markdown file), or at https://keelstack.dev/llms.txt for the index. Each page is also served

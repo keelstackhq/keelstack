@@ -116,6 +116,21 @@ fn json_error_of_init_names_the_command() {
 }
 
 #[test]
+fn json_error_of_system_check_names_the_subcommand() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("system.toml"), "this is = not [valid").unwrap();
+    let (v, _) = json_error(&[
+        "--json",
+        "-C",
+        dir.path().to_str().unwrap(),
+        "system",
+        "check",
+    ]);
+    assert_eq!(v["command"], "system check");
+    assert_eq!(v["exit_code"], 3);
+}
+
+#[test]
 fn non_utf8_argument_is_exit_3_not_a_panic() {
     use std::os::unix::ffi::OsStrExt;
     let bad = std::ffi::OsStr::from_bytes(b"/tmp/d\xff");

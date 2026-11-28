@@ -334,6 +334,50 @@ pub fn run_all(
     }
 }
 
+/// Outcome of `hoist --json system check`.
+pub enum SystemCheck {
+    NotInstalled,
+    /// This hoist has no `system` subcommand.
+    TooOld,
+    Ran(Parsed),
+}
+
+/// Whether `o` is an old hoist rejecting `system`: clap's exact `unrecognized subcommand 'system'`
+/// error in a JSON error envelope (exit 3) or on stderr/stdout (exit 2 on very old clap, 3 once
+/// main mapped it). Any other failure, even one mentioning `system`, is a real failure.
+pub(crate) fn lacks_system(o: &Out) -> bool {
+    const CLAP: &str = "unrecognized subcommand 'system'";
+    match json(o) {
+        Some(v) => {
+            o.code == 3
+                && v["error"]["message"]
+                    .as_str()
+                    .is_some_and(|m| m.contains(CLAP))
+        }
+        None => {
+            (o.code == 2 && (o.stderr.contains(CLAP) || o.stdout.contains(CLAP)))
+                || (o.code == 3 && o.stderr.contains(CLAP))
+        }
+    }
+}
+
+/// `hoist --json system check` (D-031, spec §17.4): `NotInstalled` when hoist is not installed,
+/// `TooOld` when it lacks `system`; exit 0, 1 and 2 are parsed, anything else is an `Err`.
+pub fn system_check(r: &dyn Runner, dir: &Path, t: Duration) -> Result<SystemCheck, String> {
+    let c = cmd(&["--json", "system", "check"], Vec::new(), dir, t);
+    let o = r.run(&c);
+    if super::not_found(&o) {
+        return Ok(SystemCheck::NotInstalled);
+    }
+    if lacks_system(&o) {
+        return Ok(SystemCheck::TooOld);
+    }
+    match o.code {
+        0..=2 => Ok(SystemCheck::Ran(parse(&o, &envelope(&c, &o)?))),
+        _ => Err(failure(&c, &o)),
+    }
+}
+
 /// The items of `hoist --json explain` with area `cloudflare`.
 pub fn explain_cloudflare(r: &dyn Runner, dir: &Path, t: Duration) -> Result<Vec<Item>, String> {
     let c = cmd(&["--json", "explain"], Vec::new(), dir, t);
@@ -443,6 +487,37 @@ mod tests {
     }
 
     const AREAS: &str = "--area github --area npm --area crates --area release";
+
+    #[test]
+    fn lacks_system_matches_only_clap_unrecognized_system() {
+        let clap = "error: unrecognized subcommand 'system'\n\nUsage: hoist <COMMAND>";
+        assert!(lacks_system(&Out::with(2, "", clap)));
+        assert!(lacks_system(&Out::with(3, "", clap)));
+        let env = |m: &str| {
+            Out::with(
+                3,
+                &format!(r#"{{"ok":false,"error":{{"message":"{m}"}}}}"#),
+                "",
+            )
+        };
+        assert!(lacks_system(&env("unrecognized subcommand 'system'")));
+        for near in [
+            "unrecognized subcommand 'systems'",
+            "unrecognized subcommand 'pr'",
+            "system.toml: unrecognized key, bad subcommand",
+            "unknown command system",
+        ] {
+            assert!(!lacks_system(&env(near)), "{near}");
+            assert!(!lacks_system(&Out::with(2, "", near)), "{near}");
+            assert!(!lacks_system(&Out::with(3, "", near)), "{near}");
+        }
+        assert!(!lacks_system(&Out::with(
+            2,
+            "",
+            "Usage: hoist system check"
+        )));
+        assert!(!lacks_system(&Out::with(1, "", clap)));
+    }
 
     #[test]
     fn settings_names_every_area_but_cloudflare_and_falls_back_on_old_hoist() {

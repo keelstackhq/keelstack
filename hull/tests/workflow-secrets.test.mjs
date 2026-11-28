@@ -165,6 +165,7 @@ test("rendered template-rust circleci-only: the status workflow has no secrets, 
     "circleci-status.yml",
     "release.yml",
     "splice.yml",
+    "system-check.yml",
   ]);
   const text = readFileSync(join(wfDir, "circleci-status.yml"), "utf8");
   const wf = YAML.parse(text);

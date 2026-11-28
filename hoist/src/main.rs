@@ -77,9 +77,24 @@ fn main() -> ExitCode {
             ..
         }
     );
+    // `system init --print` and plain `system explain` print only their text (TOML, Markdown),
+    // so stdout can be redirected into a file.
+    let raw = matches!(
+        cli.command,
+        hoist::Command::System {
+            command: hoist::cli::SystemCommand::Init { print: true }
+                | hoist::cli::SystemCommand::Explain {
+                    write: false,
+                    check: false,
+                    ..
+                },
+        }
+    );
     match hoist::run(cli) {
         Ok(report) => {
-            if json {
+            if raw && !json {
+                print!("{}", report.text.as_deref().unwrap_or_default());
+            } else if json {
                 println!("{}", render_json(&report));
             } else {
                 if emit {
@@ -139,7 +154,7 @@ fn command_name(args: &[String]) -> String {
                 break;
             }
             words.push(a);
-            let group = matches!(words[0], "auth" | "release" | "secrets" | "org");
+            let group = matches!(words[0], "auth" | "release" | "secrets" | "org" | "system");
             if words.len() == 2 || !group {
                 break;
             }
@@ -148,6 +163,7 @@ fn command_name(args: &[String]) -> String {
     words.join(" ")
 }
 
-const KNOWN: [&str; 10] = [
+const KNOWN: [&str; 11] = [
     "explain", "plan", "apply", "check", "import", "init", "auth", "release", "secrets", "org",
+    "system",
 ];

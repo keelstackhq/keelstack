@@ -252,6 +252,21 @@ export const docs: DocPage[] = [
     ready: true,
   },
   {
+    slug: "system",
+    title: "System description",
+    summary:
+      "system.toml (D-031): every external system and credential by name and metadata, with init, fill, check and rotate, the SYSTEM.md it renders, alternatives from the org catalog and keyless trusts.",
+    sources: [
+      "hoist/README.md",
+      "hoist/skills/hoist/SKILL.md",
+      "hoist/docs/superpowers/specs/2026-10-16-hoist-design.md",
+      "hoist/schema/system.schema.json",
+      "decisions/decisions/031-system-description.md",
+      "decisions/channel/pieces/catalog/files/catalog.toml",
+    ],
+    ready: true,
+  },
+  {
     slug: "playbook",
     title: "Playbook",
     summary:

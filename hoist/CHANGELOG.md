@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `hoist system init|check|explain` and `system.toml` (D-031, spec §17): a cleartext description of a repo's external systems, credentials and keyless trusts; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and long-lived credentials where keyless exists; `explain --write` renders `SYSTEM.md`.
+- `hoist system explain --catalog PATH` (env `HOIST_CATALOG`, else `catalog.toml` next to `system.toml`) lists each provider's alternatives from the org catalog (spec §17.6) with name, docs, keyless options and migration; without a catalog the output is unchanged.
+
+- `hoist system check --live` reads only the token env names each provider owns (github `GH_TOKEN`/`GH_PAT`, cloudflare `CLOUDFLARE_API_TOKEN`, fly `FLY_API_TOKEN`/`FLY_ACCESS_TOKEN`, npm `NPM_TOKEN`, crates `CARGO_REGISTRY_TOKEN`, google `GOOGLE_OAUTH_ACCESS_TOKEN`); a storage key with another name is `unknown` with the env name to export. Every `fly` child starts from an empty env plus PATH, HOME, TMPDIR, proxy and CA vars and the intended `FLY_API_TOKEN`.
+- `hoist secrets rotate` (auto): `pending_ref` is kept until the pending tokens are revoked (an id whose revoke fails stays recorded), pending ids are deduped and never the current `provider_ref`; `hoist system stamp ID --created DAY [--expires DAY|never] [--by WHO] [--via TEXT] [--ref REF] [--file PATH]` records a rotation (stamp first, revoke the old token last).
+- `hoist system explain --write` (SYSTEM.md) and `system init` (system.toml) write through a temp file and rename (mode kept, a symlink written through, `init` never overwrites).
+- `system check` exits 1 on an expired credential and 2 (rotate, a human step) on one expiring within 30 days (D-031).
+
 ## 0.25.0 (2026-11-27)
 
 - `hoist --json init` with no publishable package: the exit-3 error object carries the stable `error.kind` `nothing-to-publish` (keel migrate reads it).

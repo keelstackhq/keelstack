@@ -65,6 +65,7 @@ Files (owned):
 - `.github/scripts/rust-affected.mjs`
 - `.github/workflows/release.yml`
 - `.github/workflows/splice.yml`
+- `.github/workflows/system-check.yml`
 - `.github/scripts/release-plan.mjs`
 - `scripts/agents-index.mjs`
 - `scripts/ready.mjs`
@@ -84,6 +85,7 @@ Files (shared):
 Files (seed):
 
 - `CHANGELOG.md`
+- `system.toml`
 - `docs/agents/index.md`
 - `AGENTS.md`
 - `docs/agents/onboarding.toml`

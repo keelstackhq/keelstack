@@ -27,6 +27,7 @@ pub mod report;
 pub mod seal;
 pub mod secrets;
 pub mod sshkey;
+pub mod system;
 pub mod timeutil;
 pub mod verify;
 
@@ -125,6 +126,46 @@ pub fn run(cli: Cli) -> Result<Report, HoistError> {
             cli.verbose,
         ),
         Command::Org { ref command } => org::run(&dir, command, cli.verbose),
+        Command::System {
+            command: cli::SystemCommand::Init { print },
+        } => system::init::system_init(&dir, print),
+        Command::System {
+            command: cli::SystemCommand::Check { ref file, live },
+        } => system::check::system_check(&dir, file.as_deref(), live, cli.verbose),
+        Command::System {
+            command:
+                cli::SystemCommand::Stamp {
+                    ref id,
+                    ref created,
+                    ref expires,
+                    ref by,
+                    ref via,
+                    ref provider_ref,
+                    ref file,
+                },
+        } => system::stamp::system_stamp(
+            &dir,
+            file.as_deref(),
+            &system::stamp::StampArgs {
+                id,
+                created,
+                expires: expires.as_deref(),
+                by: by.as_deref(),
+                via: via.as_deref(),
+                provider_ref: provider_ref.as_deref(),
+            },
+        ),
+        Command::System {
+            command:
+                cli::SystemCommand::Explain {
+                    ref file,
+                    ref catalog,
+                    write,
+                    check,
+                },
+        } => {
+            system::explain::system_explain(&dir, file.as_deref(), catalog.as_deref(), write, check)
+        }
         Command::Secrets {
             command:
                 cli::SecretsCommand::Set {

@@ -22,9 +22,14 @@ const ROTATABLE: &str = "CLOUDFLARE_API_TOKEN";
 const VERIFY_ATTEMPTS: u32 = 3;
 
 pub fn secrets_rotate(dir: &Path, name: Option<&str>, verbose: bool) -> Result<Report, HoistError> {
+    if let Some(n) = name
+        && let Some(report) = crate::system::rotate::try_rotate(dir, n, verbose)?
+    {
+        return Ok(report);
+    }
     if name.is_some_and(|n| n != ROTATABLE) {
         return Err(HoistError::Usage(format!(
-            "only minted secrets can be rotated: {ROTATABLE}"
+            "only minted secrets can be rotated: {ROTATABLE} (or a system.toml credential id)"
         )));
     }
     let desired = build_desired(dir)?;

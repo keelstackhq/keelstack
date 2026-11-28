@@ -29,7 +29,7 @@ hoist check [--adopt] [--area ...]  # plan plus verification (required checks, P
 hoist apply [--yes] [--prune | --adopt] [--area ...] [--secrets-to SINK | --emit-secrets]  # write the plan, then verify like check
 hoist auth check              # what each token can read vs what hoist needs
 hoist secrets set NAME        # seal --from-file PATH, else env NAME, else a hidden prompt (one line) into an Actions secret; PEMs: --from-file
-hoist secrets rotate [NAME]   # mint, verify and seal a new CLOUDFLARE_API_TOKEN, revoke the old
+hoist secrets rotate [NAME|ID] # mint, verify and seal a new CLOUDFLARE_API_TOKEN, revoke the old; ID: a system.toml credential (spec §17.8)
 hoist secrets check [--remote] # secrets repo or secrets.toml; never decrypts (spec §15.9)
 hoist secrets exec --env E --keys A,B -- cmd  # CI only: run cmd with those secrets (spec §15.7)
 hoist secrets edit FILE         # secrets repo: sops edit with your own age key, then the git commands
@@ -280,6 +280,42 @@ credentials, headers and API bases are in the table of section 16.5 (`NPM_TOKEN`
 `CARGO_REGISTRY_TOKEN`, `HOIST_SEARCH_CONSOLE_TOKEN`, `HOIST_SEARCH_CONSOLE_BRIDGE`,
 `FLY_API_TOKEN`, `HOIST_FLY_API`). In a sandbox whose proxy injects the credentials, set each
 token to `proxy-injected`.
+
+## System description (`hoist system`)
+
+`hoist system init|check|explain|stamp [--file PATH]` works on `system.toml` (D-031), a cleartext
+description of the repo's external systems, credentials (purpose, owner, scopes, storage,
+consumers, expiry, rotation) and keyless trusts, never values. `init [--print]` drafts it from
+workflows, `hoist.toml`, `secrets.toml`, `access.toml`, `org.toml` and `keel.toml` and writes only
+if absent; `check` fails on undeclared or unused secrets, expiry, missing metadata, `max_ttl` and
+long-lived credentials where keyless exists; `explain [--catalog PATH] [--write|--check]` renders `SYSTEM.md`.
+With the org catalog of alternatives (`--catalog`, env `HOIST_CATALOG`, or `catalog.toml` next to
+`system.toml`; the decisions channel piece `catalog` ships it) each provider's `alternatives` are
+listed with name, docs, keyless options and migration notes; without a catalog the output is
+unchanged. These send no HTTP and read no secret value.
+
+`check --live` also asks each provider, GET only (Fly: read-only `fly tokens list` and
+`fly secrets list`): Cloudflare tokens (status, expiry, permission groups), GitHub repo and
+environment secrets (declared storage present, undeclared secrets, age against `rotate_every`,
+a PAT's expiry header), Fly tokens and app secrets, npm and crates.io tokens, Google service
+account keys. Tokens come from env (`CLOUDFLARE_API_TOKEN`, `GITHUB_TOKEN`, `FLY_API_TOKEN`,
+`NPM_TOKEN`, `CARGO_REGISTRY_TOKEN`, `GOOGLE_OAUTH_ACCESS_TOKEN`, or a storage key with a name
+that provider owns, such as `GH_PAT` or `FLY_ACCESS_TOKEN`); hoist never reads any other storage key,
+which is `unknown` with the env name to export. A missing token or a 401/403 is `unknown` with a
+fix, never a failure.
+
+`hoist secrets rotate ID` rotates a credential of `system.toml`: `strategy = "auto"` (Cloudflare,
+Fly) creates the new credential, tests it, writes it into every storage (GitHub storages sealed,
+`fly-secret` on stdin of `fly secrets import`); `assisted`/`manual` print the
+steps (exit 2). Rotation order: new credential created and tested, stored everywhere, `system.toml`
+stamped, and the old credential revoked last, so a failure before the revoke leaves the old one
+working. `hoist system stamp ID --created YYYY-MM-DD [--expires YYYY-MM-DD|never] [--by WHO]
+[--via TEXT] [--ref PROVIDER_REF] [--file PATH]` records a rotation done by hand (`--via` is
+`created_via`, `--ref` the provider's id for the credential, never a value). `SYSTEM.md` and
+`system.toml` are written atomically (temp file, rename; mode kept; a symlinked `SYSTEM.md` is
+written through). Exit codes: 0 ok, 1 drift (or stale `SYSTEM.md`, failed rotation), 2
+rotation due or human steps, 3 usage or config error. Format: spec section 17; schema:
+`schema/system.schema.json`.
 
 ## Apply
 

@@ -101,7 +101,7 @@ test("no template-rust workflow hardcodes nextest, cargo-deny or hoist versions"
     for (const n of names) {
       const text = await readFile(join(dir, n), "utf8");
       assert.doesNotMatch(text, /cargo-(nextest|deny)@\d/, n);
-      assert.doesNotMatch(text, /HOIST_VERSION:\s*\d/, n);
+      assert.doesNotMatch(text, /HOIST_VERSION:\s*"?\d/, n);
       assert.doesNotMatch(text, /hoist@\d/, n);
     }
   }

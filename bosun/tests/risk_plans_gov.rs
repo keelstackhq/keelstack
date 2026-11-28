@@ -48,3 +48,21 @@ fn any_plans_directory_is_r_gov() {
     }
     assert!(read("channel/pieces/core/files/.bosun/risk.toml.jinja").contains(r#""**/plans/**""#));
 }
+
+/// `system.toml` (D-031) lists credentials and who owns and rotates them, so it is R-gov in the
+/// built-in rules, this repo's rules and the channel template. The generated `SYSTEM.md` is not.
+#[test]
+fn system_toml_is_r_gov_but_system_md_is_not() {
+    let built = Rules::defaults();
+    let repo = Rules::parse(&committed(".bosun/risk.toml")).unwrap();
+    for rules in [&built, &repo] {
+        for p in ["system.toml", "hoist/system.toml", "crates/x/system.toml"] {
+            assert!(gov_matches(rules, p), "{p}");
+        }
+        assert!(!gov_matches(rules, "SYSTEM.md"));
+        assert!(!gov_matches(rules, "src/system.rs"));
+    }
+    assert!(
+        read("channel/pieces/core/files/.bosun/risk.toml.jinja").contains(r#""**/system.toml""#)
+    );
+}

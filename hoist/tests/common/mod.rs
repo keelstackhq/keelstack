@@ -14,13 +14,14 @@ pub use fake::{FakeApi, RouteSpec};
 pub use stub_tool::{stub, write_script};
 
 /// Env vars that could reach a real API; every test child runs without them (ruling R2).
-pub const SCRUBBED_ENV: [&str; 16] = [
+pub const SCRUBBED_ENV: [&str; 20] = [
     "GITHUB_ACTIONS",
     "HOIST_RELEASE_TOKEN",
     "HOIST_RELEASE_APP_ID",
     "HOIST_RELEASE_APP_KEY",
     "GITHUB_TOKEN",
     "GH_TOKEN",
+    "GH_PAT",
     "CLOUDFLARE_API_TOKEN",
     "CLOUDFLARE_ACCOUNT_ID",
     "HOIST_SEARCH_CONSOLE_TOKEN",
@@ -28,9 +29,12 @@ pub const SCRUBBED_ENV: [&str; 16] = [
     "NPM_TOKEN",
     "CARGO_REGISTRY_TOKEN",
     "FLY_API_TOKEN",
+    "FLY_ACCESS_TOKEN",
     "HOIST_BRIDGE_SA_KEY",
     "HOIST_BRIDGE_SA_KEY_FILE",
     "HOIST_BRIDGE_TOKEN",
+    "GOOGLE_OAUTH_ACCESS_TOKEN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
 ];
 
 /// `name:` of `.github/workflows/ci.yml`, the only workflow that installs sops and age-keygen
@@ -60,6 +64,8 @@ pub fn hoist() -> Command {
     for name in SCRUBBED_ENV {
         cmd.env_remove(name);
     }
+    // A catalog from the dev machine must not change `system explain`.
+    cmd.env_remove("HOIST_CATALOG");
     // `gh auth token` must not find a real login on the dev machine.
     cmd.env("GH_CONFIG_DIR", "/nonexistent-hoist-gh");
     cmd.env("TMPDIR", tmpdir());
@@ -70,6 +76,7 @@ pub fn hoist() -> Command {
     cmd.env("HOIST_CRATES_API", "http://127.0.0.1:9");
     cmd.env("HOIST_SEARCH_CONSOLE_BRIDGE", "http://127.0.0.1:9");
     cmd.env("HOIST_FLY_API", "http://127.0.0.1:9");
+    cmd.env("HOIST_GOOGLE_API", "http://127.0.0.1:9");
     // `check` probes the Pages URL; it must never leave the machine.
     cmd.env("HOIST_PAGES_BASE", "http://127.0.0.1:9");
     // No real `fly` either; tests that need one set HOIST_FLY.

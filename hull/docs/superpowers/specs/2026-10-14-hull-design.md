@@ -250,6 +250,35 @@ Root files (class in brackets):
   marked `npm-cli`/`ts-lib` chain) it adds a `## Blocked` section with the human release steps of
   §8.7. A seed renders only on `new`, so the owned npm-cli and ts-lib `AGENTS.md` files carry the
   same steps for a later `splice add`.
+- `system.toml.jinja` [seed] (D-031, hoist spec §17, 2026-11-27; both templates, template-rust
+  has its own): `[system]` with `{{ scope }}/TODO` as name and `owner = "TODO"`, a github
+  `[[provider]]`, and per piece (`"id" in pieces`, marked chains for npm-cli/ts-lib) the providers
+  (cloudflare always in `template/`: preview-deploy.yml reads `CLOUDFLARE_*`; sops with secrets;
+  circleci; npm; crates and fly in template-rust) and one `[[credential]]` per secret the rendered
+  workflows read or `secrets.toml` lists: purpose, owner, role, kind, storage, consumers (the
+  `{workflow, job, environment}` that read it; `runtime` for values the hoist action decrypts and
+  the local first crates.io publish), `max_ttl`/`rotate_every`, `rotation` with
+  `command = "hoist secrets rotate <id>"` and steps. `created_at`/`expires_at` (except `"never"`
+  for keys that cannot expire) are left for `hoist system stamp`, so `hoist system check` reports
+  `metadata` drift until the owner records them; `provider_ref` is a commented hint. Keyless:
+  `[[trust]]` github-app always, npm trusted publishing with npm-cli/ts-lib, crates.io trusted
+  publishing with template-rust rust-cli (its first publish: credential `crates-first-publish`,
+  assisted, `keyless_exempt`); PAT fallbacks carry `keyless_exempt` and prefer the App; Google WIF is
+  a comment. `tests/system-description.test.mjs` validates every combo against
+  `hoist/schema/system.schema.json` and mirrors the offline check. SYSTEM.md is not shipped
+  (`hoist system explain --write` makes it on demand; PR CI has no hoist).
+- `.github/workflows/system-check.yml` [owned; the same in template-rust except where the hoist
+  version comes from: a `HOIST_VERSION` literal `scripts/bump-version.sh` moves here, `pins.toml`
+  `hoist` (via `scripts/pins.mjs --github-output`) there]: weekly cron + `workflow_dispatch`,
+  both jobs gated to those events on the default branch, no secrets (live probes get
+  `github.token`; a missing provider token is `unknown`). Job `check` (`contents: read`)
+  installs the pinned `@keelstackhq/hoist` from npm, runs `hoist system check --live --json` and
+  `hoist system check --json` and uploads both reports with their exit codes; job `report`
+  (`issues: write`, no checkout, no repo code: the artifact, jq and gh only) keeps one issue
+  labelled `system-check` (create or edit on exit 1/2/3, close on 0; cells lose `|`, newlines and
+  backticks, `@` is defused, step urls only as plain https) and fails on live exit 1 (unless the
+  drift is only `metadata`, a warning) or 3. Title, label, concurrency, report job and exits equal
+  the monorepo's own `system-check.yml` (`tests/system-description.test.mjs`).
 - AI layer, §6.9.
 
 ### 6.2 `preact-app`

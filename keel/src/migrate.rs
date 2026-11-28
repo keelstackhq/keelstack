@@ -834,6 +834,56 @@ impl Mig<'_> {
         }
     }
 
+    /// D-031: a repo with hoist and no `system.toml` gets the draft of `hoist system init` (it
+    /// writes only when the file is absent). Names and metadata only; the owner fills the TODOs.
+    fn s_system(&mut self) -> Res {
+        if !self.p.hoist {
+            return Ok((MAction::Skipped, "no hoist.toml".into()));
+        }
+        if self.dir.join("system.toml").is_file() {
+            return Ok((MAction::Skipped, "system.toml exists".into()));
+        }
+        if self.dry {
+            return Ok((
+                MAction::WouldRun,
+                "hoist system init would draft system.toml".into(),
+            ));
+        }
+        let c = self.tool("hoist", &["--json", "system", "init"]);
+        let o = self.r.run(&c);
+        if o.code != 0 {
+            // Like `hoist init`: not a reason to stop the migration, and not silent either.
+            let why = failure(&c, &o);
+            if hoist::lacks_system(&o) {
+                self.human(
+                    "system-init",
+                    "Upgrade hoist to a version with `hoist system` (this one is too old), then describe the repo's systems and credentials".into(),
+                    "",
+                    "hoist system init",
+                );
+                return Ok((
+                    MAction::Skipped,
+                    "hoist is too old for `hoist system`".into(),
+                ));
+            }
+            self.human(
+                "system-init",
+                format!("Describe the repo's systems and credentials: hoist system init failed here: {why}"),
+                "",
+                "hoist system init",
+            );
+            return Ok((MAction::Skipped, why));
+        }
+        if self.commit_all("chore: add system.toml (hoist system init)")? {
+            Ok((
+                MAction::Done,
+                "system.toml drafted by hoist system init".into(),
+            ))
+        } else {
+            Ok((MAction::Ok, "hoist system init changed nothing".into()))
+        }
+    }
+
     fn snippet_now(&self) -> Option<String> {
         let c = Cmd::new("bosun", &["--json", "setup-snippet"]).dir(&self.dir);
         let o = self.r.run(&c);
@@ -1644,6 +1694,7 @@ fn in_worktree(
         "splice",
         "bosun-pin",
         "hoist",
+        "system",
         "setup-snippet",
         "verify",
         "mode",
@@ -1679,6 +1730,7 @@ fn in_worktree(
             "splice" => m.s_splice(),
             "bosun-pin" => m.s_bosun_pin(),
             "hoist" => m.s_hoist(),
+            "system" => m.s_system(),
             "setup-snippet" => m.s_snippet(),
             "verify" => m.s_verify(),
             "mode" => m.s_mode(),
