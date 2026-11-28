@@ -288,7 +288,7 @@ jobs:
         with:
           toolchain: "1.97"
           components: rustfmt, clippy
-          targets: x86_64-pc-windows-msvc
+          targets: x86_64-pc-windows-gnu
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: bosun
@@ -300,9 +300,12 @@ jobs:
       - run: cargo fmt -p keel-bosun --check
       - run: cargo clippy -p keel-bosun --all-targets --locked -- -D warnings
       - run: cargo test -p keel-bosun --locked
-      # Windows runs only at release (D-007): check the target compiles here instead.
+      # Windows runs only at release (D-007): check the target compiles here instead. The gnu
+      # target with mingw builds ring's C code on Linux (msvc would need lib.exe); same cfg(unix).
       - name: Check the Windows target compiles
-        run: cargo check -p keel-bosun --locked --target x86_64-pc-windows-msvc
+        run: |
+          sudo apt-get install -y -qq gcc-mingw-w64-x86-64
+          cargo check -p keel-bosun --locked --target x86_64-pc-windows-gnu
       - name: npm launcher tests
         working-directory: bosun
         run: node --test npm/*/test/*.test.js
