@@ -7,14 +7,14 @@ and stops at the first step only a human can do. One Rust binary; cargo commands
 - Spec: `docs/superpowers/specs/2026-11-20-keel-design.md` — source of truth (§3 CLI, §3.2 JSON,
   §4 manifest, §5 steps, §6 pins, §7 PAT gate, §8 agent env). Read only the section you touch;
   update it in the same commit when behaviour changes.
-- Plans: `docs/superpowers/plans/` (M1: `2026-11-20-keel-m1.md`). Tick tasks as they land.
+- Plans: `docs/superpowers/plans/` (M1: `2026-11-20-keel-m1.md`; K5 `keel up`: `2026-11-27-oneshot-k5.md`). Tick tasks as they land.
 - Progress: `docs/PROGRESS.md` — Status and Blocked (human-only items), ≤ 40 lines.
 
 ## Layout
 
 ```
 src/main.rs      parse (clap errors -> exit 2), run, print lines or JSON, exit code
-src/cli.rs       Cli, Command (up|plan|doctor); global -C, --json, -v
+src/cli.rs       Cli, Command (up|plan|doctor|migrate|preflight); global -C, --json, -v
 src/lib.rs       run(Cli) -> Result<Report, KeelError>
 src/error.rs     KeelError (Usage exit 2, others exit 3, message says how to fix)
 src/report.rs    Action, StepResult, HumanStep, Report; render_json, render_text
@@ -24,7 +24,7 @@ src/pins.rs      pins parser; src/pins.toml  embedded default pins (KEEL_PINS ov
 src/ctx.rs       run context (repo, branch, flags); src/step.rs Step trait, Outcome
 src/engine.rs    runs steps in order, stops at the first pending or failed one
 src/tools/       adapters: gh, npm, splice, bosun, hoist, fly, curl (argv builders, output parsers)
-src/steps/       preflight, apps, render, governance, settings, token, agent_env, deploy, dns, backup, doctor, merge, verify
+src/steps/       up (K5 upgrade pipeline: dispatch on .splice/lock.toml, migrate, mode-preset, gate-app, owner line), preflight, apps, render, governance, settings, token, agent_env, deploy, dns, backup, doctor, merge, verify
 src/proxy_ca.sh  proxy-CA prelude for the agent environment script (include_str!)
 npm/keel, npm/keel-<platform>   launcher (bin/keel.js, node:test) and 5 platform packages
 tests/           cli_*.rs integration tests with stub tool scripts on PATH

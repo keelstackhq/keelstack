@@ -6,8 +6,9 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use crate::cli::risk_check::OWNERS_PATH;
-use crate::config::{LIMITS_FILE, Limits};
+use crate::config::{CONFIG_FILE, LIMITS_FILE, Limits};
 use crate::core::glob::Glob;
+use crate::core::intake_trust::{self, Author, Trust, TrustedAuthors};
 use crate::core::lease::{Lease, leases_of, race_winner};
 use crate::core::meta::{TaskMeta, closing_issues_in, parse_task_meta};
 use crate::core::records::{Note, Record, parse_record, replace_record};
@@ -295,6 +296,83 @@ pub fn base_files(gh: &dyn Github) -> Result<Option<Vec<String>>> {
     }))
 }
 
+/// Who may start work (spec §3, BA): `[intake] trusted_authors` of the default branch's
+/// `.bosun/bosun.toml` and the owners of `governance/owners.toml`, read once per process. Under
+/// `any` nothing else is read.
+#[derive(Debug, Clone)]
+pub struct IntakeTrust {
+    pub policy: TrustedAuthors,
+    owners: Vec<String>,
+    repo_owner: String,
+}
+
+impl IntakeTrust {
+    pub fn is_any(&self) -> bool {
+        self.policy == TrustedAuthors::Any
+    }
+
+    fn decide(&self, login: &str, association: Option<&str>) -> Trust {
+        intake_trust::decide(
+            &self.policy,
+            &Author {
+                login,
+                association,
+                repo_owner: &self.repo_owner,
+                owners: &self.owners,
+            },
+        )
+    }
+
+    pub fn issue(&self, i: &Issue) -> Trust {
+        self.decide(&i.user, i.author_association.as_deref())
+    }
+
+    pub fn comment(&self, c: &crate::github::Comment) -> Trust {
+        self.decide(&c.user, Some(c.author_association.as_str()))
+    }
+
+    /// The refusal of `claim` and `spawn` for an issue of an untrusted author (exit 5).
+    pub fn require_issue(&self, i: &Issue) -> Result<()> {
+        let t = self.issue(i);
+        if t.trusted {
+            return Ok(());
+        }
+        Err(BosunError::needs_human(
+            format!("#{} was opened by an untrusted author: {}", i.number, t.reason),
+            "an owner or member reads the issue and re-files it, or adds the author to [intake] trusted_authors in .bosun/bosun.toml on the default branch",
+        )
+        .with_data(json!({"reason": "untrusted_author", "issue": i.number, "author": i.user,
+            "detail": t.reason})))
+    }
+}
+
+/// The [`IntakeTrust`] of this repo; fails closed on a config that cannot be read.
+pub fn intake_trust(gh: &dyn Github) -> Result<IntakeTrust> {
+    static CACHE: OnceLock<IntakeTrust> = OnceLock::new();
+    if let Some(t) = CACHE.get() {
+        return Ok(t.clone());
+    }
+    let branch = default_branch(gh).unwrap_or_else(|_| "main".to_string());
+    let policy = match gh.file_at(CONFIG_FILE, &branch)? {
+        // A file that is no TOML at all is the config loaders' error to report (a mainfix claim
+        // must still go through); a bad `[intake]` table fails closed here.
+        Some(t) if toml::from_str::<toml::Value>(&t).is_err() => TrustedAuthors::Any,
+        Some(t) => crate::config::parse_intake_table(&t, &format!("{CONFIG_FILE} on {branch}"))?,
+        None => TrustedAuthors::Any,
+    };
+    let owners = if policy == TrustedAuthors::Any {
+        Vec::new()
+    } else {
+        owner_view(gh, &branch)?.logins()
+    };
+    let t = IntakeTrust {
+        policy,
+        owners,
+        repo_owner: gh.repo_owner().to_string(),
+    };
+    Ok(CACHE.get_or_init(|| t).clone())
+}
+
 /// The comments of an issue, oldest first.
 pub fn notes(gh: &dyn Github, number: u64) -> Result<Vec<Note>> {
     Ok(gh
@@ -345,10 +423,27 @@ fn notes_from(gh: &dyn Github, number: u64, mode: Count) -> Result<Vec<Note>> {
     }
     let mut cache: std::collections::HashMap<String, Who> = std::collections::HashMap::new();
     let mut out = Vec::new();
+    // Reading notes must survive a failing config read (status, digest): the claim, spawn and
+    // wave plan gates stay strict; here the permission check below still applies.
+    let trust = intake_trust(gh).unwrap_or_else(|e| {
+        eprintln!(
+            "bosun: warning: cannot read [intake] trusted_authors ({}); comment authors are not checked",
+            e.message
+        );
+        IntakeTrust {
+            policy: TrustedAuthors::Any,
+            owners: Vec::new(),
+            repo_owner: String::new(),
+        }
+    });
     for c in gh.list_comments(number)? {
         let is_bot = bot
             && c.user
                 .eq_ignore_ascii_case(crate::core::risk::VERDICT_AUTHOR);
+        // A comment of an untrusted author is no command (BA); the workflow bot's spend stays.
+        if !is_bot && !trust.comment(&c).trusted {
+            continue;
+        }
         let who = match cache.get(&c.user) {
             _ if is_bot => Who::Writer,
             Some(w) => *w,

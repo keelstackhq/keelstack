@@ -164,6 +164,7 @@ fn spawn_on(
     if args.record {
         return record(app, &epic, args);
     }
+    crate::app::intake_trust(app.gh.as_ref())?.require_issue(&epic)?;
     let (me, now) = (&app.ctx.session, app.ctx.now);
     let Gathered {
         input,
@@ -401,7 +402,12 @@ fn thread(app: &App, args: &SpawnArgs) -> CmdResult {
 /// Ready epics and ready plan tasks (the intake issues) that a normal spawn could take.
 fn ready_work(gh: &dyn Github) -> Result<Vec<Value>, BosunError> {
     let mut out = Vec::new();
+    let trust = crate::app::intake_trust(gh)?;
     for i in gh.list_issues(&[&State::Ready.label()], IssueState::Open)? {
+        // Issue pick-up: an untrusted author's issue is never offered (BA).
+        if !trust.issue(&i).trusted {
+            continue;
+        }
         let kind = if epic_item(i.body_text()).is_some() {
             "epic"
         } else if task_meta(&i).is_some_and(|m| m.kind == "plan") {

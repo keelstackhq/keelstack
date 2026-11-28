@@ -9,7 +9,7 @@ use ring::signature::{Ed25519KeyPair, KeyPair};
 use serde_json::json;
 
 use super::KeygenArgs;
-use crate::github::b64;
+use crate::github::{Secret, b64};
 use crate::output::{BosunError, CmdResult, Outcome};
 use crate::time::Timestamp;
 
@@ -133,6 +133,37 @@ fn write_new(path: &Path, root: Option<&Path>, pem: &str) -> Result<PathBuf, Bos
     }
 }
 
+/// A fresh ed25519 approval key: the PKCS#8 PEM (in memory, wiped on drop) and its public key
+/// (base64). `bosun owner setup` uses it without ever writing the PEM to disk.
+pub(crate) struct NewKey {
+    pub pem: Secret,
+    pub public: String,
+}
+
+pub(crate) fn new_key() -> Result<NewKey, BosunError> {
+    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| {
+        BosunError::error("the system random source failed", "rerun `bosun keygen`")
+    })?;
+    let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
+        .map_err(|_| BosunError::error("ring made an unreadable key", "rerun `bosun keygen`"))?;
+    let public = b64::encode(pair.public_key().as_ref());
+    let mut body = b64::encode(pkcs8.as_ref())
+        .as_bytes()
+        .chunks(64)
+        .map(|c| String::from_utf8_lossy(c).into_owned() + "\n")
+        .collect::<String>();
+    let pem = Secret::new(format!(
+        "-----BEGIN PRIVATE KEY-----\n{body}-----END PRIVATE KEY-----\n"
+    ));
+    zeroize::Zeroize::zeroize(&mut body);
+    Ok(NewKey { pem, public })
+}
+
+/// The `[[key]]` block that enrolls `public` in `.bosun/approvers.toml`.
+pub(crate) fn key_block(id: &str, public: &str, role: &str) -> String {
+    format!("[[key]]\nid = \"{id}\"\ned25519 = \"{public}\"\nrole = \"{role}\"\n")
+}
+
 pub fn run(dir: Option<&Path>, a: &KeygenArgs) -> CmdResult {
     let base = dir.unwrap_or_else(|| Path::new("."));
     let role = a.role.as_deref().unwrap_or("owner");
@@ -213,19 +244,8 @@ pub fn run(dir: Option<&Path>, a: &KeygenArgs) -> CmdResult {
         ));
     }
 
-    let pkcs8 = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new()).map_err(|_| {
-        BosunError::error("the system random source failed", "rerun `bosun keygen`")
-    })?;
-    let pair = Ed25519KeyPair::from_pkcs8(pkcs8.as_ref())
-        .map_err(|_| BosunError::error("ring made an unreadable key", "rerun `bosun keygen`"))?;
-    let public = b64::encode(pair.public_key().as_ref());
-    let body = b64::encode(pkcs8.as_ref())
-        .as_bytes()
-        .chunks(64)
-        .map(|c| String::from_utf8_lossy(c).into_owned() + "\n")
-        .collect::<String>();
-    let pem = format!("-----BEGIN PRIVATE KEY-----\n{body}-----END PRIVATE KEY-----\n");
-    let block = format!("[[key]]\nid = \"{id}\"\ned25519 = \"{public}\"\nrole = \"{role}\"\n");
+    let NewKey { pem, public } = new_key()?;
+    let block = key_block(&id, &public, role);
     let sep = if existing.is_empty() {
         ""
     } else if existing.ends_with('\n') {
@@ -237,7 +257,7 @@ pub fn run(dir: Option<&Path>, a: &KeygenArgs) -> CmdResult {
     if joined.parse::<toml::Table>().is_err() {
         return Err(not_list());
     }
-    let out = write_new(&out, root.as_deref(), &pem)?;
+    let out = write_new(&out, root.as_deref(), pem.expose())?;
     let shown = out.display();
     let steps = if let Some(p) = &approvers {
         let wrote = p

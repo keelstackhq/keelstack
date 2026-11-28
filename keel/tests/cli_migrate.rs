@@ -1018,7 +1018,7 @@ fn commit_base(env: &Env, files: &[(&str, &str)]) {
 #[test]
 fn pre_existing_splice_drift_does_not_fail_the_migration_and_is_listed_with_choices() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run_untouched("predrift", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("predrift", &["--drift", "keep", "--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["status"], "human");
     assert_eq!(action(&v, "verify"), "pending");
@@ -1059,7 +1059,7 @@ fn pre_existing_splice_drift_does_not_fail_the_migration_and_is_listed_with_choi
 #[test]
 fn drift_a_step_introduced_still_fails_and_rolls_back() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run_untouched("predrift-new", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("predrift-new", &["--drift", "keep", "--to", "0.23.0"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(action(&v, "verify"), "failed");
     let d = v["steps"]
@@ -1121,7 +1121,7 @@ fn no_commits_but_drift_exits_5_with_the_checklist_and_no_pr() {
             ("docs/agents/org-decisions.md", "decisions v2\n"),
         ],
     );
-    let (code, v) = env.run_untouched("predrift", &["--to", "0.23.0", "--pr"]);
+    let (code, v) = env.run_untouched("predrift", &["--drift", "keep", "--to", "0.23.0", "--pr"]);
     assert_eq!(code, 5, "{v}");
     assert_eq!(v["status"], "human");
     assert_eq!(v["changed"], false);
@@ -1160,7 +1160,7 @@ fn no_commits_but_a_changed_setup_snippet_exits_5_with_no_pr() {
 #[test]
 fn drift_on_the_same_path_with_a_new_cause_counts_as_introduced() {
     let env = Env::new(&ALL);
-    let (code, v) = env.run_untouched("cause-change", &["--to", "0.23.0"]);
+    let (code, v) = env.run_untouched("cause-change", &["--drift", "keep", "--to", "0.23.0"]);
     assert_eq!(code, 1, "{v}");
     assert_eq!(action(&v, "verify"), "failed");
 }

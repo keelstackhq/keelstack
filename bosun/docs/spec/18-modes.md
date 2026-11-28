@@ -84,7 +84,12 @@ exact-inverse check.
 ### Commands
 
 - `bosun mode`: the effective mode and knobs (`review_rounds` included) with their sources; no GitHub call.
-- `bosun migrate --to <mode> [--direct] [--dry-run]`: survey (pinned version, mode, registry,
+- `bosun migrate --to <mode> [--direct] [--dry-run] [--flow autonomous|gatekeeper] [--cloud-env ID]`:
+  landing on `autonomous` also writes the D-028 set into `.bosun/bosun.toml` (idempotent, other keys
+  and comments kept): `[approvals] policy = "quorum"`, `owner_delegation = "all"`; `[review]
+  verdicts_needed = 1`, `block_on = "blocker"`; `[main_health] block = false`; and `[cloud]
+  environment_id` only when `--cloud-env` is given (bosun reads no env var for it). `--flow
+  gatekeeper` keeps the old behaviour (only `[mode]`). Survey (pinned version, mode, registry,
   epics without a marker, hull lock, a 30-day metrics baseline with a timeout that never blocks:
   `BOSUN_MIGRATE_METRICS_TIMEOUT`, default 20 s), then one draft governance PR on
   `bosun/migrate-<mode>` with every file step: the `.bosun/version` pin (through `bosun pin --latest

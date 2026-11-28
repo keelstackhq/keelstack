@@ -408,6 +408,12 @@ code_owner_review = false                   # default
   <id>" and is not looked up as a workflow job (an app posts it, hoist does not see its runs).
   A check with no pin or pinned to 15368 keeps the job-name rule; `[github] statuses` still
   needs a `statuses: write` job unless the live entry is pinned to another app.
+- Pin by id (`hoist check` only; `plan` and `apply` stay fail-closed): when `GET /apps/<slug>`
+  fails (404, 403, a cloud proxy refusal, transport), a slug equal to `slug` in
+  `.bosun/gate-app.toml` (keys `id`, `slug`) takes its `id`; `integration_id` in hoist.toml needs no
+  read. A slug still unresolved does not exit 3 in `check`: the `ruleset` item is `unknown` ("pinned
+  source not verified: ...") and the check's verify is `ok` ("pinned to app ...; not verified
+  live"); a real mismatch of ids stays an `update` (exit 1). Any other refused read is `unknown`.
 - What a pin to GitHub Actions proves: the check came from some workflow run, not from a
   personal token or another App; any workflow run counts, `GITHUB_TOKEN` included. It does not
   say which workflow: a PR that adds or edits a workflow under `.github/workflows/` still posts as

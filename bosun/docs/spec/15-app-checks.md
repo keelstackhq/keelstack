@@ -269,3 +269,65 @@ account.
   an empty `environment:` name is not documented as "none"); others stay in `statuses` mode.
 - O6: 15368 as the GitHub Actions integration id comes from ruleset exports, not a GitHub doc:
   read it from the live ruleset before step 6.
+
+### `bosun owner manifest`: creating the App without copy and paste (B2 T1)
+
+`bosun owner manifest [--org ORG] [--name N] [--timeout-secs 600]` creates the gate App with GitHub's
+manifest flow; `owner setup` (B2 T2) calls the same library. It listens on 127.0.0.1 only, on a
+random port, and prints the start URL (no secret in it) to stderr. A page there posts the manifest
+(no webhook) to github.com with a one-time state of 256 bits from the system CSPRNG. Only `GET`,
+`Host: 127.0.0.1:<port>` and the paths `/start` and `/callback` are served (421, 405, 404
+otherwise, no redirects); the state is compared in constant time and works once; a wrong state or
+a replay never reaches GitHub. After the timeout (default 10 minutes) it exits 1. The `code` is
+exchanged once through the github client (`convert_manifest`); the code never appears in errors
+or `-v` logs. The private key is a `Secret` (redacting `Debug`, no `Display`, wiped on drop);
+the client and webhook secrets are wiped on arrival. stdout holds only `app_id`, `client_id`,
+`slug`, `source`. `--manual --app-id N --client-id C --slug S (--key-file PEM | --key-stdin)` is
+the fallback: the key comes from a file or stdin (echo off on a terminal via `stty`), never argv.
+
+### `bosun owner setup`: the App and the signer in one run (B2 T2)
+
+`bosun owner setup [--manual ... | --org/--name] [--dry-run] [--delete-key-file] [--remote origin]`
+runs on the owner's computer inside the repo. Each step reads what exists and skips it, so a rerun
+changes nothing and a cut run resumes; the App is never created twice (`.bosun/gate-app.toml`, on
+the branch or on main, names it). Steps: (1) the App from the manifest flow or `--manual`; (2) the
+environments `bosun-app` and `bosun-signer` with deployment branch policy `main` only and no
+reviewers (an environment that allows other branches is fixed; one with extra custom branches
+is exit 5); (3) the variable `BOSUN_APP_CLIENT_ID` and the secret `BOSUN_APP_KEY` in `bosun-app`;
+(4) a signer ed25519 key as `bosun keygen` makes it, generated in memory, sealed as
+`BOSUN_SIGNER_KEY` into `bosun-signer` and enrolled with `role = "signer"` in
+`.bosun/approvers.toml`; (5) the keys are wiped from memory (the owner's `--key-file` is deleted
+only with `--delete-key-file`); (6) the branch `bosun/gate-app` (approvers.toml and
+`.bosun/gate-app.toml` with `id` and `slug` only) is pushed with a plain push, never forced. No
+PR, no merge: an agent opens the PR and the owner approves it on GitHub (a PR cannot enroll its
+own key). Secrets are sealed with the environment public key from the API (libsodium sealed box),
+never sent in plaintext. A known App whose key or client id is missing needs `--manual` (exit 5):
+bosun cannot read a key back and never replaces one it cannot prove it should. A signer secret
+with no enrolled key is replaced by a new enrolled key. `--dry-run` writes, pushes and mutates
+nothing; its `steps` list each step with `device` (`owner-computer` or `agent`). stdout holds
+public ids only.
+
+### The waiting `hoist apply` and `bosun gate-app advance` (B3)
+
+`owner setup` ends with two more steps on the owner's computer: `wait-pr-a` polls GitHub for the
+merge of PR A (head `bosun/gate-app`, or `.bosun/gate-app.toml` already on main) every 15 s
+(`BOSUN_OWNER_POLL_MS`) for at most 30 minutes (`BOSUN_OWNER_WAIT_SECS`; `0` checks once), then
+`hoist-apply` runs `hoist apply --area github --yes` (`BOSUN_HOIST` names the binary; the checkout
+of main is fast-forwarded first when clean). On timeout both stay `pending`, the exit is 0, and a
+rerun only waits and applies. A failing hoist is exit 1 with the command to run by hand.
+`--dry-run` lists both as `would-do` and runs nothing.
+
+`bosun gate-app advance [--dry-run] [--branch B] [--remote origin]` (agent) does the next step of
+the Transition only and prints it (`data.step`: `pr-a`, `probe`, `hoist-apply`, `pr-b`, `done`;
+`data.status`; `steps`; `left`). No `.bosun/gate-app.toml` on main or on `bosun/gate-app` is
+exit 1 (fix: `bosun owner setup`). PR A (branch `bosun/gate-app`, built on the owner-setup
+commit when the branch exists, else on main): `splice set --channel bosun bosun_app=1`
+(`BOSUN_SPLICE`), `[checks] mode = "dual"` with the App's id and slug, and `hoist.toml`'s
+`required_checks` pinned (`ci-ok` to 15368, the three gates to the App's slug). After PR A is on
+main it waits until a check run of the App is on a recent PR or the default branch (`probe`), then
+names the owner's `hoist apply --area github --yes` in `next` until `GET /rules/branches/<default>`
+pins risk-check, review-verdict and main-open to the App, then opens PR B (branch
+`bosun/gate-app-checks`: `mode = "checks"`, `[approvals] signer = true`); under
+`owner_delegation = "all"` the CI signer signs it, no owner touch. Both PRs are drafts: `bosun pr
+--pr N --ready` turns on auto-merge. It needs a clean tree, never merges and never forces a push;
+`--dry-run` makes no branch, commit, push, splice run or PR.

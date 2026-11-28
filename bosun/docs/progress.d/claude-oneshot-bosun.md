@@ -1,0 +1,1 @@
+- BA/T1: trusted authors for intake (config, core/intake_trust.rs, claim, spawn, wave plan, comment records).

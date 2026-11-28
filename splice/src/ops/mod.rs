@@ -5,9 +5,11 @@ pub mod adopt;
 pub mod channel;
 pub mod check;
 pub mod diff;
+pub mod exclude;
 pub mod explain;
 pub mod new;
 pub mod pieces;
+pub mod set;
 pub mod update;
 
 /// Exit 2: the command needs a lock and the directory has none.

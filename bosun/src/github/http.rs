@@ -577,8 +577,12 @@ pub fn auto_merge_off(message: &str) -> bool {
     (m.contains("auto merge") || m.contains("auto-merge")) && m.contains("not allowed")
 }
 
-/// The path without its query string.
+/// The path without its query string; the one-time code of an App manifest conversion is
+/// hidden (it ends up in errors and `-v` logs).
 fn bare(path: &str) -> &str {
+    if path.starts_with("/app-manifests/") {
+        return "/app-manifests/[code]/conversions";
+    }
     path.split('?').next().unwrap_or(path)
 }
 

@@ -211,6 +211,38 @@ impl TemplateSource {
     }
 }
 
+/// The tools whose old repositories were folded into the monorepo (D-023).
+pub const LEGACY_TOOLS: [&str; 7] = ["hull", "bosun", "hoist", "hoard", "berth", "splice", "keel"];
+
+/// A legacy source `gh:keelstackhq/<tool>//<dir>` and where it lives in the monorepo.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LegacyMap {
+    pub tool: String,
+    /// `gh:keelstackhq/keelstack//<tool>/<dir>`.
+    pub new_spec: String,
+}
+
+impl LegacyMap {
+    /// `None` unless `spec` is exactly `gh:keelstackhq/<tool>//<dir>` for a known tool.
+    pub fn of(spec: &str) -> Option<LegacyMap> {
+        let rest = spec.strip_prefix("gh:keelstackhq/")?;
+        let (repo, dir) = rest.split_once("//")?;
+        let tool = repo.strip_suffix(".git").unwrap_or(repo);
+        if !LEGACY_TOOLS.contains(&tool) || dir.is_empty() {
+            return None;
+        }
+        Some(LegacyMap {
+            tool: tool.to_string(),
+            new_spec: format!("gh:keelstackhq/keelstack//{tool}/{dir}"),
+        })
+    }
+
+    /// The monorepo file mapping legacy versions to monorepo commits.
+    pub fn tags_file(&self) -> String {
+        format!("{}/legacy-tags.txt", self.tool)
+    }
+}
+
 /// Absolute, `.`/`..` collapsed, symlinks resolved for the longest existing ancestor (symlinks
 /// are followed before `..`, as the filesystem does). Never fails on a missing path.
 fn lenient_canonical(p: &Path) -> Option<PathBuf> {
@@ -301,6 +333,23 @@ mod tests {
             "https://example.com/r.git//dir@x",
         ] {
             TemplateSource::parse(ok).unwrap();
+        }
+    }
+
+    #[test]
+    fn legacy_sources_map_to_the_monorepo() {
+        let m = LegacyMap::of("gh:keelstackhq/hull//template-rust").unwrap();
+        assert_eq!(m.new_spec, "gh:keelstackhq/keelstack//hull/template-rust");
+        assert_eq!(m.tags_file(), "hull/legacy-tags.txt");
+        let b = LegacyMap::of("gh:keelstackhq/bosun//channel").unwrap();
+        assert_eq!(b.new_spec, "gh:keelstackhq/keelstack//bosun/channel");
+        for no in [
+            "gh:keelstackhq/keelstack//hull/template",
+            "gh:keelstackhq/hull",
+            "gh:keelstackhq/other//x",
+            "gh:someone/hull//template",
+        ] {
+            assert_eq!(LegacyMap::of(no), None, "{no}");
         }
     }
 

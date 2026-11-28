@@ -187,6 +187,9 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
         return cx.push("ruleset", name, Action::Create, reason, &source);
     };
     let mut problems = Vec::new();
+    // Only `hoist check` leaves a pin unresolved (the other commands exit 3 first): it cannot
+    // be compared, so it is reported `unknown`, never a failure.
+    let mut unresolved = Vec::new();
     if let Some(mode) = live.enforcement.as_deref().filter(|m| *m != "active") {
         problems.push(format!("enforcement `{mode}`, want `active`"));
     }
@@ -208,7 +211,12 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
     for pin in &want.check_pins {
         let Some(id) = pin.id else {
             // Never dropped silently: `ensure_pins_resolved` makes this an error before a write.
-            problems.push(format!("`{}`: its app is not resolved", pin.context));
+            unresolved.push(match &pin.app {
+                crate::config::CheckApp::Slug(s) => {
+                    format!("`{}`: app `{s}` cannot be read", pin.context)
+                }
+                crate::config::CheckApp::Id(i) => format!("`{}`: app id {i}", pin.context),
+            });
             continue;
         };
         let have = live.check_pins.iter().find(|(c, _)| *c == pin.context);
@@ -270,7 +278,14 @@ fn ruleset(cx: &mut Ctx, d: &Desired, l: &LiveGithub) {
             quoted(&unwanted)
         ));
     }
-    if problems.is_empty() && drift.is_empty() {
+    if problems.is_empty() && drift.is_empty() && !unresolved.is_empty() {
+        let why = format!(
+            "pinned source not verified: {}; pin it with `integration_id` or \
+             `.bosun/gate-app.toml`",
+            unresolved.join(", ")
+        );
+        cx.unknown("ruleset", name, &why, &source);
+    } else if problems.is_empty() && drift.is_empty() {
         cx.push("ruleset", name, Action::Ok, in_sync, &source);
     } else if problems.is_empty() {
         cx.push("ruleset", name, Action::Drift, drift.join("; "), &source);

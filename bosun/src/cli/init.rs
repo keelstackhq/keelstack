@@ -225,7 +225,7 @@ fn git(root: &Path, args: &[&str]) -> Result<String, BosunError> {
 }
 
 /// Run splice; its stdout is one JSON object `{ok, changes, messages}`.
-fn run_splice(argv: &[String]) -> Result<Value, BosunError> {
+pub(crate) fn run_splice(argv: &[String]) -> Result<Value, BosunError> {
     let bin = std::env::var("BOSUN_SPLICE")
         .ok()
         .filter(|s| !s.trim().is_empty())

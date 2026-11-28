@@ -70,12 +70,42 @@ pub fn below_min(version: Option<&str>) -> bool {
 
 /// `text` with `[mode] name` set to `name`, every other byte kept.
 pub fn set_mode_name(text: &str, name: ModeName) -> String {
-    let line = format!("name = \"{}\"", name.as_str());
+    set_key(text, "mode", "name", &format!("\"{}\"", name.as_str()))
+}
+
+/// The D-028 flow set `--to autonomous` writes (table, key, TOML value).
+pub const AUTONOMOUS_PRESET: [(&str, &str, &str); 5] = [
+    ("approvals", "policy", "\"quorum\""),
+    ("approvals", "owner_delegation", "\"all\""),
+    ("review", "verdicts_needed", "1"),
+    ("review", "block_on", "\"blocker\""),
+    ("main_health", "block", "false"),
+];
+
+/// `text` with the D-028 flow set, plus `[cloud] environment_id` when `cloud_env` is given; every
+/// other key and comment kept. Idempotent.
+pub fn apply_autonomous_preset(text: &str, cloud_env: Option<&str>) -> String {
+    let mut out = text.to_string();
+    for (table, key, value) in AUTONOMOUS_PRESET {
+        out = set_key(&out, table, key, value);
+    }
+    if let Some(id) = cloud_env {
+        let quoted = serde_json::Value::String(id.to_string()).to_string();
+        out = set_key(&out, "cloud", "environment_id", &quoted);
+    }
+    out
+}
+
+/// `text` with `key = value` set in `[table]` (the key replaced, or added at the top of the table,
+/// or the table appended), every other byte kept.
+pub fn set_key(text: &str, table: &str, key: &str, value: &str) -> String {
+    let line = format!("{key} = {value}");
     let lines: Vec<&str> = text.split_inclusive('\n').collect();
+    let want = format!("[{table}]");
     let header = |l: &str| {
         let t = l.trim();
-        t == "[mode]"
-            || t.strip_prefix("[mode]")
+        t == want
+            || t.strip_prefix(want.as_str())
                 .is_some_and(|r| r.trim_start().starts_with('#'))
     };
     if let Some(at) = lines.iter().position(|l| header(l)) {
@@ -85,7 +115,7 @@ pub fn set_mode_name(text: &str, name: ModeName) -> String {
             .map_or(lines.len(), |p| at + 1 + p);
         let is_name = |l: &str| {
             l.trim_start()
-                .strip_prefix("name")
+                .strip_prefix(key)
                 .is_some_and(|r| r.trim_start().starts_with('='))
         };
         let mut out: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
@@ -112,7 +142,7 @@ pub fn set_mode_name(text: &str, name: ModeName) -> String {
             s.push('\n');
         }
     }
-    s + &format!("[mode]\n{line}\n")
+    s + &format!("[{table}]\n{line}\n")
 }
 
 /// What only the owner can do (Routines), each a human-only step on a computer.

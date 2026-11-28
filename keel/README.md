@@ -20,9 +20,14 @@ Node 24+ (checked in preflight).
 
 ## Commands
 
-- `keel up`: run the steps, stop at the first human step or failure.
+- `keel up`: run the steps, stop at the first human step or failure. One command for both cases:
+  without `.splice/lock.toml` it bootstraps a new repo (this table of steps); with it, it moves an
+  existing repo to the current release (see "Upgrade with `keel up`"). `--new` / `--existing` force a side;
+  the JSON `data.path` (`bootstrap` / `upgrade`) and `data.reason` say which ran.
 - `keel plan`: same checks, writes nothing, shows what `up` would do.
 - `keel doctor`: check the toolchain and the repo for drift (no installs).
+- `keel owner [--dry-run] [-- ARGS]`: the owner's one command; runs `bosun owner setup` (inherited stdio, bosun's exit code; exit 3 if bosun is missing).
+- `keel preflight`: read-only checks (token scopes, admin, plan and visibility, legacy sources, tools, drift); exit 5 on a block, with the choices. It also runs first in `up`, `plan` and `migrate`.
 - `keel migrate`: move an existing repo to a keelstack release in one step (below).
 
 Global flags: `-C DIR` (checkout, default `.`), `--json`, `-v`. `up` and `plan` also take
@@ -85,18 +90,34 @@ account_id = "..."                # optional; 32 lowercase hex chars; env CLOUDF
 Unknown keys are an error. keel never reads or prints `CLOUDFLARE_API_TOKEN` or a Fly token: it
 only checks that the Cloudflare one is set, and hoist and the hull script move the secrets.
 
-## Migrate a repo to a new release
+## Upgrade with `keel up`
+
+```bash
+npx -y @keelstackhq/keel@<version> up --json   # in an existing keelstack repo (it has .splice/lock.toml)
+```
+
+Flags (upgrade only): `--to X.Y.Z` (default: keel's version), `--mode MODE` (default `autonomous`), `--branch NAME`
+(cloud sessions: plain push to that branch, no PR), `--dry-run`. Pipeline: preflight (a private Free-plan repo
+blocks before any write, unless `keel.toml` has `[ci]` / `provider = "none"`), repoint + `keel migrate --pr`
+(one PR whose body lists every step), `bosun migrate --to MODE`, `bosun gate-app advance` (PR A), then ONE owner
+line, `npx -y @keelstackhq/keel@X owner`. Run `keel up` again after the owner is done: PR B. Details:
+[docs/migrate.md](https://github.com/keelstackhq/keelstack/blob/main/docs/migrate.md).
+
+`keel.toml` `[ci]` table: `provider = "github"` (default) or `"none"` (no GitHub-side gates; lifts the preflight
+`plan-free-private` block to a warning). Unknown keys are an error.
+
+## Migrate a repo to a new release (`keel migrate`, the subset `up` runs)
 
 ```bash
 npx -y @keelstackhq/keel@<version> migrate --pr   # run in the repo; --dry-run first to see the plan; -y skips the "Ok to proceed?" prompt
 ```
 
 One command does what used to be `splice update`, `bosun pin`, a hoist check and the setup-snippet by hand: it
-installs the target release's tools (checksum verified), updates splice (the decisions channel alone first,
+installs the target release's tools (checksum verified), repoints legacy `gh:keelstackhq/<tool>` splice sources to the monorepo (its own `repoint` step, before the update), updates splice (the decisions channel alone first,
 as `chore: sync org decisions`), pins bosun and its setup script, refreshes hoist's release workflow, verifies
 (`splice check`, `bosun doctor`, `hoist check`, read-only), commits on `keel/migrate-vX.Y.Z` and, with `--pr`, opens
 ONE PR. It works in its own temporary git worktree based on `origin/<default>`: your checkout, branch, uncommitted, untracked and ignored files and unpushed commits are never touched. Pieces the repo does not use are skipped. A failed step rolls the branch back; running it again on an
-up-to-date repo changes nothing and exits 0. Flags: `--to X.Y.Z` (default: keel's version), `--dry-run`, `--pr`, `--mode MODE`.
+up-to-date repo changes nothing and exits 0. Flags: `--to X.Y.Z` (default: keel's version), `--dry-run` (tools that are not installed are fetched with verified checksums into a temp cache, nothing is installed globally), `--pr`, `--mode MODE`, `--branch NAME` (commit and push to that branch instead of `keel/migrate-vX`; plain push, never forced), `--drift seed|take|keep` (default `seed`: an owned file with local edits is restored to the template and its local lines move to the seed file `<dir>/CLAUDE.md`; a channel file that was deleted or edited is added to the channel's `exclude` (`splice channel exclude`); `take` forces the template side, `keep` keeps the local side; each path is listed in the JSON `drift` array (`path`, `action`, `moved_lines`) and in the PR body).
 
 An npm warning about an unknown user config comes from your `~/.npmrc`, not from keel. Drift `splice check` already reports on the base does not fail the run: it becomes the checklist entry `splice-drift` (per path: keep local or take the template's, with the exact commands); a repo with nothing to publish skips the hoist step silently. With no commits and a human step left, the result is exit 5, `changed: false`, `pr: null`.
 

@@ -10,12 +10,14 @@ pub mod backup;
 pub mod deploy;
 pub mod dns;
 pub mod doctor;
+pub mod drift;
 pub mod governance;
 pub mod merge;
 pub mod preflight;
 pub mod render;
 pub mod settings;
 pub mod token;
+pub mod up;
 pub mod verify;
 
 /// The steps for the manifest: `template = "none"` is an existing repo (preflight and settings

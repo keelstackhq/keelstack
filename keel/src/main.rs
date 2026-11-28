@@ -44,6 +44,21 @@ fn main() -> ExitCode {
     };
     let json = cli.json;
     let command = cli.command.name();
+    if matches!(cli.command, keel::Command::Owner(_)) {
+        return match keel::run_owner(&cli) {
+            Ok(code) => ExitCode::from(code.clamp(0, 255) as u8),
+            Err(err) => fail(command, json, &err),
+        };
+    }
+    // Read-only gate: any block stops the command with exit 5 before it writes anything.
+    if let Some(report) = keel::preflight_gate(&cli) {
+        if json {
+            println!("{}", keel::render_preflight_json(&report));
+        } else {
+            print!("{}", keel::render_preflight_text(&report));
+        }
+        return ExitCode::from(report.exit_code as u8);
+    }
     if matches!(cli.command, keel::Command::Migrate(_)) {
         return match keel::run_migrate(&cli) {
             Ok(report) => {
@@ -73,10 +88,40 @@ fn main() -> ExitCode {
             }
         };
     }
+    let up = match keel::up_path(&cli) {
+        Ok(up) => up,
+        Err(err) => return fail(command, json, &err),
+    };
+    if let Some((keel::steps::up::UpPath::Upgrade, reason)) = &up {
+        return match keel::run_up(&cli, reason) {
+            Ok(u) => {
+                if json {
+                    println!(
+                        "{}",
+                        keel::steps::up::render_json(
+                            &u.report,
+                            keel::steps::up::UpPath::Upgrade,
+                            reason,
+                            Some(&u)
+                        )
+                    );
+                } else {
+                    print!("{}", keel::steps::up::render_text(&u));
+                }
+                ExitCode::from(u.report.exit_code.clamp(0, 255) as u8)
+            }
+            Err(err) => fail(command, json, &err),
+        };
+    }
     match keel::run(cli) {
         Ok(report) => {
             if json {
-                println!("{}", render_json(&report));
+                match &up {
+                    Some((path, reason)) => {
+                        println!("{}", keel::render_up_json(&report, *path, reason))
+                    }
+                    None => println!("{}", render_json(&report)),
+                }
             } else {
                 print!("{}", render_text(&report));
             }
@@ -101,6 +146,23 @@ fn main() -> ExitCode {
     }
 }
 
+fn fail(command: &str, json: bool, err: &keel::KeelError) -> ExitCode {
+    eprintln!("error: {err}");
+    if json {
+        println!(
+            "{}",
+            render_json_error(
+                command,
+                err.exit_code(),
+                &err.to_string(),
+                err.fix()
+                    .unwrap_or("the message says what to change; see `keel up --help`")
+            )
+        );
+    }
+    ExitCode::from(err.exit_code() as u8)
+}
+
 /// The subcommand word of the command line, skipping flags and the value of `-C`.
 fn command_name(args: &[String]) -> String {
     let mut it = args.iter();
@@ -110,7 +172,9 @@ fn command_name(args: &[String]) -> String {
         } else if a == "--" {
             break;
         } else if !a.starts_with('-') {
-            return if ["up", "plan", "doctor", "migrate"].contains(&a.as_str()) {
+            return if ["up", "plan", "doctor", "migrate", "preflight", "owner"]
+                .contains(&a.as_str())
+            {
                 a.clone()
             } else {
                 String::new()

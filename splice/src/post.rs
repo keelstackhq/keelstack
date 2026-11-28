@@ -157,24 +157,108 @@ fn how(status: ExitStatus) -> String {
     }
 }
 
+/// The directory a channel's post commands run in: the common directory prefix of its `only`
+/// globs (`apps/site/**` -> `apps/site`). A glob's literal leading segments count; a last segment
+/// without wildcards is a file and does not. `None` means the repo root (no `only`, or no common
+/// directory).
+pub fn only_root(only: &[String]) -> Option<String> {
+    let mut common: Option<Vec<&str>> = None;
+    for g in only {
+        let segs: Vec<&str> = g.split('/').collect();
+        let mut dir: Vec<&str> = Vec::new();
+        for (i, seg) in segs.iter().enumerate() {
+            let last = i + 1 == segs.len();
+            if *seg == ".." {
+                // A root must stay inside the repo: reject, no root.
+                return None;
+            }
+            if last || seg.contains(['*', '?', '[', '{']) || seg.is_empty() || *seg == "." {
+                break;
+            }
+            dir.push(seg);
+        }
+        common = Some(match common {
+            None => dir,
+            Some(c) => c
+                .iter()
+                .zip(&dir)
+                .take_while(|(a, b)| a == b)
+                .map(|(a, _)| *a)
+                .collect(),
+        });
+    }
+    common.filter(|c| !c.is_empty()).map(|c| c.join("/"))
+}
+
+/// Why `cmd` cannot run in `dir`, if so: the directory is missing, or a pnpm/npm/yarn command
+/// finds no `package.json` there.
+fn skip_reason(dir: &Path, run: &str) -> Option<&'static str> {
+    if !dir.is_dir() {
+        return Some("the directory does not exist");
+    }
+    let node = run
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '&' | '|'))
+        .any(|w| matches!(w, "pnpm" | "npm" | "npx" | "yarn"));
+    if node && !dir.join("package.json").is_file() {
+        return Some("no package.json there");
+    }
+    None
+}
+
 /// Run every command whose `when` contains `when`, in order, skipping repeats of an identical
 /// `run` string. The shell is POSIX `sh -c` on every OS (on Windows Git for Windows' `sh.exe`, spec §10 item 19) with `repo` as working directory.
 /// The command's stdout and stderr both go to our stderr (our stdout is the report only); with
 /// its stdin is closed. A non-zero exit is an environment error (exit 3) naming the command.
 pub fn run_post(repo: &Path, cmds: &[PostCmd], when: When) -> Result<(), SpliceError> {
-    let mut seen: Vec<&str> = Vec::new();
-    for cmd in cmds.iter().filter(|c| c.when.contains(&when)) {
-        if seen.contains(&cmd.run.as_str()) {
-            continue;
-        }
-        seen.push(&cmd.run);
-        let status = run_shell(repo, &cmd.run, &[])?.map_err(|e| spawn_error(&cmd.run, &e))?;
-        if !status.success() {
-            return Err(SpliceError::Env(format!(
-                "post command `{}` failed ({})",
-                cmd.run,
-                how(status)
-            )));
+    run_post_groups(repo, &[(&[], cmds)], when)
+}
+
+/// [`run_post`] for one channel: commands run in the [`only_root`] of `only`.
+pub fn run_post_in(
+    repo: &Path,
+    only: &[String],
+    cmds: &[PostCmd],
+    when: When,
+) -> Result<(), SpliceError> {
+    run_post_groups(repo, &[(only, cmds)], when)
+}
+
+/// Groups of `(channel only globs, commands)`; the main template uses no globs. A command runs in
+/// its group's root, once per (root, `run`). When the root is missing, or a pnpm/npm command has
+/// no `package.json` there, the command is skipped with a message on stderr, never an error.
+pub fn run_post_groups(
+    repo: &Path,
+    groups: &[(&[String], &[PostCmd])],
+    when: When,
+) -> Result<(), SpliceError> {
+    let mut seen: Vec<(Option<String>, &str)> = Vec::new();
+    for (only, cmds) in groups {
+        let root = only_root(only);
+        for cmd in cmds.iter().filter(|c| c.when.contains(&when)) {
+            let key = (root.clone(), cmd.run.as_str());
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            let dir = root
+                .as_ref()
+                .map_or_else(|| repo.to_path_buf(), |r| repo.join(r));
+            // Only a channel with an `only` root may skip; main and rootless channels run from
+            // the repo root and fail as before.
+            if let Some(r) = &root
+                && let Some(why) = skip_reason(&dir, &cmd.run)
+            {
+                eprintln!("skipped post command `{}` in `{r}`: {why}", cmd.run);
+                continue;
+            }
+            let status = run_shell(&dir, &cmd.run, &[])?.map_err(|e| spawn_error(&cmd.run, &e))?;
+            if !status.success() {
+                return Err(SpliceError::Env(format!(
+                    "post command `{}` failed ({})",
+                    cmd.run,
+                    how(status)
+                )));
+            }
         }
     }
     Ok(())
@@ -370,6 +454,32 @@ mod tests {
             std::fs::read_to_string(dir.path().join("log")).unwrap(),
             "a\nc\n"
         );
+    }
+
+    #[test]
+    fn only_root_is_the_common_dir_prefix() {
+        let r = |g: &[&str]| only_root(&g.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(r(&["apps/site/**"]).as_deref(), Some("apps/site"));
+        assert_eq!(
+            r(&["apps/site/src/**", "apps/site/*.json"]).as_deref(),
+            Some("apps/site")
+        );
+        assert_eq!(
+            r(&["apps/site/**", "apps/docs/**"]).as_deref(),
+            Some("apps")
+        );
+        assert_eq!(r(&["apps/site/package.json"]).as_deref(), Some("apps/site"));
+        assert_eq!(r(&["**/*.md"]), None);
+        assert_eq!(r(&["README.md"]), None);
+        assert_eq!(r(&[]), None);
+    }
+
+    #[test]
+    fn only_root_rejects_parent_segments() {
+        let r = |g: &[&str]| only_root(&g.iter().map(|s| s.to_string()).collect::<Vec<_>>());
+        assert_eq!(r(&["../x/**"]), None);
+        assert_eq!(r(&["apps/../../x/**"]), None);
+        assert_eq!(r(&["apps/site/**", "apps/../y/**"]), None);
     }
 
     #[test]

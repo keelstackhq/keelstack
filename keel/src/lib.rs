@@ -17,6 +17,9 @@ pub use cli::{Cli, Command};
 pub use error::KeelError;
 pub use migrate::{render_migrate_json, render_migrate_text};
 pub use report::{render_json, render_json_error, render_json_info, render_text};
+pub use steps::preflight::{
+    PreflightReport, render_json as render_preflight_json, render_text as render_preflight_text,
+};
 
 use cli::UpArgs;
 use ctx::{Ctx, Opts};
@@ -158,6 +161,14 @@ pub fn run(cli: Cli) -> Result<Report, KeelError> {
     run_with(cli, &SystemRunner, &sleep, &read_token)
 }
 
+/// Preflight with the real tools: always for `keel preflight`, and for `up`, `plan` and `migrate`
+/// only when it blocks (the command must then stop with exit 5 before any write).
+pub fn preflight_gate(cli: &Cli) -> Option<PreflightReport> {
+    let verbose = Verbose(&SystemRunner);
+    let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
+    steps::preflight::gate(runner, cli)
+}
+
 /// Run `keel migrate` with the real tools.
 pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
     exec::install_signal_handlers();
@@ -167,6 +178,51 @@ pub fn run_migrate(cli: &Cli) -> Result<migrate::MigrateReport, KeelError> {
     let verbose = Verbose(&SystemRunner);
     let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
     migrate::run(&cli.dir, args, runner)
+}
+
+/// `keel owner`: `bosun owner setup [--dry-run] [extra...]` with inherited stdio; returns bosun's
+/// exit code. bosun is found on PATH, like every other tool step.
+pub fn run_owner(cli: &Cli) -> Result<i32, KeelError> {
+    let Command::Owner(a) = &cli.command else {
+        return Err(KeelError::Usage("not an owner command".into()));
+    };
+    let mut c = std::process::Command::new("bosun");
+    c.args(["owner", "setup"]);
+    if a.dry_run {
+        c.arg("--dry-run");
+    }
+    c.args(&a.extra).current_dir(&cli.dir);
+    match c.status() {
+        Ok(s) => Ok(s.code().unwrap_or(1)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(KeelError::Env(
+            "bosun is not installed: run `npm install -g @keelstackhq/bosun@latest`, then `keel owner` again".into(),
+        )),
+        Err(e) => Err(KeelError::Env(format!(
+            "could not run bosun: {e}; check that `bosun --version` works, then run `keel owner` again"
+        ))),
+    }
+}
+
+/// Which side `keel up` takes (`.splice/lock.toml`, `--new`, `--existing`) and why; `None` for
+/// every other command. An error is a usage error (exit 2).
+pub fn up_path(cli: &Cli) -> Result<Option<(steps::up::UpPath, String)>, KeelError> {
+    match &cli.command {
+        Command::Up(a) => steps::up::choose(&cli.dir, a).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// Run the `keel up` upgrade pipeline with the real tools.
+pub fn run_up(cli: &Cli, reason: &str) -> Result<steps::up::UpReport, KeelError> {
+    exec::install_signal_handlers();
+    let verbose = Verbose(&SystemRunner);
+    let runner: &dyn Runner = if cli.verbose { &verbose } else { &SystemRunner };
+    steps::up::run(cli, reason, runner)
+}
+
+/// A bootstrap `up` report as JSON: the usual object plus `data.path` and `data.reason`.
+pub fn render_up_json(report: &Report, path: steps::up::UpPath, reason: &str) -> String {
+    steps::up::render_json(report, path, reason, None)
 }
 
 pub fn run_with(
@@ -186,6 +242,16 @@ pub fn run_with(
         Command::Migrate(_) => {
             return Err(KeelError::Usage(
                 "`keel migrate` has its own report: call keel::run_migrate".into(),
+            ));
+        }
+        Command::Preflight => {
+            return Err(KeelError::Usage(
+                "`keel preflight` has its own report: call keel::preflight_gate".into(),
+            ));
+        }
+        Command::Owner(_) => {
+            return Err(KeelError::Usage(
+                "`keel owner` runs bosun directly: call keel::run_owner".into(),
             ));
         }
     };

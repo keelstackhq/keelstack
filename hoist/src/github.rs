@@ -683,10 +683,32 @@ fn read_homes(
     Ok(Some(Fetch::Got(found)))
 }
 
+/// The repo's gate App from `.bosun/gate-app.toml` (keys `id`, `slug`): the id a pinned slug
+/// falls back to when the slug cannot be read (a private App, or a proxy that refuses the read).
+pub fn read_gate_app(dir: &std::path::Path) -> Option<(String, u64)> {
+    let text = std::fs::read_to_string(dir.join(".bosun/gate-app.toml")).ok()?;
+    let table: toml::Table = text.parse().ok()?;
+    let id = table.get("id")?.as_integer().filter(|i| *i > 0)?;
+    let slug = table.get("slug")?.as_str()?.to_string();
+    Some((slug, id as u64))
+}
+
 /// Resolve each pinned required check's `app` slug to the App's id with `GET /apps/{slug}`
 /// (once per slug). Any failure is exit 3: hoist never writes a check unpinned because its App
 /// did not resolve (spec §6.1).
 pub fn resolve_check_pins(http: &Http, d: &mut Desired) -> Result<(), HoistError> {
+    resolve_check_pins_with(http, d, None, false)
+}
+
+/// Like `resolve_check_pins`, but a slug whose read fails (404, 403, proxy refusal, transport)
+/// takes `gate`'s id when the slug matches. With `lenient` (`hoist check`) a slug still
+/// unresolved stays `id: None` (the ruleset item is then `unknown`) instead of exit 3.
+pub fn resolve_check_pins_with(
+    http: &Http,
+    d: &mut Desired,
+    gate: Option<&(String, u64)>,
+    lenient: bool,
+) -> Result<(), HoistError> {
     let mut seen: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
     for pin in &mut d.github.ruleset.check_pins {
         let crate::config::CheckApp::Slug(slug) = &pin.app else {
@@ -700,17 +722,27 @@ pub fn resolve_check_pins(http: &Http, d: &mut Desired) -> Result<(), HoistError
             HoistError::Usage(format!(
                 "GitHub App `{slug}` (required check `{}`) cannot be resolved ({why}); check the \
                  slug, or for a private App use a token that can see it, or pin it with \
-                 `integration_id`",
+                 `integration_id` or `.bosun/gate-app.toml`",
                 pin.context
             ))
         };
-        let id = match http.get_json(&format!("/apps/{}", crate::http::seg(slug))) {
-            Ok(Fetched::Ok(v)) => v.get("id").and_then(Value::as_u64),
-            Ok(Fetched::NotFound) => return Err(fail("404".into())),
-            Ok(Fetched::Forbidden(hint)) => return Err(fail(hint)),
-            Err(e) => return Err(fail(e.to_string())),
+        let read = match http.get_json(&format!("/apps/{}", crate::http::seg(slug))) {
+            Ok(Fetched::Ok(v)) => v
+                .get("id")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| "no id in the answer".to_string()),
+            Ok(Fetched::NotFound) => Err("404".to_string()),
+            Ok(Fetched::Forbidden(hint)) => Err(hint),
+            Err(e) => Err(e.to_string()),
         };
-        let id = id.ok_or_else(|| fail("no id in the answer".into()))?;
+        let id = match read {
+            Ok(id) => id,
+            Err(why) => match gate.filter(|(s, _)| s == slug) {
+                Some((_, id)) => *id,
+                None if lenient => continue,
+                None => return Err(fail(why)),
+            },
+        };
         seen.insert(slug.clone(), id);
         pin.id = Some(id);
     }

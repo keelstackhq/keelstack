@@ -26,7 +26,7 @@ name = "hull"
 min_splice = "0.1.0"             # oldest splice that can render this template
 base = "base"                    # piece applied by every `splice new`, exactly once
 
-[vars]                           # template-wide variables, asked once per repo
+[vars]                           # template-wide variables, asked once per repo (`splice set K=V` changes one later)
 scope = { prompt = "npm scope without @", default = "acme", pattern = "^[a-z0-9-]+$" }
 ```
 
@@ -51,7 +51,7 @@ seed   = ["src/**", "index.html"]
 [merge]                          # strategy for shared files (default: "text")
 "package.json" = "json"          # json | yaml | toml | text
 
-[[post]]                         # commands run after `new`/`add`/`update`, in the repo root
+[[post]]                         # commands run after `new`/`add`/`update`, in the repo root (a channel: in its `only` root)
 run = "pnpm install --no-frozen-lockfile"
 when = ["new", "add", "update"]
 ```
@@ -111,6 +111,14 @@ vars = { name = "web" }
 ```
 
 Only `splice` writes this file. Seed files are not listed.
+
+**Legacy sources.** A lock source `gh:keelstackhq/<tool>//<dir>` (tool: hull, bosun, hoist, hoard,
+berth, splice, keel; the archived repos, D-023) is repointed by `splice update` (main and channel
+locks) to `gh:keelstackhq/keelstack//<tool>/<dir>`. The locked version is mapped to its monorepo
+commit through `<tool>/legacy-tags.txt` (lines `<version> <commit>`, `#` comments) read from the
+latest monorepo release. One commit `chore(splice): repoint <source> to the monorepo` per lock,
+then the update continues in the same run. A version missing from that file exits 1 naming it,
+and nothing is written.
 
 ## 7. Migrations `migrations/<semver>.toml`
 

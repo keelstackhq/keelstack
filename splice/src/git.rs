@@ -269,4 +269,18 @@ impl Git {
         run(cmd, "commit")?;
         Ok(())
     }
+
+    /// Commit only `paths` (staged first) with `msg`; other staged or dirty files stay as they are.
+    pub fn commit_paths(dir: &Path, msg: &str, paths: &[String]) -> Result<(), SpliceError> {
+        let mut cmd = command();
+        cmd.arg("-C").arg(dir).args(["add", "--"]).args(paths);
+        run(cmd, "add")?;
+        let mut cmd = command();
+        cmd.arg("-C")
+            .arg(dir)
+            .args(["commit", "--quiet", "-m", msg, "--"])
+            .args(paths);
+        run(cmd, "commit")?;
+        Ok(())
+    }
 }

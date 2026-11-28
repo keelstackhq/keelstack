@@ -22,6 +22,7 @@ pub mod guard;
 pub mod handoff;
 pub mod heal;
 pub mod intake;
+pub mod intake_trust;
 pub mod lease;
 pub mod lessons;
 pub mod lockmerge;

@@ -94,6 +94,23 @@ fn default_retention() -> u32 {
     30
 }
 
+/// Where the repo's CI gates run. `none`: no GitHub-side gates (no rulesets, auto-merge or
+/// environment secrets), the choice that lifts the preflight block on a private Free-plan repo.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CiProvider {
+    #[default]
+    Github,
+    None,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Ci {
+    #[serde(default)]
+    pub provider: CiProvider,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Confirmed {
@@ -158,6 +175,8 @@ pub struct Manifest {
     pub deploy: Option<Deploy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backup: Option<Backup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ci: Option<Ci>,
 }
 
 fn manifest_err(message: impl Into<String>) -> KeelError {
@@ -185,6 +204,13 @@ impl Manifest {
             toml::from_str(text).map_err(|e| manifest_err(e.message().trim().to_string()))?;
         m.validate()?;
         Ok(m)
+    }
+
+    /// `[ci] provider = "none"`: the owner chose to run without GitHub-side gates.
+    pub fn ci_none(&self) -> bool {
+        self.ci
+            .as_ref()
+            .is_some_and(|c| c.provider == CiProvider::None)
     }
 
     /// `template = "none"`: an existing repo, nothing to render.
@@ -478,6 +504,22 @@ mod tests {
 
     fn args() -> UpArgs {
         UpArgs::default()
+    }
+
+    #[test]
+    fn ci_provider_none_is_read_and_unknown_ci_keys_are_errors() {
+        let m = Manifest::parse("repo = \"o/n\"\n[ci]\nprovider = \"none\"\n").unwrap();
+        assert!(m.ci_none());
+        assert!(
+            !Manifest::parse("[ci]\nprovider = \"github\"\n")
+                .unwrap()
+                .ci_none()
+        );
+        assert!(!Manifest::default().ci_none());
+        let e = Manifest::parse("[ci]\nprovidr = \"none\"\n").unwrap_err();
+        assert!(e.to_string().contains("providr"), "{e}");
+        let e = Manifest::parse("[ci]\nprovider = \"circle\"\n").unwrap_err();
+        assert!(e.to_string().contains("circle"), "{e}");
     }
 
     #[test]

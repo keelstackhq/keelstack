@@ -17,8 +17,8 @@ use crate::config::{CONFIG_FILE, Config};
 use crate::core::intake::{INTAKE_PATH, seed_repo};
 use crate::core::meta::parse_task_meta;
 use crate::core::migrate::{
-    BodyIn, MODE_MIN, below_min, body, branch_step, is_lighter, owner_steps, parse_mode,
-    redact_credentials, semver_lt, set_mode_name, step,
+    BodyIn, MODE_MIN, apply_autonomous_preset, below_min, body, branch_step, is_lighter,
+    owner_steps, parse_mode, redact_credentials, semver_lt, set_mode_name, step,
 };
 use crate::core::mode::{BudgetFeature, ModeName};
 use crate::core::pin::{get_line, keys};
@@ -499,7 +499,16 @@ pub fn run(dir: Option<&Path>, a: &MigrateArgs) -> CmdResult {
         s.live.first().copied()
     };
     let old_toml = read(&root, CONFIG_FILE).unwrap_or_default();
-    let new_toml = (next != from).then(|| set_mode_name(&old_toml, next));
+    // Landing on autonomous writes the D-028 flow set too, unless `--flow gatekeeper`.
+    let preset = next == ModeName::Autonomous && a.flow.as_deref() != Some("gatekeeper");
+    let mut edited = old_toml.clone();
+    if next != from {
+        edited = set_mode_name(&edited, next);
+    }
+    if preset {
+        edited = apply_autonomous_preset(&edited, a.cloud_env.as_deref());
+    }
+    let new_toml = (edited != old_toml).then_some(edited);
     if let Some(t) = &new_toml {
         Config::parse(t, CONFIG_FILE).map_err(|e| {
             BosunError::error(

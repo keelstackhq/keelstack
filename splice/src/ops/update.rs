@@ -17,12 +17,12 @@ use crate::manifest::{PostCmd, Template, When};
 use crate::migrate::{Migration, Step, select};
 use crate::output::{Action, Class, NewQuestion, Report};
 use crate::planner::{Disk, Plan, PlanInput, plan, render_removes};
-use crate::post::run_post;
+use crate::post::run_post_groups;
 use crate::render::{
     PieceInstance, RenderInput, RenderedSections, RenderedTree, render_sections, render_tree,
 };
 use crate::sections::{SectionChange, SectionInput, SectionPlan, plan_sections};
-use crate::source::TemplateSource;
+use crate::source::{LegacyMap, TemplateSource};
 use crate::sources::{Claim, SourceId, Sources, check_claims, claims_last};
 use crate::vars::{
     VarSource, check_instance_name, instance_name, interactive, name_source, no_data_hint,
@@ -908,6 +908,128 @@ fn channel_up_to_date(mut r: Resolved, cl: &ChannelLock, me: SourceId) -> Prepar
     }
 }
 
+/// A legacy source found in a lock, with the monorepo source and commit it maps to.
+struct Repoint {
+    old: String,
+    map: LegacyMap,
+    commit: String,
+    lock: LockOut,
+}
+
+/// The monorepo commit of legacy `version`, from `<tool>/legacy-tags.txt` (`<version> <commit>`
+/// per line, `v` prefix optional, `#` comments) as shipped by the latest release of the new
+/// source. Any failure is exit 1 naming the file; nothing has been written yet.
+fn legacy_commit(fetcher: &Fetcher, map: &LegacyMap, version: &Version) -> Result<String> {
+    let file = map.tags_file();
+    let refuse = |why: String| {
+        let mut r = Report::new("update");
+        r.ok = false;
+        r.msg(format!(
+            "cannot repoint `{}`: {why}; nothing was written",
+            map.new_spec
+        ));
+        SpliceError::Drift(r)
+    };
+    let src = TemplateSource::parse(&map.new_spec)?;
+    let latest = fetcher
+        .available_versions(&src, false)?
+        .pop()
+        .ok_or_else(|| refuse(format!("the monorepo has no release to read `{file}` from")))?;
+    let at = fetcher.resolve_version(&src, &latest)?;
+    let sub_depth = src
+        .subdir
+        .as_deref()
+        .map_or(0, |s| s.split('/').filter(|p| !p.is_empty()).count());
+    let tree = at.root.ancestors().nth(sub_depth).unwrap_or(&at.root);
+    let text = std::fs::read_to_string(tree.join(&file))
+        .map_err(|_| refuse(format!("`{file}` is missing at monorepo release {latest}")))?;
+    let commit = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once(char::is_whitespace))
+        .find(|(v, _)| v.strip_prefix('v').unwrap_or(v) == version.to_string())
+        .map(|(_, c)| c.trim().to_string())
+        .ok_or_else(|| {
+            refuse(format!(
+                "legacy version {version} is not listed in `{file}`"
+            ))
+        })?;
+    crate::fetch::validate_commit(&commit, &file)
+        .map_err(|e| refuse(format!("`{file}` lists {version}: {e}")))?;
+    fetcher
+        .checkout(&src, &commit, version.clone())
+        .map_err(|e| {
+            refuse(format!(
+                "`{file}` maps {version} to {commit}, not usable: {e}"
+            ))
+        })?;
+    Ok(commit)
+}
+
+/// Rewrite every lock source of the form `gh:keelstackhq/<tool>//<dir>` (main and channels) to
+/// `gh:keelstackhq/keelstack//<tool>/<dir>`, mapping the locked commit through
+/// `<tool>/legacy-tags.txt`; one commit `chore(splice): repoint <source> to the monorepo` each.
+/// All mappings are resolved before the first write.
+fn repoint_legacy(repo: &Path) -> Result<Vec<String>> {
+    let sources = Sources::load(repo)?;
+    let fetcher = Fetcher::from_env();
+    let mut todo = Vec::new();
+    let check = |lock: &Lock| -> Result<Option<(String, LegacyMap, String)>> {
+        let Some(map) = LegacyMap::of(&lock.template.source) else {
+            return Ok(None);
+        };
+        let commit = legacy_commit(&fetcher, &map, &lock.template.version)?;
+        Ok(Some((lock.template.source.clone(), map, commit)))
+    };
+    if let Some(l) = &sources.main
+        && let Some((old, map, commit)) = check(l)?
+    {
+        let mut l = l.clone();
+        l.template.source = map.new_spec.clone();
+        l.template.commit = commit.clone();
+        todo.push(Repoint {
+            old,
+            map,
+            commit,
+            lock: LockOut::Main(l),
+        });
+    }
+    for c in &sources.channels {
+        if let Some((old, map, commit)) = check(&c.lock)? {
+            let mut c = c.clone();
+            c.lock.template.source = map.new_spec.clone();
+            c.lock.template.commit = commit.clone();
+            todo.push(Repoint {
+                old,
+                map,
+                commit,
+                lock: LockOut::Channel(c),
+            });
+        }
+    }
+    let in_git = Git::is_clean(repo)?.is_some();
+    let mut messages = Vec::new();
+    for r in todo {
+        r.lock.write_atomic(repo)?;
+        if in_git {
+            Git::commit_paths(
+                repo,
+                &format!("chore(splice): repoint {} to the monorepo", r.old),
+                &[r.lock.path()],
+            )?;
+        }
+        messages.push(format!(
+            "repointed {} to {} at {} ({})",
+            r.old,
+            r.map.new_spec,
+            &r.commit[..7],
+            r.lock.path()
+        ));
+    }
+    Ok(messages)
+}
+
 /// Spec §8.3 step 1: refuse (exit 2) outside a git work tree or with uncommitted changes.
 /// `command` names the splice command in the message.
 pub fn require_clean(repo: &Path, command: &str) -> Result<()> {
@@ -965,6 +1087,26 @@ fn with_questions(mut r: Report, qs: &[NewQuestion], tag: &str) -> Report {
 }
 
 pub fn run(g: &GlobalArgs, a: &UpdateArgs) -> Result<Report> {
+    // Legacy sources repoint first (own commit each), then the update proceeds in the same run.
+    if !a.allow_dirty {
+        require_clean(g.dir.as_path(), "update")?;
+    }
+    let mut pre = repoint_legacy(g.dir.as_path())?;
+    let prepend = |mut r: Report| {
+        pre.append(&mut r.messages);
+        r.messages = pre;
+        r
+    };
+    match run_update(g, a) {
+        Ok(r) => Ok(prepend(r)),
+        Err(SpliceError::Conflict(r)) => Err(SpliceError::Conflict(prepend(r))),
+        Err(SpliceError::Drift(r)) => Err(SpliceError::Drift(prepend(r))),
+        Err(SpliceError::Applied(r)) => Err(SpliceError::Applied(prepend(r))),
+        Err(e) => Err(e),
+    }
+}
+
+fn run_update(g: &GlobalArgs, a: &UpdateArgs) -> Result<Report> {
     if a.all {
         return run_all(g, a);
     }
@@ -1388,8 +1530,13 @@ fn run_all(g: &GlobalArgs, a: &UpdateArgs) -> Result<Report> {
     // 5. The post commands of every changed source once (first occurrence wins), before any
     // lock: post sees the old locks.
     if conflicts.is_empty() && !a.no_post {
-        let post: Vec<PostCmd> = changed.iter().flat_map(|s| post_of(&s.prep)).collect();
-        if let Err(e) = run_post(repo, &post, When::Update) {
+        let post: Vec<(LockOut, Vec<PostCmd>)> = changed
+            .iter()
+            .map(|s| (s.lock_out(), post_of(&s.prep)))
+            .collect();
+        let groups: Vec<(&[String], &[PostCmd])> =
+            post.iter().map(|(l, c)| (l.only(), c.as_slice())).collect();
+        if let Err(e) = run_post_groups(repo, &groups, When::Update) {
             return Err(all_failed(report, "", e));
         }
     }

@@ -1,0 +1,3 @@
+- keel: `keel preflight` and a preflight gate before every write (exit 5 with the choices); `keel migrate --dry-run` fetches missing tools into a temp cache; `--branch NAME` pushes to an assigned branch; a merged `--branch` is restarted from the base with a plain push; `--branch` is validated.
+- keel: `keel migrate` reports legacy source repoint as its own `repoint` step (K2).
+- keel, splice: `keel migrate --drift seed|take|keep` settles drift (local lines to the seed `CLAUDE.md`, channel drift to `exclude`); new `splice channel exclude` (K3).

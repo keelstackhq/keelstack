@@ -1,6 +1,7 @@
 //! GitHub as the shared store: the `Github` trait and its live implementation (spec §1, D28).
 
 pub mod b64;
+pub mod environments;
 pub mod gate;
 pub mod ghcli;
 pub mod http;
@@ -10,9 +11,9 @@ use http::{Http, enc};
 use serde_json::{Value, json};
 use types::RawGitCommit;
 pub use types::{
-    CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label, PrFile, Pull,
-    Review, RunJob, RunPull, RunPullBase, RunState, RunStep, ShaRun, Status, TreeEntry,
-    WorkflowRun,
+    AppCredentials, CheckRun, Comment, Compare, GateRun, GitCommit, GitTree, Issue, Job, Label,
+    PrFile, Pull, Review, RunJob, RunPull, RunPullBase, RunState, RunStep, Secret, ShaRun, Status,
+    TreeEntry, WorkflowRun,
 };
 
 pub use crate::output::BosunError;
@@ -236,6 +237,19 @@ pub trait Github {
     fn ruleset_pins(&self, branch: &str) -> Result<Option<Vec<Pin>>>;
     /// Which branches may deploy to the environment `name`.
     fn environment_branches(&self, name: &str) -> Result<EnvBranches>;
+    /// Exchange a GitHub App manifest `code` once (`POST /app-manifests/{code}/conversions`).
+    /// The code never appears in an error or a log; the client and webhook secrets are dropped.
+    fn convert_manifest(&self, code: &str) -> Result<AppCredentials>;
+    /// Create or update environment `name` with no reviewers and the deployment branch policy
+    /// `main` only (idempotent).
+    fn put_environment_main_only(&self, name: &str) -> Result<()>;
+    /// Whether the environment `name` has a required-reviewers protection rule.
+    fn environment_has_reviewers(&self, name: &str) -> Result<bool>;
+    /// Set variable `name` of environment `env`: created, or updated when it exists.
+    fn put_environment_variable(&self, env: &str, name: &str, value: &str) -> Result<()>;
+    /// Seal `value` with the environment's public key from the API and set secret `name`; the
+    /// plaintext is never sent. Returns nothing: the value is not kept.
+    fn put_environment_secret(&self, env: &str, name: &str, value: &Secret) -> Result<()>;
 }
 
 /// An environment's deployment branches as the token sees them.
@@ -837,6 +851,66 @@ impl Github for LiveGithub {
         } else {
             Live::Checks(out)
         })
+    }
+
+    fn put_environment_main_only(&self, name: &str) -> Result<()> {
+        self.put_env_main_only(name)
+    }
+
+    fn put_environment_variable(&self, env: &str, name: &str, value: &str) -> Result<()> {
+        self.put_env_variable(env, name, value)
+    }
+
+    fn environment_has_reviewers(&self, name: &str) -> Result<bool> {
+        self.env_has_reviewers(name)
+    }
+
+    fn put_environment_secret(&self, env: &str, name: &str, value: &Secret) -> Result<()> {
+        // A 422 means the key rotated between the read and the write: read it again once.
+        let mut last = None;
+        for _ in 0..2 {
+            let (key_id, key) = self.env_public_key(env)?;
+            let sealed = environments::seal(&key, value)?;
+            match self.put_env_secret_sealed(env, name, &key_id, &sealed) {
+                Ok(()) => return Ok(()),
+                Err(e) if e.message.contains(" 422") => last = Some(e),
+                Err(e) => return Err(e),
+            }
+        }
+        Err(last.unwrap_or_else(|| BosunError::error("GitHub rejected the secret", "rerun")))
+    }
+
+    fn convert_manifest(&self, code: &str) -> Result<AppCredentials> {
+        let bad = |what: &str| {
+            BosunError::error(
+                format!("GitHub App manifest conversion: {what}"),
+                "the code is single use and expires in an hour: rerun the owner step to get a new one",
+            )
+        };
+        let path = format!("/app-manifests/{}/conversions", enc(code));
+        let mut v = self.http.send_json("POST", &path, &serde_json::json!({}))?;
+        let Some(map) = v.as_object_mut() else {
+            return Err(bad("GitHub sent no object"));
+        };
+        let pem = map.remove("pem").and_then(|p| match p {
+            Value::String(s) => Some(Secret::new(s)),
+            _ => None,
+        });
+        let creds = (|| {
+            Some(AppCredentials {
+                id: map.get("id")?.as_u64()?,
+                client_id: map.get("client_id")?.as_str()?.to_string(),
+                slug: map.get("slug")?.as_str()?.to_string(),
+                key: pem?,
+            })
+        })();
+        // The client secret, the webhook secret and the rest of the answer are wiped, not kept.
+        for val in map.values_mut() {
+            if let Value::String(s) = val {
+                zeroize::Zeroize::zeroize(s);
+            }
+        }
+        creds.ok_or_else(|| bad("GitHub sent no id, client_id, slug or pem"))
     }
 
     fn variable(&self, name: &str) -> Result<Variable> {
