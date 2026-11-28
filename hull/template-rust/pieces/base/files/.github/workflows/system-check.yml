@@ -122,6 +122,7 @@ jobs:
               printf '| action | kind | key | reason | source |\n| --- | --- | --- | --- | --- |\n'
               jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); .items[] | select(.action != "ok") | "| \(.action | cell) | \(.kind | cell) | \(.key | cell) | \(.reason | cell) | \(.source // "" | cell) |"' "$json"
               jq -r 'def cell: tostring | gsub("[|\n\r`]"; " ") | gsub("@"; "@​"); def link: if type == "string" and test("^https://[A-Za-z0-9._~/?#&=%+:-]+$") then " <\(.)>" else "" end; (.human_steps // []) as $s | if ($s | length) > 0 then "\nHuman steps:\n", ($s[] | "- \(.title | cell)\(.url | link)") else empty end' "$json"
+              # shellcheck disable=SC2016 # literal backticks: markdown code spans
               printf '\nFix: edit system.toml (dates: `hoist system stamp`), rotate what is due, then `hoist system explain --write`. Only metadata is listed, never values. This issue closes itself on a clean run.\n'
             } > "$body"
           fi

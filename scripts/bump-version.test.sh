@@ -177,6 +177,7 @@ if [ -f "$f" ]; then
 fi
 f=hull/template-rust/pieces/base/files/.github/workflows/system-check.yml
 if [ -f "$f" ]; then
+  # shellcheck disable=SC2016 # a literal ${{ }} expression, not shell
   if [ "$(grep -c '^ *HOIST_VERSION: ' "$f")" = 1 ] && grep -q '^ *HOIST_VERSION: \${{ steps.pins.outputs.hoist }}$' "$f"; then
     ok "$f: HOIST_VERSION from pins.toml"
   else
