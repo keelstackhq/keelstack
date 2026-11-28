@@ -171,8 +171,8 @@ test("commandName skips the value of the global -C <DIR> option", () => {
 
 test("the groups are the CLI's subcommand groups", () => {
   const cli = fs.readFileSync(path.join(__dirname, "..", "..", "..", "src", "cli", "mod.rs"), "utf8");
-  const groups = [...cli.matchAll(/^\s+([A-Z][a-z]+)\((\1)Cmd\),?$/gm)]
-    .map((m) => m[1].toLowerCase())
+  const groups = [...cli.matchAll(/^\s+([A-Z][A-Za-z]+)\((\1)Cmd\),?$/gm)]
+    .map((m) => m[1].replace(/(?<!^)([A-Z])/g, "-$1").toLowerCase())
     .sort();
   assert.ok(groups.length > 0, "no `Name(NameCmd)` variants found in src/cli/mod.rs");
   assert.deepEqual([...launcher.GROUPS].sort(), groups);
