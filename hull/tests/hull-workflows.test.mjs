@@ -111,7 +111,7 @@ test("the templates' splice.yml runs the splice update bot on all sources", asyn
     // it receives a token with workflows: write, so it is pinned by commit SHA
     assert.equal(
       bot.uses,
-      "keelstackhq/keelstack/splice/action@d9ff733da856b8913e6b92c79feca45f7709505b",
+      "keelstackhq/keelstack/splice/action@5816246c9d0166474424c9a877c7762ba15b7f4b",
       t,
     );
     assert.equal(bot.with.scope, "all", t);
