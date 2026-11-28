@@ -76,11 +76,10 @@ case "$name $*" in
   "gh api orgs/owner") echo "{\"plan\":{\"name\":\"${KEEL_PLAN:-team}\"}}";;
   "bosun --json gate-app advance")
     [ "$KEEL_SCENARIO" = old-bosun ] && { echo "unknown command" >&2; exit 2; }
-    if [ -f "$KEEL_LOG/owner_done" ]; then
-      env '{"dry_run":false,"app_id":42,"slug":"gate","step":"pr-b","status":"advanced","steps":[],"left":[],"branch":"bosun/gate-app","pr":{"number":11,"head_sha":"abc"}}'
-    else
-      env '{"dry_run":false,"app_id":42,"slug":"gate","step":"pr-a","status":"advanced","steps":[],"left":[],"branch":"bosun/gate-app","pr":{"number":10,"head_sha":"abc"}}'
-    fi;;
+    if [ ! -f "$KEEL_LOG/owner_done" ]; then
+      echo '{"version":1,"command":"gate-app advance","ok":false,"exit_code":5,"data":{"step":"owner-setup","status":"needs-human"},"error":{"message":"gate-app.toml is not on main","fix":"the owner runs `keel owner`"},"next":[]}'; exit 5
+    fi
+    env '{"dry_run":false,"app_id":42,"slug":"gate","step":"pr-b","status":"advanced","steps":[],"left":[],"branch":"bosun/gate-app","pr":{"number":11,"head_sha":"abc"}}';;
   "gh repo view"*) echo '{"nameWithOwner":"owner/name","defaultBranchRef":{"name":"main"}}';;
   "gh pr view"*)
     [ -f "$KEEL_LOG/pr_merged" ] && { printf '{"number":9,"url":"https://github.com/owner/name/pull/9","state":"MERGED","headRefOid":"%s","mergeCommit":{"oid":"c0"}}\n' "$(cat "$KEEL_LOG/pr_merged")"; exit 0; }
@@ -248,6 +247,17 @@ fn ids(v: &serde_json::Value) -> Vec<String> {
 const OWNER_LINE: &str = "npx -y @keelstackhq/keel@0.25.0 owner";
 
 #[test]
+fn up_before_owner_setup_exits_5_and_shows_the_owner_command() {
+    let env = Env::new(true, None);
+    let (code, v) = env.run(&[], &["up", "--to", "0.25.0"]);
+    assert_eq!(code, 5, "{v}");
+    assert_eq!(step(&v, "gate-app")["action"], "pending", "{v}");
+    assert_eq!(step(&v, "gate-app")["detail"], "owner-setup", "{v}");
+    assert_eq!(step(&v, "owner")["detail"], OWNER_LINE, "{v}");
+    assert!(ids(&v).contains(&"owner".to_string()), "{v}");
+}
+
+#[test]
 fn uc_k5_1_a_013_base_reaches_025_autonomous_with_one_agent_command_one_owner_command_one_approval()
 {
     let env = Env::new(true, None);
@@ -263,14 +273,8 @@ fn uc_k5_1_a_013_base_reaches_025_autonomous_with_one_agent_command_one_owner_co
     assert_eq!(v["data"]["target"], "0.25.0");
     assert_eq!(step(&v, "pr")["action"], "done");
     assert_eq!(step(&v, "mode-preset")["action"], "done");
-    assert_eq!(step(&v, "gate-app")["action"], "done");
-    assert!(
-        step(&v, "gate-app")["detail"]
-            .as_str()
-            .unwrap()
-            .contains("#10"),
-        "{v}"
-    );
+    assert_eq!(step(&v, "gate-app")["action"], "pending");
+    assert_eq!(step(&v, "gate-app")["detail"], "owner-setup", "{v}");
     // Exactly one owner command and one owner approval (PR A) are left.
     assert_eq!(ids(&v), ["owner", "approve-pr"], "{v}");
     assert_eq!(v["human_step"]["command"], OWNER_LINE);
@@ -456,7 +460,7 @@ fn branch_pushes_to_that_branch_and_opens_no_pr() {
     assert_eq!(env.called("gh pr create"), 0, "{v}");
     assert!(git(&env.repo, &["ls-remote", "--heads", "origin"]).contains("refs/heads/claude/up-x"));
     assert!(env.called("git push origin HEAD:refs/heads/claude/up-x") <= 1);
-    assert_eq!(step(&v, "gate-app")["action"], "done");
+    assert_eq!(step(&v, "gate-app")["action"], "pending");
 }
 
 #[test]

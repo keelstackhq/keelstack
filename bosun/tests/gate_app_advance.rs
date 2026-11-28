@@ -158,13 +158,15 @@ fn step_status<'a>(v: &'a Value, step: &str) -> &'a str {
 fn without_gate_app_toml_it_points_at_owner_setup() {
     let e = Env::new(false, CONFIG);
     let (out, v) = e.run(&[]);
-    assert_eq!(out.status.code(), Some(1), "{v}");
+    assert_eq!(out.status.code(), Some(5), "{v}");
+    assert_eq!(v["data"]["step"], "owner-setup", "{v}");
     assert!(
         v["error"]["fix"]
             .as_str()
             .unwrap()
             .contains("bosun owner setup")
     );
+    assert!(v["error"]["fix"].as_str().unwrap().contains("keel owner"));
     assert!(e.mutations().is_empty());
 }
 

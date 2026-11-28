@@ -335,10 +335,11 @@ fn find_gate_app(
         .flatten()
         .find_map(|t| parse_gate_app(&t))
         .ok_or_else(|| {
-            BosunError::error(
+            BosunError::needs_human(
                 format!("{GATE_APP} is not on {base} or on {branch}: the gate App is not set up"),
-                "ask the owner to run `bosun owner setup` on their computer (it records the App and pushes bosun/gate-app), then rerun",
+                "the owner runs `keel owner` (or `bosun owner setup`) on their computer (it records the App and pushes bosun/gate-app), then rerun",
             )
+            .with_data(json!({"step": "owner-setup", "status": "needs-human"}))
         })
 }
 

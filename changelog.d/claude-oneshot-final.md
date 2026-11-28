@@ -1,2 +1,3 @@
 - bosun: `gate-app advance` and the waiting `hoist apply` at the end of `owner setup` (B3).
 - keel: `keel up` runs the whole move to the latest release when `.splice/lock.toml` exists (`--new`/`--existing`, `--branch`, `[ci] provider = "none"`), docs/migrate.md rewritten (K5).
+- bosun/keel: `gate-app advance` without `.bosun/gate-app.toml` exits 5 (step `owner-setup`, fix names `keel owner`), so the first `keel up` shows the owner line; `token_scopes` treats `none` as unknown.

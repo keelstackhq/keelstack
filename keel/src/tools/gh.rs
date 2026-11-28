@@ -78,13 +78,14 @@ pub fn token_scopes(r: &dyn Runner) -> Option<Vec<String>> {
     let o = r.run(&Cmd::new("gh", &["auth", "status"]));
     let text = format!("{}\n{}", o.stdout, o.stderr);
     let line = text.lines().find_map(|l| l.split_once("Token scopes:"))?;
-    Some(
-        line.1
-            .split(',')
-            .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
-    )
+    let scopes: Vec<String> = line
+        .1
+        .split(',')
+        .map(|s| s.trim().trim_matches('\'').trim_matches('"').to_string())
+        .filter(|s| !s.is_empty() && s != "none")
+        .collect();
+    // `none` or an empty list is what fine-grained and App tokens print: unknown, not "no scope".
+    (!scopes.is_empty()).then_some(scopes)
 }
 
 /// The repo's default branch; an error detail when the repo does not exist or is not readable.
@@ -300,4 +301,25 @@ pub fn pr_create_cmd(
         ],
     )
     .dir(dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::exec::{FakeRunner, Out};
+
+    fn scopes(line: &str) -> Option<Vec<String>> {
+        let r = FakeRunner::new().on(&["gh", "auth", "status"], Out::ok(line));
+        token_scopes(&r)
+    }
+
+    #[test]
+    fn token_scopes_none_or_empty_is_unknown() {
+        assert_eq!(scopes("  - Token scopes: none\n"), None);
+        assert_eq!(scopes("  - Token scopes: \n"), None);
+        assert_eq!(
+            scopes("  - Token scopes: 'repo', 'workflow'\n"),
+            Some(vec!["repo".into(), "workflow".into()])
+        );
+    }
 }
